@@ -229,8 +229,10 @@ impl Dir {
             if need_to_retry {
                 // Since we closed the handle that the previous iterator used, we
                 // need to re-open the dir and re-create the iterator.
-                let new_dir = match openat_a(parent_dir, &name, DELETE_TREE_OPEN, 0) {
-                    Ok(fd) => fd,
+                let reopened = Dir::borrow(&parent_dir).open_tree_to_delete(&name);
+                let new_dir = match reopened {
+                    Ok(Some(fd)) => fd,
+                    Ok(None) => continue 'process_stack,
                     Err(e) => match e.get_errno() {
                         E::ENOTDIR => {
                             // Racing fs: it became a file; unlink it.
@@ -339,11 +341,23 @@ fn open_entry_to_delete(dir: Fd, name: &[u8]) -> Maybe<Option<Fd>> {
                 E::ENOENT => return Ok(None),
                 // It has entries, it is no directory, or it is `.`.
                 E::ENOTEMPTY | E::EEXIST | E::ENOTDIR | E::EINVAL => {}
-                _ => return Err(e),
+                E::EBUSY => return Err(e),
+                // Not allowed, or what a file system such as sshfs says of one that has entries.
+                _ if is_mount_point(dir, name) => return Err(e),
+                _ => {}
             },
         },
     }
     openat(dir, name, DELETE_TREE_OPEN, 0).map(Some)
+}
+
+/// For an `rmdir` that was refused before its own mount test.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn is_mount_point(dir: Fd, name: &ZStr) -> bool {
+    super::linux_syscall::is_mount_root(dir, name).unwrap_or_else(|| {
+        // Another file system. A bind mount of the same one is not told apart.
+        matches!((fstat(dir), lstatat(dir, name)), (Ok(around), Ok(it)) if around.st_dev != it.st_dev)
+    })
 }
 
 #[cfg(unix)]

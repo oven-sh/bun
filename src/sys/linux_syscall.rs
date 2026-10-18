@@ -136,6 +136,18 @@ pub(crate) fn openat2_no_xdev(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> R
     openat2(dir, path, flags, mode, rustix::fs::ResolveFlags::NO_XDEV)
 }
 
+/// Whether `path` in `dir` is the root of a mount. `None`: this kernel does not say (before 5.8).
+pub(crate) fn is_mount_root(dir: Fd, path: &ZStr) -> Option<bool> {
+    const STATX_ATTR_MOUNT_ROOT: u64 = 0x2000;
+    let flags = rustix::fs::AtFlags::SYMLINK_NOFOLLOW | rustix::fs::AtFlags::NO_AUTOMOUNT;
+    let dir = dir.as_borrowed_fd();
+    let stat =
+        retry(|| rustix::fs::statx(dir, path.as_cstr(), flags, rustix::fs::StatxFlags::empty()))
+            .ok()?;
+    (stat.stx_attributes_mask & STATX_ATTR_MOUNT_ROOT != 0)
+        .then_some(stat.stx_attributes & STATX_ATTR_MOUNT_ROOT != 0)
+}
+
 #[inline]
 pub(crate) fn read(fd: Fd, buf: &mut [u8]) -> Result<usize, i32> {
     let fd = fd.as_borrowed_fd();

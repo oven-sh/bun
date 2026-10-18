@@ -70,7 +70,12 @@ type VolumeRow = {
   version?: string;
   exitCode?: number;
 };
-const setpriv = Bun.which("setpriv");
+// For a bun that the mode of a directory applies to. The `setpriv` of BusyBox has no `--bounding-set`.
+const withoutDacOverride = ["setpriv", "--bounding-set", "-dac_override,-dac_read_search"];
+const canDropDacOverride =
+  canMount &&
+  Bun.spawnSync({ cmd: ["unshare", "-Urm", ...withoutDacOverride, "true"], stdout: "ignore", stderr: "ignore" })
+    .exitCode === 0;
 const failing = "lifecycle-failing-postinstall";
 const hoisted = { linker: "hoisted", on: "a directory" } as const;
 const isolated = { linker: "isolated", on: "a directory" } as const;
@@ -159,10 +164,7 @@ for (const row of volumeRows) {
   const { name = "no-deps", where = "vol", exitCode: expectedExitCode = 0 } = row;
   const manifest = (dependencies: Record<string, string>) =>
     JSON.stringify({ name: "root", dependencies, trustedDependencies: [failing] });
-  const wrap = [
-    ...(row.refused ? [setpriv!, "--bounding-set", "-dac_override,-dac_read_search"] : []),
-    ...(row.openat2 === false ? [androidSeccompWrap!] : []),
-  ];
+  const wrap = [...(row.refused ? withoutDacOverride : []), ...(row.openat2 === false ? [androidSeccompWrap!] : [])];
   const title = [
     `${row.linker} on ${row.on}`,
     row.what,
@@ -173,7 +175,7 @@ for (const row of volumeRows) {
     .skipIf(
       !(row.on === "an overlay" ? canMountOverlay : canMount) ||
         (row.openat2 === false && !androidSeccompWrap) ||
-        (row.refused === true && !setpriv),
+        (row.refused === true && !canDropDacOverride),
     )
     .concurrent(
       `no delete goes into a volume that is mounted ${where ? "in" : "on"} a package folder: ${title}`,
@@ -244,7 +246,7 @@ exit $code`,
           volume: await readdirSorted(join(root, "volume")),
           said,
           saidAgain,
-          version: row.version && JSON.parse(stdout).version,
+          version: row.version && (stdout ? JSON.parse(stdout).version : stdout),
           // Shown when the exit code is another one.
           stderr: exitCode === expectedExitCode ? "" : stderr,
         }).toEqual({

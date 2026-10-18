@@ -493,7 +493,7 @@ impl PackageManagerCommand {
                     let store_stays = !dry_run
                         && rm_dir.as_ref().is_some_and(|dir| {
                             bun_sys::directory_exists_at(dir.fd(), bun_core::zstr!("links"))
-                                .unwrap_or(false)
+                                .unwrap_or(true)
                         });
                     if has_global_store && !store_stays {
                         bun_core::note!(

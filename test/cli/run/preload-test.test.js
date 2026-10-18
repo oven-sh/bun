@@ -1,6 +1,16 @@
 import { spawnSync } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "fs";
+import {
+  closeSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from "fs";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -284,8 +294,17 @@ plugin({
         stdout: collect(proc.stdout),
         stderr: collect(proc.stderr),
         write: (name, contents) => writeFileSync(path(name), contents),
-        // The file is never there empty, as it is for a moment in a write. A reload that reads a
-        // preload empty passes it, and then the save is lost.
+        // Writes over the file and does not truncate it first, as a write does. The file is never
+        // there empty: a reload that reads a preload empty passes it, and then the save is lost.
+        overwrite(name, contents) {
+          const fd = openSync(path(name), "r+");
+          try {
+            writeSync(fd, contents.padEnd(fstatSync(fd).size), 0);
+          } finally {
+            closeSync(fd);
+          }
+        },
+        // For a file that is not there. It comes with its contents, by a rename.
         create(name, contents) {
           writeFileSync(path(name + ".new"), contents);
           renameSync(path(name + ".new"), path(name));
@@ -300,33 +319,33 @@ plugin({
       };
     }
 
-    // For a preload that holds its load until the test has made a file. It gives up after a
-    // minute, so that it does not outlive a test that timed out.
-    const waitFor = `
-      const waitFor = name => {
-        const deadline = Date.now() + 60_000;
-        while (!require("node:fs").existsSync(__dirname + "/" + name)) {
-          if (Date.now() > deadline) process.exit(3);
-          Bun.sleepSync(1);
-        }
-      };
-    `;
-
-    // A preload holds its load until the reload for a save is posted. `save` is code of the
-    // preload that saves a watched file. If it is empty, the test saves one. The watcher logs a
-    // change (logLevel) just before it posts the reload for it, so that line does not say that the
-    // reload is posted. The preload then saves a second file: the watcher gets to that change,
-    // and logs it, only after it has posted the first reload.
-    const hold = (save = "") => `
-      ${waitFor}
+    // A preload holds its load until the reload for a save is posted. It saves `file` with `text`
+    // (code of the preload for the path and for the new text), and then a second file. The watcher
+    // logs a change (logLevel) just before it posts the reload for it, so the line for the first
+    // save does not say that its reload is posted. The watcher gets to the second save, and logs
+    // it, only after it has posted the first reload. The test makes the files "saved" and
+    // "helper-saved" when it sees the two lines (`posted`).
+    // On Windows the watcher now and then reports nothing for a save, so the preload makes a save
+    // again each 250 ms until the test has seen it. It gives up after a minute, so that it does
+    // not outlive a test that timed out.
+    const hold = (file, text) => `
       {
         const fs = require("node:fs");
+        const saveUntil = (file, text, seen) => {
+          const deadline = Date.now() + 60_000;
+          for (let saved = 0; !fs.existsSync(__dirname + "/" + seen); Bun.sleepSync(1)) {
+            const now = Date.now();
+            if (now > deadline) process.exit(3);
+            if (now - saved > 250) {
+              fs.writeFileSync(file, text);
+              saved = now;
+            }
+          }
+        };
         const helper = require.resolve("./helper.js");
         require(helper);
-        ${save}
-        waitFor("saved");
-        fs.writeFileSync(helper, fs.readFileSync(helper));
-        waitFor("helper-saved");
+        saveUntil(${file}, ${text}, "saved");
+        saveUntil(helper, fs.readFileSync(helper), "helper-saved");
       }
     `;
     async function posted(hot, file) {
@@ -342,7 +361,7 @@ plugin({
       const first = `
         if (!globalThis.savedOnce) {
           globalThis.savedOnce = true;
-          ${hold("fs.writeFileSync(__filename, fs.readFileSync(__filename));")}
+          ${hold("__filename", "fs.readFileSync(__filename)")}
         }
         console.log("first ran");
       `;
@@ -363,23 +382,22 @@ plugin({
     `;
 
     concurrentTest("a reload that lands while the preloads of a reload load runs them again", async () => {
-      // In the reload, second.js holds its load while the test saves first.js, which was read before.
+      const first = text => `console.log("first ran: ${text}");`;
+      // In the reload, second.js holds its load and saves first.js, which was read before.
       const second = `
         ${failsOnce}
         if (!globalThis.heldOnce) {
           globalThis.heldOnce = true;
           console.log("second holds");
-          ${hold()}
+          ${hold('__dirname + "/first.js"', JSON.stringify(first("new")))}
         }
         console.log("second ran");
       `;
-      const first = text => `console.log("first ran: ${text}");`;
       await using hot = spawnHot({ ...held, "first.js": first("old"), "second.js": second });
       expect(await hot.stderr("error: from second.js")).toContain("error: from second.js");
       // second.js is watched: it was loaded. The entry point is watched only after that report.
-      hot.create("second.js", second);
+      hot.overwrite("second.js", second);
       expect(await hot.stdout("second holds\n")).toBe("first ran: old\nfirst ran: old\nsecond holds\n");
-      hot.write("first.js", first("new"));
       await posted(hot, "first.js");
       const again = "first ran: new\nsecond ran\nmain ran\n";
       // Or the entry point ran twice, with no preload in between.
@@ -415,11 +433,11 @@ plugin({
       expect(await hot.stderr("error: from first.js, one")).toContain("error: from first.js, one");
       // The first load prints what is logged until it has reported its error. After the error of a
       // reload, that is over.
-      hot.create("first.js", first("two"));
+      hot.overwrite("first.js", first("two"));
       expect(await hot.stderr("error: from first.js, two")).toContain("error: from first.js, two");
       // This reload logs a warning about tsconfig.json, and nothing prints it.
       hot.write("tsconfig.json", `{ "compilerOptions": { "paths": { "@/*": ["src/*"] } } }`);
-      hot.create("first.js", first("three"));
+      hot.overwrite("first.js", first("three"));
       expect(await hot.stderr("error: from first.js, three")).toContain("error: from first.js, three");
       hot.write("tsconfig.json", `{}`);
       hot.remove("first.js");
@@ -433,7 +451,7 @@ plugin({
       await using hot = spawnHot({ "first.js": runMainAnswerThrows, "second.js": failsOnce });
       expect(await hot.stderr("error: from second.js")).toContain("error: from second.js");
       // As above: a save of the entry point could come before it is watched.
-      hot.create("second.js", failsOnce);
+      hot.overwrite("second.js", failsOnce);
       expect(await hot.stderr("error: from the getter")).toContain("error: from the getter");
       hot.write("main.js", `console.log("main ran again");`);
       expect(await hot.stdout("main ran again\n")).toContain("main ran again\n");

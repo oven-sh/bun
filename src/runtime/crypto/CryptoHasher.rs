@@ -1,5 +1,5 @@
 use core::any::Any;
-use core::ffi::c_char;
+use core::ffi::{c_char, c_uint};
 
 use bun_boringssl_sys as boring_ssl;
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsPayload as _, JsWrapper};
@@ -440,25 +440,37 @@ impl CryptoHasherClass for CryptoHasher {
 
     fn hash<'a>(
         heap: &JsHeap<'a>,
-        algorithm: &bun_core::String,
+        algorithm: &'a [u8],
         input: &'a [u8],
         output: Option<DigestOutput<'a>>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
-        let algorithm = &*algorithm.to_utf8();
-        let engine = engine_of(heap);
-        let mut digest: evp::Digest = [0; EVP_MAX_MD_SIZE_USIZE];
-        let length = if let Some(mut evp) = EVP::by_name_and_engine(engine, algorithm) {
-            let Some(length) = evp.hash(engine, input, &mut digest) else {
-                return Err(crypto_error(heap, boring_ssl::ERR_get_error()));
-            };
-            length as usize
-        } else if let Some(length) = CryptoHasherZig::hash_by_name(algorithm, input, &mut digest) {
-            length
-        } else {
+        let Some((algorithm, md)) = evp::md_by_name(algorithm) else {
             return Err(heap.invalid_arguments(format_args!(
                 "Unsupported algorithm \"{}\"",
                 bstr::BStr::new(algorithm)
             )));
+        };
+        let mut digest: evp::Digest = [0; EVP_MAX_MD_SIZE_USIZE];
+        let length = match md {
+            Some(md) => {
+                let mut length: c_uint = 0;
+                // SAFETY: `input` is valid for its length, `digest` holds
+                // `EVP_MAX_MD_SIZE` bytes, `md` is a BoringSSL static
+                // singleton, and the engine is the VM's.
+                let rc = unsafe {
+                    boring_ssl::EVP_Digest(
+                        input.as_ptr().cast(),
+                        input.len(),
+                        digest.as_mut_ptr(),
+                        &raw mut length,
+                        md,
+                        engine_of(heap),
+                    )
+                };
+                debug_assert!(rc == 1);
+                length as usize
+            }
+            None => CryptoHasherZig::hash(algorithm, input, &mut digest),
         };
         finish_with(heap, output, JsHeap::create_buffer, &digest[..length])
     }
@@ -565,9 +577,9 @@ macro_rules! for_each_zig_algo {
 }
 
 impl CryptoHasherZig {
-    /// How many bytes of `out` it wrote. `None` when `algorithm` is not one of these.
-    fn hash_by_name(algorithm: &[u8], input: &[u8], out: &mut evp::Digest) -> Option<usize> {
-        let algorithm = evp::lookup_ignore_case(algorithm)?;
+    /// How many bytes of `out` it wrote. `algorithm` is one of these: the
+    /// ones without a BoringSSL `EVP_MD`.
+    fn hash(algorithm: evp::Algorithm, input: &[u8], out: &mut evp::Digest) -> usize {
         macro_rules! arm {
             ($ty:ty) => {
                 if algorithm == <$ty as ZigHashAlgo>::ALGORITHM {
@@ -575,12 +587,12 @@ impl CryptoHasherZig {
                     let mut hasher = <$ty as ZigHashAlgo>::init();
                     hasher.update(input);
                     hasher.final_(&mut out[..length]);
-                    return Some(length);
+                    return length;
                 }
             };
         }
         for_each_zig_algo!(arm);
-        None
+        unreachable!("{algorithm:?} has a BoringSSL EVP_MD");
     }
 
     pub(crate) fn init(name: &[u8]) -> Option<CryptoHasherZig> {

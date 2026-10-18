@@ -1,4 +1,4 @@
-use core::ffi::{CStr, c_uint};
+use core::ffi::CStr;
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
@@ -22,8 +22,7 @@ pub(crate) use bun_sha_hmac::evp::Algorithm;
 /// Higher-tier helpers on the lowered `Algorithm` enum (orphan rules prevent an
 /// inherent `impl` on a foreign type, so callers `use evp::AlgorithmExt as _;`).
 pub(crate) trait AlgorithmExt: Copy + Sized {
-    /// NUL-terminated tag name. Needed for `EVP_get_digestbyname` which reads
-    /// a C string.
+    /// The canonical name, as `Bun.CryptoHasher.algorithms` lists it.
     fn tag_cstr(self) -> &'static CStr;
 }
 
@@ -184,34 +183,6 @@ impl EVP {
 
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
-    pub(crate) fn hash(
-        &mut self,
-        engine: *mut boringssl::ENGINE,
-        input: &[u8],
-        output: &mut [u8],
-    ) -> Option<u32> {
-        boringssl::ERR_clear_error();
-        let mut outsize: c_uint = (output.len() as u16).min(self.size()) as c_uint;
-        // SAFETY: input/output point to valid slices of the given lengths; outsize bounded by output.len().
-        if unsafe {
-            boringssl::EVP_Digest(
-                input.as_ptr().cast(),
-                input.len(),
-                output.as_mut_ptr(),
-                &raw mut outsize,
-                self.md,
-                engine,
-            )
-        } != 1
-        {
-            return None;
-        }
-
-        Some(outsize)
-    }
-
-    /// # Safety
-    /// `engine` must be either null or a valid `ENGINE` pointer.
     pub(crate) fn r#final<'a>(
         &mut self,
         engine: *mut boringssl::ENGINE,
@@ -262,31 +233,27 @@ impl EVP {
         Ok(new)
     }
 
+    /// A streaming context for a name that [`md_by_name`] resolves to a BoringSSL digest.
+    ///
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
     pub(crate) fn by_name_and_engine(engine: *mut boringssl::ENGINE, name: &[u8]) -> Option<EVP> {
-        if let Some(algorithm) = lookup_ignore_case(name) {
-            if let Some(md) = algorithm.md() {
-                // `Algorithm::md()` lives in `bun_sha_hmac`
-                // and returns that crate's opaque `EVP_MD`; both name the same C
-                // `struct env_md_st`, so a pointer cast is the correct unification.
-                // SAFETY: md is a BoringSSL static singleton; caller upholds `engine`.
-                return Some(EVP::init(algorithm, md.cast::<boringssl::EVP_MD>(), engine));
-            }
-
-            // strum's `<&'static str>::from(algorithm)` is NOT NUL-terminated, so use the
-            // explicit `tag_cstr()` table for the C-string FFI.
-            // SAFETY: FFI into BoringSSL; EVP_get_digestbyname expects a NUL-terminated
-            // C string, which `tag_cstr()` guarantees.
-            let md = unsafe { boringssl::EVP_get_digestbyname(algorithm.tag_cstr().as_ptr()) };
-            if !md.is_null() {
-                // SAFETY: md is non-null from EVP_get_digestbyname; caller upholds `engine`.
-                return Some(EVP::init(algorithm, md, engine));
-            }
-        }
-
-        None
+        let (algorithm, md) = md_by_name(name)?;
+        Some(EVP::init(algorithm, md?, engine))
     }
+}
+
+/// The algorithm a name denotes, and its BoringSSL `EVP_MD` when it has one.
+///
+/// `None` for an unknown name. The `EVP_MD` is `None` for the algorithms
+/// that BoringSSL does not implement (`Blake2s256`, `Shake128`, `Shake256`):
+/// `CryptoHasherZig` hashes those.
+pub(crate) fn md_by_name(name: &[u8]) -> Option<(Algorithm, Option<*const boringssl::EVP_MD>)> {
+    let algorithm = lookup_ignore_case(name)?;
+    // `Algorithm::md()` lives in `bun_sha_hmac` and returns that crate's opaque
+    // `EVP_MD`; both name the same C `struct env_md_st`.
+    let md = algorithm.md().map(|md| md.cast::<boringssl::EVP_MD>());
+    Some((algorithm, md))
 }
 
 impl Drop for EVP {

@@ -578,4 +578,14 @@ describe("CryptoHasher", () => {
       static: collect(encoding => Bun.CryptoHasher.hash(algorithm, "hello", encoding as any)),
     }).toEqual({ instance: expected, static: expected });
   });
+
+  // The one-shot resolves the name once, for the BoringSSL digests and the others alike.
+  test("the static hash matches the name without regard to case", () => {
+    for (const [algorithm, hex] of Object.entries(hello)) {
+      for (const name of [algorithm.toUpperCase(), algorithm.replace(/^./, c => c.toUpperCase())]) {
+        expect(Bun.CryptoHasher.hash(name as any, "hello", "hex"), name).toBe(hex);
+        expect(Bun.CryptoHasher.hash(name as any, "hello"), name).toEqual(Buffer.from(hex, "hex"));
+      }
+    }
+  });
 });

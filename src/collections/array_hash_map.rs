@@ -1148,12 +1148,6 @@ impl<'a, K, V, C, A: MapAllocator> VacantEntry<'a, K, V, C, A> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> MapEntry<'a, K, V, C, A> {
-    pub fn or_insert(self, default: V) -> &'a mut V {
-        match self {
-            MapEntry::Occupied(o) => o.into_mut(),
-            MapEntry::Vacant(v) => v.insert(default),
-        }
-    }
     pub fn or_insert_with<F: FnOnce() -> V>(self, f: F) -> &'a mut V {
         match self {
             MapEntry::Occupied(o) => o.into_mut(),
@@ -1231,18 +1225,6 @@ impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         }
         let i = self.push_entry(K::default(), V::default(), h);
         Ok(self.gop_at(i, false))
-    }
-}
-
-impl<K, V, C, A: MapAllocator> ArrayHashMapExt for ArrayHashMap<K, V, C, A> {
-    type Key = K;
-    type Value = V;
-    type Iterator<'a>
-        = Iter<'a, K, V>
-    where
-        Self: 'a;
-    fn iterator(&mut self) -> Iter<'_, K, V> {
-        ArrayHashMap::iterator(self)
     }
 }
 

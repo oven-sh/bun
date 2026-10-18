@@ -59,7 +59,7 @@ export function validateOptions(options: unknown): asserts options is SvelteOpti
  * @internal
  */
 export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Partial<BuildConfig>): CompileOptions {
-  let {
+  const {
     development = false,
     compilerOptions: { customElement, runes, modernAst, namespace } = kEmptyObject as OverrideCompileOptions,
   } = pluginOptions;

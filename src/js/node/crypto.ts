@@ -70,7 +70,7 @@ const {
   argon2Sync: _argon2Sync,
 } = $rust("node_crypto_binding.rs", "createNodeCryptoBindingZig");
 
-const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
+const normalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
 
 const {
   validateFunction,
@@ -145,7 +145,7 @@ crypto_exports.createPrivateKey = createPrivateKey;
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
 
-crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
+crypto_exports.hash = function hash(algorithm, input, outputEncoding: import("bun").DigestEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
 

@@ -298,7 +298,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         // Straight-line teardown: log copy
         // runs on both paths; `completeOnBundleThread` only on success (the error
         // path's `set_result(Err)` + complete happens in `thread_main`). The
-        // `deinitWithoutFreeingArena` + wait-group drain live inside `init_and_run`
+        // `deinit_without_freeing_arena` call lives inside `init_and_run`
         // (it owns `this`).
         let mut out_log = bun_ast::Log::init();
         // SAFETY: `transpiler.log` is the arena-allocated `*mut Log` set up by

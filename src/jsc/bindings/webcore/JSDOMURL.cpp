@@ -280,6 +280,31 @@ JSString* JSDOMURL::href(JSGlobalObject& lexicalGlobalObject) const
     return string;
 }
 
+unsigned JSDOMURL::offsetInHref(const URL& url, StringView view)
+{
+    const String& string = url.string();
+    ASSERT(view.is8Bit() == string.is8Bit());
+    auto bytes = static_cast<const uint8_t*>(view.rawCharacters()) - static_cast<const uint8_t*>(StringView(string).rawCharacters());
+    unsigned offset = string.is8Bit() ? bytes : bytes / sizeof(char16_t);
+    ASSERT(offset + view.length() <= string.length());
+    return offset;
+}
+
+JSString* JSDOMURL::substringOfHref(JSGlobalObject& lexicalGlobalObject, unsigned offset, unsigned length) const
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    JSString* base = href(lexicalGlobalObject);
+    return JSC::jsSubstring(&lexicalGlobalObject, vm, base, offset, length);
+}
+
+// The StringViews that WTF::URL returns point into href().string(), so the component is a slice of m_href.
+JSString* JSDOMURL::substringOfHref(JSGlobalObject& lexicalGlobalObject, StringView view) const
+{
+    if (view.isEmpty())
+        return jsEmptyString(JSC::getVM(&lexicalGlobalObject));
+    return substringOfHref(lexicalGlobalObject, offsetInHref(wrapped().href(), view), view.length());
+}
+
 static inline JSValue jsDOMURL_hrefGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
 {
     return thisObject.href(lexicalGlobalObject);
@@ -311,6 +336,11 @@ JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_href, (JSGlobalObject * lexicalGlobalObject
 
 static inline JSValue jsDOMURL_originGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
 {
+    const URL& url = thisObject.wrapped().href();
+    // protocolHostAndPort() with no credentials is the prefix of the string up to the path.
+    bool isTupleOrigin = url.protocolIsInHTTPFamily() || url.protocolIsInFTPFamily() || url.protocolIs("ws"_s) || url.protocolIs("wss"_s);
+    if (isTupleOrigin && !url.hasCredentials()) [[likely]]
+        return thisObject.substringOfHref(lexicalGlobalObject, 0, url.pathStart());
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
@@ -324,10 +354,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_origin, (JSGlobalObject * lexicalGlobalObject,
 
 static inline JSValue jsDOMURL_protocolGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
 {
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.protocol())));
+    const URL& url = thisObject.wrapped().href();
+    // The scheme is canonical (lowercase) and the character after it is ':'.
+    return thisObject.substringOfHref(lexicalGlobalObject, 0, url.protocol().length() + 1);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_protocol, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -356,10 +385,7 @@ JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_protocol, (JSGlobalObject * lexicalGlobalOb
 
 static inline JSValue jsDOMURL_usernameGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
 {
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.username())));
+    return thisObject.substringOfHref(lexicalGlobalObject, thisObject.wrapped().href().encodedUser());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_username, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -388,10 +414,7 @@ JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_username, (JSGlobalObject * lexicalGlobalOb
 
 static inline JSValue jsDOMURL_passwordGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
 {
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.password())));
+    return thisObject.substringOfHref(lexicalGlobalObject, thisObject.wrapped().href().encodedPassword());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_password, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -420,10 +443,13 @@ JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_password, (JSGlobalObject * lexicalGlobalOb
 
 static inline JSValue jsDOMURL_hostGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
 {
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.host())));
+    const URL& url = thisObject.wrapped().href();
+    StringView host = url.host();
+    if (host.isEmpty())
+        return jsEmptyString(JSC::getVM(&lexicalGlobalObject));
+    // With a non-empty host, the path starts right after the host and the optional ":port".
+    unsigned start = JSDOMURL::offsetInHref(url, host);
+    return thisObject.substringOfHref(lexicalGlobalObject, start, url.pathStart() - start);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_host, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -452,10 +478,7 @@ JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_host, (JSGlobalObject * lexicalGlobalObject
 
 static inline JSValue jsDOMURL_hostnameGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
 {
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.hostname())));
+    return thisObject.substringOfHref(lexicalGlobalObject, thisObject.wrapped().href().host());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_hostname, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -484,10 +507,13 @@ JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_hostname, (JSGlobalObject * lexicalGlobalOb
 
 static inline JSValue jsDOMURL_portGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
 {
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.port())));
+    const URL& url = thisObject.wrapped().href();
+    if (!url.port())
+        return jsEmptyString(JSC::getVM(&lexicalGlobalObject));
+    // The port digits sit between the ':' after the host and the start of the path.
+    StringView host = url.host();
+    unsigned start = JSDOMURL::offsetInHref(url, host) + host.length() + 1;
+    return thisObject.substringOfHref(lexicalGlobalObject, start, url.pathStart() - start);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_port, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -516,10 +542,7 @@ JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_port, (JSGlobalObject * lexicalGlobalObject
 
 static inline JSValue jsDOMURL_pathnameGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
 {
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.pathname())));
+    return thisObject.substringOfHref(lexicalGlobalObject, thisObject.wrapped().href().path());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_pathname, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -548,10 +571,10 @@ JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_pathname, (JSGlobalObject * lexicalGlobalOb
 
 static inline JSValue jsDOMURL_hashGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
 {
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.hash())));
+    const URL& url = thisObject.wrapped().href();
+    if (url.fragmentIdentifier().isEmpty())
+        return jsEmptyString(JSC::getVM(&lexicalGlobalObject));
+    return thisObject.substringOfHref(lexicalGlobalObject, url.fragmentIdentifierWithLeadingNumberSign());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_hash, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -580,10 +603,10 @@ JSC_DEFINE_CUSTOM_SETTER(setJSDOMURL_hash, (JSGlobalObject * lexicalGlobalObject
 
 static inline JSValue jsDOMURL_searchGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
 {
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.search())));
+    const URL& url = thisObject.wrapped().href();
+    if (url.query().isEmpty())
+        return jsEmptyString(JSC::getVM(&lexicalGlobalObject));
+    return thisObject.substringOfHref(lexicalGlobalObject, url.queryWithLeadingQuestionMark());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_search, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))

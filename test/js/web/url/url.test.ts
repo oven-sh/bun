@@ -1,3 +1,4 @@
+import { isRope } from "bun:jsc";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { resolveObjectURL } from "node:buffer";
@@ -248,6 +249,88 @@ describe("url", () => {
     expect([u.href, String(u), JSON.stringify(u)]).toEqual(["http://other/", "http://other/", '"http://other/"']);
     const v = new URL("HTTP://Example.COM");
     expect(v.href).toBe("http://example.com/");
+  });
+
+  it("component getters are substrings of href, not copies", () => {
+    // #45627: every read of host, pathname, ... copied the bytes into a new string. They now slice the href string.
+    const u = new URL("https://my-bucket.s3.us-east-1.amazonaws.com/photos/2026/cat.jpg?versionId=abc&x-id=GetObject");
+    for (const name of ["origin", "protocol", "host", "hostname", "pathname", "search"] as const) {
+      expect(isRope(u[name])).toBe(true);
+    }
+    expect(isRope(u.href)).toBe(false);
+  });
+
+  it("component getters slice the right ranges", () => {
+    const components = (u: URL) => [
+      u.href,
+      u.origin,
+      u.protocol,
+      u.username,
+      u.password,
+      u.host,
+      u.hostname,
+      u.port,
+      u.pathname,
+      u.search,
+      u.hash,
+    ];
+    const cases: [string, string[]][] = [
+      ["http://h:0080/", ["http://h/", "http://h", "http:", "", "", "h", "h", "", "/", "", ""]],
+      ["http://h:08080/x", ["http://h:8080/x", "http://h:8080", "http:", "", "", "h:8080", "h", "8080", "/x", "", ""]],
+      ["http://u:p@h:81/a?b#c", ["http://u:p@h:81/a?b#c", "http://h:81", "http:", "u", "p", "h:81", "h", "81", "/a", "?b", "#c"]],
+      ["http://u@h/", ["http://u@h/", "http://h", "http:", "u", "", "h", "h", "", "/", "", ""]],
+      ["http://h/?", ["http://h/?", "http://h", "http:", "", "", "h", "h", "", "/", "", ""]],
+      ["http://h/#", ["http://h/#", "http://h", "http:", "", "", "h", "h", "", "/", "", ""]],
+      ["http://h?x", ["http://h/?x", "http://h", "http:", "", "", "h", "h", "", "/", "?x", ""]],
+      ["http://h", ["http://h/", "http://h", "http:", "", "", "h", "h", "", "/", "", ""]],
+      ["http://[::1]:8/x", ["http://[::1]:8/x", "http://[::1]:8", "http:", "", "", "[::1]:8", "[::1]", "8", "/x", "", ""]],
+      ["ws://h:65535/a/b?c=d#e", ["ws://h:65535/a/b?c=d#e", "ws://h:65535", "ws:", "", "", "h:65535", "h", "65535", "/a/b", "?c=d", "#e"]],
+      ["foo:/.//bar", ["foo:/.//bar", "null", "foo:", "", "", "", "", "", "//bar", "", ""]],
+      ["foo:bar?q#f", ["foo:bar?q#f", "null", "foo:", "", "", "", "", "", "bar", "?q", "#f"]],
+      ["blob:http://h/x", ["blob:http://h/x", "http://h", "blob:", "", "", "", "", "", "http://h/x", "", ""]],
+      ["JavaScript:alert(1)", ["javascript:alert(1)", "null", "javascript:", "", "", "", "", "", "alert(1)", "", ""]],
+      ["file:///tmp/x", ["file:///tmp/x", "null", "file:", "", "", "", "", "", "/tmp/x", "", ""]],
+      [
+        "https://h/\u4e2d?\u6587#\u5b57",
+        ["https://h/%E4%B8%AD?%E6%96%87#%E5%AD%97", "https://h", "https:", "", "", "h", "h", "", "/%E4%B8%AD", "?%E6%96%87", "#%E5%AD%97"],
+      ],
+    ];
+    for (const [input, expected] of cases) {
+      expect(components(new URL(input))).toEqual(expected);
+    }
+  });
+
+  it("component getters observe every mutation", () => {
+    const u = new URL("https://example.com/a?b=1#c");
+    const before = [u.host, u.pathname, u.search, u.hash];
+    u.pathname = "/zz";
+    u.hash = "dd";
+    u.searchParams.set("b", "2");
+    Bun.gc(true);
+    expect([u.host, u.pathname, u.search, u.hash]).toEqual(["example.com", "/zz", "?b=2", "#dd"]);
+    expect(before).toEqual(["example.com", "/a", "?b=1", "#c"]);
+    u.href = "http://other:8080/p";
+    expect([u.origin, u.host, u.port, u.pathname, u.search, u.hash]).toEqual([
+      "http://other:8080",
+      "other:8080",
+      "8080",
+      "/p",
+      "",
+      "",
+    ]);
+    u.searchParams.append("k", "v");
+    expect(u.search).toBe("?k=v");
+  });
+
+  it("component strings outlive their URL", () => {
+    let parts: string[] = [];
+    {
+      const u = new URL("https://example.com/long/path/name?query=string#fragment");
+      parts = [u.host, u.pathname, u.search, u.hash];
+    }
+    Bun.gc(true);
+    expect(parts.join("|")).toBe("example.com|/long/path/name|?query=string|#fragment");
+    expect(parts.map(p => p.length)).toEqual([11, 15, 13, 9]);
   });
 
   it("prints", () => {

@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("CSS logical properties should not be stripped when nested rules are present", async () => {
   // Test for regression of issue #25794: CSS logical properties (e.g., inset-inline-end)
   // are stripped from bundler output when they appear in a nested selector that also
   // contains further nested rules (like pseudo-elements).
 
-  const dir = tempDirWithFiles("css-logical-properties-nested", {
+  await using dir = tempDir("css-logical-properties-nested", {
     "input.css": `.test-longform {
   background-color: teal;
 

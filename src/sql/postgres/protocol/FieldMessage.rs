@@ -1,5 +1,3 @@
-use core::fmt;
-
 use bun_core::String;
 
 use super::field_type::FieldType;
@@ -26,12 +24,6 @@ pub enum FieldMessage {
     Routine(String),
 }
 
-impl fmt::Display for FieldMessage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.payload())
-    }
-}
-
 impl FieldMessage {
     /// Every variant carries a single `bun.String` payload.
     pub fn payload(&self) -> &String {
@@ -56,7 +48,7 @@ impl FieldMessage {
         }
     }
 
-    pub fn decode_list<Context: super::new_reader::ReaderContext>(
+    pub(crate) fn decode_list<Context: super::new_reader::ReaderContext>(
         mut reader: NewReader<Context>,
         mut remaining: usize,
     ) -> Result<Vec<FieldMessage>, AnyPostgresError> {
@@ -81,11 +73,11 @@ impl FieldMessage {
         Ok(messages)
     }
 
-    pub fn init(tag: FieldType, message: &[u8]) -> crate::Result<FieldMessage> {
+    pub(crate) fn init(tag: FieldType, message: &[u8]) -> crate::Result<FieldMessage> {
         Ok(match tag {
-            FieldType::SEVERITY => FieldMessage::Severity(String::clone_utf8(message)),
-            // Ignore this one for now.
-            // FieldType::LOCALIZED_SEVERITY => FieldMessage::LocalizedSeverity(String::clone_utf8(message)),
+            FieldType::SEVERITY | FieldType::SEVERITY_NOT_LOCALIZED => {
+                FieldMessage::Severity(String::clone_utf8(message))
+            }
             FieldType::CODE => FieldMessage::Code(String::clone_utf8(message)),
             FieldType::MESSAGE => FieldMessage::Message(String::clone_utf8(message)),
             FieldType::DETAIL => FieldMessage::Detail(String::clone_utf8(message)),

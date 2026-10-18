@@ -2,14 +2,13 @@ import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, disableAggressiveGCScope, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
-// Spawn a cluster fixture with a hard deadline and no-orphan protection. The
-// toRun() matcher uses spawnSync, which a test timeout cannot interrupt, so a
-// hung fixture leaks the primary + workers onto a non-ephemeral CI agent and
-// every later UDP test in the shard then times out too. Bun.spawn lets the
+// Spawn a cluster fixture with a hard deadline and no-orphan protection so a
+// hung fixture doesn't leak the primary + workers onto a non-ephemeral CI agent
+// and make every later UDP test in the shard time out too. Bun.spawn lets the
 // test-level timeout actually fire, `await using` kills the primary on the way
 // out, and BUN_FEATURE_FLAG_NO_ORPHANS makes the workers follow it.
 async function runClusterFixture(fixture: string, deadlineMs: number) {
@@ -230,12 +229,12 @@ describe("createSocket()", () => {
 
 describe("unref()", () => {
   test("call before bind() does not hang", async () => {
-    expect([path.join(import.meta.dir, "dgram-unref-hang-fixture.ts")]).toRun();
+    expect(await bunRun(path.join(import.meta.dir, "dgram-unref-hang-fixture.ts"))).toSpawn();
   });
 
   // The last ref()/unref() before bind wins, like Node's always-present handle.
   test("ref() after unref() before bind() keeps the socket ref'd", async () => {
-    expect([path.join(import.meta.dir, "dgram-ref-after-unref-fixture.ts")]).toRun();
+    expect(await bunRun(path.join(import.meta.dir, "dgram-ref-after-unref-fixture.ts"))).toSpawn();
   });
 });
 
@@ -422,7 +421,7 @@ test.skipIf(isWindows)("Bun.udpSocket({ fd }) rejects a descriptor a live socket
   socket.bind({ fd: wrap.fd });
   await listening;
 
-  await expect(() => Bun.udpSocket({ fd: wrap.fd })).toThrowWithCodeAsync(Error, "EEXIST");
+  await expect(() => Bun.udpSocket({ fd: wrap.fd } as any)).toThrowWithCodeAsync(Error, "EEXIST");
 
   socket.close();
   wrap.close();
@@ -465,6 +464,36 @@ test.skipIf(isWindows)("connected send() failure reports Node's error shape", as
     message: "send EMSGSIZE",
     address: undefined,
     port: undefined,
+  });
+});
+
+// The default lookup is dns.lookup, which already answers such a name with
+// ENOTFOUND. A custom lookup can hand the raw string to the native connect,
+// which resolves it synchronously: the same check runs there too, and the
+// socket does not end up marked connected.
+test("connect() with a custom lookup that yields a name that cannot be a hostname reports getaddrinfo ENOTFOUND", async () => {
+  const hostname = "this is not a hostname";
+  const socket = createSocket({ type: "udp4", lookup: (address, _family, callback) => callback(null, address, 4) });
+  const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+  socket.bind(0, "127.0.0.1", onBound);
+  await bound;
+
+  const err: any = await new Promise(resolve => socket.connect(1234, hostname, resolve as () => void));
+  let connected = true;
+  try {
+    socket.remoteAddress();
+  } catch {
+    connected = false;
+  }
+  socket.close();
+  const { name, code, syscall, hostname: errHostname, message } = err ?? {};
+  expect({ name, code, syscall, hostname: errHostname, message, connected }).toEqual({
+    name: "Error",
+    code: "ENOTFOUND",
+    syscall: "getaddrinfo",
+    hostname,
+    message: `getaddrinfo ENOTFOUND ${hostname}`,
+    connected: false,
   });
 });
 
@@ -749,11 +778,11 @@ test("handleDrain resumes after renewed backpressure and steps past a throwing e
     handle.sendQueue = [];
 
     const lengths = [10, 20, 30, 40];
-    const fired: { i: number; err: any; sent: number }[] = [];
+    const fired: { i: number; err: any; sent: number | undefined }[] = [];
     const done = lengths.map((n, i) => {
       const { promise, resolve } = Promise.withResolvers<void>();
       socket.send(Buffer.alloc(n), (err, sent) => {
-        fired.push({ i, err: err?.code ?? err, sent });
+        fired.push({ i, err: (err as NodeJS.ErrnoException | null)?.code ?? err, sent });
         resolve();
       });
       return promise;
@@ -823,67 +852,13 @@ async function getDeadPort() {
   return deadPort;
 }
 
-// An unconnected echo server (reply from the 'message' handler, no 'error'
-// listener) is the documented shape. Node never enables IP_RECVERR, so ICMP
-// port-unreachable from a vanished client is dropped by the kernel. With the
-// flag forced on, the same ICMP poisoned sk_err and surfaced through the
-// plain recv path (no errqueue flag), bypassing the unconnected filter and
-// killing the process.
-test.skipIf(!isLinux)(
-  "unconnected echo server without 'error' listener survives ICMP from a vanished client",
-  async () => {
-    // The reply must go out from inside the 'message' handler so it happens
-    // inside loop.c's recvmmsg do-while; on loopback the ICMP lands before the
-    // next iteration and poisons sk_err, which surfaces as a recv-path error
-    // without the errqueue flag and so bypasses the errqueue-only filter.
-    const src = `
-    const dgram = require("node:dgram");
-    const server = dgram.createSocket("udp4");
-    const client = dgram.createSocket("udp4");
-    const probe = dgram.createSocket("udp4");
-    let deadPort, handled = 0;
-    server.on("message", msg => {
-      handled++;
-      server.send(msg, deadPort, "127.0.0.1");
-    });
-    server.bind(0, "127.0.0.1", () => {
-      probe.bind(0, "127.0.0.1", () => {
-        deadPort = probe.address().port;
-        probe.close(() => {
-          let i = 0;
-          const pump = () => {
-            if (handled < 5 && i++ < 200) {
-              client.send("q", server.address().port, "127.0.0.1");
-              return setTimeout(pump, 10);
-            }
-            console.log(JSON.stringify({ handled: handled >= 5 }));
-            process.exit(0);
-          };
-          pump();
-        });
-      });
-    });
-  `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", src],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    // Node delivers no error at all for ICMP on an unconnected socket.
-    expect(JSON.parse(stdout.trim())).toEqual({ handled: true });
-    expect(exitCode).toBe(0);
-  },
-);
-
 // A connected socket's ICMP error must be *emitted*, not treated as fatal.
 // On the BSDs there is no error queue, so the kernel only delivers it via the
-// next recvmsg failing with so_error. On Linux us_udp_socket_connect arms
-// IP_RECVERR (for both created and adopted descriptors) so the error arrives
-// via MSG_ERRQUEUE; loop.c's bare-EPOLLERR sk_err fallback is covered by the
-// BSD lanes. Node emits `recvmsg ECONNREFUSED` and keeps the socket open.
+// next recvmsg failing with so_error. On Linux an adopted descriptor has no
+// IP_RECVERR (that deliberately matches libuv's uv_udp_open), so its error
+// queue is empty and the kernel reports a bare EPOLLERR with no EPOLLIN.
+// Either way loop.c used to treat the failure as fatal and silently close the
+// socket; Node emits `recvmsg ECONNREFUSED` and keeps it open.
 const icmpBindModes = {
   connected: async (socket: any) => {
     await new Promise<void>(resolve => socket.bind(0, "127.0.0.1", resolve));

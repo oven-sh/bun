@@ -72,18 +72,11 @@ pub fn is_enabled() -> bool {
 /// use this from `spawnSync` so the pgroup-kill cleanup path runs even though
 /// Linux already has a SIGKILL PDEATHSIG backstop.
 pub fn ppid_to_watch() -> Option<libc::pid_t> {
-    #[cfg(not(unix))]
-    {
+    let ppid = ORIGINAL_PPID.load(Ordering::Relaxed);
+    if !ENABLED.load(Ordering::Relaxed) || ppid <= 1 {
         return None;
     }
-    #[cfg(unix)]
-    {
-        let ppid = ORIGINAL_PPID.load(Ordering::Relaxed);
-        if !ENABLED.load(Ordering::Relaxed) || ppid <= 1 {
-            return None;
-        }
-        Some(ppid)
-    }
+    Some(ppid)
 }
 
 /// `bun run`/`bunx` set this to the script's pgid (= script pid, since we
@@ -104,30 +97,19 @@ static SYNC_PGIDS_LEN: core::sync::atomic::AtomicUsize = core::sync::atomic::Ato
 /// Returns true if the push was recorded; caller must pop iff true. Depth >4
 /// would lose stack discipline if push were a silent no-op while pop wasn't.
 pub fn push_sync_pgid(pgid: libc::pid_t) -> bool {
-    #[cfg(not(unix))]
-    {
-        let _ = pgid;
+    let len = SYNC_PGIDS_LEN.load(Ordering::Relaxed);
+    if len >= 4 {
         return false;
     }
-    #[cfg(unix)]
-    {
-        let len = SYNC_PGIDS_LEN.load(Ordering::Relaxed);
-        if len >= 4 {
-            return false;
-        }
-        SYNC_PGIDS_BUF[len].store(pgid, Ordering::Relaxed);
-        SYNC_PGIDS_LEN.store(len + 1, Ordering::Relaxed);
-        true
-    }
+    SYNC_PGIDS_BUF[len].store(pgid, Ordering::Relaxed);
+    SYNC_PGIDS_LEN.store(len + 1, Ordering::Relaxed);
+    true
 }
 
 pub fn pop_sync_pgid() {
-    #[cfg(unix)]
-    {
-        let len = SYNC_PGIDS_LEN.load(Ordering::Relaxed);
-        if len > 0 {
-            SYNC_PGIDS_LEN.store(len - 1, Ordering::Relaxed);
-        }
+    let len = SYNC_PGIDS_LEN.load(Ordering::Relaxed);
+    if len > 0 {
+        SYNC_PGIDS_LEN.store(len - 1, Ordering::Relaxed);
     }
 }
 
@@ -137,31 +119,25 @@ pub fn pop_sync_pgid() {
 /// siblings when `spawnSync` is reached from inside a live VM (e.g.
 /// FFI's system-root-dir lookup shelling out to `xcrun`).
 pub fn kill_sync_script_tree() {
-    #[cfg(unix)]
-    {
-        let len = SYNC_PGIDS_LEN.load(Ordering::Relaxed);
-        for slot in &SYNC_PGIDS_BUF[..len] {
-            let pgid = slot.load(Ordering::Relaxed);
-            if pgid > 1 {
-                let _ = kill(-pgid, libc::SIGKILL);
-            }
+    let len = SYNC_PGIDS_LEN.load(Ordering::Relaxed);
+    for slot in &SYNC_PGIDS_BUF[..len] {
+        let pgid = slot.load(Ordering::Relaxed);
+        if pgid > 1 {
+            let _ = kill(-pgid, libc::SIGKILL);
         }
-        #[cfg(target_os = "macos")]
-        Bun__noOrphans_killTracked();
-        // Linux: subreaper-adopted setsid escapees are killed by
-        // `kill_subreaper_adoptees()` in `spawnPosix`'s disarm defer (which can
-        // tell them apart from `Bun.spawn` siblings via the pre-arm snapshot).
     }
+    #[cfg(target_os = "macos")]
+    Bun__noOrphans_killTracked();
+    // Linux: subreaper-adopted setsid escapees are killed by
+    // `kill_subreaper_adoptees()` in `spawnPosix`'s disarm defer (which can
+    // tell them apart from `Bun.spawn` siblings via the pre-arm snapshot).
 }
 
 /// Full-process teardown: pgroups + tracked + getpid()-rooted tree.
 /// Only safe to call when the whole Bun process is exiting.
 fn kill_sync_pgroups_and_descendants() {
-    #[cfg(unix)]
-    {
-        kill_sync_script_tree();
-        kill_descendants();
-    }
+    kill_sync_script_tree();
+    kill_descendants();
 }
 
 #[cfg(target_os = "macos")]
@@ -170,7 +146,6 @@ unsafe extern "C" {
     safe fn Bun__noOrphans_killTracked();
 }
 
-#[cfg(unix)]
 unsafe extern "C" {
     // safe: no args; read process IDs — no preconditions, never fail.
     safe fn getpid() -> libc::pid_t;
@@ -210,13 +185,10 @@ static INSTANCE: bun_core::RacyCell<ParentDeathWatchdog> =
 /// rare-taken arm body lives in `#[cold] enable()`.
 #[inline]
 pub fn install() {
-    #[cfg(unix)]
-    {
-        if !env_var::BUN_FEATURE_FLAG_NO_ORPHANS.get().unwrap_or(false) {
-            return;
-        }
-        enable();
+    if !env_var::BUN_FEATURE_FLAG_NO_ORPHANS.get().unwrap_or(false) {
+        return;
     }
+    enable();
 }
 
 /// Idempotent. Arms the watchdog: Linux `prctl(PR_SET_PDEATHSIG)`, exit-time
@@ -229,7 +201,6 @@ pub fn install() {
 #[cold]
 #[inline(never)]
 pub fn enable() {
-    #[cfg(unix)]
     // SAFETY: called only on the main thread during startup, before any
     // concurrent reader exists; idempotent guard prevents double-init.
     unsafe {
@@ -287,6 +258,10 @@ pub fn enable() {
     }
 }
 
+/// Windows-only primitive; POSIX cleanup is the exit-time tree walk above.
+#[inline]
+pub fn ensure_kill_on_close_job() {}
+
 /// Register `EVFILT_PROC`/`NOTE_EXIT` for the original parent on the main
 /// event loop's kqueue. Called from `VirtualMachine.init` once the uws loop is
 /// up. macOS-only; no-op elsewhere and on subsequent calls.
@@ -326,7 +301,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
         // borrow; `register` does not re-derive the loop.
         match unsafe { &mut *poll }.register(
             handle.loop_mut(),
-            crate::file_poll::Pollable::Process,
+            crate::file_poll::Flags::Process,
             true,
         ) {
             bun_sys::Result::Ok(()) => {
@@ -379,78 +354,69 @@ extern "C" fn on_process_exit() {
 /// (so its child set is stable while we recurse), which is what makes the
 /// verify step sufficient. The only forking process is `self`, and we're in
 /// the exit handler — not forking.
-pub(crate) fn kill_descendants() {
-    #[cfg(unix)]
-    {
-        let self_pid = getpid();
+fn kill_descendants() {
+    let self_pid = getpid();
 
-        let mut to_visit: Vec<libc::pid_t> = Vec::new();
-        let mut to_kill: Vec<libc::pid_t> = Vec::new();
+    let mut to_visit: Vec<libc::pid_t> = Vec::new();
+    let mut to_kill: Vec<libc::pid_t> = Vec::new();
 
-        to_visit.push(self_pid);
+    to_visit.push(self_pid);
 
-        let mut buf: [libc::pid_t; 4096] = [0; 4096];
-        // Hard cap on tree size so a fork bomb under us can't make exit hang.
-        while !to_visit.is_empty() && to_kill.len() < 4096 {
-            let parent = to_visit.swap_remove(to_visit.len() - 1);
-            let Some(n) = list_child_pids(parent, &mut buf) else {
+    let mut buf: [libc::pid_t; 4096] = [0; 4096];
+    // Hard cap on tree size so a fork bomb under us can't make exit hang.
+    while !to_visit.is_empty() && to_kill.len() < 4096 {
+        let parent = to_visit.swap_remove(to_visit.len() - 1);
+        let Some(n) = list_child_pids(parent, &mut buf) else {
+            continue;
+        };
+        for &child in &buf[..n] {
+            if child == self_pid || child <= 1 {
                 continue;
-            };
-            for &child in &buf[..n] {
-                if child == self_pid || child <= 1 {
-                    continue;
-                }
-                // Freeze first, then confirm it's still the process we enumerated.
-                if kill(child, libc::SIGSTOP) != 0 {
-                    continue;
-                }
-                if parent_pid_of(child) != parent {
-                    // Recycled between enumerate and STOP — undo and skip.
-                    let _ = kill(child, libc::SIGCONT);
-                    continue;
-                }
-                if to_kill.try_reserve(1).is_err() {
-                    // OOM after we've already STOPped+verified this child — kill it
-                    // now rather than leaving it frozen and absent from to_kill.
-                    let _ = kill(child, libc::SIGKILL);
-                    break;
-                }
-                to_kill.push(child);
-                if to_visit.try_reserve(1).is_err() {
-                    break;
-                }
-                to_visit.push(child);
             }
+            // Freeze first, then confirm it's still the process we enumerated.
+            if kill(child, libc::SIGSTOP) != 0 {
+                continue;
+            }
+            if parent_pid_of(child) != parent {
+                // Recycled between enumerate and STOP — undo and skip.
+                let _ = kill(child, libc::SIGCONT);
+                continue;
+            }
+            if to_kill.try_reserve(1).is_err() {
+                // OOM after we've already STOPped+verified this child — kill it
+                // now rather than leaving it frozen and absent from to_kill.
+                let _ = kill(child, libc::SIGKILL);
+                break;
+            }
+            to_kill.push(child);
+            if to_visit.try_reserve(1).is_err() {
+                break;
+            }
+            to_visit.push(child);
         }
+    }
 
-        // Reverse: leaves first. SIGKILL terminates stopped processes directly.
-        let mut i = to_kill.len();
-        while i > 0 {
-            i -= 1;
-            let _ = kill(to_kill[i], libc::SIGKILL);
-        }
+    // Reverse: leaves first. SIGKILL terminates stopped processes directly.
+    let mut i = to_kill.len();
+    while i > 0 {
+        i -= 1;
+        let _ = kill(to_kill[i], libc::SIGKILL);
     }
 }
 
-/// Linux-only: enumerate our direct children into `out`. Used by `spawnPosix`
+/// Enumerate our direct children into `out`. Used by `spawnPosix`
 /// to snapshot pre-existing siblings before arming subreaper, so the post-wait
 /// `kill_subreaper_adoptees` can tell adopted orphans apart from `Bun.spawn`
 /// siblings (both have ppid==us). Returns the slice written; empty on
-/// non-Linux or enumeration failure.
+/// enumeration failure.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    {
-        return &out[..0];
-    }
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        let self_pid = getpid();
-        let n = list_child_pids(self_pid, out).unwrap_or(0);
-        &out[..n]
-    }
+    let self_pid = getpid();
+    let n = list_child_pids(self_pid, out).unwrap_or(0);
+    &out[..n]
 }
 
-/// Linux-only: SIGKILL every direct child of ours that isn't in `siblings`,
+/// SIGKILL every direct child of ours that isn't in `siblings`,
 /// plus its entire subtree. Called from `spawnPosix`'s defer *before*
 /// disarming subreaper, so subreaper-adopted setsid daemons (ppid==us) are
 /// killed while we can still find them — closing the window where the
@@ -462,48 +428,42 @@ pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
 /// spawnSync. A `Bun.spawn` from a Worker thread *during* spawnSync would
 /// also land here and be killed — `--no-orphans` is opt-in aggressive cleanup
 /// and would kill it at process-exit via `kill_descendants()` anyway.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    {
-        let _ = siblings;
-    }
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        let self_pid = getpid();
-        let mut buf: [libc::pid_t; 4096] = [0; 4096];
+    let self_pid = getpid();
+    let mut buf: [libc::pid_t; 4096] = [0; 4096];
 
-        // Iterate: kill non-sibling direct children's subtrees, reap, re-read.
-        // After we kill an adoptee's subtree, anything that raced (forked between
-        // enumerate and STOP) reparents to us and shows up next pass. Bounded by
-        // tree depth; 64 is far past any sane chain.
-        let mut rounds: u8 = 64;
-        while rounds > 0 {
-            let Some(n) = list_child_pids(self_pid, &mut buf) else {
-                return;
-            };
-            let mut killed_any = false;
-            for &child in &buf[..n] {
-                if child <= 1 || child == self_pid {
-                    continue;
-                }
-                if siblings.contains(&child) {
-                    continue;
-                }
-                kill_tree_rooted_at(child, self_pid);
-                killed_any = true;
+    // Iterate: kill non-sibling direct children's subtrees, reap, re-read.
+    // After we kill an adoptee's subtree, anything that raced (forked between
+    // enumerate and STOP) reparents to us and shows up next pass. Bounded by
+    // tree depth; 64 is far past any sane chain.
+    let mut rounds: u8 = 64;
+    while rounds > 0 {
+        let Some(n) = list_child_pids(self_pid, &mut buf) else {
+            return;
+        };
+        let mut killed_any = false;
+        for &child in &buf[..n] {
+            if child <= 1 || child == self_pid {
+                continue;
             }
-            // Reap what we just killed so their children (if any raced) reparent.
-            loop {
-                let mut st: c_int = 0;
-                if waitpid(-1, &mut st, libc::WNOHANG) <= 0 {
-                    break;
-                }
+            if siblings.contains(&child) {
+                continue;
             }
-            if !killed_any {
-                return;
-            }
-            rounds -= 1;
+            kill_tree_rooted_at(child, self_pid);
+            killed_any = true;
         }
+        // Reap what we just killed so their children (if any raced) reparent.
+        loop {
+            let mut st: c_int = 0;
+            if waitpid(-1, &mut st, libc::WNOHANG) <= 0 {
+                break;
+            }
+        }
+        if !killed_any {
+            return;
+        }
+        rounds -= 1;
     }
 }
 
@@ -570,7 +530,6 @@ fn kill_tree_rooted_at(root: libc::pid_t, expected_ppid_of_root: libc::pid_t) {
 /// Best-effort ppid lookup for an arbitrary pid. Returns 0 if the process
 /// doesn't exist or the lookup failed (which the caller treats as "not the
 /// parent we expected").
-#[cfg(unix)]
 fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
     #[cfg(target_os = "macos")]
     {
@@ -608,12 +567,10 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
         // Format: "pid (comm) state ppid …". `comm` may contain spaces and
         // parens; the *last* ')' terminates it. Field 1 after that is state,
         // field 2 is ppid.
-        let Some(rparen) = stat.iter().rposition(|&b| b == b')') else {
+        let Some(rparen) = bun_core::strings::last_index_of_char(stat, b')') else {
             return 0;
         };
-        let mut it = stat[rparen + 1..]
-            .split(|&b| b == b' ')
-            .filter(|s| !s.is_empty());
+        let mut it = bun_core::strings::tokenize(&stat[rparen + 1..], b" ");
         let _ = it.next(); // state
         let Some(ppid_str) = it.next() else {
             return 0;
@@ -630,7 +587,6 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
 /// Enumerate direct children of `parent` into `out`. Returns the number of
 /// pids written, or null if enumeration failed / is unsupported. May truncate
 /// to `out.len`.
-#[cfg(unix)]
 fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize> {
     #[cfg(target_os = "macos")]
     {
@@ -713,9 +669,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         let Some(data) = read_file_once(children_path, &mut read_buf) else {
             continue;
         };
-        let tok = data
-            .split(|&b| b == b' ' || b == b'\n')
-            .filter(|s| !s.is_empty());
+        let tok = bun_core::strings::tokenize_any(data, b" \n");
         for pid_str in tok {
             if written >= out.len() {
                 break;

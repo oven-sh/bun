@@ -8,5 +8,6 @@
     "declarationDir": "out"
   },
   "include": ["**/*.ts"],
-  "exclude": ["dist", "node_modules"]
+  // ts7.1/ uses syntax that the repository's TypeScript cannot parse yet.
+  "exclude": ["dist", "node_modules", "ts7.1"]
 }

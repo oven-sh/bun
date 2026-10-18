@@ -20,14 +20,6 @@
 
 #include <string.h>
 
-// int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index) {
-//     return bsd_udp_packet_buffer_ecn((struct udp_recvbuf *)buf, index);
-// }
-
-int us_udp_packet_buffer_local_ip(struct us_udp_packet_buffer_t *buf, int index, char *ip) {
-    return bsd_udp_packet_buffer_local_ip((struct udp_recvbuf *)buf, index, ip);
-}
-
 char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index) {
     return bsd_udp_packet_buffer_peer((struct udp_recvbuf *)buf, index);
 }
@@ -148,28 +140,11 @@ int us_udp_socket_set_ttl_multicast(struct us_udp_socket_t *s, int ttl) {
 }
 
 int us_udp_socket_connect(struct us_udp_socket_t *s, const char* host, unsigned short port) {
-    LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd((struct us_poll_t *)s);
-    int rc = bsd_connect_udp_socket(fd, host, port);
-    /* Only a connected socket has one peer to attribute ICMP to; without an
-     * on_recv_error handler the error queue would never be drained. */
-    if (rc == 0 && s->on_recv_error) bsd_udp_socket_set_recverr(fd, 1);
-    return rc;
+    return bsd_connect_udp_socket(us_poll_fd((struct us_poll_t *)s), host, port);
 }
 
 int us_udp_socket_disconnect(struct us_udp_socket_t *s) {
-    LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd((struct us_poll_t *)s);
-    int rc = bsd_disconnect_udp_socket(fd);
-    if (rc == 0) {
-        /* Disabling IP_RECVERR purges the error queue but not sk_err; reading
-         * SO_ERROR clears that too so a stale ICMP from the connected phase
-         * cannot surface on the now-unconnected socket. */
-        bsd_udp_socket_set_recverr(fd, 0);
-#if !defined(_WIN32)
-        int so_err = 0; socklen_t so_len = sizeof(so_err);
-        getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_err, &so_len);
-#endif
-    }
-    return rc;
+    return bsd_disconnect_udp_socket(us_poll_fd((struct us_poll_t *)s));
 }
 
 int us_udp_socket_set_multicast_loopback(struct us_udp_socket_t *s, int enabled) {
@@ -188,6 +163,63 @@ int us_udp_socket_set_source_specific_membership(struct us_udp_socket_t *s, cons
     return bsd_socket_set_source_specific_membership(us_poll_fd(&s->p), source, group, iface, drop);
 }
 
+
+struct us_udp_socket_t *us_create_udp_socket_from_fd(
+    struct us_loop_t *loop,
+    void (*data_cb)(struct us_udp_socket_t *, void *, int),
+    void (*drain_cb)(struct us_udp_socket_t *),
+    void (*close_cb)(struct us_udp_socket_t *),
+    void (*recv_error_cb)(struct us_udp_socket_t *, int, int),
+    LIBUS_SOCKET_DESCRIPTOR fd,
+    int shared,
+    int *err,
+    void *user
+) {
+    if (bsd_prepare_adopted_udp_socket(fd)) {
+        if (err != NULL) {
+#ifdef _WIN32
+            *err = WSAGetLastError();
+#else
+            *err = errno;
+#endif
+        }
+        return 0;
+    }
+
+    int ext_size = 0;
+    int fallthrough = 0;
+
+    struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_udp_socket_t) + ext_size);
+    us_poll_init(p, fd, POLL_TYPE_UDP);
+
+    struct us_udp_socket_t *udp = (struct us_udp_socket_t *)p;
+
+    struct bsd_addr_t tmp = {0};
+    bsd_local_addr(fd, &tmp);
+    udp->port = bsd_addr_get_port(&tmp);
+    udp->loop = loop;
+
+    udp->user = user;
+
+    udp->closed = 0;
+    udp->shared_fd = shared ? 1 : 0;
+    udp->on_data = data_cb;
+    udp->on_drain = drain_cb;
+    udp->on_close = close_cb;
+    udp->on_recv_error = recv_error_cb;
+    udp->next = NULL;
+
+    if (us_poll_start_rc((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE) != 0) {
+        int saved_errno = errno;
+        us_poll_free(p, loop);
+        if (err) *err = saved_errno;
+        errno = saved_errno;
+        return 0;
+    }
+
+    return (struct us_udp_socket_t *) udp;
+}
+
 struct us_udp_socket_t *us_create_udp_socket(
     struct us_loop_t *loop,
     void (*data_cb)(struct us_udp_socket_t *, void *, int),
@@ -201,11 +233,10 @@ struct us_udp_socket_t *us_create_udp_socket(
     void *user
 ) {
 
-    /* IP_RECVERR is NOT enabled at creation time. On an unconnected socket it
-     * turns an ICMP from any one peer into an async error (and poisons sk_err
-     * for the next send to a different peer), which is a single-packet DoS for
-     * a DNS/statsd/echo server. us_udp_socket_connect arms it once there is a
-     * peer to attribute the error to; Node's dgram never sets it at all. */
+    /* IP_RECVERR is only useful when there is an on_recv_error handler to
+     * drain the error queue; without one it only poisons subsequent sends. */
+    if (recv_error_cb) flags |= LIBUS_UDP_LINUX_RECVERR;
+    else flags &= ~LIBUS_UDP_LINUX_RECVERR;
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port, flags, err);
     if (fd == LIBUS_SOCKET_ERROR) {
         return 0;
@@ -238,74 +269,12 @@ struct us_udp_socket_t *us_create_udp_socket(
     udp->user = user;
 
     udp->closed = 0;
-    udp->connected = 0;
+    udp->shared_fd = 0;
     udp->on_data = data_cb;
     udp->on_drain = drain_cb;
     udp->on_close = close_cb;
     udp->on_recv_error = recv_error_cb;
     udp->next = NULL;
-
-    return (struct us_udp_socket_t *) udp;
-}
-
-struct us_udp_socket_t *us_create_udp_socket_from_fd(
-    struct us_loop_t *loop,
-    void (*data_cb)(struct us_udp_socket_t *, void *, int),
-    void (*drain_cb)(struct us_udp_socket_t *),
-    void (*close_cb)(struct us_udp_socket_t *),
-    void (*recv_error_cb)(struct us_udp_socket_t *, int, int),
-    LIBUS_SOCKET_DESCRIPTOR fd,
-    int *err,
-    void *user
-) {
-    if (bsd_prepare_adopted_udp_socket(fd)) {
-        if (err != NULL) {
-#ifdef _WIN32
-            *err = WSAGetLastError();
-#else
-            *err = errno;
-#endif
-        }
-        return 0;
-    }
-
-    int ext_size = 0;
-    int fallthrough = 0;
-
-    struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_udp_socket_t) + ext_size);
-    us_poll_init(p, fd, POLL_TYPE_UDP);
-
-    struct us_udp_socket_t *udp = (struct us_udp_socket_t *)p;
-
-    /* Get and store the port. An adopted-but-unbound descriptor reports 0 —
-     * bound_port() re-queries in that case so socket.address() reflects the
-     * ephemeral port the kernel assigns on the first sendto(). */
-    struct bsd_addr_t tmp = {0};
-    bsd_local_addr(fd, &tmp);
-    udp->port = bsd_addr_get_port(&tmp);
-    udp->loop = loop;
-
-    udp->user = user;
-
-    udp->closed = 0;
-    udp->connected = 0;
-    udp->on_data = data_cb;
-    udp->on_drain = drain_cb;
-    udp->on_close = close_cb;
-    udp->on_recv_error = recv_error_cb;
-    udp->next = NULL;
-
-    /* Unlike us_create_udp_socket we don't own the adopted fd, so on failure
-     * only the poll is freed and the caller keeps the descriptor. */
-    if (us_poll_start_rc((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE) != 0) {
-        int saved_errno = errno;
-        us_poll_free((struct us_poll_t *) udp, loop);
-        if (err) {
-            *err = saved_errno;
-        }
-        errno = saved_errno;
-        return 0;
-    }
 
     return (struct us_udp_socket_t *) udp;
 }

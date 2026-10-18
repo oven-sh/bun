@@ -54,7 +54,6 @@ const {
   ArrayPrototypePop,
   ArrayPrototypePush,
   ArrayPrototypeShift,
-  ArrayPrototypeSlice,
   ArrayPrototypeSort,
   Boolean,
   Error: MainContextError,

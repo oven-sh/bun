@@ -137,7 +137,7 @@ const handlers = {
     const reader = new DataViewReader(view, 1);
 
     // The code generating each list is annotated with equivalent "List n"
-    // comments in DevServer.rs's finalize_bundle function.
+    // comments in dev_server/finalize.rs's finalize_bundle function.
 
     // List 1
     const serverSideRoutesUpdated = new Set();

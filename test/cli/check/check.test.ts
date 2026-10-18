@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isRoot, isWindows, tempDir } from "harness";
 import {
   chmodSync,
   existsSync,
@@ -726,6 +726,20 @@ describe.concurrent("bun check", () => {
         expect(exitCode).toBe(1);
       }
     });
+  });
+
+  // The walk goes from `x` back to the start of the loop, then from the end of the loop back to its start again. So it
+  // gets 2,000 levels deep with half as many flow nodes. A debug build can run out of stack before it hits the limit.
+  test.skipIf(isDebug || isASAN)("a loop body counts twice toward the control flow limit", async () => {
+    const loop = (statements: number) =>
+      `export {};\ndeclare const c: boolean, b: number;\ndeclare function must(v: unknown): asserts v;\n` +
+      `let x: string | number | undefined = 0;\nwhile (b) {\n  if (c) x = "s";\n${repeat("  must(b);\n", statements)}  x;\n}\n`;
+    using dir = project({ "below.ts": loop(996), "over.ts": loop(997) });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(
+      "over.ts(1,1): error TS2563: The containing function or module body is too large for control flow analysis.",
+    );
+    expect(exitCode).toBe(1);
   });
 
   // The time was cubic and worse: 16 s for 1,000 lines in a release build, where it now takes 0.2 s.
@@ -1641,6 +1655,37 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect(stdout).toBe(`pkg/a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`);
     });
 
+    test("links to a file and to directories, side by side in one directory", async () => {
+      using dir = project({
+        "real/file.ts": `export const file: string = 1;\n`,
+        "real/one/index.ts": `export const one: string = 1;\n`,
+        "real/two/index.ts": `export const two: string = 1;\n`,
+        "src/a.ts": `import { file } from "./file";
+import { one } from "./one";
+import { two } from "./two";
+export const a: number[] = [file, one, two];
+`,
+      });
+      const link = (name: string, type: "file" | "dir" | "junction") =>
+        symlinkSync(join(String(dir), "real", name), join(String(dir), "src", name), type);
+      link("file.ts", "file");
+      link("one", "dir");
+      link("two", "junction");
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "real/file.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        real/one/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        real/two/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        src/a.ts(4,29): error TS2322: Type 'string' is not assignable to type 'number'.
+        src/a.ts(4,35): error TS2322: Type 'string' is not assignable to type 'number'.
+        src/a.ts(4,40): error TS2322: Type 'string' is not assignable to type 'number'.
+        src/file.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        src/one/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        src/two/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("a path on the command line is relative to the working directory, as in tsc", async () => {
       using dir = project({
         "packages/server/tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), include: ["src"] }),
@@ -2076,6 +2121,83 @@ later/src/index.ts(3,14): error TS2322: Type '"stale"' is not assignable to type
       ]) {
         const { stdout, exitCode } = await check(dir, directories);
         expect({ stdout, exitCode }).toEqual({ stdout: separately, exitCode: 1 });
+      }
+    });
+
+    test("when two projects emit the same file, a later project sees the most recently emitted one", async () => {
+      const compilerOptions = { ...options, outDir: "../dist", rootDir: "src" };
+      const config = (name: string) =>
+        JSON.stringify({
+          compilerOptions: { ...compilerOptions, tsBuildInfoFile: `../dist/${name}.tsbuildinfo` },
+          files: ["src/index.ts"],
+        });
+      const reader = `import { which } from "../../dist/index";\nexport const wrong: never = which;\n`;
+      const names = ["first", "between", "second", "after"];
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ files: [], references: names.map(name => ({ path: `./${name}` })) }),
+        "first/tsconfig.json": config("first"),
+        "first/src/index.ts": `export const which = "first" as const;\n`,
+        "between/tsconfig.json": JSON.stringify({ compilerOptions: options, files: ["src/reader.ts"] }),
+        "between/src/reader.ts": reader,
+        "second/tsconfig.json": config("second"),
+        "second/src/index.ts": `export const which = "second" as const;\n`,
+        "after/tsconfig.json": JSON.stringify({ compilerOptions: options, files: ["src/reader.ts"] }),
+        "after/src/reader.ts": reader,
+      });
+      const expected = `between/src/reader.ts(2,14): error TS2322: Type '"first"' is not assignable to type 'never'.
+after/src/reader.ts(2,14): error TS2322: Type '"second"' is not assignable to type 'never'.`;
+      for (const threads of ["1", "2", "8"]) {
+        const { stdout, exitCode } = await check(dir, ["--threads", threads]);
+        expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 1 });
+      }
+    });
+
+    // One project checks the shared global file while the others wait for the result. There is no result to share here.
+    test("every project reports running out of stack in a global file they share", async () => {
+      const names = ["a", "b", "c", "d", "e"];
+      const files: Record<string, string> = {
+        "tsconfig.json": JSON.stringify({ files: [], references: names.map(name => ({ path: `./${name}` })) }),
+        "shared/deep.d.ts": `type Deep = number${repeat("[]", 100_000)};\ndeclare const one: 1;\n`,
+      };
+      for (const name of names) {
+        files[`${name}/tsconfig.json`] = JSON.stringify({
+          compilerOptions: { ...options, rootDir: "..", skipLibCheck: false },
+          files: ["../shared/deep.d.ts", "index.ts"],
+        });
+        files[`${name}/index.ts`] = `export const wrong: 2 = one;\n`;
+      }
+      using dir = project(files);
+      for (const threads of ["1", "2", "8"]) {
+        const { stdout, stderr, exitCode } = await check(dir, ["--threads", threads]);
+        expect({ stdout, exitCode }).toEqual({
+          stdout: names
+            .map(name => `${name}/index.ts(1,14): error TS2322: Type '1' is not assignable to type '2'.`)
+            .join("\n"),
+          exitCode: 1,
+        });
+        expect(stderr.split("\n").filter(line => line.includes("ran out of stack in shared/deep.d.ts"))).toHaveLength(
+          5,
+        );
+      }
+    });
+
+    // The directories share one check of the libraries, except for the one that redeclares `Array`.
+    test("directories checked together report what each reports alone, also in the libraries", async () => {
+      const names = ["a", "b", "c", "clash", "d"];
+      const files: Record<string, string> = { "clash/globals.ts": `declare const Array: number;\n` };
+      for (const name of names) {
+        files[`${name}/tsconfig.json`] = JSON.stringify({
+          compilerOptions: { strict: true, noEmit: true, lib: ["es5"], types: [] },
+        });
+        files[`${name}/index.ts`] = `export const wrong: string = [1].length;\n`;
+      }
+      using dir = project(files);
+      const alone: string[] = [];
+      for (const name of names) alone.push(...(await check(dir, [name])).stdout.split("\n"));
+      expect(alone.filter(line => line.includes("lib.es5.d.ts"))).toHaveLength(2);
+      for (const threads of ["1", "8"]) {
+        const { stdout } = await check(dir, [...names, "--threads", threads]);
+        expect(stdout.split("\n").sort()).toEqual([...alone].sort());
       }
     });
 
@@ -15232,6 +15354,61 @@ export function f<T>(rest: T) {
       expect(stdout).toBe(`a.ts(8,9): error TS2540: Cannot assign to 'model' because it is a read-only property.`);
       expect(exitCode).toBe(1);
     });
+
+    test("the type of a parameter is instantiated when it is asked for", async () => {
+      using dir = project({
+        // `useLoaderData()` of TanStack Router, where the contextual type is inferred for `Selected`.
+        "a.ts": `
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+type PageData = { flags: Record<string, Json> };
+type ValidateJSON<T> = ((...args: any[]) => any) extends T ? never : { [K in keyof T]: ValidateJSON<T[K]> };
+interface Sharing<T> { readonly structuralSharing?: T }
+type Options<Selected> = unknown extends Selected ? Sharing<boolean> : Selected extends ValidateJSON<Selected> ? Sharing<boolean> : Sharing<false>;
+type Result<Selected> = unknown extends Selected ? PageData : Selected;
+declare const route: { useLoaderData<Selected = unknown>(options?: Options<Selected>): Result<Selected> };
+interface Loader<T> { load(key?: string, options?: Options<T>): T }
+declare const loader: Loader<PageData>;
+declare function take(data: PageData): void;
+take(route.useLoaderData());
+take(loader.load());
+take(loader.load("a"));
+const data: PageData = route.useLoaderData();
+// An argument asks for the type of its parameter.
+take(loader.load("a", undefined));
+export {};
+`,
+        "b.ts": `
+type Json = string | Json[];
+type ValidateJSON<T> = ((...args: any[]) => any) extends T ? never : { [K in keyof T]: ValidateJSON<T[K]> };
+type Options<T> = T extends ValidateJSON<T> ? 1 : 2;
+declare function load<T = unknown>(options?: Options<T>): T;
+declare function take(data: Json): void;
+take(load());
+take(load(undefined));
+export {};
+`,
+        "c.ts": `
+type Json = string | Json[];
+type ValidateJSON<T> = ((...args: any[]) => any) extends T ? never : { [K in keyof T]: ValidateJSON<T[K]> };
+type Options<T> = T extends ValidateJSON<T> ? { shared?: true } : { shared?: false };
+interface Loader<T> {
+  load(key: string, options: Options<T>, retries: number): T;
+  load(key: number, options: { shared?: true }, retries: number): T;
+}
+declare const loader: Loader<Json>;
+declare const key: number;
+declare const options: { shared?: true };
+// The first overload fails at its first argument.
+export const loaded = loader.load(key, options, key);
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(17,6): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        b.ts(8,6): error TS2589: Type instantiation is excessively deep and possibly infinite."
+      `);
+      expect(exitCode).toBe(1);
+    });
   });
 
   describe("compiler options as flags", () => {
@@ -15387,7 +15564,7 @@ export function f<T>(rest: T) {
     });
 
     // The superuser can read every file.
-    const canReadEverything = process.platform === "win32" || process.getuid?.() === 0;
+    const canReadEverything = isWindows || isRoot;
     test.skipIf(canReadEverything)("a source file that cannot be read is reported", async () => {
       using dir = project({ "a.ts": `import "./secret";\n`, "secret.ts": `export {};\n` });
       chmodSync(join(String(dir), "secret.ts"), 0o000);
@@ -15420,6 +15597,31 @@ export function f<T>(rest: T) {
       expect(places).toEqual(
         runs.map(() => ["a/a.ts", "b/secret.ts", "b/b.ts", "c/c.ts", "d/d.ts", "e/secret.ts", "e/e.ts", "f/f.ts"]),
       );
+    });
+
+    // The projects share their declaration files.
+    test.skipIf(canReadEverything)("every project reports a declaration file that it can't read", async () => {
+      const names = ["a", "b", "c"];
+      const config = JSON.stringify({
+        compilerOptions: { composite: true, emitDeclarationOnly: true, outDir: "out", lib: ["es5"], types: [] },
+        include: ["*.ts"],
+      });
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ files: [], references: names.map(name => ({ path: `./${name}` })) }),
+        ...Object.fromEntries(
+          names.flatMap(name => [
+            [`${name}/tsconfig.json`, config],
+            [`${name}/${name}.ts`, `import "../secret";\nexport const wrong: number = "";\n`],
+          ]),
+        ),
+        "secret.d.ts": `export {};\n`,
+      });
+      chmodSync(join(String(dir), "secret.d.ts"), 0o000);
+      for (const threads of ["1", "8"]) {
+        const { stdout } = await check(dir, ["--threads", threads]);
+        const places = stdout.split("\n").map(line => /[a-c]\/\w+\.ts|secret\.d\.ts/.exec(line)?.[0]);
+        expect(places).toEqual(["secret.d.ts", "a/a.ts", "secret.d.ts", "b/b.ts", "secret.d.ts", "c/c.ts"]);
+      }
     });
 
     // As in tsc: without its options nothing can be checked. To a build the file is not there.
@@ -15749,7 +15951,7 @@ export function f<T>(rest: T) {
     const { stdout, exitCode } = await check(dir, ["--help"]);
     expect(stdout).toStartWith("Usage: bun check [flags] [...files or directories]");
     expect(stdout).toEndWith(
-      `note: package.json has a "check" script, so bun check runs that script\n  Change the script to "bun check" to use the built-in command`,
+      `note: package.json has a "check" script, so bun check runs that script\n  Change the script to "bun check" to use the built-in command, or pass --no-script`,
     );
     expect(exitCode).toBe(0);
   });

@@ -3,6 +3,7 @@ use crate::util_ast::name_of_key;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::types::IdMap;
 use bun_lint_oxlint::ast_util::is_react_component_name;
 use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
@@ -104,7 +105,7 @@ pub struct State<'a> {
     /// The first of them.
     outermost: Option<Expr<'a>>,
     /// oxlint: the name under which a variable is exported where it is from, if that is another.
-    exported_names: FxHashMap<Symbol<'a>, Option<&'a [u8]>>,
+    exported_names: IdMap<Symbol<'a>, Option<&'a [u8]>>,
     /// Upstream: the same by the name alone, of the declarations so far. `None`: it is exported under a string.
     renamed_import_map: FxHashMap<&'a [u8], Option<&'a [u8]>>,
 }
@@ -307,7 +308,7 @@ impl<'a> State<'a> {
             let names = &mut self.exported_names;
             id_ref
                 .symbol()
-                .and_then(|symbol| *names.entry(symbol).or_insert_with(|| exported_name(symbol)))
+                .and_then(|symbol| *names.get_or_insert_with(symbol, || exported_name(symbol)))
         } else {
             self.renamed_import_map
                 .get(id_ref.text())

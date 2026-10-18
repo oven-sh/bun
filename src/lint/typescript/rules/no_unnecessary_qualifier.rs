@@ -23,7 +23,8 @@ fn is_in_declaration(declarations: &[Span], at: u32) -> bool {
 /// Of `namespace A.B.C {}`, which is three declarations for TypeScript and one for ESLint, that is
 /// the one of `A`, and if it is exported also the one of `C`: typescript-estree maps the
 /// `TSModuleDeclaration` to the former and the `ExportNamedDeclaration` to the latter.
-fn namespaces_in_scope<'a>(node: Node<'a>) -> Namespaces<'a> {
+/// tsgolint has the one of `C` alone, exported or not: the parent of the `ModuleBlock`.
+fn namespaces_in_scope<'a>(node: Node<'a>, is_oxlint: bool) -> Namespaces<'a> {
     let mut namespaces = Namespaces::new();
     for ancestor in node.ancestors() {
         let Node::Stmt(statement) = ancestor else {
@@ -31,6 +32,7 @@ fn namespaces_in_scope<'a>(node: Node<'a>) -> Namespaces<'a> {
         };
         match statement.kind() {
             StmtKind::Enum(declaration) => namespaces.push(declaration.ts_node()),
+            StmtKind::Module(declaration) if is_oxlint => namespaces.push(declaration.innermost().ts_node()),
             StmtKind::Module(declaration) => {
                 namespaces.push(declaration.ts_node());
                 if statement.is_exported() {
@@ -125,10 +127,10 @@ impl NoUnnecessaryQualifier {
         {
             return;
         }
-        if !is_entity_name_expression(obj) || node.is_jsx_tag_name() {
+        if !is_entity_name_expression(obj) || node.is_jsx_tag_name() && !cx.language().is_oxlint {
             return;
         }
-        let namespaces = namespaces_in_scope(Node::Expr(node));
+        let namespaces = namespaces_in_scope(Node::Expr(node), cx.language().is_oxlint);
         if namespaces.is_empty() {
             return;
         }
@@ -151,7 +153,7 @@ impl NoUnnecessaryQualifier {
         if !is_in_declaration(&cx.state, first.start()) {
             return;
         }
-        let namespaces = namespaces_in_scope(owner);
+        let namespaces = namespaces_in_scope(owner, cx.language().is_oxlint);
         if namespaces.is_empty() {
             return;
         }

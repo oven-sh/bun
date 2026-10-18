@@ -420,6 +420,30 @@ impl<'a> Expr<'a> {
         self.file.is_parenthesized(self.id)
     }
 
+    /// It is the `e` of `/** @type {T} */ (e)` or `/** @satisfies {T} */ (e)` in JavaScript, so its syntax says nothing
+    /// about [its type](Self::ty).
+    #[inline]
+    pub fn has_jsdoc_cast(self) -> bool {
+        self.file.jsdoc_cast_around(self.id).is_some()
+    }
+
+    /// In JavaScript `/** @type {T} */ (e)` is `(e as T)` for TypeScript 7 and tsgolint. Given the `e`, this is that
+    /// `e as T`: an [`ExprKind::As`] in the place of `e`, which nothing else returns. A rule with types calls it before it
+    /// looks at the syntax of an operand: to go into a `&&`, to know a literal, to walk up to a test.
+    ///
+    /// Of nested casts it is the outermost, and its `expr` is the `e` again: calling this on that `expr` never ends.
+    /// Without a cast it is `self`, and always with an ESLint config.
+    #[inline]
+    pub fn with_jsdoc_cast(self) -> Expr<'a> {
+        match self.file.types_follow_jsdoc_casts() {
+            true => Expr {
+                file: self.file,
+                id: self.file.with_jsdoc_casts(self.id),
+            },
+            false => self,
+        }
+    }
+
     /// With all the parentheses around it.
     #[inline]
     pub fn outer_span(self) -> Span {
@@ -630,6 +654,15 @@ impl<'a> Expr<'a> {
             hir::ExprKind::Object(props) => Some(List::run(self.file, props)),
             _ => None,
         }
+    }
+
+    /// The import, the export or the import type whose attributes are in this `{ .. }`: the `import a from "a" with {}`
+    /// around the `{}`. Such an object is not a node of the tree, and its [parent](Expr::parent) is the file.
+    pub fn owner_of_import_attributes(self) -> Option<Node<'a>> {
+        if self.file.hir.import_attributes.is_empty() {
+            return None;
+        }
+        (self.file.parents()).of_import_attributes(self.file, self.id)
     }
 
     #[inline]
@@ -972,8 +1005,28 @@ impl<'a> Expr<'a> {
     /// `AssignmentPattern` or `RestElement`. Parentheses make what is in them an ordinary
     /// expression.
     pub fn is_assignment_target(self) -> bool {
+        let mut container = None;
+        let answer = self.is_assignment_target_uncached(&mut container);
+        // The answer is the same for the array or the object that it is in, and so for everything else in that. With it
+        // remembered, what is nested does not go up to the root each time.
+        if let Some(container) = container {
+            let last = &self.file.lazy.last_assignment_target;
+            last.set(Some((container, answer)));
+        }
+        answer
+    }
+
+    /// `container`: the array or the object that it is in.
+    #[inline(always)]
+    fn is_assignment_target_uncached(self, container: &mut Option<hir::ExprId>) -> bool {
         let mut at = self;
         loop {
+            if container.is_some()
+                && let Some((last, answer)) = self.file.lazy.last_assignment_target.get()
+                && last == at.id
+            {
+                return answer;
+            }
             if at.is_parenthesized() {
                 return false;
             }
@@ -999,6 +1052,7 @@ impl<'a> Expr<'a> {
                 }
                 _ => return false,
             };
+            container.get_or_insert(at.id);
         }
     }
 

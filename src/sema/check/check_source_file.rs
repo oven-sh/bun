@@ -260,6 +260,23 @@ impl<'s> Checker<'_, 's> {
         self.reported_unreachable_nodes.clear();
     }
 
+    /// Runs `checkSourceFile` on the task's file and throws its diagnostics away. For a file that `check_file` skips because
+    /// it reports no semantic errors (`// @ts-nocheck`, JavaScript without `checkJs`), when lint rules are about to ask for
+    /// its types out of source order. As in `check_statements_ahead`, a diagnostic that belongs to a query stays with
+    /// that query's entry.
+    pub(super) fn check_source_file_and_report_nothing(&mut self, file: FileId) {
+        let (reported, logged) = (self.reported.len(), self.task.diagnostics.len());
+        self.is_type_checked = false;
+        self.save_deferred_diagnostics = true;
+        self.check_source_file(file);
+        self.produce_type_not_iterable_errors(logged);
+        self.is_type_checked = true;
+        self.reported.truncate(reported);
+        let since = self.task.diagnostics.split_off(logged).into_iter();
+        (self.task.diagnostics).extend(since.filter(|(owner, _)| owner.is_some()));
+        self.never_checked.get_mut().clear();
+    }
+
     /// Settles `unvisited_exprs`. A query that computes a type from one checks the whole of it
     /// (`checkDeclarationInitializer`, `checkComputedPropertyName`,
     /// `checkAndAggregateYieldOperandTypes`). What no query has reached by the end of
@@ -693,10 +710,20 @@ impl<'s> Checker<'_, 's> {
         let has_body = has_body(&hir[func]);
         let is_pattern = matches!(hir[node.pat].kind, PatKind::Object(_) | PatKind::Array(_));
         if p != hir[func].this_param {
-            if self.check_name_and_initializer(file, node.pat, node.default, !has_body) {
+            // `checkExpressionCached(initializer)`: a loop that is being analysed is hidden from it.
+            let check = |c: &mut Self| {
+                let exits = c.check_name_and_initializer(file, node.pat, node.default, !has_body);
+                if !exits {
+                    c.check_parameter_initializer(file, p);
+                }
+                exits
+            };
+            let exits = match self.flow_loops.is_empty() {
+                true => check(self),
+                false => self.outside_flow_loops(check),
+            };
+            if exits {
                 self.error(file, p, 2371, &[]);
-            } else {
-                self.check_parameter_initializer(file, p);
             }
         }
         if node.flags.contains(Flags::PARAMETER_PROPERTY) {
@@ -845,7 +872,7 @@ impl<'s> Checker<'_, 's> {
 
     /// The check of the parent of `e` returns before it checks `e`.
     pub(super) fn leave_unvisited(&mut self, file: FileId, e: ExprId) {
-        if e.is_some() {
+        if e.is_some() && !self.is_checking_in_flow_loop {
             let start = self.start_of(file, e);
             self.unvisited_exprs.push((start, e));
         }
@@ -884,9 +911,11 @@ impl<'s> Checker<'_, 's> {
                     }
                     let (name, prop) = (hir[p].value, &hir[p]);
                     if is_bodiless && self.is_renamed_binding_element(file, p) {
-                        self.renamed_binding_elements_in_types.push(p);
-                        if let PropKey::Computed(key) = prop.key {
-                            self.unvisited_exprs.push((prop.key_pos, key));
+                        if !self.is_checking_in_flow_loop {
+                            self.renamed_binding_elements_in_types.push(p);
+                            if let PropKey::Computed(key) = prop.key {
+                                self.unvisited_exprs.push((prop.key_pos, key));
+                            }
                         }
                         self.leave_unvisited(file, prop.default);
                         continue;
@@ -1930,6 +1959,10 @@ impl<'s> Checker<'_, 's> {
                 if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
                     check_tagged_template(self, file, c);
                 }
+                // Otherwise `check_calls`, after the walk.
+                if self.is_checking_in_flow_loop {
+                    self.check_call_like(file, e);
+                }
             }
             ExprKind::BigInt(_) => self.check_grammar_big_int_literal(file, e),
             ExprKind::Object(props) => {
@@ -2122,7 +2155,7 @@ impl<'s> Checker<'_, 's> {
     /// and whose walk reached the depth limit, reaches it again.
     #[cold]
     fn reach_flow_depth_limit_again(&mut self, file: FileId, e: ExprId) {
-        if self.bound(file).flow_places > super::flow::MAX_FLOW_DEPTH
+        if self.bound(file).can_reach_flow_depth_limit()
             && (self.p.flows_too_deep.get(&self.task, &(file, e))).is_some()
         {
             self.disable_flow_analysis(file);

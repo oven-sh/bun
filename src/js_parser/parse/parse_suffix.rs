@@ -20,12 +20,19 @@ enum Continuation {
 type CResult = core::result::Result<Continuation, Error>;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    fn sfx_handle_typescript_as(p: &mut Self, level: Level) -> CResult {
+    fn sfx_handle_typescript_as(
+        p: &mut Self,
+        level: Level,
+        errors: Option<&mut DeferredErrors>,
+    ) -> CResult {
         if Self::IS_TYPESCRIPT_ENABLED
             && level.lt(Level::Compare)
             && !p.lexer.has_newline_before
             && (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
         {
+            if let Some(errors) = errors {
+                errors.is_not_binding = true;
+            }
             p.lexer.next()?;
             p.skip_type_script_type(Level::Lowest)?;
 
@@ -468,7 +475,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // condition ? yes : no
         //                   ^
         // Still between the "?" and ":" of an outer conditional when nested in its "yes"
-        let no_flags = if flags == EFlags::AfterQuestionAndBeforeColon {
+        let no_flags = if Self::IS_TYPESCRIPT_ENABLED && flags.is_after_question_and_before_colon()
+        {
             flags
         } else {
             EFlags::None
@@ -486,6 +494,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
+        errors: Option<&mut DeferredErrors>,
     ) -> CResult {
         // Skip over TypeScript non-null assertions
         if p.lexer.has_newline_before {
@@ -497,6 +506,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::SyntaxError);
         }
 
+        if let Some(errors) = errors {
+            errors.is_not_binding = true;
+        }
         p.lexer.next()?;
         *optional_chain = old_optional_chain;
 
@@ -583,14 +595,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_plus_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    /// The right side of an assignment between "?" and ":" is still between them.
+    #[inline]
+    fn sfx_right_of_assignment(p: &mut Self, flags: EFlags) -> Result<Expr, Error> {
+        let mut right = Expr::EMPTY;
+        p.parse_expr_with_flags(Level::Assign.sub(1), Self::carried_flags(flags), &mut right)?;
+        Ok(right)
+    }
+
+    fn sfx_t_plus_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinAddAssign,
@@ -621,14 +641,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_minus_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_minus_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinSubAssign,
@@ -678,14 +698,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_asterisk_asterisk_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_asterisk_asterisk_equals(
+        p: &mut Self,
+        level: Level,
+        left: &mut Expr,
+        flags: EFlags,
+    ) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinPowAssign,
@@ -697,14 +722,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_asterisk_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_asterisk_equals(
+        p: &mut Self,
+        level: Level,
+        left: &mut Expr,
+        flags: EFlags,
+    ) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinMulAssign,
@@ -735,14 +765,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_percent_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_percent_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinRemAssign,
@@ -773,14 +803,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_slash_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_slash_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinDivAssign,
@@ -874,6 +904,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
         left: &mut Expr,
+        errors: Option<&mut DeferredErrors>,
     ) -> CResult {
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
@@ -881,6 +912,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED
             && p.try_skip_type_script_type_arguments_with_backtracking()?
         {
+            if let Some(errors) = errors {
+                errors.is_not_binding = true;
+            }
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }
@@ -995,14 +1029,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_less_than_less_than_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_less_than_less_than_equals(
+        p: &mut Self,
+        level: Level,
+        left: &mut Expr,
+        flags: EFlags,
+    ) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinShlAssign,
@@ -1037,6 +1076,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         level: Level,
         left: &mut Expr,
+        flags: EFlags,
     ) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
@@ -1044,7 +1084,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinShrAssign,
@@ -1083,6 +1123,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         level: Level,
         left: &mut Expr,
+        flags: EFlags,
     ) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
@@ -1090,7 +1131,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinUShrAssign,
@@ -1121,14 +1162,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_question_question_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_question_question_equals(
+        p: &mut Self,
+        level: Level,
+        left: &mut Expr,
+        flags: EFlags,
+    ) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinNullishCoalescingAssign,
@@ -1175,14 +1221,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_bar_bar_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_bar_bar_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinLogicalOrAssign,
@@ -1235,14 +1281,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_ampersand_ampersand_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_ampersand_ampersand_equals(
+        p: &mut Self,
+        level: Level,
+        left: &mut Expr,
+        flags: EFlags,
+    ) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinLogicalAndAssign,
@@ -1273,14 +1324,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_bar_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_bar_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinBitwiseOrAssign,
@@ -1311,14 +1362,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_ampersand_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_ampersand_equals(
+        p: &mut Self,
+        level: Level,
+        left: &mut Expr,
+        flags: EFlags,
+    ) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinBitwiseAndAssign,
@@ -1349,14 +1405,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_caret_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_caret_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinBitwiseXorAssign,
@@ -1368,14 +1424,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_equals(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        let right = p.parse_expr(Level::Assign.sub(1))?;
+        let right = Self::sfx_right_of_assignment(p, flags)?;
         *left = p.new_expr(
             E::Binary {
                 op: OpCode::BinAssign,
@@ -1506,20 +1562,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let continuation = match p.lexer.token {
                 T::TAmpersand => Self::sfx_t_ampersand(p, level, left),
                 T::TAmpersandAmpersandEquals => {
-                    Self::sfx_t_ampersand_ampersand_equals(p, level, left)
+                    Self::sfx_t_ampersand_ampersand_equals(p, level, left, flags)
                 }
-                T::TAmpersandEquals => Self::sfx_t_ampersand_equals(p, level, left),
+                T::TAmpersandEquals => Self::sfx_t_ampersand_equals(p, level, left, flags),
                 T::TAsterisk => Self::sfx_t_asterisk(p, level, left),
                 T::TAsteriskAsterisk => Self::sfx_t_asterisk_asterisk(p, level, left),
-                T::TAsteriskAsteriskEquals => Self::sfx_t_asterisk_asterisk_equals(p, level, left),
-                T::TAsteriskEquals => Self::sfx_t_asterisk_equals(p, level, left),
+                T::TAsteriskAsteriskEquals => {
+                    Self::sfx_t_asterisk_asterisk_equals(p, level, left, flags)
+                }
+                T::TAsteriskEquals => Self::sfx_t_asterisk_equals(p, level, left, flags),
                 T::TBar => Self::sfx_t_bar(p, level, left),
-                T::TBarBarEquals => Self::sfx_t_bar_bar_equals(p, level, left),
-                T::TBarEquals => Self::sfx_t_bar_equals(p, level, left),
+                T::TBarBarEquals => Self::sfx_t_bar_bar_equals(p, level, left, flags),
+                T::TBarEquals => Self::sfx_t_bar_equals(p, level, left, flags),
                 T::TCaret => Self::sfx_t_caret(p, level, left),
-                T::TCaretEquals => Self::sfx_t_caret_equals(p, level, left),
+                T::TCaretEquals => Self::sfx_t_caret_equals(p, level, left, flags),
                 T::TComma => Self::sfx_t_comma(p, level, left),
-                T::TEquals => Self::sfx_t_equals(p, level, left),
+                T::TEquals => Self::sfx_t_equals(p, level, left, flags),
                 T::TEqualsEquals => Self::sfx_t_equals_equals(p, level, left),
                 T::TEqualsEqualsEquals => Self::sfx_t_equals_equals_equals(p, level, left),
                 T::TExclamationEquals => Self::sfx_t_exclamation_equals(p, level, left),
@@ -1530,35 +1588,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TGreaterThanEquals => Self::sfx_t_greater_than_equals(p, level, left),
                 T::TGreaterThanGreaterThan => Self::sfx_t_greater_than_greater_than(p, level, left),
                 T::TGreaterThanGreaterThanEquals => {
-                    Self::sfx_t_greater_than_greater_than_equals(p, level, left)
+                    Self::sfx_t_greater_than_greater_than_equals(p, level, left, flags)
                 }
                 T::TGreaterThanGreaterThanGreaterThan => {
                     Self::sfx_t_greater_than_greater_than_greater_than(p, level, left)
                 }
                 T::TGreaterThanGreaterThanGreaterThanEquals => {
-                    Self::sfx_t_greater_than_greater_than_greater_than_equals(p, level, left)
+                    Self::sfx_t_greater_than_greater_than_greater_than_equals(p, level, left, flags)
                 }
                 T::TIn => Self::sfx_t_in(p, level, left),
                 T::TInstanceof => Self::sfx_t_instanceof(p, level, left),
                 T::TLessThanEquals => Self::sfx_t_less_than_equals(p, level, left),
                 T::TLessThanLessThanEquals => {
-                    Self::sfx_t_less_than_less_than_equals(p, level, left)
+                    Self::sfx_t_less_than_less_than_equals(p, level, left, flags)
                 }
                 T::TMinus => Self::sfx_t_minus(p, level, left),
-                T::TMinusEquals => Self::sfx_t_minus_equals(p, level, left),
+                T::TMinusEquals => Self::sfx_t_minus_equals(p, level, left, flags),
                 T::TMinusMinus => Self::sfx_t_minus_minus(p, level, left),
                 T::TPercent => Self::sfx_t_percent(p, level, left),
-                T::TPercentEquals => Self::sfx_t_percent_equals(p, level, left),
+                T::TPercentEquals => Self::sfx_t_percent_equals(p, level, left, flags),
                 T::TPlus => Self::sfx_t_plus(p, level, left),
-                T::TPlusEquals => Self::sfx_t_plus_equals(p, level, left),
+                T::TPlusEquals => Self::sfx_t_plus_equals(p, level, left, flags),
                 T::TPlusPlus => Self::sfx_t_plus_plus(p, level, left),
                 T::TQuestionQuestion => Self::sfx_t_question_question(p, level, left),
-                T::TQuestionQuestionEquals => Self::sfx_t_question_question_equals(p, level, left),
-                T::TSlash => Self::sfx_t_slash(p, level, left),
-                T::TSlashEquals => Self::sfx_t_slash_equals(p, level, left),
-                T::TExclamation => {
-                    Self::sfx_t_exclamation(p, &mut optional_chain, old_optional_chain)
+                T::TQuestionQuestionEquals => {
+                    Self::sfx_t_question_question_equals(p, level, left, flags)
                 }
+                T::TSlash => Self::sfx_t_slash(p, level, left),
+                T::TSlashEquals => Self::sfx_t_slash_equals(p, level, left, flags),
+                T::TExclamation => Self::sfx_t_exclamation(
+                    p,
+                    &mut optional_chain,
+                    old_optional_chain,
+                    errors.as_deref_mut(),
+                ),
                 T::TBarBar => Self::sfx_t_bar_bar(p, level, left, flags),
                 T::TAmpersandAmpersand => Self::sfx_t_ampersand_ampersand(p, level, left, flags),
                 T::TQuestion => Self::sfx_t_question(p, level, errors.as_deref_mut(), left, flags),
@@ -1570,9 +1633,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     old_optional_chain,
                     left,
                 ),
-                T::TLessThan => {
-                    Self::sfx_t_less_than(p, level, &mut optional_chain, old_optional_chain, left)
-                }
+                T::TLessThan => Self::sfx_t_less_than(
+                    p,
+                    level,
+                    &mut optional_chain,
+                    old_optional_chain,
+                    left,
+                    errors.as_deref_mut(),
+                ),
                 T::TOpenParen => {
                     Self::sfx_t_open_paren(p, level, &mut optional_chain, old_optional_chain, left)
                 }
@@ -1598,7 +1666,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     old_optional_chain,
                     left,
                 ),
-                _ => Self::sfx_handle_typescript_as(p, level),
+                _ => Self::sfx_handle_typescript_as(p, level, errors.as_deref_mut()),
             };
 
             match continuation? {

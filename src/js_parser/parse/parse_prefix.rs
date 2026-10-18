@@ -43,7 +43,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Super {}, loc))
     }
 
-    fn pfx_t_open_paren(p: &mut Self, level: Level, flags: EFlags) -> PResult<Expr> {
+    fn pfx_t_open_paren(
+        p: &mut Self,
+        level: Level,
+        errors: Option<&mut DeferredErrors>,
+        flags: EFlags,
+    ) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
 
@@ -61,11 +66,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(value);
         }
 
+        if Self::IS_TYPESCRIPT_ENABLED
+            && let Some(errors) = errors
+        {
+            errors.is_not_binding = true;
+        }
         p.parse_paren_expr(
             loc,
             level,
             ParenExprOpts {
-                is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
+                flags,
                 ..Default::default()
             },
         )
@@ -274,7 +284,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 needs_async_loc: loc,
                 ..Default::default()
             };
-            let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data);
+            let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data, flags);
             p.pop_scope();
             return Ok(p.new_expr(arrow_result?, loc));
         }
@@ -780,7 +790,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Is this a binding pattern?
         if p.will_need_binding_pattern() {
-            // noop
+            if Self::IS_TYPESCRIPT_ENABLED
+                && let Some(errors) = errors
+            {
+                errors.is_not_binding |= self_errors.is_not_binding;
+            }
         } else if errors.is_none() {
             // Is this an expression?
             p.log_expr_errors(&mut self_errors);
@@ -867,6 +881,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if p.will_need_binding_pattern() {
             // Is this a binding pattern?
+            if Self::IS_TYPESCRIPT_ENABLED
+                && let Some(errors) = errors
+            {
+                errors.is_not_binding |= self_errors.is_not_binding;
+            }
         } else if errors.is_none() {
             // Is this an expression?
             p.log_expr_errors(&mut self_errors);
@@ -972,6 +991,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ParenExprOpts {
                             force_arrow_fn: result
                                 == SkipTypeParameterResult::DefinitelyTypeParameters,
+                            flags,
+                            after_type_parameters: true,
                             ..Default::default()
                         },
                     );
@@ -982,7 +1003,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
             p.skip_type_script_type(Level::Lowest)?;
             p.lexer.expect_greater_than::<false>()?;
-            return p.parse_prefix(level, errors, flags);
+            if let Some(errors) = errors {
+                errors.is_not_binding = true;
+            }
+            return p.parse_prefix(Level::Prefix, None, EFlags::None);
         }
 
         p.lexer.unexpected()?;
@@ -1009,7 +1033,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TOpenBrace => Self::pfx_t_open_brace(p, errors),
             T::TLessThan => Self::pfx_t_less_than(p, level, errors, flags),
             T::TImport => Self::pfx_t_import(p, level),
-            T::TOpenParen => Self::pfx_t_open_paren(p, level, flags),
+            T::TOpenParen => Self::pfx_t_open_paren(p, level, errors, flags),
             T::TPrivateIdentifier => Self::pfx_t_private_identifier(p, level),
             T::TIdentifier => Self::pfx_t_identifier(p, level, flags),
             T::TFalse => Self::pfx_t_false(p),

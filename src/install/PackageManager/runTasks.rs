@@ -1322,7 +1322,8 @@ fn run_tasks_erased(
                     // Void-callback fallback (resolve phase): drain the
                     // `task_queue` entry too so a later install-phase
                     // `enqueuePackageForDownload` doesn't wedge on `found_existing`.
-                    let _ = manager.task_queue.remove(&task.id);
+                    let waiters = manager.task_queue.remove(&task.id).unwrap_or_default();
+                    report_waiting_peers(manager, &waiters, alias);
 
                     continue;
                 }
@@ -1441,6 +1442,7 @@ fn run_tasks_erased(
                             bun_core::fmt::for_terminal(bstr::BStr::new(name)),
                         );
                     }
+                    report_waiting_peers(manager, &waiters, name);
                     continue;
                 }
 
@@ -1528,7 +1530,7 @@ fn run_tasks_erased(
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
                     let is_required = manager.is_network_task_required(task.id);
-                    let _ = forget_failed_git_task(manager, task.id, name);
+                    let waiters = forget_failed_git_task(manager, task.id, name);
                     if cb.has_on_package_manifest_error {
                         (cb.on_package_manifest_error)(extract_ctx, name, err, url);
                     } else {
@@ -1541,6 +1543,7 @@ fn run_tasks_erased(
                                 bun_core::fmt::for_terminal(bstr::BStr::new(name)),
                             ),
                         );
+                        report_waiting_peers(manager, &waiters, name);
                     }
                     continue;
                 }
@@ -1588,7 +1591,8 @@ fn run_tasks_erased(
                             err.name(),
                             bun_core::fmt::for_terminal(bstr::BStr::new(alias.slice())),
                         );
-                        let _ = forget_failed_git_task(manager, task.id, alias.slice());
+                        let waiters = forget_failed_git_task(manager, task.id, alias.slice());
+                        report_waiting_peers(manager, &waiters, alias.slice());
                     }
 
                     continue;
@@ -1839,6 +1843,32 @@ fn forget_failed_git_task(
     fail_update_requests(this, task_id, name, None, false);
     let _ = this.network_dedupe_map.remove(&task_id);
     this.task_queue.remove(&task_id).unwrap_or_default()
+}
+
+/// The error about a failed task names the dependency that started it. `verify_resolutions` names
+/// the others that waited for it, but no peer.
+fn report_waiting_peers(this: &mut PackageManager, waiters: &TaskCallbackList, name: &[u8]) {
+    for waiter in waiters.iter() {
+        let &bun_install::TaskCallbackContext::Dependency(row) = waiter else {
+            continue;
+        };
+        let peer = &this.lockfile.buffers.dependencies[row as usize];
+        if !peer.behavior.is_peer()
+            || peer.behavior.is_optional_peer()
+            || this.lockfile.str(&peer.name) == name
+        {
+            continue;
+        }
+        let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+        bun_ast::add_error_pretty!(
+            this.log_mut(),
+            None,
+            bun_ast::Loc::EMPTY,
+            "<b>{}<r><d>@<b>{}<r><d> failed to resolve<r>",
+            bun_core::fmt::for_terminal(bstr::BStr::new(peer.name.slice(string_buf))),
+            bun_core::fmt::for_terminal(peer.version.literal.fmt(string_buf)),
+        );
+    }
 }
 
 /// How often a failed manifest request is retried. When `bunx` already has a copy of the tool, it

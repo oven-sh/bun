@@ -1785,6 +1785,7 @@ impl Lockfile {
             let tree = builder.list.items_tree()[item.tree_id as usize];
             tree.process_subtree(item.dependency_id, item.hoist_root_id, &mut builder)?;
             if builder.found_peer_cycle {
+                builder.list.drop_elements();
                 return Ok(None);
             }
         }

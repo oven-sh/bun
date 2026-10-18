@@ -5,7 +5,7 @@
 // packages whose own package.json declares `file:` folder dependencies.
 // Everything is local: a bare repo on disk (served over git's dumb HTTP
 // protocol by Bun.serve when an http URL is needed) or tarballs built in memory.
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -2369,24 +2369,77 @@ exec '${Bun.which("git")}' "$@"
   );
 }
 
-// A commit lookup that failed stayed on record too. A peer dependency is
-// resolved in a later pass: it joined the finished lookup, ran no `git log`,
-// and the install ended with an error about the first package only.
-test.concurrent("looks the commit up again for a peer dependency after the lookup failed for another one", async () => {
-  using dir = tempDir("git-dep-failed-commit", {});
-  const root = String(dir);
-  const spec = `${sharedRepoUrl}#no-such-branch`;
-  const project = writeProject(root, {}, { optionalDependencies: { first: spec }, peerDependencies: { second: spec } });
+// Both wait for one task, and its error names the first. The install must not end with an error
+// about the optional package only.
+describe.concurrent("names a peer dependency that waited for what failed under the name of another one", () => {
+  async function install(root: string, spec: string, env: NodeJS.Dict<string> = {}) {
+    const project = writeProject(
+      root,
+      {},
+      { optionalDependencies: { first: spec }, peerDependencies: { second: spec } },
+    );
+    const { stderr, exitCode } = await runInstall(project, join(root, "cache"), env);
+    return { diagnostics: diagnostics(stderr), exitCode };
+  }
 
-  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
-  // git's own failures print at once, the lines about the packages after the resolve phase
-  expect(diagnostics(stderr)).toEqual([
-    gitFailed("warn"),
-    gitFailed("error"),
-    'warn: no commit matching "no-such-branch" found for "first" (but repository exists)',
-    'error: no commit matching "no-such-branch" found for "second" (but repository exists)',
-  ]);
-  expect(exitCode).toBe(1);
+  test("the commit lookup", async () => {
+    using dir = tempDir("git-dep-failed-commit", {});
+    const spec = `${sharedRepoUrl}#no-such-branch`;
+    expect(await install(String(dir), spec)).toEqual({
+      diagnostics: [
+        gitFailed("error"),
+        'error: no commit matching "no-such-branch" found for "first" (but repository exists)',
+        `error: second@${spec} failed to resolve`,
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("the clone", async () => {
+    using dir = tempDir("git-dep-failed-clone", {});
+    const spec = `git+${pathToFileURL(join(String(dir), "no-such-repo.git"))}`;
+    expect(await install(String(dir), spec)).toEqual({
+      diagnostics: [
+        gitFailed("error"),
+        'error: "git clone" for "first" failed',
+        "error: InstallFailed cloning repository for first",
+        `error: second@${spec} failed to resolve`,
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test.skipIf(isWindows)("the checkout", async () => {
+    using dir = tempDir("git-dep-failed-checkout", {
+      "bin/git": `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = restore ]; then echo 'fatal: cannot check out' >&2; exit 128; fi
+done
+exec '${Bun.which("git")}' "$@"
+`,
+    });
+    const bin = join(String(dir), "bin");
+    chmodSync(join(bin, "git"), 0o755);
+    const spec = `git+${pathToFileURL(sharedBare)}#pkg-b`;
+    expect(await install(String(dir), spec, { PATH: `${bin}:${gitEnv.PATH}` })).toEqual({
+      diagnostics: [
+        gitFailed("error"),
+        'error: "git restore" for "first" failed',
+        "error: InstallFailed checking out repository for first",
+        `error: second@${spec} failed to resolve`,
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("the tarball", async () => {
+    using dir = tempDir("git-dep-failed-tarball", {});
+    const spec = join(String(dir), "no-such.tgz");
+    expect(await install(String(dir), spec)).toEqual({
+      diagnostics: ["error: ENOENT extracting tarball from first", `error: second@${spec} failed to resolve`],
+      exitCode: 1,
+    });
+  });
 });
 
 // With GIT_DIR in the environment (git exports it to commit hooks), git ignores

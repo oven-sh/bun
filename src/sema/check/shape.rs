@@ -8020,14 +8020,12 @@ impl<'p, 's> Checker<'p, 's> {
             if let (Ok(stored), Some(all), true) =
                 (c.end_scope_by_counters(scope), resolved_type, is_new)
             {
-                c.p
-                    .intersected_props
+                c.p.intersected_props
                     .insert(&c.task, (ty, prop.name), all, stored);
             }
             let may_be_discriminant =
                 !every.contains(PropFlags::OPTIONAL) && is_non_uniform && has_literal;
-            if some.contains(PropFlags::PRIVATE) || may_be_discriminant && has_one_of_no_member
-            {
+            if some.contains(PropFlags::PRIVATE) || may_be_discriminant && has_one_of_no_member {
                 asks = true;
             } else if may_be_discriminant {
                 discriminants.push((types, resolved_type));

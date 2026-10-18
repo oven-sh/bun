@@ -35,35 +35,8 @@ use smallvec::SmallVec;
 use std::cell::RefCell;
 use std::sync::atomic::AtomicU32;
 
-/// If `false`, `cond_piece`, `cond_infer_params` and `default_constraint_of_conditional` derive the part on every call.
-pub(super) const KEEPS_CONDITIONAL_PARTS: bool = true;
-/// If `false`, `mapped_type_param`, `mapped_mapper`, `mapped_keys`, `mapped_template`, `mapped_name_type`,
-/// `mapped_modifiers_type` and `apparent_type_of_mapped` derive the part on every call.
-pub(super) const KEEPS_MAPPED_PARTS: bool = true;
-/// If `false`, `alias_of_type` derives the alias on every call, and `alias_symbol_of_type` caches its results in
-/// `Checker::alias_symbols` instead.
-pub(super) const KEEPS_ALIASES: bool = true;
-/// If `false`, `restrictive_instantiation`, `permissive_instantiation` and `unique_literal_filled_instantiation`
-/// instantiate on every call.
-pub(super) const KEEPS_INSTANTIATIONS_WITH_FIXED_MAPPERS: bool = true;
-
-/// Debug switches. Every part read from the cache is also derived. Panics with the type and the file if the derived
-/// part differs or if deriving it computed anything.
-pub(super) const CHECKS_CONDITIONAL_PARTS: bool = false;
-pub(super) const CHECKS_MAPPED_PARTS: bool = false;
-pub(super) const CHECKS_ALIASES: bool = false;
-pub(super) const CHECKS_INSTANTIATIONS_WITH_FIXED_MAPPERS: bool = false;
-
 /// `Type.alias.typeArguments`
 pub(super) type AliasArguments = SmallVec<[TypeId; 4]>;
-
-/// Names of a conditional type's parts, indexed by the `which` argument of `cond_piece`.
-pub(super) const CONDITIONAL_PARTS: [&str; 4] = [
-    "checkType",
-    "extendsType",
-    "resolvedTrueType",
-    "resolvedFalseType",
-];
 
 /// Cell index of a conditional type's `resolvedDefaultConstraint`. It follows the `cond_piece` cells.
 pub(super) const DEFAULT_CONSTRAINT: usize = 4;
@@ -347,33 +320,6 @@ impl TypeLinks {
     }
 }
 
-/// Formats a part for the panic message of a `CHECKS_*` switch.
-pub(super) trait Described: Copy + PartialEq {
-    fn described(self, c: &mut Checker<'_, '_>) -> String;
-}
-
-impl Described for TypeId {
-    fn described(self, c: &mut Checker<'_, '_>) -> String {
-        let printed = c.type_to_string(self);
-        format!("{self:?} `{}`", bstr::BStr::new(&printed))
-    }
-}
-
-impl Described for Option<TypeId> {
-    fn described(self, c: &mut Checker<'_, '_>) -> String {
-        match self {
-            Some(ty) => ty.described(c),
-            None => "none".to_owned(),
-        }
-    }
-}
-
-impl Described for MapperId {
-    fn described(self, c: &mut Checker<'_, '_>) -> String {
-        format!("{self:?} {:?}", c.types().mapping(self))
-    }
-}
-
 impl<'p, 's> Checker<'p, 's> {
     /// Returns the part of `ty` in cell `at` if it's cached and may be read now.
     #[inline]
@@ -517,53 +463,6 @@ impl<'p, 's> Checker<'p, 's> {
         let q = Query::TypeNode(file, node);
         (self.p.type_node_types.get(&self.task, &(file, node))).is_some()
             && !(self.may_be_in_flight(q) && self.stack.contains(&q))
-    }
-
-    /// Used by the `CHECKS_*` switches. `kept` was read from the cache as part `name` of `ty`, and `derive` computes it
-    /// without the cache.
-    #[cold]
-    #[inline(never)]
-    pub(super) fn check_kept_part<V: Described>(
-        &mut self,
-        ty: TypeId,
-        name: &str,
-        kept: V,
-        derive: impl FnOnce(&mut Self) -> V,
-    ) {
-        // At these values, or a few levels deeper, `derive` hits a limit and reports it.
-        if self.instantiation_depth >= 90 || self.instantiation_count >= 4_900_000 {
-            return;
-        }
-        let traces = |c: &Self| {
-            (
-                c.work,
-                c.instantiations_computed,
-                c.types().first_new_type_id(),
-                c.non_cacheable_mark(),
-                c.reported.len(),
-            )
-        };
-        let (before, count) = (traces(self), self.instantiation_count);
-        let derived = derive(self);
-        self.instantiation_count = count;
-        let computed_nothing = traces(self) == before;
-        if derived != kept || !computed_nothing {
-            let (kept, derived) = (kept.described(self), derived.described(self));
-            let of = ty.described(self);
-            let found = format!("derived {derived}, computing nothing: {computed_nothing}");
-            self.kept_part_differs(ty, &format!("{name} of {of}"), &kept, &found);
-        }
-    }
-
-    /// Panics for a `CHECKS_*` switch. `kept` is the cached `what` of `ty`, and `found` describes what deriving it
-    /// returned instead.
-    #[cold]
-    #[inline(never)]
-    pub(super) fn kept_part_differs(&self, ty: TypeId, what: &str, kept: &str, found: &str) -> ! {
-        let file =
-            (self.task.file).map(|file| bstr::BStr::new(self.files().module(file).file_name()));
-        let data = self.data(ty);
-        panic!("{what} ({data:?}), while checking {file:?}: kept {kept}, {found}")
     }
 }
 

@@ -126,11 +126,6 @@ pub(super) struct CallState<'a> {
     pub(super) candidate_for_type_argument_error: Option<SigId>,
 }
 
-/// `hasCorrectArity` tests for a missing `)` only when the result depends on it, which is when an
-/// argument is missing. The test reads the file's source text, which nothing else reads while
-/// resolving a call. Set to `false` to run the test up front.
-const ASKS_LATE_WHETHER_A_CALL_IS_INCOMPLETE: bool = true;
-
 /// What `push_inference_context` replaces in the checker, and `pop_inference_context` puts back.
 struct OutsideInferenceContext {
     mode_of_recheck: CheckMode,
@@ -712,10 +707,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => args.len(),
         };
         let spread = args.iter().position(|a| a.is_spread());
-        let early = (!ASKS_LATE_WHETHER_A_CALL_IS_INCOMPLETE)
-            .then(|| self.is_call_incomplete(file, call, node));
-        let is_incomplete =
-            |c: &Self| early.unwrap_or_else(|| c.is_call_incomplete(file, call, node));
+        let is_incomplete = |c: &Self| c.is_call_incomplete(file, call, node);
         let is_open = matches!(params, List::Own(_));
         self.has_correct_arity_for_count(sig, params, is_open, actual, spread, &is_incomplete)
     }

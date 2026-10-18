@@ -210,12 +210,6 @@ mod class {
     pub(super) const PER_CELL: u32 = u32::BITS / BITS;
 }
 
-/// If `false`, a name's class is recomputed from its text on every query.
-const KEEPS_CLASSES: bool = true;
-
-/// If `true`, every stored class that is read is also recomputed from the text, and both must match.
-const CHECKS_CLASSES: bool = false;
-
 /// Returns the `class` bits for `text`.
 fn class_of(text: &[u8]) -> u32 {
     match text {
@@ -924,16 +918,10 @@ impl<'p, 's> Atoms<'p, 's> {
     /// Returns `class_of` for `atom`'s text.
     #[inline]
     fn class(&self, atom: Atom) -> u32 {
-        if !KEEPS_CLASSES || atom.is_own() {
+        if atom.is_own() {
             return class_of(self.bytes(atom));
         }
-        let class = self.published.class(atom);
-        assert!(
-            !CHECKS_CLASSES || atom.is_none() || class == class_of(self.bytes(atom)),
-            "the class {class} is kept for the name {:?}",
-            bstr::BStr::new(self.bytes(atom))
-        );
-        class
+        self.published.class(atom)
     }
 
     /// `isLateBoundName`

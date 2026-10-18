@@ -36,23 +36,6 @@ use super::Inference;
 use crate::util::fx_hash;
 use smallvec::SmallVec;
 
-/// Set to `false` to run every walk.
-pub(super) const ENABLED: bool = true;
-
-/// Debug mode. Runs every walk that the memo would skip and compares the outcome with the stored entry. On a mismatch
-/// it panics with the types, the file, and every trace the walk left.
-const SHADOW: bool = false;
-
-/// Keeps entries when the task moves on to its next file. `check_file` clears some state between files, but a walk
-/// without a trace reads that state only if `obstacle_to_leaving_out` covers it, if it depends only on syntax, or after
-/// a miss. If `false`, entries expire at the end of the file.
-const LASTS_ACROSS_FILES: bool = true;
-
-/// Keeps entries when the incomplete type of a flow loop is read. `taint_from` only writes to counters and to the
-/// frames in progress, and those frames then store nothing or store an entry that didn't exist before. If `false`, the
-/// read invalidates entries the way a cycle does.
-const OUTLASTS_FLOW_LOOPS: bool = true;
-
 /// Labels for `Checker::inference_walk_counts`.
 pub const INFERENCE_WALK_COUNTS: [&str; 16] = [
     "walks",
@@ -173,8 +156,7 @@ const TRACES: [&str; 14] = [
 ];
 
 /// Labels for `Checker::inference_disturbances`.
-const DISTURBANCES: [&str; 10] = [
-    "file",
+const DISTURBANCES: [&str; 9] = [
     "cycles",
     "taints",
     "limits",
@@ -205,31 +187,6 @@ impl Readings {
             && self.lowest_taint == before.lowest_taint
             && self.has_met_contextual_function == before.has_met_contextual_function
             && self.instantiation_count >= before.instantiation_count
-    }
-
-    /// Lists every value that differs from `before`, with its name and both values. Used by `SHADOW`.
-    #[cold]
-    fn moved_since(&self, before: &Readings) -> String {
-        let others = [
-            "lowest_taint",
-            "has_met_contextual_function",
-            "instantiation_count",
-        ];
-        let numbers = |of: &Readings| {
-            let listed = of.traces.iter().chain(&of.disturbances).copied();
-            let rest = [
-                of.lowest_taint as u64,
-                u64::from(of.has_met_contextual_function),
-                u64::from(of.instantiation_count),
-            ];
-            listed.chain(rest).collect::<Vec<u64>>()
-        };
-        let names = TRACES.iter().chain(&DISTURBANCES).chain(&others);
-        let moved = names
-            .zip(numbers(before).into_iter().zip(numbers(self)))
-            .filter(|(_, (before, after))| before != after)
-            .map(|(name, (before, after))| format!("{name} from {before} to {after}"));
-        moved.collect::<Vec<String>>().join(", ")
     }
 }
 
@@ -409,7 +366,6 @@ impl<'p, 's> Checker<'p, 's> {
         let disturbances = self.inference_disturbances();
         (self.inference_memo).begin_generation_if_disturbed(&disturbances);
         let in_use = self.stack_base.saturating_sub(stack_pointer());
-        let mut left_out = None;
         if let Some(place) = self.inference_memo.place(hash, &key) {
             let entry = &self.inference_memo.entries[place];
             let is_disturbed = entry.generation != self.inference_memo.generation;
@@ -425,8 +381,6 @@ impl<'p, 's> Checker<'p, 's> {
             };
             if !matches!(found, Count::LeftOut) {
                 self.inference_memo.count(found);
-            } else if SHADOW {
-                left_out = Some(entry.clone());
             } else {
                 if !entry.state_after().is_empty() {
                     write_state(entry.state_after(), n);
@@ -442,7 +396,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return;
             }
         }
-        if left_out.is_none() && !self.is_settled_for_inference() {
+        if !self.is_settled_for_inference() {
             self.inference_memo.count(Count::NotSettled);
             return self.infer_types(n, source, target);
         }
@@ -459,7 +413,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.reliability |= outer_reliability;
         self.lowest_taint = self.lowest_taint.min(outer_taint);
         let has_left_no_trace = after.shows_no_trace_since(&before);
-        if left_out.is_none() && (n.calls < LONG_WALK || !has_left_no_trace) {
+        if n.calls < LONG_WALK || !has_left_no_trace {
             if n.calls >= LONG_WALK {
                 self.inference_memo.count(Count::LeftTrace);
             }
@@ -481,15 +435,7 @@ impl<'p, 's> Checker<'p, 's> {
             stack: u32::try_from(deepest.saturating_sub(in_use)).unwrap_or(u32::MAX),
             generation: self.inference_memo.generation,
         };
-        if let Some(left_out) = left_out {
-            if !has_left_no_trace
-                || !walked.did_the_same_as(&left_out)
-                || walked.stack > left_out.stack
-            {
-                let moved = after.moved_since(&before);
-                self.walk_differs(source, target, &left_out, &walked, &moved);
-            }
-        } else if walked.words.len() <= InferenceMemo::MOST_WORDS {
+        if walked.words.len() <= InferenceMemo::MOST_WORDS {
             self.inference_memo.store(hash, walked);
         }
     }
@@ -603,13 +549,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// Asking for the constraint of one removes it from the set, which is a trace. So a stored walk doesn't ask for the
     /// constraint of any type parameter in the set, and that stays true until more are added.
     fn inference_disturbances(&self) -> [u64; DISTURBANCES.len()] {
-        let file = self.task.file.filter(|_| !LASTS_ACROSS_FILES);
-        let from_loops = match OUTLASTS_FLOW_LOOPS {
-            true => self.incomplete_flow_taints,
-            false => 0,
-        };
+        let from_loops = self.incomplete_flow_taints;
         [
-            file.map_or(u64::MAX, |file| u64::from(file.0)),
             self.cycles.wrapping_sub(from_loops),
             self.taints.wrapping_sub(from_loops),
             self.limits_in_earlier_files + self.limits + self.instantiation_limit_hits,
@@ -620,27 +561,6 @@ impl<'p, 's> Checker<'p, 's> {
             self.state_of_commits(),
             u64::from(self.links.times_forgotten()),
         ]
-    }
-
-    /// Panics because `SHADOW` found a mismatch. `moved` is the output of `Readings::moved_since`.
-    #[cold]
-    #[inline(never)]
-    fn walk_differs(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        left_out: &Entry,
-        walked: &Entry,
-        moved: &str,
-    ) -> ! {
-        let file = self.task.file;
-        let file = file.map(|file| bstr::BStr::new(self.files().module(file).file_name()));
-        let (source, target) = (self.type_to_string(source), self.type_to_string(target));
-        let (source, target) = (bstr::BStr::new(&source), bstr::BStr::new(&target));
-        panic!(
-            "the memo of inference walks would leave out a walk that does something else, while checking {file:?}, from \
-             {source} to {target}. It has moved: {moved}. Stored: {left_out:?}. Made: {walked:?}"
-        )
     }
 }
 
@@ -714,7 +634,7 @@ mod tests {
     }
 
     #[test]
-    fn what_a_walk_has_moved_is_named() {
+    fn a_changed_reading_counts_as_a_trace() {
         let before = Readings {
             traces: [5; TRACES.len()],
             disturbances: [7; DISTURBANCES.len()],
@@ -727,42 +647,26 @@ mod tests {
             ..before
         };
         assert!(after.shows_no_trace_since(&before));
-        assert_eq!(
-            after.moved_since(&before),
-            "instantiation_count from 10 to 12"
-        );
         after.traces[1] += 1;
+        assert!(!after.shows_no_trace_since(&before));
+        let mut after = Readings { ..before };
         after.disturbances[DISTURBANCES.len() - 1] += 1;
         assert!(!after.shows_no_trace_since(&before));
-        assert_eq!(
-            after.moved_since(&before),
-            "scopes_begun from 5 to 6, times_forgotten from 7 to 8, instantiation_count from 10 to 12"
-        );
-        for (after, moved) in [
-            (
-                Readings {
-                    instantiation_count: 9,
-                    ..before
-                },
-                "instantiation_count from 10 to 9".to_owned(),
-            ),
-            (
-                Readings {
-                    lowest_taint: 3,
-                    ..before
-                },
-                format!("lowest_taint from {} to 3", usize::MAX),
-            ),
-            (
-                Readings {
-                    has_met_contextual_function: true,
-                    ..before
-                },
-                "has_met_contextual_function from 0 to 1".to_owned(),
-            ),
+        for after in [
+            Readings {
+                instantiation_count: 9,
+                ..before
+            },
+            Readings {
+                lowest_taint: 3,
+                ..before
+            },
+            Readings {
+                has_met_contextual_function: true,
+                ..before
+            },
         ] {
             assert!(!after.shows_no_trace_since(&before));
-            assert_eq!(after.moved_since(&before), moved);
         }
     }
 

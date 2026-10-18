@@ -8,14 +8,6 @@ use smallvec::SmallVec;
 // Three places where `instantiation_depth` and `instantiation_count` follow tsgo's `instantiationDepth` and
 // `instantiationCount`, each of which moves the depth at which a recursive type gets 2589. `false`: as it was before.
 
-/// `instantiateTypeWithAlias` is one level, counts and fails at a limit with an alias as without one: `type R = F<X>`.
-pub(super) const COUNTS_INSTANTIATIONS_WITH_AN_ALIAS: bool = true;
-/// `CompositeTypeMapper.Map` calls `instantiateType` for a type parameter that the first mapper maps. One that it leaves
-/// as it is goes to the second mapper, which neither counts nor fails at a limit.
-const MAPS_WHAT_THE_FIRST_MAPPER_LEAVES_WITHOUT_INSTANTIATING: bool = true;
-/// `resolveObjectTypeMembers` of a tuple instantiates the base type, `Array<T0 | T1 | ..>`.
-pub(super) const COUNTS_THE_BASE_TYPE_OF_A_TUPLE: bool = true;
-
 /// A direct-mapped cache of results keyed by two numbers, not both 0. It belongs to one checker and
 /// sits in front of a slower lookup. A new entry overwrites whatever occupied its slot.
 #[derive(Default)]
@@ -342,7 +334,7 @@ impl<'p, 's> Checker<'p, 's> {
             smallvec::SmallVec::with_capacity(mapping.len());
         let mut changed = false;
         for &(param, value) in mapping.iter() {
-            let new = if MAPS_WHAT_THE_FIRST_MAPPER_LEAVES_WITHOUT_INSTANTIATING && value == param {
+            let new = if value == param {
                 self.types().map(second, param).unwrap_or(param)
             } else {
                 self.instantiate(value, second)
@@ -494,16 +486,8 @@ impl<'p, 's> Checker<'p, 's> {
         if self.flags(t) & (tf::PRIMITIVE | tf::ANY | tf::UNKNOWN | tf::NEVER) != 0 {
             return t;
         }
-        if !links::KEEPS_INSTANTIATIONS_WITH_FIXED_MAPPERS {
-            self.links.note_left_open();
-            return self.derive_instantiation_of_type_parameters(t, map).0;
-        }
+
         if let Some(kept) = self.kept_with_fixed_mapper(fixed, t) {
-            if links::CHECKS_INSTANTIATIONS_WITH_FIXED_MAPPERS {
-                self.check_kept_part(t, &format!("{fixed:?}"), kept, |c| {
-                    c.derive_instantiation_of_type_parameters(t, map).0
-                });
-            }
             return kept;
         }
         let forgotten = self.links.times_forgotten();

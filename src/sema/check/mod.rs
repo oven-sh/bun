@@ -163,7 +163,7 @@ macro_rules! buffered_fields {
             resolved_type_arguments instantiations key_properties composed outer_type_params declared_type_params
             identity_mappers identity_mappers_with_adopted base_types context_checked relations variances
             awaited_types mapped_prop_types reverse_mapped_cache optional_properties intersected_props
-            union_properties union_objects intersection_objects listed_properties keys_of_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
+            union_properties union_objects intersection_objects keys_of_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
             equivalent_base_types type_param_constraints enum_values type_param_defaults
             circular_type_param_defaults conditionals
             mapped_param_constraints
@@ -212,9 +212,6 @@ pub struct Program<'s> {
     /// barrier (`Program::validate`) or at a commit, read on a cache miss in `variances_worker`. Any thread adds to this
     /// map and the next one, so they are on the regular heap: `release`.
     serial_variances: Guarded<FxHashMap<Sym, &'s [u8]>>,
-    /// `Finished::listings` of the valid tasks so far: the first in serial order for each
-    /// intersection. Written and read at a barrier (`Program::validate`) or at a commit.
-    serial_listings: Guarded<FxHashMap<Sym, (bool, bool)>>,
     /// See `commit`.
     commits: commit::Commits<'s>,
     /// `Checker::referenced_properties` of all tasks. The task that checks the file of a
@@ -454,10 +451,6 @@ pub struct Program<'s> {
     /// An object type with the signatures and the index signatures of an intersection:
     /// `structured_members`.
     intersection_objects: ById<TypeId, TypeId, buffered!(intersection_objects), &'s Session>,
-    /// `resolvedProperties` of an intersection, where `getPropertiesOfUnionOrIntersectionType`
-    /// assigned it while the members of a constituent were still in place: an object type with
-    /// the properties it found. `getPropertyOfType` finds the others by name all the same.
-    listed_properties: ById<TypeId, TypeId, buffered!(listed_properties), &'s Session>,
     /// `get_literal_type_from_properties` without index flags. Instantiations under several
     /// mappers arrive at one object type.
     keys_of_properties: ById<TypeId, TypeId, buffered!(keys_of_properties), &'s Session>,
@@ -579,7 +572,6 @@ impl<'s> Program<'s> {
             session,
             closed_a_cycle: Default::default(),
             serial_variances: Guarded::default(),
-            serial_listings: Guarded::default(),
             commits: commit::Commits::new_in(session.arena()),
             properties_referenced_before: Default::default(),
             emit_helper_errors_of_earlier_files: Default::default(),
@@ -657,7 +649,6 @@ impl<'s> Program<'s> {
             mapped_targets: ById::new_in(session),
             union_objects: ById::new_in(session),
             intersection_objects: ById::new_in(session),
-            listed_properties: ById::new_in(session),
             keys_of_properties: ById::new_in(session),
             inferred_constraints: ById::new_in(session),
             constraints: ById::new_in(session),
@@ -685,7 +676,6 @@ impl<'s> Program<'s> {
         self.types.release();
         self.commits.release();
         *self.serial_variances.get_mut() = FxHashMap::default();
-        *self.serial_listings.get_mut() = FxHashMap::default();
         *self.global_errors.get_mut() = Default::default();
         self.call_diagnostics = ByNodeIndirect::new_in(&no_nodes, session);
         self.diagnostics_of_re_resolved_calls = ByNodeIndirect::new_in(&no_nodes, session);
@@ -937,10 +927,8 @@ impl<'s> Program<'s> {
             has_ambient_context: false,
             suggestions_among_globals: Default::default(),
             checked_leaves: Default::default(),
-            alias_symbols: Default::default(),
             links: Default::default(),
             signature_links: Default::default(),
-            could_contain_type_variables: Default::default(),
             has_compared_without_total_order: std::cell::Cell::new(false),
             symbol_ids: None,
             parsed_again_for_await: None,
@@ -1639,7 +1627,8 @@ pub struct Checker<'p, 's> {
     enum_literal_types: FxHashMap<(Sym, crate::types::EnumValue), TypeId>,
     /// See `shortcuts::task_fact`.
     task_facts: shortcuts::TaskFacts,
-    /// See `shortcuts::COUNTERPARTS_OF_LITERALS`. They are asked for under `&Checker`.
+    /// `LiteralType.freshType` and `regularType`. Once one has been made from the other, each id is cached under the
+    /// other id. Read under `&Checker`.
     counterparts_of_literals: std::cell::RefCell<shortcuts::TypeMap<TypeId>>,
     /// `Relation.size()`, indexed by `relate::Relation`: the entries of `relations` that this task
     /// has stored. Those of the files that a single checker would have checked before are not
@@ -1810,14 +1799,10 @@ pub struct Checker<'p, 's> {
     has_ambient_context: bool,
     suggestions_among_globals: errors::SuggestionsAmongGlobals,
     checked_leaves: errors::CheckedLeaves,
-    /// `t.alias.symbol` by type: see `alias_symbol_of_type`.
-    alias_symbols: std::cell::RefCell<FxHashMap<TypeId, Option<Sym>>>,
     /// The derived parts of conditional and mapped types, and the aliases of types.
     links: links::TypeLinks,
     /// The derived parts of signatures.
     signature_links: signature_links::SignatureLinks<'p>,
-    /// What `could_contain_type_variables_by_table` has found, by type.
-    could_contain_type_variables: std::cell::RefCell<FxHashMap<TypeId, bool>>,
     /// Set by `compare_type_names` where `CompareTypes` is not transitive.
     has_compared_without_total_order: std::cell::Cell<bool>,
     /// `Some`: this checker hands out symbol ids. See check/symbol_ids.rs.
@@ -4031,17 +4016,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `TypeFlagsObject`, except for an evolving array.
     #[inline]
     pub fn is_object_type(&self, ty: TypeId) -> bool {
-        let by_record = || {
-            self.flags(ty) & tf::OBJECT != 0 && !matches!(self.data(ty), TypeData::EvolvingArray(_))
-        };
-        if !shortcuts::KINDS_FROM_FLAGS {
-            return by_record();
-        }
-        let is_object_type = self.types().is_object_type(ty);
-        if shortcuts::SHADOW && is_object_type != by_record() {
-            self.fact_differs("an object type", &[ty]);
-        }
-        is_object_type
+        self.types().is_object_type(ty)
     }
 
     #[inline]
@@ -4127,19 +4102,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `every_type(ty, is_unit)`
     pub(crate) fn is_every_type_unit(&self, ty: TypeId) -> bool {
-        if !shortcuts::MEMBER_FLAGS {
-            return self.every_type(ty, |c, member| c.is_unit(member));
-        }
         // A member of an enum has `ENUM_LITERAL` beside the flag of its value. An intersection isn't a unit type, whatever
         // it consists of.
         let others = self.types().member_flags(ty) & !(tf::UNIT | tf::ENUM_LITERAL);
-        let is_every_type_unit = others == 0 && !self.may_be_reduced(ty);
-        if shortcuts::SHADOW
-            && is_every_type_unit != self.every_type(ty, |c, member| c.is_unit(member))
-        {
-            self.fact_differs("every member is a unit type", &[ty]);
-        }
-        is_every_type_unit
+
+        others == 0 && !self.may_be_reduced(ty)
     }
 
     pub fn some_type(&self, ty: TypeId, f: impl Fn(&Self, TypeId) -> bool) -> bool {
@@ -4184,20 +4151,13 @@ impl<'p, 's> Checker<'p, 's> {
         if !fresh && self.is_without_fresh_literal(ty) {
             return ty;
         }
-        if !shortcuts::COUNTERPARTS_OF_LITERALS {
-            return self.intern_with_freshness(ty, fresh);
-        }
+
         if let Some(counterpart) = self.counterparts_of_literals.borrow().get(ty) {
             let kept = match self.types().has_fresh_literal(ty) == fresh {
                 true => ty,
                 false => counterpart,
             };
-            if shortcuts::SHADOW && kept != self.intern_with_freshness(ty, fresh) {
-                self.fact_differs(
-                    "the fresh or the regular type of a literal type",
-                    &[ty, kept],
-                );
-            }
+
             return kept;
         }
         let found = self.intern_with_freshness(ty, fresh);

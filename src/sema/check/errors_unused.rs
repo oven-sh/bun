@@ -1020,7 +1020,7 @@ impl Checker<'_, '_> {
             return;
         }
         // The checkers of a `checkerPool` share nothing.
-        if self.referenced_properties.insert(symbol) && self.task.checker_count == 0 {
+        if self.referenced_properties.insert(symbol) {
             self.p.properties_referenced_before.lock().insert(symbol);
         }
     }

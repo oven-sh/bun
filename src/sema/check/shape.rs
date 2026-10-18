@@ -18,15 +18,6 @@ mod reduction;
 pub use reduction::MEMBER_COUNTS;
 pub(super) use reduction::{MemberCount, Reductions};
 
-/// `is_thisless_for_this_mapper` keeps its answers, by symbol, for the task: it is asked of every member that a class or an
-/// interface inherits, and each time the type of such a member is read. An answer depends on the declarations of the
-/// member and of its owner. It is kept if finding it met no cycle and no limit, and if no `has_this_type` and no binding of
-/// computed names was in progress.
-/// `false`: it is found out each time, as before.
-const KEEPS_THISLESS_MEMBERS: bool = true;
-/// Every answer that is kept is found out as well, and a difference is a panic. For debugging.
-const CHECKS_THISLESS_MEMBERS: bool = false;
-
 /// `thisAssignmentDeclarationKind`, with its location.
 #[derive(Copy, Clone)]
 pub(super) enum ThisAssignmentDeclaration {
@@ -1751,9 +1742,8 @@ impl<'p, 's> Checker<'p, 's> {
                 Some((resolved, MapperId::IDENTITY))
             }
             TypeData::Tuple { flags, .. } => {
-                if instantiate::COUNTS_THE_BASE_TYPE_OF_A_TUPLE {
-                    self.count_instantiation_of_tuple_base_type(flags);
-                }
+                self.count_instantiation_of_tuple_base_type(flags);
+
                 self.tuple_members(ty, ty)
             }
             // Its properties. See `structured_members`.
@@ -3506,10 +3496,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[cold]
     fn base_types_in_progress(&mut self, sym: Sym) -> List<'p, TypeId> {
         // A checker of `checkerPool` has visited those of the earlier files that are its own.
-        let own = self
-            .task
-            .file
-            .filter(|_| self.found_cycle && self.task.checker_count == 0);
+        let own = self.task.file.filter(|_| self.found_cycle);
         let from = self.resolution_start.min(self.stack.len());
         let head = self.stack[from..]
             .iter()
@@ -3566,8 +3553,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// of the task. It requests the base types of every one that it visits, so with one checker
     /// those of `sym` are resolved by now.
     pub(super) fn are_base_types_resolved_by_check(&self, sym: Sym) -> bool {
-        let own = self.task.file.filter(|_| self.task.checker_count == 0);
-        own.is_some_and(|own| {
+        self.task.file.is_some_and(|own| {
             let before = self.files().rank_of_file(own);
             self.first_declaration_checked_before(sym, before).is_some()
         })
@@ -5676,14 +5662,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// whose sources are the type parameters of the class or interface, the outer ones too, and
     /// its `this` type. Without a `this` type there is no mapper (`resolveClassOrInterfaceMembers`).
     pub(super) fn is_thisless_for_this_mapper(&mut self, sym: Sym) -> bool {
-        if !KEEPS_THISLESS_MEMBERS {
-            return self.find_out_whether_thisless_for_this_mapper(sym);
-        }
         if let Some(&kept) = self.thisless_members.get(&sym) {
-            if CHECKS_THISLESS_MEMBERS {
-                let found = self.find_out_whether_thisless_for_this_mapper(sym);
-                assert_eq!(kept, found, "whether {sym:?} is thisless");
-            }
             return kept;
         }
         let scope = self.begin_scope();
@@ -5950,10 +5929,7 @@ impl<'p, 's> Checker<'p, 's> {
                 assignment_declaration(declaration)
                     .is_none_or(|(of, e)| !matches!(self.hir(of)[e].kind, ExprKind::Call(_)))
             });
-            if !is_asked_by_check
-                && self.task.checker_count == 0
-                && !self.is_emitting
-                && !self.is_reported_in_time_on_request(file)
+            if !is_asked_by_check && !self.is_emitting && !self.is_reported_in_time_on_request(file)
             {
                 // One checker has collected the diagnostics of `file` by now. Nothing is stored, so
                 // the task of a file that asks in time evaluates this, and reports.
@@ -7364,13 +7340,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// and nothing substitutes for it.
     #[inline]
     pub(super) fn is_type_only_member(&self, ty: TypeId, name: Atom) -> bool {
-        if shortcuts::KINDS_FROM_FLAGS && !self.types().is_module_object(ty) {
-            if shortcuts::SHADOW
-                && matches!(self.data(ty), TypeData::Anon { origin, .. }
-                    if matches!(origin, Origin::Module(_) | Origin::Namespace { .. }))
-            {
-                self.fact_differs("the type of a module", &[ty]);
-            }
+        if !self.types().is_module_object(ty) {
             return false;
         }
         matches!(*self.data(ty), TypeData::Anon { origin: Origin::Module(module) | Origin::Namespace { module, .. }, .. } if self.files().is_type_only_star_export(module, name))
@@ -8159,10 +8129,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub(super) fn is_const_enum_object(&self, ty: TypeId) -> bool {
         // Every expression is asked. Most have a type that is not an object type, which a column says.
-        if shortcuts::CONST_ENUM_OBJECTS && !self.types().is_plain_object(ty) {
-            if shortcuts::SHADOW && self.is_const_enum_object_by_record(ty) {
-                self.fact_differs("the object type of a const enum", &[ty]);
-            }
+        if !self.types().is_plain_object(ty) {
             return false;
         }
         self.is_const_enum_object_by_record(ty)

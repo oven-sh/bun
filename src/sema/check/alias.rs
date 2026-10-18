@@ -124,18 +124,9 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some((alias, type_arguments)) = self.stored_alias(ty) {
             return Some((*alias, SmallVec::from_slice(type_arguments)));
         }
-        if !links::KEEPS_ALIASES {
-            return self.derive_alias_of_node_type(ty);
-        }
+
         let alias = self.alias_symbol_of_type(ty)?;
         if let Some(kept) = self.links.alias_type_arguments(ty) {
-            if links::CHECKS_ALIASES {
-                let derived = self.derive_alias_of_node_type(ty);
-                if derived.as_ref() != Some(&(alias, kept.clone())) {
-                    let (kept, derived) = (format!("{kept:?}"), format!("derived {derived:?}"));
-                    self.kept_part_differs(ty, "alias.typeArguments", &kept, &derived);
-                }
-            }
             return Some((alias, kept));
         }
         let (_, type_arguments) = self.derive_alias_of_node_type(ty)?;
@@ -154,19 +145,8 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn alias_symbol_of_type(&self, ty: TypeId) -> Option<Sym> {
         // FOR SPEED: tsgo reads a field of the type. `CompareTypes` asks for both types of every
         // comparison, and for the members of intersections.
-        if !links::KEEPS_ALIASES {
-            if let Some(&known) = self.alias_symbols.borrow().get(&ty) {
-                return known;
-            }
-            let alias = self.derive_alias_symbol_of_type(ty);
-            self.alias_symbols.borrow_mut().insert(ty, alias);
-            return alias;
-        }
+
         if let Some(kept) = self.links.alias_symbol(ty) {
-            if links::CHECKS_ALIASES && self.derive_alias_symbol_of_type(ty) != kept {
-                let derived = format!("derived {:?}", self.derive_alias_symbol_of_type(ty));
-                self.kept_part_differs(ty, "alias.symbol", &format!("{kept:?}"), &derived);
-            }
             return kept;
         }
         let alias = self.derive_alias_symbol_of_type(ty);
@@ -389,7 +369,7 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeData::Tuple { .. } => self.stored_alias(ty).is_none(),
                 _ => false,
             };
-        if !instantiate::COUNTS_INSTANTIATIONS_WITH_AN_ALIAS || !is_instantiated_here {
+        if !is_instantiated_here {
             return self.instantiate_with_alias_worker(ty, mapper, alias);
         }
         self.in_instantiation(mapper, |c| {

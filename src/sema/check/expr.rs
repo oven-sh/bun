@@ -1152,7 +1152,6 @@ impl<'p, 's> Checker<'p, 's> {
             // were requested. Nothing is stored, so the task of `file` evaluates it, and reports.
             if let TypeData::Ref { target, .. } = *self.data(apparent)
                 && let Some(height) = self.stack.iter().position(|&q| q == Query::Bases(target))
-                && self.task.checker_count == 0
                 && !self.is_emitting
                 && !self.is_reported_in_time_under_resolution(height, file)
             {
@@ -1966,24 +1965,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// member does. The flags of the union itself, such as `boolean`, don't count.
     #[inline]
     pub(super) fn maybe_type_of_kind(&self, ty: TypeId, kind: u32) -> bool {
-        if !shortcuts::MEMBER_FLAGS {
-            return self.has_member_of_kind(ty, kind);
-        }
-        let maybe = self.types().member_flags(ty) & kind != 0;
-        if shortcuts::SHADOW && maybe != self.has_member_of_kind(ty, kind) {
-            self.fact_differs("maybeTypeOfKind", &[ty]);
-        }
-        maybe
-    }
-
-    /// `maybe_type_of_kind`, computed by walking the members.
-    fn has_member_of_kind(&self, ty: TypeId, kind: u32) -> bool {
-        match self.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => {
-                parts.iter().any(|&p| self.has_member_of_kind(p, kind))
-            }
-            _ => self.flags(ty) & kind != 0,
-        }
+        self.types().member_flags(ty) & kind != 0
     }
 
     /// `maybeTypeOfKindConsideringBaseConstraint`

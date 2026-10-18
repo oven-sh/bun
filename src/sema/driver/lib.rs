@@ -4430,7 +4430,7 @@ fn check_named_files(
                 rechecks if rechecks != 0 && !is_last_round => AGAIN + rechecks,
                 _ => round,
             };
-            checker.begin_task(round as u32, first as u32, true);
+            checker.begin_task(round as u32, first as u32);
             checker.see_commits(request.plan_options.commit_policy, is_last_round);
             // Of the files that are checked and that no commit has followed.
             let (mut checked, mut incomplete) = (Vec::new(), Vec::new());

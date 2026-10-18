@@ -21,12 +21,6 @@ pub(super) type Parts = SmallVec<[TypeId; 8]>;
 /// one is matched.
 type Unmatched<'a> = std::borrow::Cow<'a, [TypeId]>;
 
-/// `isTypeCloselyMatchedBy` compares `t.symbol` and `t.alias.symbol`, which are looked up once for each member of the two
-/// lists. Off: for each pair of members.
-const CLOSE_MATCHES_BY_SYMBOL: bool = true;
-/// Every pair is asked the long way too, and another answer is a panic that names the types and the file. For debugging.
-const CHECKS_CLOSE_MATCHES: bool = false;
-
 /// From this many pairs on, `Inference::visited` is searched through `Inference::visited_index`.
 const VISITED_INDEX_FROM: usize = 16;
 
@@ -302,9 +296,6 @@ impl<'p, 's> Checker<'p, 's> {
                 .all(|c| c.fixed.is_some() || c.priority < priority)
         {
             return;
-        }
-        if !memo::ENABLED {
-            return self.infer_types(n, source, target);
         }
         self.inference_memo.count(memo::Count::Walks);
         if self.inference_memo.has_long_walk_to(target) {
@@ -773,10 +764,6 @@ impl<'p, 's> Checker<'p, 's> {
         sources: &mut Unmatched<'_>,
         targets: &mut Unmatched<'_>,
     ) {
-        if !CLOSE_MATCHES_BY_SYMBOL {
-            let matches = Self::is_type_closely_matched_by;
-            return self.infer_from_matching(n, sources, targets, matches);
-        }
         // `t.symbol` of an object type, and `t.alias.symbol`. Both are read from the type and from what the binder made.
         let symbols_of = |c: &Self, ty: TypeId| {
             let symbol = c.is_object_type(ty).then(|| c.symbol_of_type(ty));
@@ -786,7 +773,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut matched = Matched::default();
         for (j, &t) in targets.iter().enumerate() {
             let (symbol, alias) = symbols_of(self, t);
-            if symbol.is_none() && alias.is_none() && !CHECKS_CLOSE_MATCHES {
+            if symbol.is_none() && alias.is_none() {
                 continue;
             }
             if of_sources.is_empty() {
@@ -797,12 +784,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // `same_alias` returns `None` unless `alias_symbol_of_type` is `Some` for both types and the same, and up
                 // to that test it calls only what takes `&self`. So where the test fails the call can be left out.
                 let may_have_alias = alias.is_some() && of_sources[i].1 == alias;
-                if CHECKS_CLOSE_MATCHES
-                    && (has_symbol || !may_have_alias)
-                    && self.is_type_closely_matched_by(s, t) != has_symbol
-                {
-                    self.fact_differs_for("isTypeCloselyMatchedBy", &[s, t]);
-                }
+
                 if has_symbol
                     || may_have_alias
                         && (self.same_alias(s, t))
@@ -1669,18 +1651,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_identical(s, t)
             || self.flags(t) & tf::STRING != 0 && self.flags(s) & tf::STRING_LITERAL != 0
             || self.flags(t) & tf::NUMBER != 0 && self.flags(s) & tf::NUMBER_LITERAL != 0
-    }
-
-    /// `isTypeCloselyMatchedBy`
-    fn is_type_closely_matched_by(&mut self, s: TypeId, t: TypeId) -> bool {
-        self.is_object_type(s)
-            && self.is_object_type(t)
-            && self
-                .symbol_of_type(s)
-                .is_some_and(|symbol| self.symbol_of_type(t) == Some(symbol))
-            || self
-                .same_alias(s, t)
-                .is_some_and(|(.., has_type_arguments)| has_type_arguments)
     }
 
     /// `inferFromProperties`
@@ -3065,31 +3035,15 @@ impl<'p, 's> Checker<'p, 's> {
         if flags & (tf::OBJECT | tf::UNION_OR_INTERSECTION) == 0 {
             return false;
         }
-        if !shortcuts::COULD_CONTAIN_TYPE_VARIABLES {
-            return self.could_contain_type_variables_by_table(ty);
-        }
+
         // `ObjectFlagsCouldContainTypeVariablesComputed`. Types share their parts: without it a part is visited once for each
         // path to it, 2^n times in `type P1 = Pair<P0, P0>` .. `type Pn = Pair<Pn-1, Pn-1>`.
         if let Some(known) = self.types().could_contain_type_variables(ty) {
-            if shortcuts::SHADOW && self.could_contain_type_variables_by_table(ty) != known {
-                self.fact_differs("couldContainTypeVariables", &[ty]);
-            }
             return known;
         }
         // The worker reads the type, its mapper, its alias, and the flags and the declarations of symbols.
         let could_contain = self.could_contain_type_variables_worker(ty);
         (self.types()).set_could_contain_type_variables(ty, could_contain);
-        could_contain
-    }
-
-    /// The same for an object type, a union or an intersection without type variables, with the answers in a table of the
-    /// task.
-    fn could_contain_type_variables_by_table(&self, ty: TypeId) -> bool {
-        if let Some(&known) = self.could_contain_type_variables.borrow().get(&ty) {
-            return known;
-        }
-        let could_contain = self.could_contain_type_variables_worker(ty);
-        (self.could_contain_type_variables.borrow_mut()).insert(ty, could_contain);
         could_contain
     }
 

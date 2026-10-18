@@ -63,8 +63,8 @@ impl<'s> Checker<'_, 's> {
     /// `is_read_later`: whether anything will read what this task publishes. If not, only its
     /// diagnostics go to the barrier.
     /// A checker for which this is not called is outside the plan: its writes are dropped with it.
-    pub fn begin_task(&mut self, step: u32, index: u32, is_read_later: bool) {
-        self.task.begin(step, index, is_read_later);
+    pub fn begin_task(&mut self, step: u32, index: u32) {
+        self.task.begin(step, index);
         if self.p.types.shares_records() {
             self.task.own.set_sharing(Sharing::Publishes);
         }

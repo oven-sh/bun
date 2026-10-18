@@ -11,7 +11,7 @@ use super::explain_relation::{
 use super::infer::{Inference, PRIORITY_ALWAYS_STRICT, PRIORITY_NO_CONSTRAINTS};
 use super::links::MappedPart;
 use super::related::Place;
-use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch, Resolved};
+use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::shortcuts::task_fact;
 use super::*;
 use crate::util::SharedSort;
@@ -19,7 +19,6 @@ use crate::util::{FxHashSet, FxHasher};
 use smallvec::SmallVec;
 use std::hash::Hasher;
 use std::ops::{BitAnd, BitAndAssign};
-use std::sync::atomic::AtomicU32;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Relation {
@@ -293,11 +292,8 @@ impl Relater {
         if self.maybe_keys_set.is_empty() {
             return self.maybe_keys.contains(&key);
         }
-        let has_key = self.maybe_keys_set.contains(&key);
-        if shortcuts::SHADOW {
-            assert_eq!(has_key, self.maybe_keys.contains(&key), "maybeKeysSet");
-        }
-        has_key
+
+        self.maybe_keys_set.contains(&key)
     }
 
     #[inline]
@@ -1088,14 +1084,7 @@ impl<'p, 's> Checker<'p, 's> {
         if source == target {
             return true;
         }
-        if shortcuts::DISTINCT_LITERALS && are_literals_of_one_kind(sd, td) {
-            if shortcuts::SHADOW
-                && relation != Relation::Identity
-                && (self.is_simple_type_related_to(target, td, source, sd, relation, None)
-                    || self.is_simple_type_related_to(source, sd, target, td, relation, None))
-            {
-                self.fact_differs_for("two literal types are unrelated", &[source, target]);
-            }
+        if are_literals_of_one_kind(sd, td) {
             return false;
         }
         if relation != Relation::Identity {
@@ -1504,12 +1493,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if let TypeData::Intersection(parts) = self.data(t) {
             // `Partial<T>[K] & {}` is `T[K] & {}`.
-            let skips = shortcuts::NORMALIZED_INTERSECTIONS
-                && !self.maybe_type_of_kind(t, tf::INSTANTIABLE);
-            if skips && !shortcuts::SHADOW {
+            if !self.maybe_type_of_kind(t, tf::INSTANTIABLE) {
                 return t;
             }
-            let before = skips.then(|| self.traces());
             // `shouldNormalizeIntersection`
             let (mut has_instantiable, mut has_nullable_or_empty) = (false, false);
             let should_normalize = parts.iter().any(|&p| {
@@ -1520,9 +1506,6 @@ impl<'p, 's> Checker<'p, 's> {
                     || self.is_empty_anonymous_object_type(p);
                 has_instantiable && has_nullable_or_empty
             });
-            if before.is_some_and(|before| before != self.traces()) {
-                self.fact_differs_for("shouldNormalizeIntersection resolves nothing", &[t]);
-            }
             if should_normalize {
                 let normalized: Vec<TypeId> =
                     parts.iter().map(|&p| self.normalized(p, writing)).collect();
@@ -1928,15 +1911,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `checkType`, `extendsType`, `resolvedTrueType` or `resolvedFalseType` of the conditional type `t`.
     pub(super) fn cond_piece(&mut self, t: TypeId, which: usize) -> TypeId {
-        if !links::KEEPS_CONDITIONAL_PARTS {
-            self.links.note_left_open();
-            return self.derive_cond_piece(t, which);
-        }
         if let Some(kept) = self.kept_part(t, links::Kind::Conditional, which) {
-            if links::CHECKS_CONDITIONAL_PARTS {
-                let name = links::CONDITIONAL_PARTS[which];
-                self.check_kept_part(t, name, kept, |c| c.derive_cond_piece(t, which));
-            }
             return kept;
         }
         self.derive_and_keep_cond_piece(t, which)
@@ -1978,14 +1953,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `root.inferTypeParameters`
     pub(super) fn cond_infer_params(&mut self, t: TypeId) -> SmallVec<[TypeId; 4]> {
-        if !links::KEEPS_CONDITIONAL_PARTS {
-            return self.derive_cond_infer_params(t);
-        }
         if let Some(kept) = self.links.infer_type_parameters(t) {
-            if links::CHECKS_CONDITIONAL_PARTS && self.derive_cond_infer_params(t) != kept {
-                let derived = format!("derived {:?}", self.derive_cond_infer_params(t));
-                self.kept_part_differs(t, "inferTypeParameters", &format!("{kept:?}"), &derived);
-            }
             return kept;
         }
         let params = self.derive_cond_infer_params(t);
@@ -2052,9 +2020,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getDefaultConstraintOfConditionalType`
     pub(super) fn default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
-        if !links::KEEPS_CONDITIONAL_PARTS {
-            return self.derive_default_constraint_of_conditional(t);
-        }
         // The flag: `t` has `infer` type parameters. Then the derivation that is left out makes an inference, which gives
         // the same where nothing in progress can change it.
         let cell = (links::Kind::Conditional, links::DEFAULT_CONSTRAINT);
@@ -2062,11 +2027,6 @@ impl<'p, 's> Checker<'p, 's> {
             && (!infers
                 || self.has_stack_for_kept_part() && self.obstacle_to_leaving_out().is_none())
         {
-            if links::CHECKS_CONDITIONAL_PARTS {
-                self.check_kept_part(t, "resolvedDefaultConstraint", kept, |c| {
-                    c.derive_default_constraint_of_conditional(t)
-                });
-            }
             return kept;
         }
         self.derive_and_keep_default_constraint_of_conditional(t)
@@ -2182,21 +2142,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The part of the mapped type `t`, if it is kept and may be read now. `derive`: the long way.
-    #[inline]
-    fn kept_mapped_part<V: links::Described + crate::table::Packed<Cell = AtomicU32>>(
-        &mut self,
-        t: TypeId,
-        part: MappedPart,
-        derive: fn(&mut Self, TypeId) -> V,
-    ) -> Option<V> {
-        let kept = self.kept_part(t, links::Kind::Mapped, part as usize)?;
-        if links::CHECKS_MAPPED_PARTS {
-            self.check_kept_part(t, &format!("{part:?}"), kept, |c| derive(c, t));
-        }
-        Some(kept)
-    }
-
     /// Whether `mapped_mapper(t)` is kept and `is_mapper_idle`.
     fn is_mapped_mapper_idle(&self, t: TypeId) -> bool {
         self.kept_part::<MapperId>(t, links::Kind::Mapped, MappedPart::Mapper as usize)
@@ -2206,12 +2151,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getTemplateTypeFromMappedType`: with the missing type added when the mapped type makes
     /// properties optional.
     pub(super) fn mapped_template(&mut self, t: TypeId) -> TypeId {
-        if !links::KEEPS_MAPPED_PARTS {
-            self.links.note_left_open();
-            return self.derive_mapped_template(t);
-        }
         let part = MappedPart::TemplateType;
-        if let Some(kept) = self.kept_mapped_part(t, part, Self::derive_mapped_template) {
+        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
             return kept;
         }
         let Some((file, node, _)) = self.mapped_origin(t) else {
@@ -2246,11 +2187,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getTypeParameterFromMappedType`. An instantiated mapped type has a fresh type parameter,
     /// which ranges over the instantiated keys (`instantiateAnonymousType`).
     pub(super) fn mapped_type_param(&mut self, t: TypeId) -> TypeId {
-        if !links::KEEPS_MAPPED_PARTS {
-            return self.derive_mapped_type_param(t);
-        }
         let part = MappedPart::TypeParameter;
-        if let Some(kept) = self.kept_mapped_part(t, part, Self::derive_mapped_type_param) {
+        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
             return kept;
         }
         let param = self.derive_mapped_type_param(t);
@@ -2271,11 +2209,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `MappedType.mapper`: maps the outer type parameters of the mapped type `t`, and the declared
     /// type parameter to the one of `t`.
     fn mapped_mapper(&mut self, t: TypeId) -> MapperId {
-        if !links::KEEPS_MAPPED_PARTS {
-            return self.derive_mapped_mapper(t);
-        }
         let part = MappedPart::Mapper;
-        if let Some(kept) = self.kept_mapped_part(t, part, Self::derive_mapped_mapper) {
+        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
             return kept;
         }
         let mapper = self.derive_mapped_mapper(t);
@@ -2305,15 +2240,14 @@ impl<'p, 's> Checker<'p, 's> {
         // `mapped_constraint` answers with the error type for a key that is in progress, and from then on. A cycle can
         // still be found after the part is kept, where `instantiate` reads no older result. It is an error, and rare:
         // from the first one that the task finds, nothing is kept or read.
-        if !links::KEEPS_MAPPED_PARTS
-            || !self.mapped_constraints_in_progress.is_empty()
+        if !self.mapped_constraints_in_progress.is_empty()
             || self.links.has_found_circular_mapped_constraint()
         {
             self.links.note_left_open();
             return self.derive_mapped_keys(t);
         }
         let part = MappedPart::ConstraintType;
-        if let Some(kept) = self.kept_mapped_part(t, part, Self::derive_mapped_keys) {
+        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
             return kept;
         }
         let Some((_, _, mapper)) = self.mapped_origin(t) else {
@@ -2336,12 +2270,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getNameTypeFromMappedType`
     pub(super) fn mapped_name_type(&mut self, t: TypeId) -> Option<TypeId> {
-        if !links::KEEPS_MAPPED_PARTS {
-            self.links.note_left_open();
-            return self.derive_mapped_name_type(t);
-        }
         let part = MappedPart::NameType;
-        if let Some(kept) = self.kept_mapped_part(t, part, Self::derive_mapped_name_type) {
+        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
             return kept;
         }
         let (file, node, _) = self.mapped_origin(t)?;
@@ -2376,12 +2306,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getModifiersTypeFromMappedType`. `None`: `unknown`.
     pub(super) fn mapped_modifiers_type(&mut self, t: TypeId) -> Option<TypeId> {
-        if !links::KEEPS_MAPPED_PARTS {
-            self.links.note_left_open();
-            return self.derive_mapped_modifiers_type(t);
-        }
         let part = MappedPart::ModifiersType;
-        if let Some(kept) = self.kept_mapped_part(t, part, Self::derive_mapped_modifiers_type) {
+        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
             return kept;
         }
         let (file, node, mapper) = self.mapped_origin(t)?;
@@ -2401,17 +2327,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getApparentTypeOfMappedType`
     pub(super) fn apparent_type_of_mapped(&mut self, t: TypeId) -> TypeId {
         // It begins with the constraint type of the mapped type as it is declared: as in `mapped_keys`.
-        if !links::KEEPS_MAPPED_PARTS
-            || !self.mapped_constraints_in_progress.is_empty()
+        if !self.mapped_constraints_in_progress.is_empty()
             || self.links.has_found_circular_mapped_constraint()
         {
             self.links.note_left_open();
             return self.derive_apparent_type_of_mapped(t).0;
         }
         let part = MappedPart::ApparentType;
-        if let Some(kept) =
-            self.kept_mapped_part(t, part, |c, t| c.derive_apparent_type_of_mapped(t).0)
-        {
+        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
             return kept;
         }
         let Some((file, node, mapper)) = self.mapped_origin(t) else {
@@ -2637,13 +2560,9 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
-        // Each checker of `checkerPool` has its own `markerTypes`.
-        let (files, checker_count) = (self.files(), self.task.checker_count);
-        let checker_of = |f: FileId| files.rank_of_file(f).checked_rem(checker_count);
         let now = self.place_in_deferred_nodes(current_file, current);
         lists.iter().any(|&(file, params)| {
             self.reports_semantic_errors(file)
-                && checker_of(file) == checker_of(current_file)
                 && params.iter().any(|tp| {
                     self.hir(file)[tp].name == name && self.place_in_deferred_nodes(file, tp) <= now
                 })
@@ -3265,19 +3184,15 @@ impl<'p, 's> Checker<'p, 's> {
                 td = self.data(target);
             }
         }
-        let are_distinct_literals =
-            shortcuts::DISTINCT_LITERALS && are_literals_of_one_kind(sd, td);
+        let are_distinct_literals = are_literals_of_one_kind(sd, td);
         let error_reporter = REPORT.then_some(&mut *r);
         if !(is_from_related && source == original_source && target == original_target)
-            && (!are_distinct_literals || shortcuts::SHADOW)
+            && !are_distinct_literals
             && (relation == Relation::Comparable
                 && !target.is_never()
                 && self.is_simple_type_related_to(target, td, source, sd, relation, None)
                 || self.is_simple_type_related_to(source, sd, target, td, relation, error_reporter))
         {
-            if are_distinct_literals {
-                self.fact_differs_for("two literal types are unrelated", &[source, target]);
-            }
             return Ternary::TRUE;
         }
         let source_is_structured_or_instantiable = is_structured_or_instantiable_kind(sd);
@@ -3659,16 +3574,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isWeakType`: properties, all of them optional, and nothing else.
     pub(super) fn is_weak_type(&mut self, t: TypeId) -> bool {
         match self.data(t) {
-            data if is_object_kind(data) => self.members(t).is_some_and(|m| {
-                let is_weak_shape = || Resolved::is_weak_shape(m.whole_shape());
-                if !shortcuts::WEAK_TYPES {
-                    return is_weak_shape();
-                }
-                if shortcuts::SHADOW && m.resolved.is_weak() != is_weak_shape() {
-                    self.fact_differs("isWeakType", &[t]);
-                }
-                m.resolved.is_weak()
-            }),
+            data if is_object_kind(data) => self.members(t).is_some_and(|m| m.resolved.is_weak()),
             TypeData::Substitution { base, .. } => self.is_weak_type(*base),
             TypeData::Intersection(parts) => parts.iter().all(|&p| self.is_weak_type(p)),
             _ => false,
@@ -3999,7 +3905,7 @@ impl<'p, 's> Checker<'p, 's> {
             };
             if r.relation != Relation::Comparable
                 && is_such_a_literal
-                && self.is_union_of_primitives(target, types)
+                && self.is_union_of_primitives(target)
             {
                 let alternate = self.with_freshness(source, !is_fresh_literal_kind(sd));
                 let primitive = match sd {
@@ -4043,18 +3949,10 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether each of `types`, the members of `union`, is primitive.
-    fn is_union_of_primitives(&self, union: TypeId, types: &[TypeId]) -> bool {
-        let is_each_primitive = || types.iter().all(|&t| is_primitive_kind(self.data(t)));
-        if !shortcuts::MEMBER_FLAGS {
-            return is_each_primitive();
-        }
+    fn is_union_of_primitives(&self, union: TypeId) -> bool {
         // An intersection is not primitive, whatever it consists of.
-        let is_union_of_primitives =
-            self.types().member_flags(union) & !tf::PRIMITIVE == 0 && !self.may_be_reduced(union);
-        if shortcuts::SHADOW && is_union_of_primitives != is_each_primitive() {
-            self.fact_differs("a union of primitives", &[union]);
-        }
-        is_union_of_primitives
+
+        self.types().member_flags(union) & !tf::PRIMITIVE == 0 && !self.may_be_reduced(union)
     }
 
     /// `typeRelatedToEachType`
@@ -4105,13 +4003,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn has_generic_arguments(&self, t: TypeId) -> bool {
-        if !shortcuts::GENERIC_ARGUMENTS {
-            return self.has_generic_arguments_worker(t);
-        }
         if let Some(known) = self.types().has_generic_arguments(t) {
-            if shortcuts::SHADOW && known != self.has_generic_arguments_worker(t) {
-                self.fact_differs("isTypeReferenceWithGenericArguments", &[t]);
-            }
             return known;
         }
         // The worker reads the type and its type arguments.

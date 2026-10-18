@@ -197,9 +197,7 @@ impl Checker<'_, '_> {
             self.checked_leaves.is_any = true;
         }
         self.checked_leaves.files.insert(file.idx());
-        if shortcuts::FORGETS_LEAVES_TOGETHER
-            && self.entries_by_node() < 2 * self.checked_leaves.entries_kept + 1024
-        {
+        if self.entries_by_node() < 2 * self.checked_leaves.entries_kept + 1024 {
             return;
         }
         let leaves = std::mem::take(&mut self.checked_leaves.files);

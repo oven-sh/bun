@@ -6,7 +6,7 @@ use super::errors::Container;
 use super::expr::TargetKind;
 use super::related::Place;
 use super::shape::UntypedProperty;
-use super::unions::{CHECKS_JOINS_BY_POSITION, JOINS_PARTS_OF_INITIAL_TYPE, PartsOf};
+use super::unions::PartsOf;
 use super::*;
 use crate::bind::{
     Decl, Flow, FlowId, FlowTarget, FnOwner, MAX_FLOW_DEPTH, MemberOwner, Parent, PatParent,
@@ -146,10 +146,6 @@ impl PartialEq for Reference {
 }
 
 impl Eq for Reference {}
-
-/// Set to `false` to walk even if `is_never_narrowed` returns true. `flow_type_of` still calls it,
-/// because it fills the `FlowMemo` fields that the walks read.
-const LEAVES_OUT_WALKS_THAT_NARROW_NOTHING: bool = true;
 
 /// Memo tables of flow analysis that are not keyed by a node alone. They belong to the checker, so
 /// they are dropped at the end of the task. Those keyed by a node are fields of `Program`. They are
@@ -621,11 +617,6 @@ impl About {
 /// See `first_unsettled_call`.
 const NEVER_RETURNS: u32 = u32::MAX - 1;
 
-/// See `Checker::kept_type_with_facts`. Set to `false` to compute every answer.
-const KEEPS_TYPES_WITH_FACTS: bool = true;
-/// For debugging. Recomputes the answer on every cache hit. Panics with the file, the types and
-/// both `Traces` if the answer differs or the recomputation changes `Traces`.
-const CHECKS_TYPES_WITH_FACTS: bool = false;
 /// Key bit for `getAdjustedTypeWithFacts`. No constant in `facts` uses it.
 const ADJUSTED: u32 = 1 << 31;
 /// Sentinel in `FlowMemo::types_with_facts`. The answer can't be cached, so later calls compute it
@@ -1133,24 +1124,14 @@ impl<'p, 's> Checker<'p, 's> {
         key: u32,
         compute: impl Fn(&mut Self) -> TypeId,
     ) -> TypeId {
-        if !KEEPS_TYPES_WITH_FACTS || !self.is_at_rest_for_type_facts() {
+        if !self.is_at_rest_for_type_facts() {
             return compute(self);
         }
         if let Some(known) = self.flow_memo.types_with_facts.get(ty.0, key) {
             if known == COUNTS_EACH_TIME {
                 return compute(self);
             }
-            if CHECKS_TYPES_WITH_FACTS {
-                let before = self.traces();
-                let again = compute(self);
-                let after = self.traces();
-                if again.0 != known || after != before {
-                    let what = format!(
-                        "a kept type with the facts {key:#x}, before it {before:?}, after it {after:?}"
-                    );
-                    self.union_differs(&what, &[ty], &[TypeId(known)], &[again]);
-                }
-            }
+
             return TypeId(known);
         }
         let traces = |c: &Self| (c.traces(), c.times_cut_short.get(), c.taints);
@@ -5762,9 +5743,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.convert_auto_to_any(declared);
         }
         let mut reference = self.reference_of(file, e);
-        if self.is_never_narrowed(&reference, e, declared, start)
-            && LEAVES_OUT_WALKS_THAT_NARROW_NOTHING
-        {
+        if self.is_never_narrowed(&reference, e, declared, start) {
             return declared;
         }
         let is_automatic = self.is_automatic_type(declared);
@@ -6122,8 +6101,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let rank = files.rank_of_file(file);
         // A checker of a `checkerPool` has its own marks, and checks only its own files.
-        let is_ahead = self.task.checker_count == 0
-            && (self.task.file).is_some_and(|visited| files.rank_of_file(visited) > rank);
+        let is_ahead = (self.task.file).is_some_and(|visited| files.rank_of_file(visited) > rank);
         if is_ahead {
             marked.insert(&self.task, (file, Node::NONE), false, Stored::new());
         }
@@ -6456,7 +6434,7 @@ impl<'p, 's> Checker<'p, 's> {
                 || t.is_never()
                 || c.is_union(initial) && c.is_type_subset_of_union(t, initial)
         };
-        if !JOINS_PARTS_OF_INITIAL_TYPE || !self.is_union(initial) {
+        if !self.is_union(initial) {
             return match types.iter().all(|&t| is_subset(self, t)) {
                 true => self.union_or_evolving_with(types, Join::Literal),
                 false => self.union_or_evolving_with(types, Join::Subtype),
@@ -6464,10 +6442,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // FOR SPEED: the subset test against the initial type also finds the members' positions.
         let parts = self.parts_of_union(initial, types);
-        if CHECKS_JOINS_BY_POSITION {
-            let are_parts = types.iter().all(|&t| is_subset(self, t));
-            assert_eq!(are_parts, !matches!(parts, PartsOf::Other), "{types:?}");
-        }
+
         match &parts {
             PartsOf::Other => self.union_or_evolving_with(types, Join::Subtype),
             PartsOf::OutOfOrder => self.union_or_evolving_with(types, Join::Literal),

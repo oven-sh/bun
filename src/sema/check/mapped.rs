@@ -163,22 +163,14 @@ impl<'p, 's> Checker<'p, 's> {
     fn generic_object_flags_and_whether_resolved(&mut self, ty: TypeId) -> (bool, bool, bool) {
         match *self.data(ty) {
             TypeData::Union(ref parts) | TypeData::Intersection(ref parts) => {
-                let known = if shortcuts::MEMBER_FLAGS
-                    && self.types().member_flags(ty) & (tf::INSTANTIABLE | tf::OBJECT) == 0
+                let known = if self.types().member_flags(ty) & (tf::INSTANTIABLE | tf::OBJECT) == 0
                 {
                     // Only object types and instantiable types can be generic.
                     Some((false, false))
-                } else if shortcuts::GENERIC_OBJECT_FLAGS {
-                    self.types().generic_object_flags(ty)
                 } else {
-                    None
+                    self.types().generic_object_flags(ty)
                 };
                 if let Some((object, index)) = known {
-                    if shortcuts::SHADOW
-                        && self.generic_object_flags_of_all(parts) != (object, index, false)
-                    {
-                        self.fact_differs_for("getGenericObjectFlags", &[ty]);
-                    }
                     return (object, index, false);
                 }
                 // `ObjectFlagsIsGenericTypeComputed`
@@ -191,7 +183,7 @@ impl<'p, 's> Checker<'p, 's> {
                     );
                 }
                 let (object, index, is_resolved) = self.generic_object_flags_of_all(parts);
-                if shortcuts::GENERIC_OBJECT_FLAGS && !is_resolved {
+                if !is_resolved {
                     (self.types()).set_generic_object_flags(ty, (object, index));
                 } else {
                     let mut facts = task_fact::KNOWS_GENERIC_OBJECT_FLAGS;

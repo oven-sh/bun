@@ -2190,8 +2190,6 @@ impl<'s, V> Own<'s, V> {
     }
 }
 
-const KIND_SHIFT: u32 = 29;
-
 /// Controls whether a task finds and publishes records while other tasks run
 /// (`TypeStore::shares_records`).
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -2235,11 +2233,6 @@ pub struct OwnStore<'s> {
     mappers: Own<'s, MapperRecord<'s>>,
     sigs: Own<'s, SigData<'s>>,
     types: Own<'s, TypeRecord<'s>>,
-    /// Every record, in creation order: the kind in the bits above the index. The records a record
-    /// references come before it.
-    log: LocalVec<u32>,
-    /// Whether anything will read what the task publishes. If not, there is no `log`.
-    is_read_later: bool,
     /// The files that the task has visited and that nothing imports, indexed by `FileId`. No other
     /// task can reference a node or a symbol of such a file. Empty: nothing is bound.
     unimported_files: Bits,
@@ -2280,8 +2273,6 @@ impl<'s> OwnStore<'s> {
             sigs: Own::new_in(arena, Some(published.sigs.items)),
             types: Own::new_in(arena, Some(published.types.items)),
             summaries,
-            log: LocalVec::new(),
-            is_read_later: true,
             unimported_files: Bits(Vec::new()),
             has_ordered_by_own_id: Cell::new(false),
             has_unresolved_names: Cell::new(false),
@@ -2347,8 +2338,6 @@ impl<'s> OwnStore<'s> {
         self.sigs.clear();
         self.types.clear();
         self.summaries.clear();
-        self.log.clear();
-        self.is_read_later = true;
         self.unimported_files.0.clear();
         self.has_ordered_by_own_id.set(false);
         self.has_unresolved_names.set(false);
@@ -2374,22 +2363,9 @@ impl<'s> OwnStore<'s> {
         self.unimported_files.set(file.0 as usize);
     }
 
-    /// Before anything is created. `false`: `finish` will be given no marks.
-    pub fn set_is_read_later(&mut self, is_read_later: bool) {
-        debug_assert!(self.is_empty());
-        self.is_read_later = is_read_later;
-    }
-
     /// Nothing has been created.
     pub fn is_empty(&self) -> bool {
         self.lengths() == [0; 5]
-    }
-
-    #[inline]
-    fn log(&self, kind: Kind, index: u32) {
-        if self.is_read_later {
-            self.log.push((kind as u32) << KIND_SHIFT | index);
-        }
     }
 
     /// The text of a task-local atom.
@@ -2412,7 +2388,6 @@ impl<'s> OwnStore<'s> {
         }
         let text = List::copy_from_slice_in(text, self.arena);
         let index = self.atoms.records.push(text);
-        self.log(Kind::Atom, index);
         self.atoms.found.add(spread, index | LOCAL);
         Atom(index | LOCAL)
     }
@@ -2435,7 +2410,7 @@ type Of<'s, V> = for<'a> fn(&'a OwnStore<'s>) -> &'a Own<'s, V>;
 /// and only that index is searched.
 #[inline]
 fn intern_record<'s, V: Record, K>(
-    (published, own, kind): (&Interned<'s, V>, &OwnStore<'s>, Kind),
+    (published, own): (&Interned<'s, V>, &OwnStore<'s>),
     of: Of<'s, V>,
     (spread, key): (u64, K),
     is_bound: impl FnOnce(&K) -> bool,
@@ -2455,10 +2430,6 @@ fn intern_record<'s, V: Record, K>(
     }
     let find_published = || published.find(spread, |record| is_it(record, &key));
     let known = if key_is_bound || keeps_all && mentions_own(&key) {
-        assert!(
-            !CHECKS_THE_LOOKUPS_IT_SKIPS || find_published().is_none(),
-            "a published record equals a key that references a task-local record"
-        );
         None
     } else {
         find_published()
@@ -2470,7 +2441,6 @@ fn intern_record<'s, V: Record, K>(
     match make(key, index | LOCAL) {
         (record, Home::Own { is_bound }) => {
             debug_assert_eq!(is_bound, key_is_bound);
-            own.log(kind, index);
             mine.push(record, is_bound);
             match vacancy {
                 Some(vacancy) => mine.found.fill(vacancy, spread, index | LOCAL),
@@ -2486,13 +2456,6 @@ fn intern_record<'s, V: Record, K>(
         }
     }
 }
-
-/// Set to `false` to look up every type or signature the task doesn't have among the published
-/// records, even if its key references a task-local record.
-const SKIPS_LOOKUPS_OF_OWN_KEYS: bool = true;
-
-/// Set to `true` to run the lookups that `intern_record` skips and assert that they find nothing.
-const CHECKS_THE_LOOKUPS_IT_SKIPS: bool = false;
 
 /// A mapper's pairs, sorted (`is_in_order`). At least three quarters of all mappers have three
 /// pairs or fewer.
@@ -3054,12 +3017,6 @@ impl<'p, 's> Types<'p, 's> {
     #[inline]
     fn member_flags_and_more(&self, id: TypeId) -> u32 {
         (self.own.summaries.of_either(id.0).member_flags).load(Ordering::Relaxed)
-    }
-
-    /// Same as `flags`, but computed from the type's record.
-    #[inline]
-    pub fn flags_of_record(&self, id: TypeId) -> u32 {
-        Self::flags_of(&self.record(id).created)
     }
 
     /// `Relaxed` is enough here and in `add_facts`. A fact lives in one byte and is written in one
@@ -3890,15 +3847,14 @@ impl<'p, 's> Types<'p, 's> {
         }
         let spread = spread_hash(&key);
         TypeId(intern_record(
-            (&self.published.types, self.own, Kind::Type),
+            (&self.published.types, self.own),
             |own| &own.types,
             (spread, key),
             |(data, provenance)| {
                 data.is_bound(self.own) || provenance.is_some_and(|it| it.is_bound(self.own))
             },
             |(data, provenance)| {
-                SKIPS_LOOKUPS_OF_OWN_KEYS
-                    && (data.mentions_own() || provenance.is_some_and(|it| it.mentions_own()))
+                data.mentions_own() || provenance.is_some_and(|it| it.mentions_own())
             },
             |record, (data, provenance)| {
                 data.is(&record.created.0)
@@ -3940,11 +3896,11 @@ impl<'p, 's> Types<'p, 's> {
 
     fn intern_new(&self, created: Made<'s>) -> TypeId {
         TypeId(intern_record(
-            (&self.published.types, self.own, Kind::Type),
+            (&self.published.types, self.own),
             |own| &own.types,
             (spread_hash(&created), created),
             |created| created.is_bound(self.own),
-            |created| SKIPS_LOOKUPS_OF_OWN_KEYS && created.mentions_own(),
+            |created| created.mentions_own(),
             |record, created| record.created == *created,
             |created, id| self.new_record_of_task(created, id),
         ))
@@ -4039,11 +3995,11 @@ impl<'p, 's> Types<'p, 's> {
             *sig = *inner;
         }
         SigId(intern_record(
-            (&self.published.sigs, self.own, Kind::Sig),
+            (&self.published.sigs, self.own),
             |own| &own.sigs,
             (spread_hash(&data), data),
             |data| data.is_bound(self.own),
-            |data| SKIPS_LOOKUPS_OF_OWN_KEYS && data.mentions_own(),
+            |data| data.mentions_own(),
             |record, data| record == data,
             |data, _| {
                 let home = self.home_of(Kind::Sig, 0, &data);
@@ -4063,7 +4019,7 @@ impl<'p, 's> Types<'p, 's> {
             return ComponentsId::NONE;
         }
         ComponentsId(intern_record(
-            (&self.published.components, self.own, Kind::Components),
+            (&self.published.components, self.own),
             |own| &own.components,
             (spread_hash(list), list),
             |list| list.is_bound(self.own),
@@ -4106,7 +4062,7 @@ impl<'p, 's> Types<'p, 's> {
 
     fn mapper_in_order(&self, pairs: &[(TypeId, TypeId)]) -> MapperId {
         MapperId(intern_record(
-            (&self.published.mappers, self.own, Kind::Mapper),
+            (&self.published.mappers, self.own),
             |own| &own.mappers,
             (spread_hash(&Pairs(pairs)), pairs),
             |pairs| pairs.is_bound(self.own),

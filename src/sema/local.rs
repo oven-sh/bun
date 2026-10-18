@@ -92,9 +92,6 @@ impl Placement for OfTask {
     }
 }
 
-/// `false`: `Found::fill` searches for the free slot again.
-const FILLS_THE_VACANCY: bool = true;
-
 /// Finds indices by the hash of the values they represent. It is added to through a shared
 /// reference, by the one thread that has it.
 #[derive(Default)]
@@ -160,7 +157,7 @@ impl Found {
         }
         let slots: &mut [u64] = &mut held;
         let at = match slots.get(vacancy.at) {
-            Some(0) if FILLS_THE_VACANCY && vacancy.of == slots.len() => vacancy.at,
+            Some(0) if vacancy.of == slots.len() => vacancy.at,
             _ => free_slot::<OfTask>(slots.len(), spread as u32, |at| slots[at]),
         };
         slots[at] = place_of(spread, number);

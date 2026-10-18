@@ -795,14 +795,7 @@ impl Checker<'_, '_> {
             return self.mark_tainted_from(0);
         }
         diagnostic.by_emit |= self.is_emitting;
-        let mut owner = owner;
-        if self.task.checker_count != 0 {
-            if diagnostic.file != NOWHERE.0 && !self.collects_later(diagnostic.file) {
-                return;
-            }
-            // No other checker reports in the file.
-            owner = None;
-        } else if diagnostic.file != NOWHERE.0
+        if diagnostic.file != NOWHERE.0
             && !diagnostic.by_emit
             && !self.is_reported_in_time(owner, diagnostic.file)
         {
@@ -820,19 +813,6 @@ impl Checker<'_, '_> {
             // competes for its entries.
             self.p.push_diagnostic(diagnostic);
         }
-    }
-
-    /// `getBindAndCheckDiagnosticsWithChecker`: the diagnostics of a file are those that its own
-    /// checker has for it right after `checkSourceFile`. Returns whether that has not happened yet
-    /// for `file`.
-    fn collects_later(&self, file: FileId) -> bool {
-        let rank = self.files().rank_of_file(file);
-        let is_own = Some(rank % self.task.checker_count) == self.task.index();
-        let current = self
-            .task
-            .file
-            .map(|current| self.files().rank_of_file(current));
-        is_own && current.is_none_or(|current| rank >= current)
     }
 
     /// `collects_later` for a task of the plan, which other tasks precede in no particular order.

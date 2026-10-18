@@ -66,17 +66,10 @@ pub struct Open;
 pub struct Task<'s> {
     /// The step, and the index of the task in it. `None`: the task is outside the plan.
     place: Option<(u32, u32)>,
-    /// See `Task::begin`.
-    is_read_later: bool,
-    /// The `Buffered` tables of which `finish` passes nothing to the barrier: a bit set, by slot.
-    withheld: u128,
     /// The file that the task is visiting.
     pub file: Option<FileId>,
     /// The files that the task has visited and that no commit has followed: they are not checked for good.
     pub(super) files_in_doubt: Vec<FileId>,
-    /// Nonzero: the task is one checker of a `checkerPool` of this size. Its index in the step is
-    /// its checker index.
-    pub(super) checker_count: u32,
     /// `Some(q)`: the diagnostic belongs to the entry that `q` stores. `None`: it belongs to the task.
     pub(super) diagnostics: Vec<(Option<Query>, Reported)>,
     /// Whether a query of this task has re-entered itself.
@@ -85,8 +78,6 @@ pub struct Task<'s> {
     pub(super) foreign_evaluations: [u32; 14],
     /// See `Finished::order_dependent_variances`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
-    /// See `Finished::listings`.
-    pub(super) listings: Vec<(Sym, bool)>,
     /// See `Finished::assignments_walked`. It is added to under `&Checker`.
     pub(super) assignments_walked: RefCell<Vec<(FileId, Node, bool)>>,
     /// See `hold_back`.
@@ -135,16 +126,12 @@ impl<'s> Task<'s> {
     pub(super) fn new_in(arena: &'s Arena, types: &TypeStore<'s>) -> Task<'s> {
         Task {
             place: None,
-            is_read_later: true,
-            withheld: 0,
             file: None,
             files_in_doubt: Vec::new(),
-            checker_count: 0,
             diagnostics: Vec::new(),
             closed_a_cycle: false,
             foreign_evaluations: [0; 14],
             order_dependent_variances: Vec::new(),
-            listings: Vec::new(),
             assignments_walked: RefCell::default(),
             held_back: Cell::new(0),
             view: None,
@@ -173,25 +160,19 @@ impl<'s> Task<'s> {
     /// no reference from a kept table may be live.
     /// `is_read_later`: whether anything will read what the task publishes. If not, `finish`
     /// returns only the diagnostics.
-    pub fn begin(&mut self, step: u32, index: u32, is_read_later: bool) {
+    pub fn begin(&mut self, step: u32, index: u32) {
         debug_assert!(
             self.own.is_empty(),
             "created before `begin`: the id would dangle"
         );
         self.drop_everything();
-        self.own.set_is_read_later(is_read_later);
-        (self.place, self.is_read_later) = (Some((step, index)), is_read_later);
+        self.place = Some((step, index));
     }
 
     /// `begin` has been called: the entries the task buffers go to a barrier.
     #[inline]
     pub fn is_planned(&self) -> bool {
         self.place.is_some()
-    }
-
-    /// The index of the task in its step.
-    pub(super) fn index(&self) -> Option<u32> {
-        self.place.map(|(_, index)| index)
     }
 
     /// A number that no other task of the plan has.
@@ -402,9 +383,7 @@ impl<'s> Task<'s> {
     /// Whether the task has noted a listing or a walk for which its next commit can find it invalid
     /// (`Finished::can_be_invalid`), or is lost. What it has computed since then may depend on that.
     pub(super) fn may_be_thrown_away(&self) -> bool {
-        !self.listings.is_empty()
-            || self.assignments_walked.borrow().iter().any(|it| it.2)
-            || self.is_lost()
+        self.assignments_walked.borrow().iter().any(|it| it.2) || self.is_lost()
     }
 
     /// Ends a task that commits, on its own thread, after its last commit.
@@ -464,14 +443,11 @@ impl<'s> Task<'s> {
     }
 
     fn drop_everything(&mut self) {
-        (self.place, self.is_read_later, self.file) = (None, true, None);
+        (self.place, self.file) = (None, None);
         self.files_in_doubt.clear();
-        self.withheld = 0;
-        self.checker_count = 0;
         self.diagnostics.clear();
         (self.closed_a_cycle, self.foreign_evaluations) = (false, [0; 14]);
         self.order_dependent_variances.clear();
-        self.listings.clear();
         self.assignments_walked.get_mut().clear();
         (self.view, self.is_believed) = (None, false);
         self.is_lost.set(None);
@@ -582,7 +558,7 @@ pub struct Published {
 /// The `Buffered` tables keyed by a type, a signature or a mapper, except for `relations` and for the small ones that say something
 /// about a declared type parameter or flag a type. An entry of one of these is evaluated inside an evaluation that `relations` or a
 /// table keyed by a node or a symbol records, so a task that finds those entries does not ask for these.
-const TABLES_OF_RECORDS: [&str; 30] = [
+const TABLES_OF_RECORDS: [&str; 29] = [
     "shapes",
     "members",
     "sig_params",
@@ -601,7 +577,6 @@ const TABLES_OF_RECORDS: [&str; 30] = [
     "union_properties",
     "union_objects",
     "intersection_objects",
-    "listed_properties",
     "keys_of_properties",
     "conditionals",
     "resolved_return_types",
@@ -621,9 +596,7 @@ pub(super) fn tables_written_at_once() -> u128 {
     let more = ["relations", "type_param_constraints", "type_param_defaults"];
     let mut set = 0;
     for (slot, name) in table_names().into_iter().enumerate() {
-        if name != "listed_properties"
-            && (TABLES_OF_RECORDS.contains(&name) || more.contains(&name))
-        {
+        if TABLES_OF_RECORDS.contains(&name) || more.contains(&name) {
             set |= 1 << slot;
         }
     }

@@ -1036,27 +1036,17 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(context);
         }
         let parts = self.parts(context);
-        let asked = match shortcuts::CONTEXTUAL_UNIONS {
-            true => self.members_to_ask_as_context(context, name),
-            false => None,
-        };
+        let asked = self.members_to_ask_as_context(context, name);
         let mut types = Parts::new();
         match &asked {
-            Some(asked) if !shortcuts::SHADOW => {
+            Some(asked) => {
                 for at in asked.iter() {
                     types.extend(self.contextual_property_of_member(parts[at], name, name_type));
                 }
             }
-            _ => {
-                for (at, &part) in parts.iter().enumerate() {
-                    let is_left_out = asked.as_ref().is_some_and(|asked| !asked.contains(at));
-                    let before = is_left_out.then(|| self.traces());
-                    let found = self.contextual_property_of_member(part, name, name_type);
-                    if is_left_out && (found.is_some() || before != Some(self.traces())) {
-                        let fact = "a member of a contextual union has no such property";
-                        self.fact_differs_for(fact, &[part, context]);
-                    }
-                    types.extend(found);
+            None => {
+                for &part in parts {
+                    types.extend(self.contextual_property_of_member(part, name, name_type));
                 }
             }
         }

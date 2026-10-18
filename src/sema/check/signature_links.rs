@@ -29,23 +29,6 @@ use super::decl::Predicate;
 use super::*;
 use crate::table::{Id, Packed};
 
-/// If false, `sig_return` and `non_circular_return_type_of_signature` derive the return type on every call.
-pub(super) const KEEPS_RETURN_TYPES: bool = true;
-/// If false, `sig_predicate` derives the type predicate on every call.
-pub(super) const KEEPS_TYPE_PREDICATES: bool = true;
-/// If false, `sig_type_params` skips this cache, and so does `sig_this_parameter` for a signature without a `this`
-/// parameter.
-pub(super) const KEEPS_FACTS: bool = true;
-/// If false, `sig_params` looks up every list that it hasn't returned recently.
-pub(super) const KEEPS_PARAMETERS: bool = true;
-
-/// For debugging. Every part read from the cache is also derived. Panics with the signature and the file if the derived
-/// value differs, or if deriving it computed anything.
-pub(super) const CHECKS_RETURN_TYPES: bool = false;
-pub(super) const CHECKS_TYPE_PREDICATES: bool = false;
-pub(super) const CHECKS_FACTS: bool = false;
-pub(super) const CHECKS_PARAMETERS: bool = false;
-
 /// Flags in the low bits of the `FACTS` cell.
 pub(super) mod fact {
     /// `len(signature.typeParameters) == 0`. Only set for a function that doesn't adopt type parameters from a
@@ -201,19 +184,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns `signature.resolvedReturnType` if it's cached and safe to read now.
     #[inline]
     pub(super) fn kept_return_type(&mut self, sig: SigId) -> Option<TypeId> {
-        if !KEEPS_RETURN_TYPES {
-            return None;
-        }
         let raw = self.signature_links.cell(sig, RETURN_TYPE);
         if raw == 0 || !self.index_infos_in_instantiation.is_empty() {
             return None;
         }
         let kept = TypeId::unpack(raw);
-        if CHECKS_RETURN_TYPES {
-            self.check_kept_signature_part(sig, "resolvedReturnType", &kept, |c| {
-                c.derive_return_type(sig)
-            });
-        }
+
         Some(kept)
     }
 
@@ -274,11 +250,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.index_infos_in_instantiation.is_empty() {
             return None;
         }
-        if CHECKS_TYPE_PREDICATES {
-            self.check_kept_signature_part(sig, "resolvedTypePredicate", &kept, |c| {
-                c.derive_type_predicate(sig)
-            });
-        }
+
         Some(kept)
     }
 
@@ -317,44 +289,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
         };
         is_declared_type_settled && self.active_mappers.is_empty()
-    }
-
-    /// Runs under a `CHECKS_*` switch. `kept` was read from the cache as the part `name` of `sig`, and `derive`
-    /// computes it without the cache.
-    #[cold]
-    #[inline(never)]
-    pub(super) fn check_kept_signature_part<V: PartialEq + std::fmt::Debug>(
-        &mut self,
-        sig: SigId,
-        name: &str,
-        kept: &V,
-        derive: impl FnOnce(&mut Self) -> V,
-    ) {
-        // This close to the instantiation limits, `derive` can fail and report an error.
-        if self.instantiation_depth >= 90 || self.instantiation_count >= 4_900_000 {
-            return;
-        }
-        let traces = |c: &Self| {
-            (
-                c.work,
-                c.instantiations_computed,
-                c.types().first_new_type_id(),
-                c.non_cacheable_mark(),
-                c.reported.len(),
-            )
-        };
-        let (before, count) = (traces(self), self.instantiation_count);
-        let derived = derive(self);
-        self.instantiation_count = count;
-        let computed_nothing = traces(self) == before;
-        if derived != *kept || !computed_nothing {
-            let file =
-                (self.task.file).map(|file| bstr::BStr::new(self.files().module(file).file_name()));
-            let data = self.types().sig(sig);
-            panic!(
-                "{name} of {sig:?} ({data:?}), while checking {file:?}: kept {kept:?}, derived {derived:?}, computing nothing: {computed_nothing}"
-            )
-        }
     }
 }
 

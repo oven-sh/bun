@@ -537,12 +537,7 @@ impl<'s> Program<'s> {
                     .is_some_and(|first| it.conflicts_with(first))
             })
         };
-        let has_another_list = {
-            let listings = self.serial_listings.lock();
-            let mut noted = task.listings.iter();
-            noted.any(|it| listings.get(&it.0).is_some_and(|first| first.0 != it.1))
-        };
-        if has_other_variances || has_another_list {
+        if has_other_variances {
             return true;
         }
         let oldest_pin = view.oldest_pin.get();
@@ -560,12 +555,6 @@ impl<'s> Program<'s> {
             let mut serial = self.serial_variances.lock();
             for it in &task.order_dependent_variances {
                 serial.entry(it.sym).or_insert(it.variances);
-            }
-        }
-        {
-            let mut listings = self.serial_listings.lock();
-            for it in task.listings.drain(..) {
-                listings.entry(it.0).or_insert((it.1, true));
             }
         }
         let walked = task.assignments_walked.get_mut().drain(..);

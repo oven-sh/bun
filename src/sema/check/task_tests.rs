@@ -132,7 +132,7 @@ fn on_threads(count: usize, work: &(dyn Fn(usize) + Sync)) {
 
 fn begin<'s>(session: &'s Session, types: &TypeStore<'s>, index: u32) -> Task<'s> {
     let mut task = Task::new_in(session.arena(), types);
-    task.begin(0, index, true);
+    task.begin(0, index);
     task
 }
 

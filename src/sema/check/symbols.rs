@@ -558,8 +558,7 @@ impl<'p, 's> Checker<'p, 's> {
             return true;
         };
         let is_in_time = |visited: FileId| self.is_checked_no_later_than(visited, file);
-        self.task.checker_count != 0
-            || self.task.file.is_none_or(is_in_time)
+        self.task.file.is_none_or(is_in_time)
             || self.stack[..=start].iter().any(|&q| match q {
                 // `checkAliasSymbol`
                 Query::AliasTarget(alias) => is_in_time(alias.file),
@@ -3761,7 +3760,7 @@ impl<'p, 's> Checker<'p, 's> {
         let reports = options.no_implicit_any && !options.strict_null_checks;
         // One checker has collected the diagnostics of `file` by now, and has resolved the names
         // in the pattern.
-        if reports && self.task.checker_count == 0 && !self.is_reported_in_time(None, file) {
+        if reports && !self.is_reported_in_time(None, file) {
             return self.type_of_pat(file, pat);
         }
         let query = Query::ParameterSymbol(file, pat);
@@ -4823,7 +4822,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn is_literal_context(&mut self, candidate: TypeId, contextual: TypeId) -> bool {
         // If `contextual` has no type variable, no constraint is needed and only the kind of each constituent matters.
         let kinds = self.types().member_flags(contextual);
-        if !shortcuts::LITERAL_CONTEXTS || kinds & tf::INSTANTIABLE_NON_PRIMITIVE != 0 {
+        if kinds & tf::INSTANTIABLE_NON_PRIMITIVE != 0 {
             return self.is_literal_context_of_each(candidate, contextual);
         }
         let candidates = self.types().member_flags(candidate);
@@ -4831,14 +4830,9 @@ impl<'p, 's> Checker<'p, 's> {
             tf::STRING_LITERAL | tf::TEMPLATE_LITERAL | tf::STRING_MAPPING | tf::INDEX;
         let others =
             tf::NUMBER_LITERAL | tf::BIGINT_LITERAL | tf::BOOLEAN_LITERAL | tf::UNIQUE_ES_SYMBOL;
-        let is_literal_context = kinds & takes_strings != 0 && candidates & tf::STRING_LITERAL != 0
-            || kinds & candidates & others != 0;
-        if shortcuts::SHADOW
-            && is_literal_context != self.is_literal_context_of_each(candidate, contextual)
-        {
-            self.fact_differs_for("isLiteralOfContextualType", &[candidate, contextual]);
-        }
-        is_literal_context
+
+        kinds & takes_strings != 0 && candidates & tf::STRING_LITERAL != 0
+            || kinds & candidates & others != 0
     }
 
     /// `is_literal_context`, computed by walking the constituents.

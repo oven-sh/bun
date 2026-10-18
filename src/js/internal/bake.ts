@@ -199,6 +199,46 @@ function hasComponentPages(pagesDir: string): boolean {
   return false;
 }
 
+/** The React major versions that the default renderer is tested with. */
+const supportedReactMajors = [18, 19];
+
+/** The version in `name/package.json`, resolved from the project, or `undefined` when not installed. */
+function installedVersion(name: string, cwd: string): string | undefined {
+  let file: string;
+  try {
+    file = Bun.resolveSync(`${name}/package.json`, cwd);
+  } catch {
+    return undefined;
+  }
+  return JSON.parse(require("node:fs").readFileSync(file, "utf8")).version;
+}
+
+/**
+ * The default renderer of `.tsx` pages uses the project's React. Checks that it is installed, is a
+ * version the renderer supports, and that `react` and `react-dom` match.
+ */
+function checkReactForPages(cwd: string) {
+  const react = installedVersion("react", cwd);
+  const reactDom = installedVersion("react-dom", cwd);
+  if (react === undefined || reactDom === undefined) {
+    const missing = [react === undefined && "react", reactDom === undefined && "react-dom"].filter(Boolean).join(" ");
+    throw new BakeError(`app/pages/ has .tsx pages, which need React. Install it: bun add ${missing}`, false);
+  }
+  const major = Number(react.split(".")[0]);
+  if (!supportedReactMajors.includes(major)) {
+    throw new BakeError(
+      `"bun bake" renders .tsx pages with React ${supportedReactMajors.join(" or ")}, but this project has react ${react}. Upgrade React.`,
+      false,
+    );
+  }
+  if (react !== reactDom) {
+    throw new BakeError(
+      `react ${react} and react-dom ${reactDom} must be the same version. Install matching versions: bun add react@${react} react-dom@${react}`,
+      false,
+    );
+  }
+}
+
 async function loadAppServer(
   cwd: string,
 ): Promise<
@@ -276,6 +316,7 @@ async function start() {
   const pagesDir = path.join(cwd, "app", "pages");
   const pages = await loadPages(pagesDir);
   const componentPages = hasComponentPages(pagesDir);
+  if (componentPages) checkReactForPages(cwd);
   const app = await loadAppServer(cwd);
   if (pages.length === 0 && !componentPages && app === undefined) {
     throw new BakeError(

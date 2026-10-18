@@ -3599,6 +3599,7 @@ it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyA
     // @ts-expect-error
     const thrown = thrownBy(() => set());
     expect(thrown).toMatchObject({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
+    expect(thrown!.message).toMatch(/^The "value" argument must be of type (boolean|number)\. Received undefined$/);
     // @ts-expect-error
     expect(thrown).toEqual(thrownBy(() => set(undefined)));
   },

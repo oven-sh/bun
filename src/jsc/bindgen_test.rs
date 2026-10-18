@@ -60,6 +60,10 @@ pub(crate) fn string_length(text: &bun_core::String) -> usize {
     text.length()
 }
 
+pub(crate) fn expected_by_node(text: &bun_core::String, data: Option<&[u8]>, flag: bool) -> usize {
+    text.length() + data.map_or(0, <[u8]>::len) + usize::from(flag)
+}
+
 pub(crate) fn next_color(color: TestColor) -> TestColor {
     match color {
         TestColor::Red => TestColor::Green,

@@ -188,6 +188,8 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   );
   expect(() => b.fn({ args: { fooBar: b.bool, foo_bar: b.bool } })).toThrow("two arguments are both foo_bar");
   expect(() => b.fn({ length: 1.5 })).toThrow("1.5 is not a count");
+  expect(() => b.fn({ args: { a: b.bool }, expected: { b: ["boolean"] } })).toThrow("expected: b is not an argument");
+  expect(() => b.fn({ args: { a: b.bool }, expected: { a: [] } })).toThrow("expected: a expects nothing");
   expect(() => b.overloads({ args: { a: b.bool }, length: 1 }, { args: { a: b.f64 }, length: 2 })).toThrow(
     "length is given once",
   );
@@ -385,6 +387,27 @@ describe("strings", () => {
     Buffer.alloc(2000, "é").toString(),
     "nul \0 inside",
   ];
+
+  it("expected: a value of the wrong type throws Node's ERR_INVALID_ARG_TYPE", () => {
+    const f = bindgen.expectedByNode;
+    expect(f("abc", "de", true)).toBe(6);
+    expect(f("abc", new Uint8Array(2))).toBe(5);
+    const thrownBy = (...args: unknown[]) => {
+      try {
+        f(...args);
+      } catch (error: any) {
+        return `${error.name} ${error.code}: ${error.message}`;
+      }
+    };
+    const invalid = "TypeError ERR_INVALID_ARG_TYPE: ";
+    expect(thrownBy()).toBe(`${invalid}The "text" argument must be of type string. Received undefined`);
+    expect(thrownBy(1)).toBe(`${invalid}The "text" argument must be of type string. Received type number (1)`);
+    expect(thrownBy({})).toBe(`${invalid}The "text" argument must be of type string. Received an instance of Object`);
+    expect(thrownBy("abc", null)).toBe(
+      `${invalid}The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received null`,
+    );
+    expect(thrownBy("abc", "de", 1)).toBe(`${invalid}flag must be a boolean`);
+  });
 
   it.each(texts)("round trips %j", text => {
     expect(bindgen.stringLength(text)).toBe(text.length);

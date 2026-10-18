@@ -32,6 +32,7 @@ export const assertEncodingValid = b.fn({
 
 export const parseEnv = b.fn({
   args: { content: b.string.utf8 },
+  expected: { content: ["string"] },
   returns: b.any,
   capability: "heap",
   throws: true,

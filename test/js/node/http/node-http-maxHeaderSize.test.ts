@@ -70,7 +70,7 @@ test("maxHeaderSize", async () => {
   (http as any).maxHeaderSize = originalMaxHeaderSize;
 });
 
-describe("http.maxHeaderSize = value takes what the maxHeaderSize option takes", () => {
+describe("http.maxHeaderSize = value takes what the maxHeaderSize option takes, but not 0", () => {
   const originalMaxHeaderSize = http.maxHeaderSize;
   afterEach(() => {
     (http as any).maxHeaderSize = originalMaxHeaderSize;

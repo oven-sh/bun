@@ -7,5 +7,6 @@ export const crc32 = b.fn({
     data: b.bytes({ from: ["string", "buffer"], refuse: ["stringObject"] }),
     value: b.u32.validateInteger().default(0),
   },
+  expected: { data: ["Buffer", "TypedArray", "DataView", "string"] },
   returns: b.u32,
 });

@@ -10,10 +10,12 @@ use bun_dotenv::env_loader as envloader;
 
 pub(crate) fn internal_error_name(err: f64) -> BunString {
     let err_int = err as i32;
-    if let Some(name) = UV_E::name(err_int) {
+    if f64::from(err_int) == err
+        && let Some(name) = UV_E::name(err_int)
+    {
         return BunString::static_(name);
     }
-    BunString::create_format(format_args!("Unknown system error {}", err_int))
+    BunString::create_format(format_args!("Unknown system error {err}"))
 }
 
 /// libuv's full error table for this target. Consumed by node:util's getSystemErrorMap().

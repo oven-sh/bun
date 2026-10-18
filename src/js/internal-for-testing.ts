@@ -256,6 +256,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   utf8Owned: $bindgen("bindgen_test.bind.ts", "utf8Owned"),
   stringEcho: $bindgen("bindgen_test.bind.ts", "stringEcho"),
   stringLength: $bindgen("bindgen_test.bind.ts", "stringLength"),
+  expectedByNode: $bindgen("bindgen_test.bind.ts", "expectedByNode"),
   nextColor: $bindgen("bindgen_test.bind.ts", "nextColor"),
   optionsEcho: $bindgen("bindgen_test.bind.ts", "optionsEcho"),
   describeValue: $bindgen("bindgen_test.bind.ts", "describeValue"),

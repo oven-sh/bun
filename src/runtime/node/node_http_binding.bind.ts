@@ -3,7 +3,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 export default b.module({ rustPath: "crate::node::node_http_binding" });
 
 export const getMaxHTTPHeaderSize = b.fn({ returns: b.usize, rustPath: "bun_http::max_http_header_size" });
-/** Node has no setter for `http.maxHeaderSize`. The value is checked as Node checks its `maxHeaderSize` option. */
+/** Node has no setter for `http.maxHeaderSize`. This one takes what Node's `maxHeaderSize` option takes, but not 0. */
 export const setMaxHTTPHeaderSize = b.fn({
   args: { maxHeaderSize: b.usize.validateInteger(1, Number.MAX_SAFE_INTEGER) },
   rustPath: "bun_http::set_max_http_header_size",

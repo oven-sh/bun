@@ -562,9 +562,16 @@ function cppCallBody(signature: Signature, symbol: string, leading: readonly str
   const lines: string[] = [];
   // Converting a later argument can run JavaScript that detaches or resizes a buffer.
   const readLast: string[] = [];
-  signature.args.forEach(({ name, type }, i) => {
+  signature.args.forEach(({ name, type, expected }, i) => {
     lines.push(`JSC::EnsureStillAliveScope argument${i} = callFrame->argument(${i});`);
-    lines.push(`[[maybe_unused]] auto ctx${i} = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(name)} };`);
+    if (expected) {
+      lines.push(`static constexpr WTF::ASCIILiteral expected${i}[] = { ${expected.map(asciiLiteral).join(", ")} };`);
+      lines.push(
+        `[[maybe_unused]] auto ctx${i} = Bun::Bindgen::NodeArgumentContext { ${asciiLiteral(name)}, expected${i}, argument${i}.value() };`,
+      );
+    } else {
+      lines.push(`[[maybe_unused]] auto ctx${i} = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(name)} };`);
+    }
     readLast.push(...type.cppReadLast(`converted${i}`, `argument${i}.value()`));
     lines.push(...cppDeclareConverted(type, `converted${i}`, `argument${i}.value()`, `ctx${i}`, name));
     if (type.conversionThrows) lines.push(`RETURN_IF_EXCEPTION(scope, {});`);

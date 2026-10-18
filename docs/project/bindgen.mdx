@@ -62,6 +62,12 @@ which is otherwise the number of arguments up to the last that is not written
 `.optional`, `.nullable`, `.falsyAsNull` or `.default()`. The ones after that are
 the ones TypeScript lets a caller leave out.
 
+A function of a `node:*` module names what Node's own source expects of an argument:
+`expected: { data: ["Buffer", "TypedArray", "DataView", "string"] }`. A value the argument's type
+refuses then throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)`, "The "data" argument must
+be of type string or an instance of Buffer, TypedArray, or DataView. Received null", and not "data
+must be a string, ArrayBuffer or ArrayBufferView". What the type takes is the same.
+
 Nothing else is written by hand, except once per crate: `src/<crate>/generated_bindgen.rs`
 includes the generated file, the crate root declares `mod generated_bindgen`, and a
 `build.rs` like `src/semver_jsc/build.rs` says where the generated file is, for a `cargo check`

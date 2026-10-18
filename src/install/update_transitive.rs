@@ -136,8 +136,9 @@ impl DirectDependencies {
                     || (new as usize) >= packages_len
                     || pkg_res[new as usize].tag != ResolutionTag::Npm
                     || name_hashes[old as usize] != name_hashes[new as usize]
-                    // A peer only shared `old` with a regular dependency of its owner or of the
-                    // root (`bind_served_peers`). Nothing moved if that still resolves to `old`.
+                    // A peer shares the version of a regular dependency of its owner or of the root.
+                    // If that dependency still resolves to `old`, or already resolves to `new`, only
+                    // the peer was rebound and nothing was updated.
                     || (dep.behavior.is_peer()
                         && [owner, 0].into_iter().any(|holder| {
                             (dep_slices[holder].get(deps).iter())
@@ -145,7 +146,7 @@ impl DirectDependencies {
                                 .any(|(other, &kept)| {
                                     other.name_hash == dep.name_hash
                                         && !other.behavior.is_peer()
-                                        && kept == old
+                                        && (kept == old || kept == new)
                                 })
                         }))
                 {

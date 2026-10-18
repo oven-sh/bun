@@ -2121,6 +2121,38 @@ test.concurrent.each([[["--latest"]], [["--latest", "plug"]]])(
   },
 );
 
+// `old` has a peer dependency on the catalog's alpha and tests against alpha@1. Its peer is bound to its own alpha@1,
+// which isn't an update, so lib's `*` must not follow it down from alpha@2.
+test.concurrent(
+  "a second `bun update --latest` changes nothing next to a catalog: peer with an older copy",
+  async () => {
+    using server = await serveRegistry({ alpha: { "1.0.0": {}, "1.2.0": {}, "2.1.0": {} } });
+    const dir = String(
+      tempDir("update-latest-twice-catalog-peer", {
+        "package.json": stringify({
+          name: "root",
+          workspaces: { packages: ["packages/*"], catalog: { alpha: "~1.2.0" } },
+        }),
+        "packages/web/package.json": stringify({ name: "web", dependencies: { alpha: "catalog:" } }),
+        "packages/lib/package.json": stringify({ name: "lib", devDependencies: { alpha: "*" } }),
+        "packages/old/package.json": stringify({
+          name: "old",
+          peerDependencies: { alpha: "catalog:" },
+          devDependencies: { alpha: "^1.0.0" },
+        }),
+      }),
+    );
+    await servedBunfig(server, dir);
+    await install(dir);
+
+    expect((await run(dir, "update", "--latest")).exitCode).toBe(0);
+    const lockfile = await lockText(dir);
+    expect((await run(dir, "update", "--latest")).exitCode).toBe(0);
+    expect(await lockText(dir)).toBe(lockfile);
+    await frozen(dir);
+  },
+);
+
 // util's peer `core` is auto-installed and nothing depends on it outright, so `bun update <names>` re-resolves it after a manifest fetch of its own. Every other entry that still waits for its manifest at that point has to resolve too.
 const PEER_ONLY: Manifests = {
   util: { "1.0.0": { peerDependencies: { core: "^1.0.0" } }, "1.1.0": { peerDependencies: { core: "^1.0.0" } } },

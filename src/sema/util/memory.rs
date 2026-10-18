@@ -939,7 +939,10 @@ impl<T> Flat<'_, T, AtomicU32> {
 
     /// Puts `value` in the place of a placeholder, which is not dropped. Any thread.
     #[inline]
-    #[expect(clippy::needless_pass_by_value, reason = "the placeholder ends here, so no second write has one")]
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "the placeholder ends here, so no second write has one"
+    )]
     pub(crate) fn replace(&self, placeholder: Placeholder<'_>, value: T) -> &T {
         // It borrows its vector, so the range has had no other owner since.
         assert!(placeholder.of == self.base.0.addr());

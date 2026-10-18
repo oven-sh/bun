@@ -31,6 +31,7 @@ const thrower = {
     throw new Error("boom");
   },
 };
+const supports = (...args: unknown[]): boolean => (SubtleCrypto as any).supports(...args);
 
 const cases: Record<string, () => Promise<unknown>> = {
   "encrypt ok": () => crypto.subtle.encrypt({ name: "AES-GCM", iv }, aes, new Uint8Array(8)),
@@ -122,6 +123,12 @@ const cases: Record<string, () => Promise<unknown>> = {
     crypto.subtle.unwrapKey("raw", new Uint8Array(40), kw, bad, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]),
   "unwrapKey bogus unwrapped type": () =>
     crypto.subtle.unwrapKey("raw", new Uint8Array(40), kw, "AES-KW", bad, false, ["sign"]),
+
+  // supports clears an exception that the algorithm object throws.
+  "supports exportKey ok": async () => supports("exportKey", "HMAC"),
+  "supports exportKey thrower": async () => supports("exportKey", thrower),
+  "supports getPublicKey thrower": async () => supports("getPublicKey", thrower),
+  "supports wrapKey thrower": async () => supports("wrapKey", "AES-KW", thrower),
 };
 
 for (const [name, run] of Object.entries(cases)) {

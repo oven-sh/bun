@@ -1190,8 +1190,9 @@ fn table_over(lengths: &[usize]) -> ByNode<Node, TypeId, Buffered> {
 #[cfg_attr(miri, ignore)]
 fn the_nodes_of_files_that_a_task_does_not_visit_have_cells_in_pages() {
     let session = Session::new();
+    let types = TypeStore::new_in(&session);
     let table = table_over(&[5000, 5000, 70]);
-    let mut task = begin(&session, 0);
+    let mut task = begin(&session, &types, 0);
     // The last of these are at 4999, 5000, 8191, 8192 and 10069 among the nodes of all files.
     let first = [0, 1, 62, 63, 64, 65, 127, 128, 4094, 4095, 4096, 4097, 4999].map(|at| (A, at));
     let keys = first
@@ -1219,7 +1220,7 @@ fn the_nodes_of_files_that_a_task_does_not_visit_have_cells_in_pages() {
     let published = publish_tables(&[&table], &mut finished, &forwards, None);
     let all = keys.len() as u64;
     assert_eq!(counts(&published), (all, all, 0));
-    let reader = Task::new_in(session.arena());
+    let reader = Task::new_in(session.arena(), &types);
     assert_eq!(table.get(&reader, &(B, 3192)), Some(TypeId(15)));
     assert_eq!(table.get(&reader, &(B, 3193)), None);
     assert_eq!(table.get(&reader, &(C, 69)), Some(TypeId(16)));
@@ -1232,7 +1233,7 @@ fn the_nodes_of_files_that_a_task_does_not_visit_have_cells_in_pages() {
 fn what_is_in_pages_is_in_the_row_once_the_task_visits_the_file() {
     let session = Session::new();
     let tables = Tables::new(&session);
-    let mut task = begin_in(&session, 0, C);
+    let mut task = begin_in(&session, &tables.types, 0, C);
     let early = [
         (A, 63),
         (A, 64),
@@ -1301,15 +1302,16 @@ fn what_is_in_pages_is_in_the_row_once_the_task_visits_the_file() {
     assert_eq!(tables.by_node.get(&task, &(B, 50)), Some(TypeId::NUMBER));
     let published = tables.barrier(&mut [tables.finish(&mut task)], &forwards);
     assert_eq!(counts(&published), (13, 13, 0));
-    check(&Task::new_in(session.arena()));
+    check(&Task::new_in(session.arena(), &tables.types));
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn a_file_that_a_task_visits_and_stores_nothing_for_has_no_row() {
     let session = Session::new();
+    let types = TypeStore::new_in(&session);
     let table = table_over(&[3; 100]);
-    let mut task = begin_in(&session, 0, FileId(32));
+    let mut task = begin_in(&session, &types, 0, FileId(32));
     let with_entries = [0, 31, 32, 33, 63, 64, 99];
     for file in with_entries {
         table.insert(&task, (FileId(file), 1), TypeId(file), stored());
@@ -1338,8 +1340,9 @@ fn a_file_that_a_task_visits_and_stores_nothing_for_has_no_row() {
 #[cfg_attr(miri, ignore)]
 fn a_node_that_is_not_counted_has_a_cell_in_a_row() {
     let session = Session::new();
+    let types = TypeStore::new_in(&session);
     let table = table_over(&[10, 0, 0]);
-    let mut task = begin_in(&session, 0, A);
+    let mut task = begin_in(&session, &types, 0, A);
     assert_eq!(table.get(&task, &(B, 5)), None);
     table.insert(&task, (B, 5), TypeId::STRING, stored());
     assert_eq!(table.get(&task, &(B, 5)), Some(TypeId::STRING));
@@ -1361,7 +1364,7 @@ fn a_node_that_is_not_counted_has_a_cell_in_a_row() {
 fn the_row_of_a_file_has_what_is_published_for_it() {
     let session = Session::new();
     let tables = Tables::new(&session);
-    let mut first = begin_in(&session, 0, C);
+    let mut first = begin_in(&session, &tables.types, 0, C);
     let (one, two) = (TypeId::STRING, TypeId::NUMBER);
     for key in [(A, 0), (A, 63), (A, 64), (B, 28)] {
         tables.by_node.insert(&first, key, one, stored());
@@ -1370,7 +1373,7 @@ fn the_row_of_a_file_has_what_is_published_for_it() {
     (tables.kept_by_node).insert(&first, (A, 64), Box::new([one]), stored());
     tables.barrier(&mut [tables.finish(&mut first)], &forwards);
 
-    let mut later = Task::new_in(session.arena());
+    let mut later = Task::new_in(session.arena(), &tables.types);
     later.begin(1, 0, true);
     // Before the task visits the file, while it does, and afterwards.
     for file in [C, A, B] {
@@ -1416,7 +1419,7 @@ fn the_row_of_a_file_has_what_is_published_for_it() {
     // Nothing that the rows have from the published part goes back to the barrier.
     let published = tables.barrier(&mut [tables.finish(&mut later)], &forwards);
     assert_eq!(counts(&published), (3, 1, 2));
-    let reader = Task::new_in(session.arena());
+    let reader = Task::new_in(session.arena(), &tables.types);
     assert_eq!(tables.by_node.get(&reader, &(A, 63)), Some(one));
     assert_eq!(tables.by_node.get(&reader, &(A, 1)), Some(two));
 }
@@ -1435,7 +1438,7 @@ fn a_table_that_knows_its_slot_takes_no_other() {
 fn what_a_task_stores_under_published_ids_is_in_pages() {
     let session = Session::new();
     let tables = Tables::new(&session);
-    let mut task = begin(&session, 0);
+    let mut task = begin(&session, &tables.types, 0);
     let numbers = [0, 1, 63, 64, 65, 4095, 4096, 4097, 70000];
     for number in numbers {
         assert_eq!(tables.by_id.get(&task, &TypeId(number)), None);
@@ -1471,7 +1474,7 @@ fn what_a_task_stores_under_published_ids_is_in_pages() {
     assert_eq!(tables.shapes.get(&task, &TypeId(64)), None);
     let published = tables.barrier(&mut [tables.finish(&mut task)], &forwards);
     assert_eq!(counts(&published), (10, 10, 0));
-    let reader = Task::new_in(session.arena());
+    let reader = Task::new_in(session.arena(), &tables.types);
     assert_eq!(tables.by_id.get(&reader, &TypeId(4096)), Some(TypeId(4097)));
     assert_eq!(tables.by_id.get(&reader, &TypeId(66)), Some(TypeId::ANY));
 }
@@ -2140,8 +2143,8 @@ fn the_file_that_a_task_visits_stays_as_it_was_when_the_visit_began() {
 fn an_entry_that_a_task_stored_before_it_saw_another_one_loses() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
-    let first = begin_committing(&session, &commits, 0);
-    let mut second = begin_committing(&session, &commits, 1);
+    let first = begin_committing(&session, &tables, &commits, 0);
+    let mut second = begin_committing(&session, &tables, &commits, 1);
     second.begin_file(B, true);
     assert_eq!(
         tables.by_node.insert(&second, (A, 1), NUMBER, stored()),
@@ -2174,11 +2177,11 @@ fn an_entry_that_a_task_stored_before_it_saw_another_one_loses() {
 #[cfg_attr(miri, ignore)]
 fn what_is_stored_about_an_expression_of_the_visited_file_stays_in_the_task() {
     let session = Session::new();
-    let commits = Commits::new_in(session.arena());
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let bases = Bases::new_in([10, 10, 10].into_iter(), &Global);
     let mut table = ByNode::<Node, TypeId, Buffered<OfExpressions<0>>>::new_in(&bases, Global);
     table.set_slot(numbered(0));
-    let mut task = begin_writing_at_once(&session, &commits, 0);
+    let mut task = begin_writing_at_once(&session, &tables, &commits, 0);
     task.begin_file(A, true);
     table.insert(&task, (A, 1), STRING, stored());
     table.rewrite(&task, (A, 1), NUMBER, stored());
@@ -2187,8 +2190,8 @@ fn what_is_stored_about_an_expression_of_the_visited_file_stays_in_the_task() {
     table.insert(&task, (B, 1), STRING, stored());
     assert_eq!((task.buffer().logged(), task.held_back()), (1, 1));
     let mut log = task.buffer().take_log();
-    assert_eq!(commits.store(&[&table], &task, &mut log, 1), 1);
-    let mut other = begin_committing(&session, &commits, 1);
+    assert_eq!(commits.store(&[&table], &task, &mut log, 1, None), 1);
+    let mut other = begin_committing(&session, &tables, &commits, 1);
     assert_eq!(table.get(&other, &(A, 1)), None);
     assert_eq!(table.get(&other, &(B, 1)), Some(STRING));
     other.begin_file(B, true);

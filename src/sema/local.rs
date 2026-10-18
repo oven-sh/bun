@@ -441,6 +441,17 @@ impl Pages {
 
 const NO_FILE: u32 = u32::MAX;
 
+/// How much of a file's published entries `Half::dense` already includes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PublishedInRow {
+    /// Not copied yet, so a lookup may still have to ask the published part.
+    Unknown,
+    /// `Buffer::set_whole` ran and the task saw no published entry for the file.
+    None,
+    /// `Buffer::set_whole` ran and `Buffer::seed` copied at least one published entry.
+    Some,
+}
+
 /// The task-local part of one `Buffered` table. A cell holds a packed value, 0 for empty.
 ///
 /// What a lookup under a node of `file` reads comes first, and is in one cache line.
@@ -452,10 +463,7 @@ pub(crate) struct Half<'s> {
     /// A table keyed by node: the file that `dense` covers, and its `Buffer::ordinal`.
     file: u32,
     ordinal: u32,
-    /// `Buffer::set_whole`
-    is_whole: bool,
-    /// Whether that was told so.
-    has_seeds: bool,
+    published_in_row: PublishedInRow,
     /// The directory of its cells in `Buffer::pages`. A table keyed by node: by the number of the
     /// node among those of all files. A table keyed by id: by the number of a published id.
     directory: Vec<u32>,
@@ -605,8 +613,7 @@ impl<'s> Half<'s> {
             dense: Vec::new(),
             file: NO_FILE,
             ordinal: 0,
-            is_whole: false,
-            has_seeds: false,
+            published_in_row: PublishedInRow::Unknown,
             directory: Vec::new(),
             earlier: Vec::new(),
             sparse: Hashed::default(),
@@ -623,7 +630,7 @@ impl<'s> Half<'s> {
     pub(crate) fn clear_cells(&mut self) {
         clear_cells(&mut self.dense);
         (self.file, self.ordinal) = (NO_FILE, 0);
-        (self.is_whole, self.has_seeds) = (false, false);
+        self.published_in_row = PublishedInRow::Unknown;
         self.directory.clear();
         self.earlier.clear();
         self.sparse.clear();
@@ -793,7 +800,7 @@ impl<'s> Buffer<'s> {
         // What a task that sees commits sees in a file stays the same only while it visits the file.
         if self.log.is_some() {
             for half in &mut self.halves {
-                (half.is_whole, half.has_seeds) = (false, false);
+                half.published_in_row = PublishedInRow::Unknown;
             }
         }
     }
@@ -956,13 +963,16 @@ impl<'s> Buffer<'s> {
     /// Whether `dense` is the row of `file` and `set_whole` was called since it is.
     #[inline]
     pub(crate) fn has_whole_row(&self, slot: u32, file: u32) -> bool {
-        (self.half(slot)).is_some_and(|half| half.file == file && half.is_whole)
+        (self.half(slot)).is_some_and(|half| {
+            half.file == file && half.published_in_row != PublishedInRow::Unknown
+        })
     }
 
     /// Whether `set_whole` was told so.
     #[inline]
     pub(crate) fn has_seeds(&self, slot: u32) -> bool {
-        self.half(slot).is_some_and(|half| half.has_seeds)
+        self.half(slot)
+            .is_some_and(|half| half.published_in_row == PublishedInRow::Some)
     }
 
     /// What `dense` says about a node of `file`. `None`: it is not the row of `file`, or it is not
@@ -975,7 +985,8 @@ impl<'s> Buffer<'s> {
             return None;
         }
         let raw = half.dense.get(index as usize).copied().unwrap_or(0);
-        (half.is_whole || raw != 0 && self.log.is_none()).then_some(raw)
+        let is_whole = half.published_in_row != PublishedInRow::Unknown;
+        (is_whole || raw != 0 && self.log.is_none()).then_some(raw)
     }
 
     /// The cell of `dense`.
@@ -998,7 +1009,8 @@ impl<'s> Buffer<'s> {
         if half.ordinal != 0 && !row.is_empty() {
             half.keep_row(half.file, half.ordinal, row);
         }
-        (half.file, half.ordinal, half.is_whole, half.has_seeds) = (file, ordinal, false, false);
+        (half.file, half.ordinal) = (file, ordinal);
+        half.published_in_row = PublishedInRow::Unknown;
         if half.has_earlier_row(file, ordinal) {
             // The task has visited the file before.
             let before = &mut half.earlier[ordinal as usize - 1];
@@ -1022,7 +1034,10 @@ impl<'s> Buffer<'s> {
     /// for the published part too. `has_seeds`: there was such a node.
     pub(crate) fn set_whole(&mut self, slot: u32, has_seeds: bool) {
         let half = self.half_mut(slot);
-        (half.is_whole, half.has_seeds) = (true, has_seeds);
+        half.published_in_row = match has_seeds {
+            true => PublishedInRow::Some,
+            false => PublishedInRow::None,
+        };
     }
 
     /// 0: the task has not visited `file`.

@@ -38,9 +38,6 @@ type FD = number;
 
 const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
 
-// Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back what a native write or read ends.
-const nextTick = process.nextTick;
-
 const kIsPerformingIO = Symbol("kIsPerformingIO");
 const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
@@ -621,18 +618,15 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
 
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
-      // Via nextTick: called from the reaction itself (a microtask), a callback's microtasks would run before its nextTicks.
       maybePromise.then(
-        () =>
-          nextTick(() => {
-            if (cb) cb(null);
-            emitDrain(this);
-          }),
-        err =>
-          nextTick(() => {
-            if (cb) cb(err);
-            require("internal/streams/destroy").errorOrDestroy(this, err);
-          }),
+        () => {
+          if (cb) cb(null);
+          emitDrain(this);
+        },
+        err => {
+          if (cb) cb(err);
+          require("internal/streams/destroy").errorOrDestroy(this, err);
+        },
       );
       return false;
     } else {
@@ -690,19 +684,19 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   if (fileSink && fileSink !== true) {
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
-      // Via nextTick: called from the reaction itself (a microtask), a callback's microtasks would run before its nextTicks.
+      // Two-arg then(): a throw from the fulfillment handler must not be
+      // mistaken for a write failure.
       maybePromise.then(
-        () =>
-          nextTick(() => {
-            emitDrain(this);
-            cb(null);
-          }),
-        err =>
-          nextTick(() => {
-            cb(err);
-            // Node.js onwriteError: the callback is additive, not a replacement for the 'error' event.
-            require("internal/streams/destroy").errorOrDestroy(this, err);
-          }),
+        () => {
+          emitDrain(this);
+          cb(null);
+        },
+        err => {
+          cb(err);
+          // Node.js onwriteError: callback AND destroy are both invoked; the
+          // callback is additive, not a replacement for the 'error' event.
+          require("internal/streams/destroy").errorOrDestroy(this, err);
+        },
       );
       return false; // Indicate backpressure
     } else {

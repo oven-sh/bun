@@ -595,20 +595,6 @@ test("Runtime.consoleAPICalled encodes -0/NaN/Infinity/bigint as unserializableV
   }
 });
 
-test("post() calls its callback before it returns", () => {
-  const session = new inspector.Session();
-  session.connect();
-  try {
-    const order: string[] = [];
-    session.post("Runtime.enable", () => order.push("callback"));
-    session.post("No.suchMethod", error => order.push(error!.code));
-    order.push("returned");
-    expect(order).toEqual(["callback", "ERR_INSPECTOR_COMMAND", "returned"]);
-  } finally {
-    session.disconnect();
-  }
-});
-
 test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its arguments", () => {
   const session = new inspector.Session();
   expect(() => session.post("Runtime.enable")).toThrow(

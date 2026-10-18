@@ -3,15 +3,6 @@ const dns = Bun.dns;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { isIP } = require("internal/net/isIP");
 const { guardCallback } = require("internal/shared");
-
-// Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back dns callbacks.
-const nextTick = process.nextTick;
-
-// Via nextTick: called from the reaction itself (a microtask), a callback's microtasks would run before its nextTicks.
-function wrapCallback(callback) {
-  callback = guardCallback(callback);
-  return (...args) => nextTick(callback, ...args);
-}
 const {
   validateFunction,
   validateArray,
@@ -237,7 +228,7 @@ function validateOrderOption(options) {
   }
 }
 
-// Validates and returns the callback wrapped by wrapCallback.
+// Validates and returns the callback wrapped by guardCallback.
 // Callers must use the return value, not the argument.
 function validateResolve(hostname, callback) {
   if (typeof hostname !== "string") {
@@ -248,7 +239,7 @@ function validateResolve(hostname, callback) {
     throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
   }
 
-  return wrapCallback(callback);
+  return guardCallback(callback);
 }
 
 function validateLocalAddresses(first, second) {
@@ -348,7 +339,7 @@ function lookup(hostname, options, callback?) {
     return;
   }
 
-  callback = wrapCallback(callback);
+  callback = guardCallback(callback);
   dns
     .lookup(hostname, options)
     .then(res => {
@@ -393,7 +384,7 @@ function lookupService(address, port, callback) {
     throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
   }
 
-  callback = wrapCallback(callback);
+  callback = guardCallback(callback);
   dns.lookupService(address, +port).then(
     results => {
       callback(null, ...results);
@@ -634,7 +625,7 @@ class Resolver {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
-    callback = wrapCallback(callback);
+    callback = guardCallback(callback);
 
     Resolver.#getResolver(this)
       .resolveCaa(hostname)
@@ -655,7 +646,7 @@ class Resolver {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
-    callback = wrapCallback(callback);
+    callback = guardCallback(callback);
 
     Resolver.#getResolver(this)
       .resolveTxt(hostname)
@@ -675,7 +666,7 @@ class Resolver {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
-    callback = wrapCallback(callback);
+    callback = guardCallback(callback);
 
     Resolver.#getResolver(this)
       .resolveSoa(hostname)
@@ -696,7 +687,7 @@ class Resolver {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
-    callback = wrapCallback(callback);
+    callback = guardCallback(callback);
 
     Resolver.#getResolver(this)
       .reverse(ip)

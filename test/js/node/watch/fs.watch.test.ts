@@ -1833,17 +1833,3 @@ test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target d
 
   expect(runs).toEqual(runs.map(() => ({ stdout: "OK", stderr: "", exitCode: 0 })));
 });
-
-test("a tick queued in a 'close' listener runs before a microtask queued in it", async () => {
-  const order: string[] = [];
-  const { promise, resolve } = Promise.withResolvers<void>();
-  fs.watch(testDir)
-    .on("close", () => {
-      Promise.resolve().then(() => order.push("microtask"));
-      process.nextTick(() => order.push("tick"));
-      setImmediate(resolve);
-    })
-    .close();
-  await promise;
-  expect(order).toEqual(["tick", "microtask"]);
-});

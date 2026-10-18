@@ -13,9 +13,6 @@ const transferToNativeReadable = $newCppFunction(
 );
 const { errorOrDestroy } = require("internal/streams/destroy");
 
-// Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back what a native write or read ends.
-const nextTick = process.nextTick;
-
 const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");
 const kConstructed = Symbol("constructed");
@@ -178,17 +175,17 @@ function read(this: NativeReadable, maxToRead: number) {
   );
   if ($isPromise(result)) {
     this[kPendingRead] = true;
-    // Via nextTick: called from the reaction itself (a microtask), a callback's microtasks would run before its nextTicks.
     return result.then(
-      result =>
-        nextTick(() => {
-          $debug(
-            `[${this.debugId}] pull, resolved: ${$isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
-          );
-          this[kPendingRead] = false;
-          this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
-        }),
-      reason => nextTick(errorOrDestroy, this, reason),
+      result => {
+        $debug(
+          `[${this.debugId}] pull, resolved: ${$isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
+        );
+        this[kPendingRead] = false;
+        this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
+      },
+      reason => {
+        errorOrDestroy(this, reason);
+      },
     );
   } else {
     this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);

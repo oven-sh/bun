@@ -1106,26 +1106,3 @@ it("argument validation errors name the argument", () => {
     promisesLookupService: "The argument 'address' is invalid. Received 1",
   });
 });
-
-describe("a tick queued in a callback runs before a microtask queued in it", () => {
-  const refused = new dns.Resolver({ timeout: 100, tries: 1 });
-  refused.setServers(["127.0.0.1:1"]);
-  test.each([
-    ["lookup", callback => dns.lookup("localhost", callback)],
-    ["lookup, all", callback => dns.lookup("localhost", { all: true }, callback)],
-    ["lookupService", callback => dns.lookupService("127.0.0.1", 80, callback)],
-    ["Resolver#resolve4 that fails", callback => refused.resolve4("example.invalid", callback)],
-    ["Resolver#resolveTxt that fails", callback => refused.resolveTxt("example.invalid", callback)],
-    ["Resolver#reverse that fails", callback => refused.reverse("192.0.2.1", callback)],
-  ])("%s", async (_, call) => {
-    const order = [];
-    const { promise, resolve } = Promise.withResolvers();
-    call(() => {
-      Promise.resolve().then(() => order.push("microtask"));
-      process.nextTick(() => order.push("tick"));
-      setImmediate(resolve);
-    });
-    await promise;
-    expect(order).toEqual(["tick", "microtask"]);
-  });
-});

@@ -11,12 +11,12 @@ use crate::repository::{Repository, github_tarball_tag};
 use crate::resolution_real::{Resolution, TaggedValue as ResolutionValue};
 use crate::versioned_url::VersionedURL;
 use crate::{Error, Features, GetJsonResult};
-use bun_collections::StringHashMap;
+use bun_collections::{DynamicBitSet, StringHashMap};
 use bun_core::strings;
 use bun_install::bin::Bin;
 use bun_install::dependency::{self, Dependency, DependencyExt as _, Tag as DepTag, TagExt as _};
 use bun_install::install::{self, PackageID, PackageManager};
-use bun_install::integrity::Integrity;
+use bun_install::integrity::{Fold, Integrity};
 use bun_install::npm;
 use bun_paths::AutoAbsPath;
 use bun_semver::{self as Semver, String as SemverString};
@@ -24,8 +24,6 @@ use bun_semver::{self as Semver, String as SemverString};
 #[derive(Default)]
 pub(crate) struct YarnLock<'a> {
     pub(crate) entries: Vec<Entry<'a>>,
-    /// Maps the key that `consolidate_and_append_entry` builds to an index in `entries`.
-    entry_by_name_version: StringHashMap<usize>,
 }
 
 #[derive(Default)]
@@ -83,14 +81,6 @@ impl<'a> Entry<'a> {
             strings::index_of(spec, b"@https://").is_some()
                 || strings::index_of(spec, b"@http://").is_some()
         })
-    }
-
-    /// Identity shared by consolidation and the package-id pass; git entries go by repository.
-    pub(crate) fn dedupe_name(&self) -> &[u8] {
-        match &self.git_repo_name {
-            Some(repo_name) if !self.has_direct_url_spec() => repo_name,
-            _ => self.name,
-        }
     }
 
     pub(crate) fn get_name_from_spec(spec: &[u8]) -> &[u8] {
@@ -265,9 +255,7 @@ impl<'a> YarnLock<'a> {
             }
 
             if indent == 0 && trimmed.ends_with(b":") {
-                if let Some(entry) = current_entry.take() {
-                    self.consolidate_and_append_entry(entry)?;
-                }
+                self.entries.extend(current_entry.take());
 
                 current_specs.clear();
                 let specs_str = &trimmed[0..trimmed.len() - 1];
@@ -375,50 +363,8 @@ impl<'a> YarnLock<'a> {
             }
         }
 
-        if let Some(entry) = current_entry.take() {
-            self.consolidate_and_append_entry(entry)?;
-        }
+        self.entries.extend(current_entry.take());
 
-        Ok(())
-    }
-
-    fn consolidate_and_append_entry(&mut self, new_entry: Entry<'a>) -> Result<(), Error> {
-        if new_entry.specs.is_empty() {
-            return Ok(());
-        }
-        // Every `link:` entry has version 0.0.0, so the key needs the path to tell them apart.
-        let link = new_entry.link.as_deref().unwrap_or(b"");
-        // A name and a version only identify a package when it comes from a registry.
-        let (file, resolved, commit) = if new_entry.is_registry_entry() {
-            Default::default()
-        } else {
-            (
-                new_entry.file.unwrap_or_default(),
-                new_entry.resolved.as_deref().unwrap_or_default(),
-                new_entry.commit.unwrap_or_default(),
-            )
-        };
-        let key = [
-            new_entry.dedupe_name(),
-            b"\n",
-            new_entry.version,
-            b"\n",
-            link,
-            b"\n",
-            file,
-            b"\n",
-            resolved,
-            b"\n",
-            commit,
-        ]
-        .concat();
-        let index = *self
-            .entry_by_name_version
-            .get_or_put_value(&key, self.entries.len())?;
-        match self.entries.get_mut(index) {
-            Some(existing_entry) => existing_entry.specs.extend_from_slice(&new_entry.specs),
-            None => self.entries.push(new_entry),
-        }
         Ok(())
     }
 }
@@ -465,11 +411,28 @@ fn append_package_json(
     Ok(this.append_package(&package)?)
 }
 
+/// The key that yarn.lock has for a dependency that the root or a workspace declares.
+fn importer_spec(this: &Lockfile, dep: &Dependency, spec: &mut Vec<u8>) {
+    let string_bytes = this.buffers.string_bytes.as_slice();
+    // yarn.lock spells a `file:` or `link:` path relative to yarn.lock. The parsed path matches
+    // that; the literal in a workspace's package.json is relative to the workspace.
+    let (protocol, range) = match dep.version.tag {
+        dependency::Tag::Folder => (b"file:".as_slice(), dep.version.folder()),
+        dependency::Tag::Symlink => (b"link:".as_slice(), dep.version.symlink()),
+        _ => (b"".as_slice(), &dep.version.literal),
+    };
+    spec.clear();
+    spec.extend_from_slice(dep.name.slice(string_bytes));
+    spec.push(b'@');
+    spec.extend_from_slice(protocol);
+    spec.extend_from_slice(range.slice(string_bytes));
+}
+
 /// Only the exact `name@range` key binds; an entry that merely satisfies it is another resolution.
 fn bind_importer_dependency(
     this: &Lockfile,
     dep: &Dependency,
-    spec_to_package_id: &StringHashMap<PackageID>,
+    requests: &Requests<'_, '_>,
     workspace_id_by_path: &StringHashMap<PackageID>,
     spec: &mut Vec<u8>,
 ) -> Option<PackageID> {
@@ -501,26 +464,17 @@ fn bind_importer_dependency(
         )
         .or_else(newest);
     }
-    // yarn.lock spells a `file:` or `link:` path relative to yarn.lock. The parsed path matches
-    // that; the literal in a workspace's package.json is relative to the workspace.
-    let (protocol, range) = match dep.version.tag {
-        dependency::Tag::Folder => (b"file:".as_slice(), dep.version.folder()),
-        dependency::Tag::Symlink => (b"link:".as_slice(), dep.version.symlink()),
-        _ => (b"".as_slice(), &dep.version.literal),
-    };
-    spec.clear();
-    spec.extend_from_slice(dep.name.slice(string_bytes));
-    spec.push(b'@');
-    spec.extend_from_slice(protocol);
-    spec.extend_from_slice(range.slice(string_bytes));
-    spec_to_package_id.get(spec.as_slice()).copied()
+    importer_spec(this, dep, spec);
+    requests.package_of(spec)
 }
 
-/// Packages `0..importer_count` (root, then workspaces) own every row in the buffers so far. Returns those without an entry.
+/// Rows `0..` of the buffers are what packages `0..importer_count` (root, then workspaces)
+/// declare, and the rows of the entries follow them. Binds the declared rows now that every entry
+/// that the project asks for is a package, and returns those without an entry.
 fn bind_importer_dependencies(
     this: &mut Lockfile,
     importer_count: usize,
-    spec_to_package_id: &StringHashMap<PackageID>,
+    requests: &Requests<'_, '_>,
     workspace_id_by_path: &StringHashMap<PackageID>,
     frozen: bool,
 ) -> Vec<Dependency> {
@@ -528,98 +482,130 @@ fn bind_importer_dependencies(
         this.buffers.dependencies.len(),
         this.buffers.resolutions.len()
     );
-    let mut declared = core::mem::take(&mut this.buffers.dependencies).into_iter();
-    this.buffers.resolutions.clear();
-
     let mut spec: Vec<u8> = Vec::new();
     let mut unlocked = Vec::new();
-    let mut consumed: u32 = 0;
+    // The bound rows move down over the rows that are taken out.
+    let (mut row, mut bound_rows) = (0, 0);
     for package_id in 0..importer_count {
         let declared_slice = this.packages.items_dependencies()[package_id];
-        debug_assert_eq!(declared_slice.off, consumed);
-        consumed += declared_slice.len;
+        debug_assert_eq!(declared_slice.off as usize, row);
 
-        let off = u32::try_from(this.buffers.dependencies.len()).expect("int cast");
-        for dep in declared.by_ref().take(declared_slice.len as usize) {
-            let bound = bind_importer_dependency(
-                this,
-                &dep,
-                spec_to_package_id,
-                workspace_id_by_path,
-                &mut spec,
-            );
+        let off = bound_rows;
+        for _ in 0..declared_slice.len {
+            let dep = &this.buffers.dependencies[row];
+            let bound =
+                bind_importer_dependency(this, dep, requests, workspace_id_by_path, &mut spec);
             // yarn.lock never lists the project's own peer dependencies, so a frozen install leaves
             // this one unresolved.
             let unbound = (frozen && dep.behavior.is_peer()).then_some(install::INVALID_PACKAGE_ID);
-            let Some(resolution) = bound.or(unbound) else {
+            match bound.or(unbound) {
+                Some(resolution) => {
+                    this.buffers.dependencies.swap(bound_rows, row);
+                    this.buffers.resolutions[bound_rows] = resolution;
+                    bound_rows += 1;
+                }
                 // `bun install` resolves it, like a dependency added after yarn.lock was written.
-                unlocked.push(dep);
-                continue;
-            };
-            this.buffers.dependencies.push(dep);
-            this.buffers.resolutions.push(resolution);
+                None => unlocked.push(dep.clone()),
+            }
+            row += 1;
         }
-        let len = u32::try_from(this.buffers.dependencies.len()).expect("int cast") - off;
+        let (off, len) = (off as u32, (bound_rows - off) as u32);
         this.packages.items_dependencies_mut()[package_id] =
             lockfile::DependencySlice::new(off, len);
         this.packages.items_resolutions_mut()[package_id] = lockfile::PackageIDSlice::new(off, len);
     }
-    debug_assert!(declared.next().is_none());
+    if bound_rows < row {
+        this.buffers.dependencies.drain(bound_rows..row);
+        this.buffers.resolutions.drain(bound_rows..row);
+        let taken_out = (row - bound_rows) as u32;
+        for slice in &mut this.packages.items_dependencies_mut()[importer_count..] {
+            slice.off -= taken_out;
+        }
+        for slice in &mut this.packages.items_resolutions_mut()[importer_count..] {
+            slice.off -= taken_out;
+        }
+    }
     unlocked
 }
 
-pub(crate) fn migrate_yarn_lockfile<'a>(
-    this: &'a mut Lockfile,
-    manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
-    data: &[u8],
-) -> Result<LoadResult<'a>, Error> {
-    // Yarn reads a file as v1 only when the marker is in the comment lines at its top.
-    let is_berry = strings::contains(data, b"\n__metadata:") || data.starts_with(b"__metadata:");
-    let has_v1_marker = match strings::index_of(data, b"# yarn lockfile v1") {
-        Some(at) if is_berry => strings::split(&data[..at], b"\n")
-            .all(|line| line.is_empty() || line.starts_with(b"#") || line == b"\r"),
-        Some(_) => true,
-        None => false,
-    };
-    if !has_v1_marker {
-        if is_berry {
-            return crate::yarn_berry::migrate_yarn_berry_lockfile(this, manager, log, data);
+/// yarn reads the entry of a key when a dependency asks for that key, and no other. So an entry
+/// becomes a package the first time a dependency asks for it, and an entry that nothing asks for
+/// never does.
+struct Requests<'a, 'e> {
+    entries: &'e [Entry<'a>],
+    /// Every key of every entry, to the index of the entry.
+    by_spec: StringHashMap<u32>,
+    /// `INVALID_PACKAGE_ID` until a dependency asks for the entry, and for an entry that no
+    /// resolution can be built for. Its keys are then treated as if yarn.lock did not have them.
+    package_ids: Vec<PackageID>,
+    asked: DynamicBitSet,
+    /// The entries that were appended as a package, in the order of the packages.
+    appended: Vec<u32>,
+    /// The packages below this one are the root and the workspaces.
+    importer_count: usize,
+}
+
+impl<'a, 'e> Requests<'a, 'e> {
+    fn new(entries: &'e [Entry<'a>], importer_count: usize) -> Result<Self, Error> {
+        let mut by_spec: StringHashMap<u32> = StringHashMap::new();
+        for (index, entry) in entries.iter().enumerate() {
+            let index = index as u32;
+            for spec in entry.specs.iter() {
+                by_spec.put(spec, index)?;
+            }
+            // yarn.lock spells the path as package.json does, with or without `./`.
+            // `importer_spec` has it in normalized form, so that form is added too.
+            if let Some(file) = entry.file {
+                by_spec.put(&[entry.name, b"@file:", file].concat(), index)?;
+            } else if let Some(link) = entry.link.as_deref() {
+                by_spec.put(&[entry.name, b"@link:", link].concat(), index)?;
+            }
         }
-        return Err(crate::Error::UnsupportedYarnLockfileVersion);
+        Ok(Self {
+            entries,
+            by_spec,
+            package_ids: vec![install::INVALID_PACKAGE_ID; entries.len()],
+            asked: DynamicBitSet::init_empty(entries.len())?,
+            appended: Vec::new(),
+            importer_count,
+        })
     }
 
-    let mut yarn_lock = YarnLock::default();
-    yarn_lock.parse(data)?;
-
-    this.init_empty();
-    install::initialize_store();
-    bun_core::analytics::Features::yarn_migration_inc(1);
-
-    let root = append_package_json(this, manager, log, None)?;
-    debug_assert_eq!(root.meta.id, 0);
-
-    let mut workspace_id_by_path: StringHashMap<PackageID> = StringHashMap::new();
-    for dep_id in root.dependencies.begin()..root.dependencies.end() {
-        let dep = &this.buffers.dependencies[dep_id as usize];
-        if !dep.behavior.is_workspace() {
-            continue;
-        }
-        let workspace_path = *dep.version.workspace();
-        let workspace = append_package_json(this, manager, log, Some(workspace_path))?;
-        workspace_id_by_path.put(
-            workspace_path.slice(this.buffers.string_bytes.as_slice()),
-            workspace.meta.id,
-        )?;
+    /// The package of the entry that has the key `spec`, once a dependency asked for it.
+    fn package_of(&self, spec: &[u8]) -> Option<PackageID> {
+        let package_id = self.package_ids[*self.by_spec.get(spec)? as usize];
+        (package_id != install::INVALID_PACKAGE_ID).then_some(package_id)
     }
-    let importer_count = this.packages.len();
 
-    // An entry whose resolution cannot be built keeps `INVALID_PACKAGE_ID`. Its specs are then
-    // treated as if yarn.lock had no entry for them.
-    let mut yarn_entry_to_package_id = vec![install::INVALID_PACKAGE_ID; yarn_lock.entries.len()];
-    let verbose = manager.options.log_level.is_verbose();
+    /// A dependency asks for the key `spec`. The first one to ask for an entry makes it a package.
+    fn ask(
+        &mut self,
+        this: &mut Lockfile,
+        manager: &mut PackageManager,
+        log: &mut bun_ast::Log,
+        spec: &[u8],
+    ) -> Result<Option<PackageID>, Error> {
+        let Some(&index) = self.by_spec.get(spec) else {
+            return Ok(None);
+        };
+        let index = index as usize;
+        if !self.asked.is_set(index) {
+            self.asked.set(index);
+            self.package_ids[index] = self.build(this, manager, log, index)?;
+        }
+        Ok(self.package_of(spec))
+    }
 
-    for (entry, package_id) in yarn_lock.entries.iter().zip(&mut yarn_entry_to_package_id) {
+    /// Makes the entry a package, or finds the package that an entry of the same name and
+    /// resolution already is.
+    fn build(
+        &mut self,
+        this: &mut Lockfile,
+        manager: &mut PackageManager,
+        log: &mut bun_ast::Log,
+        index: usize,
+    ) -> Result<PackageID, Error> {
+        let entry = &self.entries[index];
         let is_direct_url_dep = entry.has_direct_url_spec();
         let base_name: &[u8] = entry.name;
 
@@ -740,7 +726,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         };
 
         if resolution.tag == crate::resolution::Tag::Uninitialized {
-            if verbose {
+            if manager.options.log_level.is_verbose() {
                 let reason: Cow<str> = if entry.version.is_empty() {
                     "missing \"version\" field".into()
                 } else if !Semver::Version::parse_utf8(entry.version).valid {
@@ -759,11 +745,38 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     reason
                 );
             }
-            continue;
+            return Ok(install::INVALID_PACKAGE_ID);
+        }
+
+        // One more entry of a package that an earlier entry appended. yarn installs each from its
+        // own entry. bun installs one tarball, so each integrity they have must be its hash.
+        let string_bytes = this.buffers.string_bytes.as_slice();
+        let resolutions = this.packages.items_resolution();
+        let existing = this.package_index.get(&name_hash).and_then(|ids| {
+            ids.as_slice().iter().copied().find(|&id| {
+                id as usize >= self.importer_count
+                    && resolution.eql(&resolutions[id as usize], string_bytes, string_bytes)
+            })
+        });
+        if let Some(existing) = existing {
+            // A git entry is a commit, which has no tarball to hash.
+            if entry.commit.is_none() {
+                let kept = &mut this.packages.items_meta_mut()[existing as usize].integrity;
+                let had_none = !kept.tag.is_supported();
+                match kept.fold(&entry.tarball_integrity()) {
+                    Fold::Same | Fold::Kept => {}
+                    // An entry without a hash does not say which tarball it is.
+                    Fold::Taken if had_none => {
+                        this.packages.items_resolution_mut()[existing as usize] = resolution;
+                    }
+                    Fold::Taken => {}
+                    Fold::Conflict => return Err(self.conflict(this, log, existing, index)),
+                }
+            }
+            return Ok(existing);
         }
 
         let appended_id = PackageID::try_from(this.packages.len()).expect("int cast");
-        *package_id = appended_id;
 
         let mut package = LockfilePackage {
             name: pkg_name,
@@ -802,42 +815,115 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         }
         this.packages.append(package)?;
         this.get_or_put_id(appended_id, name_hash)?;
+        self.appended.push(index as u32);
+        Ok(appended_id)
     }
 
-    let mut spec_to_package_id: StringHashMap<PackageID> = StringHashMap::new();
-    for (entry, &package_id) in yarn_lock.entries.iter().zip(&yarn_entry_to_package_id) {
-        if package_id == install::INVALID_PACKAGE_ID {
+    #[cold]
+    fn conflict(
+        &self,
+        this: &Lockfile,
+        log: &mut bun_ast::Log,
+        package_id: PackageID,
+        index: usize,
+    ) -> Error {
+        let string_bytes = this.buffers.string_bytes.as_slice();
+        // The entry that the package has its integrity from.
+        let kept = this.packages.items_meta()[package_id as usize].integrity;
+        let owner = (self.entries.iter().zip(&self.package_ids))
+            .find(|(entry, id)| **id == package_id && entry.tarball_integrity() == kept)
+            .map_or(&[][..], |(entry, _)| &entry.specs[..]);
+        log.add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "yarn.lock entries \"{}\" and \"{}\" lock {}@{} with a different integrity",
+                bun_core::fmt::for_terminal(bstr::BStr::new(&bstr::join(", ", owner))),
+                bun_core::fmt::for_terminal(bstr::BStr::new(&bstr::join(
+                    ", ",
+                    &self.entries[index].specs
+                ))),
+                bun_core::fmt::escape_control_chars(
+                    this.packages.items_name()[package_id as usize].slice(string_bytes)
+                ),
+                this.packages.items_resolution()[package_id as usize]
+                    .fmt(string_bytes, bun_core::fmt::PathSep::Posix),
+            ),
+        );
+        Error::InvalidLockfile
+    }
+}
+
+pub(crate) fn migrate_yarn_lockfile<'a>(
+    this: &'a mut Lockfile,
+    manager: &mut PackageManager,
+    log: &mut bun_ast::Log,
+    data: &[u8],
+) -> Result<LoadResult<'a>, Error> {
+    // Yarn reads a file as v1 only when the marker is in the comment lines at its top.
+    let is_berry = strings::contains(data, b"\n__metadata:") || data.starts_with(b"__metadata:");
+    let has_v1_marker = match strings::index_of(data, b"# yarn lockfile v1") {
+        Some(at) if is_berry => strings::split(&data[..at], b"\n")
+            .all(|line| line.is_empty() || line.starts_with(b"#") || line == b"\r"),
+        Some(_) => true,
+        None => false,
+    };
+    if !has_v1_marker {
+        if is_berry {
+            return crate::yarn_berry::migrate_yarn_berry_lockfile(this, manager, log, data);
+        }
+        return Err(crate::Error::UnsupportedYarnLockfileVersion);
+    }
+
+    let mut yarn_lock = YarnLock::default();
+    yarn_lock.parse(data)?;
+
+    this.init_empty();
+    install::initialize_store();
+    bun_core::analytics::Features::yarn_migration_inc(1);
+
+    let root = append_package_json(this, manager, log, None)?;
+    debug_assert_eq!(root.meta.id, 0);
+
+    let mut workspace_id_by_path: StringHashMap<PackageID> = StringHashMap::new();
+    for dep_id in root.dependencies.begin()..root.dependencies.end() {
+        let dep = &this.buffers.dependencies[dep_id as usize];
+        if !dep.behavior.is_workspace() {
             continue;
         }
-        for spec in entry.specs.iter() {
-            spec_to_package_id.put(spec, package_id)?;
-        }
-        // yarn.lock spells the path as package.json does, with or without `./`.
-        // `bind_importer_dependency` looks it up in normalized form, so that form is added too.
-        if let Some(file) = entry.file {
-            spec_to_package_id.put(&[entry.name, b"@file:", file].concat(), package_id)?;
-        } else if let Some(link) = entry.link.as_deref() {
-            spec_to_package_id.put(&[entry.name, b"@link:", link].concat(), package_id)?;
-        }
+        let workspace_path = *dep.version.workspace();
+        let workspace = append_package_json(this, manager, log, Some(workspace_path))?;
+        workspace_id_by_path.put(
+            workspace_path.slice(this.buffers.string_bytes.as_slice()),
+            workspace.meta.id,
+        )?;
     }
+    let importer_count = this.packages.len();
 
-    let unlocked = bind_importer_dependencies(
-        this,
-        importer_count,
-        &spec_to_package_id,
-        &workspace_id_by_path,
-        manager.options.enable.frozen_lockfile(),
-    );
+    let mut requests = Requests::new(&yarn_lock.entries, importer_count)?;
 
+    // Every row so far is a dependency that the root or a workspace declares. yarn locks neither
+    // a workspace nor a peer of the project, so those ask for no entry.
     let mut key: Vec<u8> = Vec::new();
-    for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
-        let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
+    for row in 0..this.buffers.dependencies.len() {
+        let dep = &this.buffers.dependencies[row];
+        if dep.version.tag == dependency::Tag::Workspace || dep.behavior.is_peer() {
             continue;
         }
+        importer_spec(this, dep, &mut key);
+        requests.ask(this, manager, log, &key)?;
+    }
+
+    // Then the dependencies of each entry that became a package, which ask for more entries.
+    let mut next = 0;
+    while let Some(&index) = requests.appended.get(next) {
+        let package_id = importer_count + next;
+        next += 1;
 
         let deps_off = u32::try_from(this.buffers.dependencies.len()).expect("int cast");
-        for (deps, (_, behavior)) in entry.dependencies.iter().zip(DEPENDENCY_SECTIONS) {
+        for (deps, (_, behavior)) in
+            (yarn_lock.entries[index as usize].dependencies.iter()).zip(DEPENDENCY_SECTIONS)
+        {
             let Some(deps) = deps else {
                 continue;
             };
@@ -848,8 +934,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 let name_hash = string_hash(dep_name);
                 let dep_name_string = sbuf!(this).append_with_hash(dep_name, name_hash)?;
                 let dep_version_string = sbuf!(this).append(dep_version_literal)?;
-                let string_bytes = this.buffers.string_bytes.as_slice();
-                let sliced_string = dep_version_string.sliced(string_bytes);
+                let sliced_string = dep_version_string.sliced(this.buffers.string_bytes.as_slice());
                 let mut parsed_version = Dependency::parse(
                     dep_name_string,
                     Some(name_hash),
@@ -865,10 +950,11 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 key.extend_from_slice(dep_name);
                 key.push(b'@');
                 key.extend_from_slice(dep_version_literal);
-                let locked = spec_to_package_id.get(key.as_slice()).copied();
+                let locked = requests.ask(this, manager, log, &key)?;
                 // When a workspace's version satisfies the range, yarn links the workspace and
                 // writes no yarn.lock entry for it.
                 let resolution = locked.or_else(|| {
+                    let string_bytes = this.buffers.string_bytes.as_slice();
                     let npm = parsed_version.try_npm().filter(|_| !behavior.is_peer())?;
                     let path = lockfile::linked_workspace_path(
                         manager.options.link_workspace_packages,
@@ -895,11 +981,19 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         let dep_count =
             u32::try_from(this.buffers.dependencies.len()).expect("int cast") - deps_off;
 
-        this.packages.items_dependencies_mut()[package_id as usize] =
+        this.packages.items_dependencies_mut()[package_id] =
             lockfile::DependencySlice::new(deps_off, dep_count);
-        this.packages.items_resolutions_mut()[package_id as usize] =
+        this.packages.items_resolutions_mut()[package_id] =
             lockfile::DependencyIDSlice::new(deps_off, dep_count);
     }
+
+    let unlocked = bind_importer_dependencies(
+        this,
+        importer_count,
+        &requests,
+        &workspace_id_by_path,
+        manager.options.enable.frozen_lockfile(),
+    );
 
     crate::migration::warn_unlocked_dependencies(this, manager, "yarn.lock", &unlocked);
 

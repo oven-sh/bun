@@ -3273,16 +3273,19 @@ describe.concurrent("yarn.lock entries the migration cannot build a resolution f
   test("bun pm migrate keeps a version of a package whose other version is skipped", async () => {
     using registry = manifestOnlyRegistry();
     using dir = tempDir("yarn-migration-skipped-sibling-version", {
-      "package.json": JSON.stringify({ name: "app", dependencies: { pinned: "^2.0.0" } }),
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { old: "npm:pinned@^1.0.0", pinned: "^2.0.0" },
+      }),
       "yarn.lock":
         header +
-        `pinned@^1.0.0:\n  version "not-a-version"\n  resolved "${registryTarball("pinned", "1.0.0")}"\n\n` +
+        `"old@npm:pinned@^1.0.0":\n  version "not-a-version"\n  resolved "${registryTarball("pinned", "1.0.0")}"\n\n` +
         pinnedEntry(),
     });
 
     const { stderr, exitCode } = await run(String(dir), registry.url.href, "pm", "migrate", "-f");
 
-    expect(stderr).toContain('warn: skipping "pinned@^1.0.0" from yarn.lock: invalid version "not-a-version"');
+    expect(stderr).toContain('warn: skipping "old@npm:pinned@^1.0.0" from yarn.lock: invalid version "not-a-version"');
     expect(exitCode).toBe(0);
 
     const bunLock = await Bun.file(join(String(dir), "bun.lock")).text();
@@ -3451,6 +3454,207 @@ ${block("dup-pkg@~1.0.2")}
       "dup-pkg": ["dup-pkg@1.0.3", "", {}, ""],
       other: ["dup-pkg@1.0.4", "", {}, ""],
     });
+  });
+
+  const sri = (bytes: Uint8Array, algorithm = "sha512") =>
+    `${algorithm}-` + new Bun.CryptoHasher(algorithm).update(bytes).digest("base64");
+  const tarballs = Promise.all(
+    ["pinned", "other"].map(says =>
+      githubTarball("package", { "package.json": JSON.stringify({ name: "pkg", version: "1.0.0", says }) }),
+    ),
+  );
+  const tarball = (host: string) => `${host}pkg/-/pkg-1.0.0.tgz`;
+  const block = (key: string, resolved: string, integrity = "", rest = "") =>
+    `"${key}":\n  version "1.0.0"\n  resolved "${resolved}"\n${integrity && `  integrity ${integrity}\n`}${rest}\n`;
+  const aliases = { a: "npm:pkg@1.0.0", b: "npm:pkg@1.0.0" };
+
+  type Hosts = { registry: string; mirror: string; elsewhere: string; pinned: Uint8Array; other: Uint8Array };
+
+  /**
+   * `registry` and `mirror` have pkg@1.0.0 with the pinned bytes. `elsewhere` sends the other bytes for any path.
+   * `says` is what got installed for the first dependency.
+   */
+  async function withHosts(manifest: object, yarnLock: (hosts: Hosts) => string, ...args: string[]) {
+    const [pinned, other] = await tarballs;
+    const requests: string[] = [];
+    const serve = (name: string, bytes: Uint8Array) => {
+      const server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const { pathname } = new URL(req.url);
+          requests.push(name + pathname);
+          if (pathname !== "/pkg") return new Response(bytes);
+          const dist = { tarball: tarball(server.url.href), integrity: sri(bytes) };
+          return Response.json({
+            name: "pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: { "1.0.0": { name: "pkg", version: "1.0.0", dist } },
+          });
+        },
+      });
+      return server;
+    };
+    using registry = serve("registry", pinned);
+    using mirror = serve("mirror", pinned);
+    using elsewhere = serve("elsewhere", other);
+    const hosts = {
+      registry: registry.url.href,
+      mirror: mirror.url.href,
+      elsewhere: elsewhere.url.href,
+      pinned,
+      other,
+    };
+    using dir = tempDir("yarn-migration-one-package", {
+      "package.json": JSON.stringify({ name: "app", ...manifest }),
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "yarn.lock": "# yarn lockfile v1\n\n\n" + yarnLock(hosts),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_CONFIG_REGISTRY: hosts.registry, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const says = (name: string) => {
+      const installed = join(String(dir), "node_modules", name, "package.json");
+      return fs.existsSync(installed) ? JSON.parse(fs.readFileSync(installed, "utf8")).says : null;
+    };
+    const bunLock = join(String(dir), "bun.lock");
+    return {
+      stderr,
+      exitCode,
+      requests: requests.sort(),
+      says: says(Object.keys(Object.values(manifest)[0])[0]),
+      left: says("left"),
+      rows: fs.existsSync(bunLock)
+        ? (Bun.JSONC.parse(fs.readFileSync(bunLock, "utf8")) as { packages: Record<string, unknown[]> }).packages
+        : null,
+    };
+  }
+
+  const refused =
+    'error: yarn.lock entries "a@npm:pkg@1.0.0" and "b@npm:pkg@1.0.0" lock pkg@1.0.0 with a different integrity\n';
+
+  // yarn installs each block from its own `resolved`. bun keeps one package for a name and version.
+  test.each(["first", "second"])("two sha512 are refused (the %s is the one the registry has)", async which => {
+    const yarnLock = ({ registry, pinned, other }: Hosts) => {
+      const [first, second] = which === "first" ? [pinned, other] : [other, pinned];
+      return (
+        block("a@npm:pkg@1.0.0", tarball(registry), sri(first)) +
+        block("b@npm:pkg@1.0.0", tarball(registry), sri(second))
+      );
+    };
+
+    const ci = await withHosts({ dependencies: aliases }, yarnLock, "install", "--frozen-lockfile");
+    expect(ci.stderr).toContain(refused);
+    expect(ci).toMatchObject({ exitCode: 1, requests: [], says: null, rows: null });
+
+    // An install that may resolve again reports it, and then resolves without yarn.lock.
+    const install = await withHosts({ dependencies: aliases }, yarnLock, "install");
+    expect(install.stderr).toContain(refused);
+    expect(install.stderr).toContain("InvalidLockfile: failed to migrate lockfile: 'yarn.lock'");
+    expect(install).toMatchObject({
+      exitCode: 0,
+      requests: ["registry/pkg", "registry/pkg/-/pkg-1.0.0.tgz"],
+      says: "pinned",
+    });
+  });
+
+  test("a version with a `v` is the same version", async () => {
+    const result = await withHosts(
+      { dependencies: aliases },
+      ({ registry, pinned, other }) =>
+        block("a@npm:pkg@1.0.0", tarball(registry), sri(pinned)) +
+        block("b@npm:pkg@1.0.0", tarball(registry), sri(other)).replace('version "1.0.0"', 'version "v1.0.0"'),
+      "install",
+      "--frozen-lockfile",
+    );
+    expect(result.stderr).toContain(refused);
+    expect(result).toMatchObject({ exitCode: 1, requests: [], says: null });
+  });
+
+  // yarn < 1.10 wrote the sha1 of the tarball after `#` and no integrity line.
+  test.each(["sha1", "sha512"])("a sha1 beside a sha512 is checked against the sha512 (%s first)", async first => {
+    const result = await withHosts(
+      { dependencies: aliases },
+      ({ registry, pinned, other }) => {
+        const sha1 = new Bun.CryptoHasher("sha1").update(pinned).digest("hex");
+        const blocks = [`${tarball(registry)}#${sha1}`, tarball(registry)];
+        const [a, b] = first === "sha1" ? blocks : blocks.reverse();
+        const integrity = (resolved: string) => (resolved.includes("#") ? "" : sri(other));
+        return block("a@npm:pkg@1.0.0", a, integrity(a)) + block("b@npm:pkg@1.0.0", b, integrity(b));
+      },
+      "install",
+      "--frozen-lockfile",
+    );
+    // The registry has other bytes than the sha512 names.
+    expect(result.stderr).toContain("error: Integrity check failed for tarball: pkg\n");
+    expect(result).toMatchObject({ exitCode: 1, says: null });
+  });
+
+  test("one sha512 on two hosts is one tarball", async () => {
+    const result = await withHosts(
+      { dependencies: aliases },
+      ({ registry, mirror, pinned }) =>
+        block("a@npm:pkg@1.0.0", tarball(mirror), sri(pinned)) +
+        block("b@npm:pkg@1.0.0", tarball(registry), sri(pinned)),
+      "install",
+      "--frozen-lockfile",
+    );
+    expect(result.stderr).not.toContain("error:");
+    expect(result).toMatchObject({
+      exitCode: 0,
+      requests: ["mirror/pkg/-/pkg-1.0.0.tgz", "registry/pkg"],
+      says: "pinned",
+    });
+  });
+
+  // yarn reads the block of a key when a dependency asks for that key. The key of an added block is one that nothing
+  // asks for, so the block has no effect, wherever it stands.
+  describe.each(["before", "after"])("a block that nothing asks for, added %s the package's own,", position => {
+    const own = ({ registry, pinned }: Hosts) => block("pkg@1.0.0", tarball(registry), sri(pinned));
+    const added: [label: string, blocks: (hosts: Hosts) => string][] = [
+      ["under an alias", ({ elsewhere, other }) => block("abc@npm:pkg@1.0.0", `${elsewhere}x.tgz`, sri(other))],
+      ["under a range", ({ elsewhere, other }) => block("pkg@^1.0.0", `${elsewhere}x.tgz`, sri(other))],
+      ["without an integrity", ({ elsewhere }) => block("abc@npm:pkg@1.0.0", `${elsewhere}x.tgz`)],
+      [
+        "with the package's own tarball and one more dependency",
+        ({ registry, elsewhere, pinned, other }) =>
+          block("abc@npm:pkg@1.0.0", tarball(registry), sri(pinned), '  dependencies:\n    left "1.0.0"\n') +
+          block("left@1.0.0", `${elsewhere}left.tgz`, sri(other)),
+      ],
+    ];
+
+    test.each(added)("%s, is not read", async (_, blocks) => {
+      const result = await withHosts(
+        { dependencies: { pkg: "1.0.0" } },
+        hosts => (position === "before" ? blocks(hosts) + own(hosts) : own(hosts) + blocks(hosts)),
+        "install",
+        "--frozen-lockfile",
+      );
+      expect(result.stderr).not.toContain("error:");
+      expect(result).toMatchObject({
+        exitCode: 0,
+        requests: ["registry/pkg", "registry/pkg/-/pkg-1.0.0.tgz"],
+        says: "pinned",
+        left: null,
+      });
+    });
+  });
+
+  // yarn does not install the peer dependencies of the project, so it has no block for them.
+  test("a peer dependency of the project does not ask for a block", async () => {
+    const result = await withHosts(
+      { peerDependencies: { pkg: "^1.0.0" } },
+      ({ elsewhere, other }) => block("pkg@^1.0.0", `${elsewhere}x.tgz`, sri(other)),
+      "install",
+      "--frozen-lockfile",
+    );
+    expect(result.stderr).not.toContain("error:");
+    expect(result).toMatchObject({ exitCode: 0, requests: [], says: null });
   });
 });
 

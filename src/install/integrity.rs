@@ -31,6 +31,19 @@ impl Default for Integrity {
     }
 }
 
+/// What `Integrity::fold` found in the hash of another lockfile entry of one package.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Fold {
+    /// The same hash: the entries name one tarball.
+    Same,
+    /// Another hash of the same algorithm: the entries name two tarballs.
+    Conflict,
+    /// The package had no hash, or one of a weaker algorithm. It has the entry's now.
+    Taken,
+    /// The entry has no hash, or one of a weaker algorithm.
+    Kept,
+}
+
 const EMPTY_DIGEST_BUF: [u8; DIGEST_BUF_LEN] = [0u8; DIGEST_BUF_LEN];
 
 const DIGEST_BUF_LEN: usize = {
@@ -94,6 +107,25 @@ impl Integrity {
             }
         }
         strongest
+    }
+
+    /// Folds the hash of one more lockfile entry of a package into `self`, the hash the package
+    /// has so far. The strongest algorithm stays, as `parse` picks it inside one entry.
+    pub(crate) fn fold(&mut self, entry: &Integrity) -> Fold {
+        if !entry.tag.is_supported() {
+            return Fold::Kept;
+        }
+        if !self.tag.is_supported() || entry.tag.0 > self.tag.0 {
+            *self = *entry;
+            return Fold::Taken;
+        }
+        if entry.tag != self.tag {
+            Fold::Kept
+        } else if entry == self {
+            Fold::Same
+        } else {
+            Fold::Conflict
+        }
     }
 
     fn parse_entry(buf: &[u8]) -> Integrity {

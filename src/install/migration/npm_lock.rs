@@ -18,7 +18,7 @@ use crate::dependency::{
 };
 use crate::external_slice::ExternalSlice;
 use crate::hosted_git_info::{HostProvider, HostedGitInfo};
-use crate::integrity::Integrity;
+use crate::integrity::{Fold, Integrity};
 use crate::lockfile::{self, Lockfile, PackageListEntry};
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::package::workspace_map::WorkspaceMap;
@@ -158,6 +158,10 @@ struct Migrator<'a> {
     /// Indexes of the entries that have no integrity and whose tarball URL is under neither the
     /// configured registry nor the default one.
     unverifiable: Vec<u32>,
+    /// For each package, the entry whose integrity it has.
+    pin_owner: Vec<u32>,
+    /// A package, its `pin_owner`, and another entry of it whose integrity names another tarball.
+    conflicts: Vec<(PackageID, u32, u32)>,
     silent: bool,
     verbose: bool,
     /// `npm-shrinkwrap.json` or `package-lock.json`, for warnings.
@@ -220,6 +224,8 @@ pub(super) fn migrate_packages(
         url: Vec::new(),
         patched: String::new(),
         unverifiable: Vec::new(),
+        pin_owner: Vec::new(),
+        conflicts: Vec::new(),
         silent,
         verbose,
         lockfile_name,
@@ -242,6 +248,9 @@ pub(super) fn migrate_packages(
     }
 
     migrator.warn_unreachable();
+
+    migrator.fold_shadowed()?;
+    migrator.report_conflicts(log, source)?;
 
     // These packages now come from the configured registry, so use the integrity in its manifests.
     let unverified = unverified_packages(&migrator);
@@ -467,13 +476,11 @@ impl<'a> Migrator<'a> {
                     bstr::BStr::new(key),
                     existing
                 );
+                // npm packs a git dependency itself, so each copy can have a hash of its own.
+                let is_git = matches!(res.tag, resolution::Tag::Git | resolution::Tag::Github);
                 // A bundled copy carries no `resolved`/`integrity`; a registry copy of the same version does.
-                if res.tag == resolution::Tag::Npm && meta.integrity.tag.is_supported() {
-                    let existing_meta = &mut self.this.packages.items_meta_mut()[existing as usize];
-                    if !existing_meta.integrity.tag.is_supported() {
-                        existing_meta.integrity = meta.integrity;
-                        self.this.packages.items_resolution_mut()[existing as usize] = res;
-                    }
+                if !is_git && self.fold_pin(existing, j, &meta.integrity) {
+                    self.this.packages.items_resolution_mut()[existing as usize] = res;
                 }
                 if folder_in_dependent.is_none() {
                     self.entry_package_ids[j as usize] = existing;
@@ -498,6 +505,8 @@ impl<'a> Migrator<'a> {
             scripts: Default::default(),
         })?;
         self.this.get_or_put_id(id, name_hash)?;
+        debug_assert_eq!(self.pin_owner.len(), id as usize);
+        self.pin_owner.push(j);
         self.queue.push((j, id));
         // `build_or_get` must keep handing other dependents the entry-key build.
         match folder_in_dependent {
@@ -505,6 +514,117 @@ impl<'a> Migrator<'a> {
             Some(_) => self.shadowed.set(j as usize),
         }
         Ok(id)
+    }
+
+    /// Entry `j` is one more copy of package `id`. npm installs each copy from its own entry. bun
+    /// installs every copy from one tarball, so each integrity the entries have must be its hash.
+    /// Returns whether this is the first integrity the package has: the caller then gives it the
+    /// tarball URL of the entry too.
+    fn fold_pin(&mut self, id: PackageID, j: u32, integrity: &Integrity) -> bool {
+        let kept = &mut self.this.packages.items_meta_mut()[id as usize].integrity;
+        let had_none = !kept.tag.is_supported();
+        match kept.fold(integrity) {
+            Fold::Same | Fold::Kept => false,
+            Fold::Conflict => {
+                (self.conflicts).push((id, self.pin_owner[id as usize], j));
+                false
+            }
+            Fold::Taken => {
+                self.pin_owner[id as usize] = j;
+                had_none
+            }
+        }
+    }
+
+    /// An entry under a copy that folded is never built: bun installs the registry package of its
+    /// name and version in its place, if there is one. Its integrity folds into that package too.
+    fn fold_shadowed(&mut self) -> Result<(), Error> {
+        let entries = self.entries;
+        let text =
+            |pkg: &'a E::ObjectJSON, prop: &[u8]| pkg.get(prop).and_then(|value| value.as_str());
+        for (j, entry) in entries.iter().enumerate() {
+            if !self.shadowed.is_set(j) || self.entry_package_ids[j] != INVALID_PACKAGE_ID {
+                continue;
+            }
+            let pkg = entry_object(entry);
+            let (Some(integrity), Some(version)) = (text(pkg, b"integrity"), text(pkg, b"version"))
+            else {
+                continue;
+            };
+            // A git or `file:` entry is not the registry's package.
+            let resolved = text(pkg, b"resolved");
+            if resolved.is_some_and(|resolved| !resolved.starts_with(b"http")) {
+                continue;
+            }
+            let name =
+                text(pkg, b"name").unwrap_or_else(|| package_name_from_path(entry.key.slice()));
+            let Some(ids) = self.this.package_index.get(&string_hash(name)) else {
+                continue;
+            };
+            let resolutions = self.this.packages.items_resolution();
+            let owner_of =
+                |id: PackageID| entry_object(&entries[self.pin_owner[id as usize] as usize]);
+            let Some(id) = ids.as_slice().iter().copied().find(|&id| {
+                resolutions[id as usize].tag == resolution::Tag::Npm
+                    && text(owner_of(id), b"version") == Some(version)
+            }) else {
+                continue;
+            };
+            if text(owner_of(id), b"integrity") != Some(integrity)
+                && self.fold_pin(id, j as u32, &Integrity::parse(integrity))
+                && let Some(resolved) = resolved
+            {
+                let res = Self::npm_resolution(self.this, resolved, version)?;
+                self.this.packages.items_resolution_mut()[id as usize] = res;
+            }
+        }
+        Ok(())
+    }
+
+    /// Logs each pair of entries of one package whose integrity names two tarballs.
+    fn report_conflicts(
+        &self,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
+    ) -> Result<(), Error> {
+        let buf = self.this.buffers.string_bytes.as_slice();
+        // The line of the entry's `integrity`.
+        let range = |entry: &E::PropertyJSON| bun_ast::Range {
+            loc: (entry_object(entry).properties().iter())
+                .find(|prop| prop.key.slice() == b"integrity")
+                .map_or(entry.key_loc, |prop| prop.key_loc),
+            ..Default::default()
+        };
+        for &(id, owner, other) in &self.conflicts {
+            let [owner, other] = [owner, other].map(|j| &self.entries[j as usize]);
+            log.add_range_error_fmt_with_notes(
+                Some(source),
+                range(other),
+                Box::new([
+                    bun_ast::range_data(Some(source), range(owner), b"The other entry is here"),
+                    bun_ast::range_data(
+                        None,
+                        bun_ast::Range::NONE,
+                        b"bun installs one tarball for a name and version",
+                    ),
+                ]),
+                format_args!(
+                    "\"{}\" and \"{}\" lock {}@{} with a different integrity",
+                    bun_core::fmt::escape_control_chars(owner.key.slice()),
+                    bun_core::fmt::escape_control_chars(other.key.slice()),
+                    bun_core::fmt::escape_control_chars(
+                        self.this.packages.items_name()[id as usize].slice(buf)
+                    ),
+                    self.this.packages.items_resolution()[id as usize]
+                        .fmt(buf, bun_core::fmt::PathSep::Posix),
+                ),
+            );
+        }
+        if self.conflicts.is_empty() {
+            Ok(())
+        } else {
+            Err(Error::InvalidNPMLockfile)
+        }
     }
 
     fn parse_bin(this: &mut Lockfile, pkg: &E::ObjectJSON, name: &[u8]) -> Result<Bin, Error> {

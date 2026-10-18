@@ -401,3 +401,46 @@ test("no --only flag with multiple files", async () => {
   `);
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("a matcher wait that is the first await of a file returns when an immediate settles it", async () => {
+  // The first test body of a file runs with nothing entered, so this wait is not
+  // nested. The promise settles inside an immediate's checkpoint, before the poll.
+  using dir = tempDir("expect-first-wait", {
+    "first.test.ts": `
+      import { afterAll, expect, test } from "bun:test";
+      import { createServer } from "node:net";
+
+      // An open handle lets the poll block.
+      const server = createServer().listen(0);
+      afterAll(() => server.close());
+
+      const hops = async (n: number) => {
+        for (let i = 0; i < n; i++) await new Promise(resolve => setImmediate(resolve));
+      };
+
+      test("first", async () => {
+        let timerFired = false;
+        const timer = setTimeout(() => {
+          timerFired = true;
+        }, 500);
+        await expect(
+          hops(3).then(() => {
+            throw new Error("done");
+          }),
+        ).rejects.toThrow("done");
+        clearTimeout(timer);
+        expect(timerFired).toBe(false);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./first.test.ts"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+});

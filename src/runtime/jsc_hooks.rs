@@ -863,9 +863,9 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                     // SAFETY: `pip` is a live JSC heap cell (see above).
                     if unsafe { &*pip }.status() == PromiseStatus::Pending {
                         // SAFETY: per fn contract — short-lived `&mut *vm` for the
-                        // dispatched `auto_tick` hook (same shape as the
-                        // non-watcher `wait_for_promise` arm).
-                        unsafe { (*vm).auto_tick() };
+                        // dispatched hook (same shape as the non-watcher
+                        // `wait_for_promise` arm).
+                        unsafe { (*vm).auto_tick_while_pending(AnyPromise::Internal(pip)) };
                     }
                 }
             } else {
@@ -944,17 +944,43 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn auto_tick(vm: *mut VirtualMachine) {
-    // Note: reshaped for borrowck — `EventLoop` is a value field of
-    // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
-    // siblings would alias. Dereference per-field via the raw `vm` ptr.
+    // SAFETY: per fn contract.
+    let has_yielded_tasks = unsafe { run_immediates(vm) };
+    // SAFETY: per fn contract.
+    unsafe { poll_and_drain_timers(vm, has_yielded_tasks) };
+}
+
+/// `eventLoop().autoTickWhilePending(promise)`: [`auto_tick`] for a turn of a
+/// promise wait. The immediates run before the poll, and their checkpoints can
+/// settle `promise`. Then the wait is over, and the poll would park on a deadline
+/// that nothing in it is waiting for, so it is skipped. Whatever the turn leaves
+/// out (timers due, the after-loop callback) runs on the next turn of the loop
+/// the wait returns to.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+unsafe fn auto_tick_while_pending(vm: *mut VirtualMachine, promise: AnyPromise) {
+    // SAFETY: per fn contract.
+    let has_yielded_tasks = unsafe { run_immediates(vm) };
+    if promise.status() != bun_jsc::js_promise::Status::Pending {
+        return;
+    }
+    // SAFETY: per fn contract.
+    unsafe { poll_and_drain_timers(vm, has_yielded_tasks) };
+}
+
+/// The first phase of [`auto_tick`]: the immediates of this turn. Returns whether
+/// yield tasks were promoted, which the poll deadline needs.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+#[inline(always)]
+unsafe fn run_immediates(vm: *mut VirtualMachine) -> bool {
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
-    // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
-    let loop_ = unsafe { (*el).usockets_loop() };
 
-    // ── tick_immediate_tasks ────────────────────────────────────────────
     // After this call `immediate_tasks` reflects next-tick immediates, so
-    // the `has_pending_immediate` read below is correct.
+    // the `has_pending_immediate` read in the poll phase is correct.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: as above.
@@ -964,6 +990,23 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // SAFETY: `el` is the live per-thread event loop.
         unsafe { (*el).wakeup() };
     }
+    has_yielded_tasks
+}
+
+/// The second phase of [`auto_tick`]: the I/O poll with the next-timer deadline,
+/// then the timers that are due.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+#[inline(always)]
+unsafe fn poll_and_drain_timers(vm: *mut VirtualMachine, has_yielded_tasks: bool) {
+    // Note: reshaped for borrowck — `EventLoop` is a value field of
+    // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
+    // siblings would alias. Dereference per-field via the raw `vm` ptr.
+    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
+    // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
+    let loop_ = unsafe { (*el).usockets_loop() };
 
     // ── pending unref ───────────────────────────────────────────────────
     #[cfg(unix)]
@@ -1499,6 +1542,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     load_preloads,
     ensure_debugger,
     auto_tick,
+    auto_tick_while_pending,
     auto_tick_active,
     print_exception,
     timer_insert,

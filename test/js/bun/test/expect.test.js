@@ -8,6 +8,7 @@
 
 // import these functions typed with the bun:test types,
 // so this test can also be used to detect issues with the "bun:test" type definitions
+import { createServer } from "node:net";
 import test_interop from "./test-interop.js";
 var { isBun, test, it, describe, expect, jest, vi, mock, bunTest, spyOn } = await test_interop();
 const isJest = !vi;
@@ -160,6 +161,70 @@ describe("expect()", () => {
     setTimeout(resolve, 0);
     expect(() => promise).not.toThrow();
     expect(promise.thenCalls).toBe(1);
+  });
+
+  test("callbacks dispatched while resolves/rejects waits run a microtask checkpoint each", async () => {
+    // After this hop the test continues inside an immediate's checkpoint, so the
+    // wait of the matcher below runs under an entered callback.
+    await new Promise(resolve => setImmediate(resolve));
+    /** @type {string[]} */
+    const order = [];
+    const run = () =>
+      new Promise(resolve => {
+        setImmediate(() => {
+          order.push("immediate 1");
+          Promise.resolve().then(() => order.push("microtask after immediate 1"));
+        });
+        setImmediate(() => {
+          order.push("immediate 2");
+          setTimeout(() => {
+            order.push("timeout 1");
+            Promise.resolve().then(() => order.push("microtask after timeout 1"));
+          }, 0);
+          setTimeout(() => {
+            order.push("timeout 2");
+            resolve(undefined);
+          }, 0);
+        });
+      });
+    await expect(run()).resolves.toBeUndefined();
+    expect(order).toEqual([
+      "immediate 1",
+      "microtask after immediate 1",
+      "immediate 2",
+      "timeout 1",
+      "microtask after timeout 1",
+      "timeout 2",
+    ]);
+  });
+
+  test("setImmediate hops while resolves/rejects waits do not wait for the poll", async () => {
+    // An open handle lets the poll block. With the checkpoint of each immediate
+    // skipped, the poll blocks before the next hop is queued, until the timer
+    // below fires.
+    const server = createServer();
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    let timerFired = false;
+    const timer = setTimeout(() => {
+      timerFired = true;
+    }, 500);
+    const hops = async (/** @type {number} */ n) => {
+      for (let i = 0; i < n; i++) await new Promise(resolve => setImmediate(resolve));
+    };
+    const error = new Error("expected");
+    try {
+      await expect(hops(10)).resolves.toBeUndefined();
+      await expect(
+        hops(10).then(() => {
+          throw error;
+        }),
+      ).rejects.toBe(error);
+    } finally {
+      clearTimeout(timer);
+      server.close();
+    }
+    expect(timerFired).toBe(false);
   });
 
   test("can call without an argument", () => {

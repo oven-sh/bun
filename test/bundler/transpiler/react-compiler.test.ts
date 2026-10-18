@@ -3766,7 +3766,8 @@ test("react-compiler does not end the process on a try in which nothing but a re
 });
 
 test("react-compiler time does not grow with the cube of a chain of functions", async () => {
-  // Windows counts CPU time in ticks of 1/64 s, and in a release build one component of n functions takes a tick or two.
+  // The CPU time of a process on Windows (GetProcessTimes) is a count of 1/64 s ticks, whatever the resolution of
+  // timers is. In a release build one component of n functions takes a tick or two.
   const components = isWindows && !isDebug ? 8 : 1;
   const component = (name: string, n: number) => `
     export function ${name}() {

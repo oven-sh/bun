@@ -333,6 +333,18 @@ pub(super) type RecursionId = (u8, u32, u32);
 /// equality test.
 const NOT_PLAIN: RecursionId = (u8::MAX, 0, 0);
 
+/// What `reset_maybe_stack` does with the keys it pops.
+#[derive(Copy, Clone)]
+enum MaybeKeys {
+    /// They get no entry.
+    Forgotten,
+    /// They succeeded. A key that has an entry already keeps it.
+    Succeeded,
+    /// They succeeded, and the result replaces the entry that a key may have already. A comparison that elaborates begins
+    /// at a key whose entry is a failure, which an overflow may have cut off. See also `recursive_type_related_to`.
+    SucceededReplacing,
+}
+
 /// What `Checker::recursive_relation_key` returns.
 struct RecursiveRelationKey {
     key: Key,
@@ -4310,14 +4322,12 @@ impl<'p, 's> Checker<'p, 's> {
                     &mut self.keeps_relations_for_this_task,
                     is_cut && self.task.commits(),
                 );
-                self.reset_maybe_stack(
-                    r,
-                    maybe_start,
-                    propagating,
-                    result == Ternary::TRUE || result == Ternary::MAYBE,
-                    stored,
-                    REPORT || replaces,
-                );
+                let keys = match result == Ternary::TRUE || result == Ternary::MAYBE {
+                    true if REPORT || replaces => MaybeKeys::SucceededReplacing,
+                    true => MaybeKeys::Succeeded,
+                    false => MaybeKeys::Forgotten,
+                };
+                self.reset_maybe_stack(r, maybe_start, propagating, keys, stored);
                 self.keeps_relations_for_this_task = around;
             }
         } else {
@@ -4343,7 +4353,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             r.relation_count -= 1;
-            self.reset_maybe_stack(r, maybe_start, propagating, false, stored, false);
+            self.reset_maybe_stack(r, maybe_start, propagating, MaybeKeys::Forgotten, stored);
         }
         result
     }
@@ -4422,31 +4432,30 @@ impl<'p, 's> Checker<'p, 's> {
         (16_000_000 - self.relation_sizes[relation as usize]) / 8
     }
 
-    /// `resetMaybeStack`. `replaces`: a key may have an entry already. A comparison that elaborates begins at a key whose
-    /// entry is a failure, which an overflow may have cut off. See also `recursive_type_related_to`.
+    /// `resetMaybeStack`
     fn reset_maybe_stack(
         &mut self,
         r: &mut Relater,
         maybe_start: usize,
         propagating: u8,
-        mark_all_as_succeeded: bool,
+        keys: MaybeKeys,
         stored: Option<Stored>,
-        replaces: bool,
     ) {
         while r.maybe_keys.len() > maybe_start {
             let Some(key) = r.pop_maybe_key() else {
                 break;
             };
-            if mark_all_as_succeeded {
-                match stored {
-                    Some(stored) if replaces => {
-                        self.set_relation(key, SUCCEEDED | propagating, stored);
-                    }
-                    Some(stored) => self.insert_relation(key, SUCCEEDED | propagating, stored),
-                    None => {}
+            match (keys, stored) {
+                (MaybeKeys::Forgotten, _) => continue,
+                (MaybeKeys::Succeeded, Some(stored)) => {
+                    self.insert_relation(key, SUCCEEDED | propagating, stored);
                 }
-                r.relation_count -= 1;
+                (MaybeKeys::SucceededReplacing, Some(stored)) => {
+                    self.set_relation(key, SUCCEEDED | propagating, stored);
+                }
+                (_, None) => {}
             }
+            r.relation_count -= 1;
         }
     }
 

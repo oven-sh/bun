@@ -1242,7 +1242,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if ctx.runtime_options.check {
             super::watch_instead_of_hot_for_check(ctx);
         }
-        super::apply_watch_mode_flags(ctx);
+        let restarts = ctx.debug.hot_reload == HotReload::Watch;
+        super::apply_watch_mode_flags(ctx, restarts);
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
         ctx.runtime_options.interactive = args.flag(b"--interactive")
             || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));

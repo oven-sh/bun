@@ -14,6 +14,7 @@ const {
 } = require("internal/serve_cli");
 const setConfigPlugins = $newRustFunction("bake/config/plugins.rs", "setConfigPlugins", 2);
 const isRestart = $newRustFunction("bake/config/plugins.rs", "isRestart", 0);
+const restartProcess = $newRustFunction("bake/config/plugins.rs", "restartProcess", 0);
 
 // `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
 const ObjectKeys = Object.keys;
@@ -31,12 +32,12 @@ Serves the app in the working directory, with hot reloading:
   app/pages/**/*.html   Pages. The path is the URL: app/pages/docs/index.html is /docs.
   bake.config.ts        Optional. Build plugins, as Bun plugins:
                         export default defineConfig({ plugins: [...] }), with
-                        defineConfig from "bun:bake". Restart after you change it.
-
-Changes to app/server.ts and the files it imports apply without a restart.
+                        defineConfig from "bun:bake". "bun bake" starts again when it changes.
   app/server.ts         Optional. Its default export holds options of Bun.serve(), as
                         for \`export default\` in \`bun app.ts\` (a Hono app works). "fetch"
                         gets the requests that no page and no route matched.
+
+Changes to app/server.ts and the files it imports apply without a restart.
 
 Options:
 
@@ -123,7 +124,8 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
 
 /**
  * The `key` of the `bake.config.ts` that the server loaded its plugins from, once it started. The
- * server loads plugins once, and each reload evaluates the file again, so the text tells a change.
+ * server loads plugins once, so a change to the file starts the process again. Each reload
+ * evaluates the file again, so the text tells a change.
  */
 let configKeyInServer: string | undefined;
 
@@ -219,7 +221,12 @@ async function loadAppServer(
 
 /** How many times `start()` ran: once, then once more for each reload. */
 let runs = 0;
-/** Whether this process is `bun bake --check` started again after a change. */
+/**
+ * Whether this process is a restart of `bun bake --check`: a new process that a change started, not
+ * the first start. An error at its start waits for a fix instead of exiting, since the session goes
+ * on and the type checker watches the project. A restart for a change to `bake.config.ts` counts as
+ * a first start.
+ */
 let restarted = false;
 
 async function start() {
@@ -245,7 +252,8 @@ async function start() {
   const cwd = process.cwd();
   const config = await loadConfig(cwd);
   if (configKeyInServer !== undefined && config.key !== configKeyInServer) {
-    console.warn(`"${config.name}" changed. Restart "bun bake" to use the new plugins.`);
+    // Does not return: on a failure it prints the error and exits.
+    restartProcess();
   }
   // Before `Bun.serve()`: the server loads them with the plugins of bunfig.toml.
   setConfigPlugins(config.plugins, config.names);

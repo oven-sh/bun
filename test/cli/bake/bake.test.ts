@@ -627,29 +627,143 @@ test.concurrent.each([
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("bun bake asks for a restart when bake.config.ts changes, and only then", async () => {
+test.concurrent("bun bake starts again when bake.config.ts changes, and only then", async () => {
+  const config = (cls: string) => `export default {
+    plugins: [{
+      name: "${cls}",
+      setup(build) {
+        build.onLoad({ filter: /style\\.css$/ }, () => ({ contents: ".${cls} { color: red; }", loader: "css" }));
+      },
+    }],
+  };`;
+  // \`globalThis\` lives through a reload in place, not through a new process: the id tells them apart.
+  const server = (version: string) =>
+    `globalThis.processId ??= crypto.randomUUID();
+    export default { fetch: () => new Response("${version} " + globalThis.processId) };`;
   using dir = tempDir("bake-command-config-change", {
+    "bake.config.ts": config("first"),
+    "app/server.ts": server("v1"),
+    "app/style.css": `.unchanged { color: red; }`,
+    "app/pages/index.html": `<!doctype html><html><head><link rel="stylesheet" href="../style.css" /></head><body></body></html>`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  expect(await getPageCss(url, "/")).toContain(".first");
+  const [, , firstId] = (await get(url, "/missing")).split(" ");
+
+  // A change to another file reloads in place, although it evaluates bake.config.ts again.
+  await Bun.write(join(String(dir), "app/server.ts"), server("v2"));
+  let body = await get(url, "/missing");
+  while (!body.includes("v2")) body = await get(url, "/missing");
+  expect(body).toBe(`200 v2 ${firstId}`);
+
+  // A change to bake.config.ts starts a new process, which loads the new plugins. A late reload in
+  // place can print a URL after the write too, so the new process is the URL that answers with
+  // another id. The URL of the old process may not answer at all.
+  const before = output.text.length;
+  await Bun.write(join(String(dir), "bake.config.ts"), config("second"));
+  let next: string;
+  let nextBody: string;
+  for (let count = 1; ; count++) {
+    await output.waitFor(new RegExp(`^[\\s\\S]{${before}}(?:[\\s\\S]*?url: http){${count}}`));
+    next = [...output.text.slice(before).matchAll(/url: (http:\/\/\S+)/g)][count - 1][1];
+    nextBody = await get(next, "/missing").catch(() => "");
+    if (nextBody !== "" && !nextBody.endsWith(firstId)) break;
+  }
+  expect(nextBody).toStartWith("200 v2 ");
+  expect(await getPageCss(next, "/")).toContain(".second");
+});
+
+test.concurrent("bun bake runs the SIGTERM handlers before it starts again for bake.config.ts", async () => {
+  using dir = tempDir("bake-command-config-sigterm", {
     "bake.config.ts": `export default { plugins: [] };`,
-    "app/pages/index.html": page,
-    "app/server.ts": `export default { fetch: () => new Response("v1") };`,
+    "app/server.ts": `
+      process.on("SIGTERM", () => console.log("SIGTERM before restart"));
+      export default { fetch: () => new Response("ok") };
+    `,
   });
 
   await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
   const output = collectOutput(proc);
   await output.waitFor(/url: /);
 
-  // A reload for another file evaluates bake.config.ts again, but it did not change.
-  await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("v2") };`);
-  await output.waitFor(/url: [\s\S]*url: /);
-  expect(output.text).not.toContain("changed");
-
   await Bun.write(join(String(dir), "bake.config.ts"), `export default { plugins: [] }; // changed`);
-  const [line] = await output.waitFor(/"bake\.config\.ts" changed\..*/);
-
-  expect(line).toBe(`"bake.config.ts" changed. Restart "bun bake" to use the new plugins.`);
+  await output.waitFor(/SIGTERM before restart/);
 });
 
-// Windows has no signal handlers to run before a restart.
+// On a terminal, `bun bake` adds its own SIGTERM listener, which exits. Bun.spawn's `terminal` is
+// POSIX only.
+test.concurrent.skipIf(isWindows)(
+  "on a terminal, bun bake runs every SIGTERM listener before it starts again for bake.config.ts",
+  async () => {
+    const server = (version: string) => `
+      process.on("SIGTERM", () => console.log("SIGTERM listener of ${version}"));
+      export default { fetch: () => new Response("${version}") };
+    `;
+    using dir = tempDir("bake-command-config-sigterm-tty", {
+      "bake.config.ts": `export default { plugins: [] };`,
+      "app/server.ts": server("v1"),
+    });
+
+    let text = "";
+    let changed = Promise.withResolvers<void>();
+    const decoder = new TextDecoder();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "bake", "--port=0"],
+      env,
+      cwd: String(dir),
+      terminal: {
+        cols: 200,
+        rows: 50,
+        data(_terminal, chunk) {
+          text += decoder.decode(chunk, { stream: true });
+          changed.resolve();
+          changed = Promise.withResolvers<void>();
+        },
+      },
+    });
+    const waitFor = async (pattern: RegExp) => {
+      while (!pattern.test(text)) {
+        const exited = await Promise.race([changed.promise.then(() => false), proc.exited.then(() => true)]);
+        if (exited && !pattern.test(text)) {
+          throw new Error(`Exited with code ${proc.exitCode} before ${pattern}:\n${text}`);
+        }
+      }
+      return text.match(pattern)!;
+    };
+
+    const [, url] = await waitFor(/url: (http:\/\/\S+)/);
+    // A reload in place adds the listener of v2 after the one of `bun bake`.
+    await Bun.write(join(String(dir), "app/server.ts"), server("v2"));
+    let body = await get(url, "/");
+    while (!body.includes("v2")) body = await get(url, "/");
+
+    await Bun.write(join(String(dir), "bake.config.ts"), `export default { plugins: [] }; // changed`);
+    await waitFor(/SIGTERM listener of v2/);
+  },
+);
+
+test.concurrent("bun bake exits when a start for a bake.config.ts change finds a page it cannot serve", async () => {
+  using dir = tempDir("bake-command-config-restart-error", {
+    "bake.config.ts": `export default { plugins: [] };`,
+    "app/pages/index.html": page,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/url: /);
+
+  // No file that the new process loads could fix the page name, so it exits as at a first start.
+  await Bun.write(join(String(dir), "app/pages/[slug].html"), page);
+  await Bun.write(join(String(dir), "bake.config.ts"), `export default { plugins: [] }; // changed`);
+  await output.waitFor(/a page cannot have/);
+
+  expect(await proc.exited).toBe(1);
+});
+
+// Windows has no SIGUSR2.
 test.concurrent.skipIf(isWindows)(
   "bun --watch-kill-signal ... bake --check sends that signal before a restart",
   async () => {
@@ -674,6 +788,29 @@ test.concurrent.skipIf(isWindows)(
       `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
     );
     await output.waitFor(/SIGUSR2 before restart/);
+  },
+);
+
+// Windows has no SIGUSR2.
+test.concurrent.skipIf(isWindows)(
+  "bun --watch-kill-signal ... bake sends that signal before it starts again for bake.config.ts",
+  async () => {
+    using dir = tempDir("bake-command-kill-signal-config", {
+      "bake.config.ts": `export default { plugins: [] };`,
+      "app/server.ts": `
+      process.on("SIGUSR2", () => console.log("SIGUSR2 before restart"));
+      process.on("SIGTERM", () => console.log("SIGTERM before restart"));
+      export default { fetch: () => new Response("ok") };
+    `,
+    });
+
+    await using proc = spawnBake(String(dir), ["--watch-kill-signal", "SIGUSR2", "bake", "--port=0"]);
+    const output = collectOutput(proc);
+    await output.waitFor(/url: /);
+
+    await Bun.write(join(String(dir), "bake.config.ts"), `export default { plugins: [] }; // changed`);
+    await output.waitFor(/SIGUSR2 before restart/);
+    expect(output.text).not.toContain("SIGTERM before restart");
   },
 );
 

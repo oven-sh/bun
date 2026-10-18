@@ -4664,22 +4664,29 @@ impl VirtualMachine {
         }
     }
 
+    /// Starts the process again with the same arguments, as `--watch` does on a change. Emits the
+    /// `--watch-kill-signal` JS handlers first, like node. On Windows, this needs the watcher-manager
+    /// parent (`bun_sys::windows::become_watcher_manager`). Returns only when the restart failed and
+    /// `may_return` is true; the error is printed.
+    pub fn restart_process(&mut self, may_return: bool) {
+        crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
+        let should_clear_terminal = !self
+            .env_loader()
+            .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
+        // execve will not reach on_exit; flush the compile cache here like
+        // node's child does via AtExit(FlushCompileCache) on every restart.
+        crate::node_compile_cache::persist_now();
+        bun_core::Output::flush();
+        bun_core::reload_process(should_clear_terminal, may_return);
+    }
+
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
         if self.hot_reload == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
-            // entry promise (node restarts regardless of child state), and
-            // emit the --watch-kill-signal JS handlers first, like node.
-            crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
-            let should_clear_terminal =
-                !self.env_loader().has_set_no_clear_terminal_on_reload(
-                    !bun_core::Output::enable_ansi_colors_stdout(),
-                );
-            // execve will not reach on_exit; flush the compile cache here like
-            // node's child does via AtExit(FlushCompileCache) on every restart.
-            crate::node_compile_cache::persist_now();
-            bun_core::Output::flush();
-            bun_core::reload_process(should_clear_terminal, false);
+            // entry promise (node restarts regardless of child state).
+            self.restart_process(false);
+            unreachable!("reload_process returns only when may_return is true");
         }
 
         if let Some(p) = self.pending_internal_promise() {

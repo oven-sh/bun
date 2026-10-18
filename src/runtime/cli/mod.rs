@@ -2321,11 +2321,14 @@ pub(crate) fn set_up_watch_restarts(ctx: &command::ContextData) {
 /// `--no-clear-screen` and `--watch-kill-signal`, once the watch mode is final. Node reads
 /// `--watch-kill-signal` only in watch mode; elsewhere it is accepted and ignored. Matching is
 /// case-insensitive (node uppercases).
-pub(crate) fn apply_watch_mode_flags(ctx: &mut command::ContextData) {
+///
+/// `restarts`: the process can start again on a change, so the kill signal applies. True in watch
+/// mode, and for `bun bake`, which starts again when `bake.config.ts` changes.
+pub(crate) fn apply_watch_mode_flags(ctx: &mut command::ContextData, restarts: bool) {
     if ctx.debug.no_clear_screen && ctx.debug.hot_reload != command::HotReload::None {
         let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
     }
-    if ctx.debug.hot_reload != command::HotReload::Watch {
+    if !restarts {
         return;
     }
     let Some(kill_signal) = ctx.debug.watch_kill_signal_arg.as_deref() else {

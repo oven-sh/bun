@@ -4435,7 +4435,8 @@ it.each<OrderedShape>([
     z: { "z": `z@${one === "a" ? "1.0.5" : "1.1.0"}`, "b/z": `z@${one === "a" ? "1.1.0" : "1.0.5"}`, "o/z": "z@1.0.0" },
   })),
   {
-    // m is itself installed as a peer. Its range counts like the others, whichever manifest arrives first.
+    // m is itself installed as a peer, so whether its range is known when z is picked depends on which manifest
+    // arrives first. It does not count.
     shape: "a peers m@1.0.0 and z@>=1.0.0, b peers z@>=1.0.5, m peers z@~1.0.0",
     manifests: {
       a: { "1.0.0": { peerDependencies: { m: "1.0.0", z: ">=1.0.0" } } },
@@ -4448,7 +4449,7 @@ it.each<OrderedShape>([
       "m's manifest last": [{ manifest: "m", until: "/z" }],
       "z's manifest last": [{ manifest: "z", until: "/b-1.0.0.tgz" }],
     },
-    z: { "z": "z@1.0.5" },
+    z: { "z": "z@2.0.0" },
   },
   {
     shape: "a peers z@^1.0.0 next to b peers z@>=1.0.0",
@@ -5011,6 +5012,78 @@ it.concurrent(
     expect({ ...instancesOf(lock, "y"), ...instancesOf(lock, "z") }).toEqual({ "z": "z@1.0.0" });
   },
 );
+
+it.concurrent(
+  "a manifest that the registry refuses does not fail the install if only an optional dependency and a version that a peer gives up need it",
+  async () => {
+    using registry = await serveRegistry(
+      { ...peerSharesOlderZ, b: { "1.0.0": { optionalDependencies: { y: "^1.0.0" } } } },
+      ["y"],
+    );
+    using dir = projectOn(registry, {
+      ...workspaceWithOlderZ,
+      "w/package.json": { name: "w", dependencies: { a: "1.0.0", b: "1.0.0", z: "1.0.0" } },
+    });
+    const { err } = await installWithOwnCache(String(dir));
+    expect(err).toContain(`warn: GET ${registry.origin}/y - 403`);
+  },
+);
+
+// The peer stays unbound, whether its turn comes before or after the optional dependency's.
+it.concurrent.each(["0b", "b"])(
+  "a manifest that the registry refuses does not fail the install if a peer of a and an optional dependency of %s need it",
+  async b => {
+    using registry = await serveRegistry(
+      {
+        a: { "1.0.0": { peerDependencies: { y: "1.0.0" } } },
+        [b]: { "1.0.0": { optionalDependencies: { y: "1.0.0" } } },
+        y: { "1.0.0": {} },
+      },
+      ["y"],
+    );
+    using dir = projectOn(registry, { "package.json": { name: "foo", dependencies: { a: "1.0.0", [b]: "1.0.0" } } });
+    const { err } = await installWithOwnCache(String(dir));
+    expect(err).toContain(`warn: GET ${registry.origin}/y - 403`);
+  },
+);
+
+it.concurrent.each(["hoisted", "isolated"])(
+  "a peer shares the devDependency of the project under --production, %s",
+  async linker => {
+    using registry = await serveRegistry({ a: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } }, z: zVersions });
+    using dir = projectOn(registry, {
+      "package.json": { name: "foo", dependencies: { a: "1.0.0" }, devDependencies: { z: "1.0.0" } },
+    });
+    const cwd = String(dir);
+    await installWithOwnCache(cwd, "--production", "--linker", linker);
+    const nextToA = dirname(realpathSync(join(cwd, "node_modules", "a")));
+    expect((await file(join(nextToA, "z", "package.json")).json()).version).toBe("1.0.0");
+    const { out } = await installWithOwnCache(cwd, "--production", "--linker", linker);
+    expect(out).toContain("(no changes)");
+  },
+);
+
+// pc@2.0.0 goes again, and pe with it. That pe depends on a tarball must not change what else stays.
+it.concurrent("a tarball below a version that goes again does not change which versions the peers get", async () => {
+  const manifests: Manifests = {
+    pb: { "1.1.0": {}, "2.0.0": { dependencies: { pc: "*" } } },
+    pc: { "1.0.5": { peerDependencies: { pb: "1.1.0" } }, "2.0.0": { peerDependencies: { pe: "1.0.5" } } },
+    pd: { "1.0.0": { dependencies: { pb: "^2.0.0" } } },
+    pe: { "1.0.5": {} },
+    pf: { "1.1.0": { peerDependencies: { pc: "1.0.5" } } },
+    t: { "1.0.0": {} },
+  };
+  using registry = await serveRegistry(manifests);
+  manifests.pe["1.0.5"].dependencies = { t: `${registry.origin}/t-1.0.0.tgz` };
+  using dir = projectOn(registry, { "package.json": { name: "foo", dependencies: { pd: "1.0.0", pf: "1.1.0" } } });
+  await installWithOwnCache(String(dir));
+  const lock = await file(join(String(dir), "bun.lock")).text();
+  expect({ ...instancesOf(lock, "pb"), ...instancesOf(lock, "pc"), ...instancesOf(lock, "pe") }).toEqual({
+    "pb": "pb@2.0.0",
+    "pc": "pc@1.0.5",
+    "pc/pb": "pb@1.1.0",
+  });
+});
 
 it.concurrent("what the version that a peer gets depends on fails the install", async () => {
   using registry = await serveRegistry(peerSharesOlderZ, ["y"]);

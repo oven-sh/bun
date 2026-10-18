@@ -380,9 +380,9 @@ impl<'a> Pass<'a> {
                 }
                 // Only in `collapse_appended`. When this dependency of a new package was resolved, it
                 // could only share the versions that the dependencies resolved before it had added.
-                let placed_early = self.frozen_below.is_some_and(|below| owner >= below);
-                let is_peer = deps[dep_id as usize].behavior.is_peer();
-                let placement = if self.frozen_below.is_some() && is_peer {
+                let placed_early = self.frozen_below.is_some_and(|below| owner >= below)
+                    && !deps[dep_id as usize].behavior.is_peer();
+                let placement = if self.moves_only_peers {
                     // What hoisting binds it to (`Builder::peer_by_version`).
                     self.placement(e)
                 } else if placed_early {
@@ -407,6 +407,9 @@ impl<'a> Pass<'a> {
         let mut best: Option<Vec<PackageID>> = None;
         loop {
             let next = self.vote(cur, live);
+            if best.is_none() && next == cur {
+                return next;
+            }
             let after = reachable(self.lockfile, &next, self.frozen_below);
             if !after.unmanaged.subset_of(&self.voters.unmanaged) {
                 return best.unwrap_or(next);
@@ -420,18 +423,18 @@ impl<'a> Pass<'a> {
         }
     }
 
-    /// `collapse_appended`. The peers of one name share a version, in range or not, because a second
-    /// copy would split a package from its plugins: `@octokit/rest` and its plugins share one
-    /// `@octokit/core`. This marks in `spare` the `Lockfile::only_peers` versions to remove. One
-    /// that a regular dependency, a peer without a range (`latest`) or a patch holds stays. Of the
-    /// others:
+    /// `collapse_appended_peers`. The peers of one name share a version, in range or not, because a
+    /// second copy would split a package from its plugins: `@octokit/rest` and its plugins share
+    /// one `@octokit/core`. This marks in `spare` the `Lockfile::only_peers` versions to remove.
+    /// One that a regular dependency, a peer without a range (`latest`) or a patch holds stays. Of
+    /// the others:
     /// - all, if the highest version that is not `only_peers` satisfies a peer;
     /// - else the ones that satisfy no peer. A peer does not count if a package above it depends on
     ///   the name: `react@17` in a workspace is used by every library under that workspace.
     /// - If no version stays, all but one: peers that nothing provides share a version. It is the
     ///   one that satisfies the most peers of the root and the workspaces, then of the packages
     ///   that are not `only_peers`, then of all, and the highest of several. A version could
-    ///   otherwise stay for a package below itself.
+    ///   otherwise stay for a package that goes itself.
     ///
     /// If only peers hold the versions of bun.lock, a peer of the root or of a workspace keeps the
     /// version it got.
@@ -465,6 +468,14 @@ impl<'a> Pass<'a> {
         }
         let still_live =
             (hoisted.as_deref()).map(|cur| reachable(lockfile, cur, self.frozen_below));
+        if let Some(still_live) = &still_live {
+            // Nothing would install what only such a peer holds.
+            for id in 0..lockfile.only_peers.bit_length() {
+                if lockfile.only_peers.is_set(id) && live.is_set(id) && !still_live.is_set(id) {
+                    self.spare.set(id);
+                }
+            }
+        }
         let (cur, live) = (
             hoisted.as_deref().unwrap_or(cur),
             still_live.as_ref().unwrap_or(live),
@@ -693,6 +704,7 @@ fn dedupe_lockfile(
             .collect();
         if candidates.len() < 2
             || frozen_below.is_some_and(|below| candidates.iter().all(|&id| id < below))
+            || (moves_only_peers && !candidates.iter().any(|&id| lockfile.is_only_for_peers(id)))
         {
             continue;
         }
@@ -728,6 +740,14 @@ fn dedupe_lockfile(
     let max_edges = edge_counts.iter().copied().max().unwrap_or(0) as usize;
 
     let initial = reachable(lockfile, &lockfile.buffers.resolutions, frozen_below);
+    let is_undecided =
+        |&id: &PackageID| lockfile.is_only_for_peers(id) && initial.is_set(id as usize);
+    if moves_only_peers && !groups.iter().flatten().any(is_undecided) {
+        return Report {
+            checked,
+            ..Report::default()
+        };
+    }
     let patched: Vec<PackageID> = (0..pkg_res.len())
         .filter(|&p| pinned.is_set(p) && initial.is_set(p))
         .map(|p| p as PackageID)
@@ -750,9 +770,15 @@ fn dedupe_lockfile(
                 moves_only_peers,
                 max_edges,
             );
-            pass.find_spare(&cur, &live);
+            if moves_only_peers {
+                pass.find_spare(&cur, &live);
+            }
             loop {
-                cur = pass.settle(&cur, &live);
+                let next = pass.settle(&cur, &live);
+                if next == cur {
+                    break;
+                }
+                cur = next;
                 let after = reachable(lockfile, &cur, frozen_below);
                 if after.unmanaged.eql(&live.unmanaged) {
                     break;
@@ -1266,8 +1292,8 @@ pub fn collapse_appended(manager: &mut PackageManager) {
     collapse(manager, false);
 }
 
-/// The same where the other dependencies were moved to their versions on purpose: only peers move,
-/// off the versions that `Pass::find_spare` removes.
+/// Decides which `Lockfile::only_peers` packages stay (`Pass::find_spare`). Only the peers that
+/// resolve to one move.
 pub fn collapse_appended_peers(manager: &mut PackageManager) {
     collapse(manager, true);
 }

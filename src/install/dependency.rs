@@ -771,8 +771,6 @@ impl VersionExt for Version {
 pub trait TagExt {
     fn cmp(self, other: Tag) -> Ordering;
     fn is_npm(self) -> bool;
-    /// See `RemotePackages`.
-    fn is_remote_package(self) -> bool;
     fn infer(dependency: &[u8]) -> Tag;
 }
 
@@ -785,11 +783,6 @@ impl TagExt for Tag {
     #[inline]
     fn is_npm(self) -> bool {
         (self as u8) < 3
-    }
-
-    #[inline]
-    fn is_remote_package(self) -> bool {
-        matches!(self, Tag::Git | Tag::Github | Tag::Tarball)
     }
 
     fn infer(dependency: &[u8]) -> Tag {

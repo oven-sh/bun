@@ -615,8 +615,9 @@ pub fn install_with_manager(
         manager.drain_dependency_list();
     }
 
+    let mut progress = ResolveProgress::new(log_level);
     if manager.pending_task_count() > 0 || !named.latest_rows.is_empty() {
-        resolve_pending_tasks(manager, &root, log_level, &mut named)?;
+        resolve_pending_tasks(manager, &root, &mut progress, &mut named)?;
     }
 
     if manager.summary.changes_resolutions()
@@ -624,11 +625,11 @@ pub fn install_with_manager(
         && reresolve_links_to_dropped_workspaces(manager)
         && manager.pending_task_count() > 0
     {
-        resolve_pending_tasks(manager, &root, log_level, &mut NamedUpdates::default())?;
+        resolve_pending_tasks(manager, &root, &mut progress, &mut NamedUpdates::default())?;
     }
 
     if resolve_peers_of_failed_providers(manager) && manager.pending_task_count() > 0 {
-        resolve_pending_tasks(manager, &root, log_level, &mut NamedUpdates::default())?;
+        resolve_pending_tasks(manager, &root, &mut progress, &mut NamedUpdates::default())?;
     }
 
     // `--depth 0`: a transitive edge that shared the old package with a moved entry stays.
@@ -636,18 +637,17 @@ pub fn install_with_manager(
     direct_deps_before.redirect_dependents(&mut manager.lockfile, direct_only);
     transitive.redirect_dependents(&mut manager.lockfile);
     redirect_moved_edges(&mut manager.lockfile, &named.moved, direct_only);
-    collapse_and_resolve_held(
-        manager,
-        &root,
-        log_level,
-        match manager.subcommand {
-            // `dedupe_before_install` has done it.
-            Subcommand::Dedupe => |_| {},
-            // `bun audit fix` moved its rows to the fixed versions on purpose.
-            Subcommand::Audit => crate::dedupe::collapse_appended_peers,
-            _ => crate::dedupe::collapse_appended,
-        },
-    )?;
+    let collapse_peers = match manager.subcommand {
+        // `dedupe_before_install` has done it.
+        Subcommand::Dedupe => |_: &mut PackageManager| {},
+        _ => crate::dedupe::collapse_appended_peers,
+    };
+    settle_only_peers(manager, &root, &mut progress, collapse_peers)?;
+    progress.close(manager);
+    // `bun audit fix` moved its rows to the fixed versions on purpose.
+    if !matches!(manager.subcommand, Subcommand::Dedupe | Subcommand::Audit) {
+        crate::dedupe::collapse_appended(manager);
+    }
     manager.log_held();
     transitive.print_plan(manager, &direct_deps_before, &named.moved);
     print_kept_patched(manager);
@@ -1782,36 +1782,22 @@ fn resolve_peers_of_failed_providers(manager: &mut PackageManager) -> bool {
     !rows.is_empty()
 }
 
-/// Runs `collapse`, then resolves `RemotePackages::held` for the packages that it kept. What that
-/// adds is collapsed again.
-fn collapse_and_resolve_held(
+/// Decides with `collapse_peers` which `Lockfile::only_peers` packages stay, and resolves what those
+/// depend on. That can add more of them.
+fn settle_only_peers(
     manager: &mut PackageManager,
     root: &lockfile::Package,
-    log_level: Options::LogLevel,
-    collapse: fn(&mut PackageManager),
+    progress: &mut ResolveProgress,
+    collapse_peers: fn(&mut PackageManager),
 ) -> crate::Result<()> {
     loop {
-        collapse(manager);
-        let held = core::mem::take(&mut manager.remote_packages.held);
-        if held.is_empty() {
+        collapse_peers(manager);
+        if !manager.lockfile.unmark_reachable_only_peers()? {
             return Ok(());
-        }
-        let all = reachable::Options::all(0);
-        let kept = reachable::packages(
-            &manager.lockfile,
-            &manager.lockfile.buffers.resolutions,
-            all,
-        );
-        for row in held {
-            let owner = manager.lockfile.get_parent_pkg_of_dependency(row);
-            if let Some(owner) = owner.filter(|&owner| kept.is_set(owner as usize)) {
-                manager.lockfile.unmark_only_peers(owner);
-                enqueue_row(manager, row);
-            }
         }
         manager.drain_dependency_list();
         if manager.pending_task_count() > 0 {
-            resolve_pending_tasks(manager, root, log_level, &mut NamedUpdates::default())?;
+            resolve_pending_tasks(manager, root, progress, &mut NamedUpdates::default())?;
         }
     }
 }
@@ -2249,7 +2235,7 @@ fn create_new_lockfile_and_enqueue(
 fn resolve_pending_tasks(
     manager: &mut PackageManager,
     root: &lockfile::Package,
-    log_level: Options::LogLevel,
+    progress: &mut ResolveProgress,
     named: &mut NamedUpdates,
 ) -> crate::Result<()> {
     if root.dependencies.len > 0 {
@@ -2257,12 +2243,7 @@ fn resolve_pending_tasks(
         let _ = manager.get_temporary_directory();
     }
 
-    if log_level.show_progress() {
-        manager.start_progress_bar();
-    } else if log_level != Options::LogLevel::Silent {
-        bun_core::pretty_errorln!("Resolving dependencies");
-        Output::flush();
-    }
+    progress.open(manager);
 
     if manager.lockfile.patched_dependencies.len() > 0 {
         wait_for_calcing_patch_hashes(manager)?;
@@ -2275,17 +2256,49 @@ fn resolve_pending_tasks(
         named.moved.extend(child_moves);
         wait_for_pending_tasks(manager)?;
     }
-
-    if log_level.show_progress() {
-        manager.end_progress_bar();
-    } else if log_level != Options::LogLevel::Silent {
-        bun_core::pretty_errorln!(
-            "Resolved, downloaded and extracted [{}]",
-            manager.total_tasks,
-        );
-        Output::flush();
-    }
     Ok(())
+}
+
+/// What is shown from the first `resolve_pending_tasks` to the last.
+struct ResolveProgress {
+    log_level: Options::LogLevel,
+    is_open: bool,
+}
+
+impl ResolveProgress {
+    fn new(log_level: Options::LogLevel) -> Self {
+        Self {
+            log_level,
+            is_open: false,
+        }
+    }
+
+    fn open(&mut self, manager: &mut PackageManager) {
+        if core::mem::replace(&mut self.is_open, true) {
+            return;
+        }
+        if self.log_level.show_progress() {
+            manager.start_progress_bar();
+        } else if self.log_level != Options::LogLevel::Silent {
+            bun_core::pretty_errorln!("Resolving dependencies");
+            Output::flush();
+        }
+    }
+
+    fn close(&mut self, manager: &mut PackageManager) {
+        if !core::mem::replace(&mut self.is_open, false) {
+            return;
+        }
+        if self.log_level.show_progress() {
+            manager.end_progress_bar();
+        } else if self.log_level != Options::LogLevel::Silent {
+            bun_core::pretty_errorln!(
+                "Resolved, downloaded and extracted [{}]",
+                manager.total_tasks,
+            );
+            Output::flush();
+        }
+    }
 }
 
 /// `bun update <name> --latest`: the packages the named rows now resolve to get their own children moved in-range too.
@@ -2504,7 +2517,6 @@ fn reresolve_rows_outside_overrides(
     }
 
     manager.lockfile.mark_loaded_packages()?;
-    manager.held_messages = Some(Vec::new());
     let mut moved: Vec<(DependencyID, PackageID)> = Vec::new();
     let mut peer_rows: Vec<DependencyID> = Vec::new();
     for (row, package_id) in outside {
@@ -2521,17 +2533,14 @@ fn reresolve_rows_outside_overrides(
     }
     enqueue_peer_rows(manager, &peer_rows, &mut moved)?;
     manager.drain_dependency_list();
+    let mut progress = ResolveProgress::new(log_level);
     if manager.pending_task_count() > 0 {
-        resolve_pending_tasks(manager, root, log_level, &mut NamedUpdates::default())?;
+        resolve_pending_tasks(manager, root, &mut progress, &mut NamedUpdates::default())?;
     }
     redirect_moved_edges(&mut manager.lockfile, &moved, false);
-    collapse_and_resolve_held(
-        manager,
-        root,
-        log_level,
-        crate::dedupe::collapse_appended_peers,
-    )?;
-    manager.log_held();
+    let collapse_peers = crate::dedupe::collapse_appended_peers;
+    settle_only_peers(manager, root, &mut progress, collapse_peers)?;
+    progress.close(manager);
     if manager.log_mut().has_errors() {
         manager.crash();
     }

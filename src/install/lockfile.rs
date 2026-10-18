@@ -37,8 +37,8 @@ use crate::update_request::UpdateRequest;
 use crate::{
     self as Install, DependencyID, ExternalSlice, Features, PackageID, PackageManager,
     PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash, dependency,
-    dependency::Dependency, dependency::DependencyExt as _, dependency::TagExt as _,
-    initialize_store, invalid_dependency_id, invalid_package_id, npm as Npm,
+    dependency::Dependency, dependency::DependencyExt as _, initialize_store,
+    invalid_dependency_id, invalid_package_id, npm as Npm,
 };
 use bun_install_types::NodeLinker::NodeLinker;
 
@@ -195,10 +195,10 @@ pub struct Lockfile {
     /// Packages that so far only rows inside a bundle resolve to. Runtime-only, sized lazily.
     pub(crate) only_bundled: DynamicBitSet,
 
-    /// Packages that this install added for a peer dependency, or for a dependency of such a package,
-    /// and that nothing else resolves to so far. `dedupe::collapse_appended` may drop them, and
-    /// whether one is there yet depends on the order, so no range shares one before that.
-    /// Runtime-only, sized lazily.
+    /// Packages that this install added for a peer dependency and that nothing else resolves to so
+    /// far. `dedupe::collapse_appended_peers` may drop them, and whether one is there yet depends on
+    /// the order. So until it has kept one, no range shares it and what it depends on is not
+    /// resolved. Runtime-only, sized lazily.
     pub(crate) only_peers: DynamicBitSet,
 }
 
@@ -954,23 +954,19 @@ impl Lockfile {
                     && (package == owner
                         || (!dep.behavior.is_bundled() && dep.behavior.is_enabled(root_features)))
                     && (self.buffers.resolutions[id as usize] != invalid_package_id
-                        || dep.version.tag.is_remote_package())
+                        || matches!(
+                            dep.version.tag,
+                            dependency::version::Tag::Git
+                                | dependency::version::Tag::Github
+                                | dependency::version::Tag::Tarball
+                        ))
             })
         })
     }
 
     /// `None` for the edges `enqueue_dependency_to_root` appends outside of any package.
     pub(crate) fn get_parent_pkg_of_dependency(&self, id: DependencyID) -> Option<PackageID> {
-        let lists = self.packages.items_dependencies();
-        // A new package puts its dependencies after everybody else's, so the lists are mostly sorted.
-        let guess = lists.partition_point(|dependencies| dependencies.end() <= id);
-        if lists
-            .get(guess)
-            .is_some_and(|dependencies| dependencies.contains(id))
-        {
-            return Some(guess as PackageID);
-        }
-        (lists.iter())
+        (self.packages.items_dependencies().iter())
             .position(|dependencies| dependencies.contains(id))
             .map(|pkg_id| pkg_id as PackageID)
     }
@@ -2558,28 +2554,35 @@ impl Lockfile {
         (self.only_peers).is_set_allow_out_of_bound(id as usize, false)
     }
 
-    /// Is the row owned by an `only_peers` package?
-    pub(crate) fn is_below_only_peers(&self, id: DependencyID) -> bool {
-        self.only_peers.bit_length() != 0
-            && (self.get_parent_pkg_of_dependency(id))
-                .is_some_and(|owner| self.is_only_for_peers(owner))
+    /// `id` stays, so what it depends on is queued.
+    pub(crate) fn unmark_only_peers(&mut self, id: PackageID) -> crate::Result<()> {
+        if !self.is_only_for_peers(id) {
+            return Ok(());
+        }
+        self.only_peers.unset(id as usize);
+        self.scratch.dependency_list_queue.push(QueuedRows {
+            rows: self.packages.items_dependencies()[id as usize],
+            from_command: false,
+        })?;
+        Ok(())
     }
 
-    /// Another row resolves to `id` now, and so to what `id` depends on.
-    pub(crate) fn unmark_only_peers(&mut self, id: PackageID) {
-        let mut stack = vec![id];
-        while let Some(id) = stack.pop() {
-            if !self.is_only_for_peers(id) {
-                continue;
-            }
-            self.only_peers.unset(id as usize);
-            let rows = self.packages.items_dependencies()[id as usize];
-            for row in rows.begin() as usize..rows.end() as usize {
-                if !self.buffers.dependencies[row].behavior.is_peer() {
-                    stack.push(self.buffers.resolutions[row]);
-                }
+    /// `unmark_only_peers` for the ones that a dependency still resolves to. Returns whether there
+    /// was one.
+    pub(crate) fn unmark_reachable_only_peers(&mut self) -> crate::Result<bool> {
+        if self.only_peers.count() == 0 {
+            return Ok(false);
+        }
+        let all = reachable::Options::all(0);
+        let reachable = reachable::packages(self, &self.buffers.resolutions, all);
+        let mut found = false;
+        for id in 0..self.only_peers.bit_length() {
+            if self.only_peers.is_set(id) && reachable.is_set(id) {
+                self.unmark_only_peers(id as PackageID)?;
+                found = true;
             }
         }
+        Ok(found)
     }
 
     /// Is the row a bundled dependency, or owned by a package only bundles hold?
@@ -2917,6 +2920,8 @@ pub(crate) struct DependencyQueue {
     asked_as: BunHashMap<DependencyID, Dependency>,
     /// The dependencies of the packages that were resolved.
     found: Lane,
+    /// The dependencies of the `Lockfile::only_peers` packages. They only request ahead.
+    of_only_peers: Lane,
     /// The task that fetches the manifest of the dependency at the front, once it was tried.
     pub(crate) waits_for: Option<crate::package_manager_task::Id>,
 }
@@ -2927,8 +2932,16 @@ impl DependencyQueue {
             commanded: Lane::init(),
             asked_as: BunHashMap::default(),
             found: Lane::init(),
+            of_only_peers: Lane::init(),
             waits_for: None,
         }
+    }
+
+    pub(crate) fn push_of_only_peers(&mut self, rows: DependencySlice) -> Result<(), AllocError> {
+        self.of_only_peers.items.write_item(QueuedRows {
+            rows,
+            from_command: false,
+        })
     }
 
     /// Queues one dependency that the command wants resolved, as the caller describes it.
@@ -3002,12 +3015,14 @@ impl DependencyQueue {
         let head_is_commanded = !self.commanded.is_empty();
         (self.commanded.next_unrequested(true))
             .or_else(|| self.found.next_unrequested(!head_is_commanded))
+            .or_else(|| self.of_only_peers.next_unrequested(false))
     }
 
     pub(crate) fn clear(&mut self) {
         self.commanded.clear();
         self.asked_as.clear();
         self.found.clear();
+        self.of_only_peers.clear();
         self.waits_for = None;
     }
 }

@@ -2078,6 +2078,42 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
       expect(called).toBe(false);
     });
 
+    it("the pump reads, cancels and unlocks with the reader's own methods, not with a patch of the prototype", async () => {
+      // The pump takes the methods when it holds its first web source.
+      await pipelineP(new ReadableStream({ start: controller => controller.close() }), nodeSink().stream);
+      const prototype = ReadableStreamDefaultReader.prototype;
+      const { read, cancel, releaseLock } = prototype;
+      const calls = [];
+      for (const [name, method] of Object.entries({ read, cancel, releaseLock })) {
+        prototype[name] = function (...args) {
+          calls.push(name);
+          return method.apply(this, args);
+        };
+      }
+      try {
+        const ends = webSource();
+        const sink = nodeSink();
+        const ended = pipelineP(ends.stream, sink.stream);
+        ends.push();
+        ends.controller().close();
+        await ended;
+        expect(sink.writes.map(String)).toEqual(["x"]);
+        expect(ends.stream.locked).toBe(false);
+
+        const idle = webSource();
+        const ac = new AbortController();
+        const aborted = pipelineP(idle.stream, nodeSink().stream, { signal: ac.signal });
+        await turn();
+        ac.abort();
+        expect(await settled(aborted)).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+        expect(await idle.cancelled).toBeUndefined();
+        expect(idle.stream.locked).toBe(false);
+      } finally {
+        Object.assign(prototype, { read, cancel, releaseLock });
+      }
+      expect(calls).toEqual([]);
+    });
+
     // The 'close' of a destination that finished reports no error, and the teardown left the wait to that report.
     it("{ end: false }: a signal between the 'finish' and the 'close' of a destination that its owner ended", async () => {
       const source = webSource();

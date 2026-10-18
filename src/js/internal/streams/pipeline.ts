@@ -80,6 +80,8 @@ async function* fromReadable(val) {
 
 // Created at the first use: a process that pipes no web stream does not pay for the class.
 function createHeldReader() {
+  // The reader's own methods: a patch of the prototype after this point does not run in a pump.
+  const { read: readerRead, cancel: readerCancel, releaseLock: readerRelease } = $ReadableStreamDefaultReader.prototype;
   const nop = () => {};
   const iteratorDone = () => ({ done: true, value: undefined });
 
@@ -107,7 +109,7 @@ function createHeldReader() {
     next() {
       // A stopped pump takes no more chunks: it waits for the cancel, or for the source's own end or error.
       if (this.#stopped) return PromisePrototypeThen.$call($webStreamClosedPromise(this.#stream!), iteratorDone);
-      return this.#reader!.read();
+      return readerRead.$call(this.#reader!);
     }
 
     return() {
@@ -121,8 +123,8 @@ function createHeldReader() {
         let reader = this.#reader;
         try {
           reader ??= new $ReadableStreamDefaultReader(this.#stream!);
-          cancelled = PromisePrototypeThen.$call(reader.cancel(), undefined, nop);
-          reader.releaseLock();
+          cancelled = PromisePrototypeThen.$call(readerCancel.$call(reader), undefined, nop);
+          readerRelease.$call(reader);
         } catch {
           // Not read yet, and someone else holds the lock: there is nothing to cancel here.
           cancelled = Promise.$resolve();
@@ -144,7 +146,8 @@ function createHeldReader() {
     // A stopped source is cancelled here if the pump failed before it got to that.
     release() {
       if (this.#stopped) this.cancel();
-      this.#reader?.releaseLock();
+      const reader = this.#reader;
+      if (reader !== null) readerRelease.$call(reader);
       this.#reader = this.#stream = null;
     }
   };

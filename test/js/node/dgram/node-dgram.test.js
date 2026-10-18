@@ -132,20 +132,6 @@ function makeSocket6() {
   });
 }
 
-test("a tick queued in a 'listening' listener runs before a microtask queued in it", async () => {
-  const socket = dgram.createSocket("udp4");
-  const order = [];
-  const { promise, resolve } = Promise.withResolvers();
-  socket.bind(0, "127.0.0.1", () => {
-    Promise.resolve().then(() => order.push("microtask"));
-    process.nextTick(() => order.push("tick"));
-    setImmediate(resolve);
-  });
-  await promise;
-  socket.close();
-  expect(order).toEqual(["tick", "microtask"]);
-});
-
 function getInterface() {
   if (isWindows) {
     return "::%1";

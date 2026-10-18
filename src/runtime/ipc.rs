@@ -1125,11 +1125,12 @@ impl SendQueue {
                 }
                 #[cfg(not(windows))]
                 {
+                    // Before `close`, whose `on_close` takes a socket that is still open for one the peer closed.
+                    self.socket_closed_notify(from != CloseFrom::Deinit);
                     s.close(match reason {
                         CloseReason::Normal => bun_uws::CloseCode::Normal,
                         CloseReason::Failure => bun_uws::CloseCode::Failure,
                     });
-                    self.socket_closed_notify(from != CloseFrom::Deinit);
                 }
             }
             None => {
@@ -1139,12 +1140,12 @@ impl SendQueue {
         let _ = reason; // suppress unused on windows
     }
 
-    fn socket_closed(&self) {
-        self.socket_closed_notify(true);
-    }
-
     fn closed_by_peer(&self) {
-        // Node handles the EOF in the loop iteration that reads it. A task has the loop poll once more before the owner hears of it.
+        if !self.socket_is_open() {
+            return;
+        }
+        let _scope = self.get_global_this().bun_vm().enter_event_loop_scope();
+        // Node handles the end of the channel in the loop iteration that reads it. A task has the loop poll once more before the owner hears of it.
         let run_now = !self.deferred_scheduled.replace(true);
         if run_now {
             self.ref_();
@@ -2517,7 +2518,7 @@ pub(crate) mod IPCHandlers {
         ) {
             // uSockets has already freed the underlying socket
             log!("NewSocketIPCHandler#onClose\n");
-            send_queue.socket_closed();
+            send_queue.closed_by_peer();
         }
 
         pub(crate) fn on_data(send_queue: &SendQueue, _: Socket, all_data: &[u8]) {
@@ -2564,10 +2565,6 @@ pub(crate) mod IPCHandlers {
 
         pub(crate) fn on_end(send_queue: &SendQueue, _: Socket) {
             log!("onEnd");
-            let _scope = send_queue
-                .get_global_this()
-                .bun_vm()
-                .enter_event_loop_scope();
             send_queue.closed_by_peer();
         }
     }

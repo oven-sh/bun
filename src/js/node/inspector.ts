@@ -512,13 +512,16 @@ class Session extends EventEmitter {
     const result = this.#handleMethod(method, params as object | undefined);
 
     if (callback) {
-      if (result instanceof Error) {
-        callback(result, undefined);
-      } else if (result !== null && typeof result === "object" && kProtocolError in result) {
-        callback(result[kProtocolError], undefined);
-      } else {
-        callback(null, result);
-      }
+      // Callback API - async
+      queueMicrotask(() => {
+        if (result instanceof Error) {
+          callback(result, undefined);
+        } else if (result !== null && typeof result === "object" && kProtocolError in result) {
+          callback(result[kProtocolError], undefined);
+        } else {
+          callback(null, result);
+        }
+      });
     } else {
       // Sync throw for errors when no callback
       if (result instanceof Error) {
@@ -719,7 +722,7 @@ class Session extends EventEmitter {
         // Node streams the collected events back over the session in chunks
         // (trace events, then metadata) before signalling completion. Emit
         // synchronously: listeners observe everything before the post()
-        // callback runs.
+        // callback (queued as a microtask above) runs.
         this.emit("NodeTracing.dataCollected", {
           method: "NodeTracing.dataCollected",
           params: { value: collected },

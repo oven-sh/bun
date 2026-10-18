@@ -268,6 +268,7 @@ pub(crate) fn list_objects(
 pub(crate) fn head_bucket(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
+    request_payer: bool,
     callback: fn(S3StatResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
@@ -278,6 +279,7 @@ pub(crate) fn head_bucket(
             path: b"",
             allow_empty_path: true,
             method: bun_http::Method::HEAD,
+            request_payer,
             ..Default::default()
         },
         s3_simple_request::Callback::Stat(callback),
@@ -291,6 +293,7 @@ pub(crate) fn create_bucket(
     context: &bun_jsc::ScriptExecutionContext,
     acl: Option<ACL>,
     object_lock: bool,
+    request_payer: bool,
     callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
@@ -306,11 +309,9 @@ pub(crate) fn create_bucket(
             b"<CreateBucketConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><LocationConstraint>",
         );
         for &c in region {
-            match c {
-                b'<' => body.extend_from_slice(b"&lt;"),
-                b'>' => body.extend_from_slice(b"&gt;"),
-                b'&' => body.extend_from_slice(b"&amp;"),
-                _ => body.push(c),
+            match bun_core::strings::xml_escape_entity(c) {
+                Some(entity) => body.extend_from_slice(entity),
+                None => body.push(c),
             }
         }
         body.extend_from_slice(b"</LocationConstraint></CreateBucketConfiguration>");
@@ -330,6 +331,7 @@ pub(crate) fn create_bucket(
             },
             acl,
             bucket_object_lock: object_lock,
+            request_payer,
             ..Default::default()
         },
         s3_simple_request::Callback::Upload(callback),
@@ -341,6 +343,7 @@ pub(crate) fn create_bucket(
 pub(crate) fn delete_bucket(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
+    request_payer: bool,
     callback: fn(S3DeleteResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
@@ -351,6 +354,7 @@ pub(crate) fn delete_bucket(
             path: b"",
             allow_empty_path: true,
             method: bun_http::Method::DELETE,
+            request_payer,
             ..Default::default()
         },
         s3_simple_request::Callback::Delete(callback),

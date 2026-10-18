@@ -21,7 +21,9 @@ const localServer = await spawnServer({
   region: "us-east-1",
   buckets: ["buntest", { name: "buntest-us-west-1", region: "us-west-1" }],
 });
-afterAll(() => localServer.stop());
+// A second server, for the requests that only a region-specific endpoint refuses.
+const euWest1Server = await spawnServer({ bunExe: bunExe(), env: bunEnv, region: "eu-west-1" });
+afterAll(() => Promise.all([localServer.stop(), euWest1Server.stop()]));
 const localCredentials: S3Credentials = {
   ...localServer.clientOptions("buntest"),
   service: "s3-server" as string,
@@ -1564,14 +1566,21 @@ describe("s3-server", () => {
     it("createBucket sends the region of the client as LocationConstraint", async () => {
       // An endpoint of a region other than us-east-1 refuses a CreateBucket
       // without a LocationConstraint, and one for another region.
-      await using server = await spawnServer({ bunExe: bunExe(), env: bunEnv, region: "eu-west-1" });
-      const client = S3(server.clientOptions());
+      const client = S3(euWest1Server.clientOptions());
       const name = `bucket-${randomUUIDv7()}`;
       await client.createBucket(name);
       expect(await client.bucketExists(name)).toBe(true);
       // The second create of a bucket outside us-east-1 is an error that names it.
       expect(await code(client.createBucket(name))).toBe("BucketAlreadyOwnedByYou");
-    }, 30_000);
+    });
+
+    it("createBucket signs the acl and object lock headers", async () => {
+      // The server checks the signature, so the canonical request must hold both headers.
+      const name = `bucket-${randomUUIDv7()}`;
+      await client.createBucket(name, { acl: "private", objectLockEnabled: true });
+      expect(await client.bucketExists(name)).toBe(true);
+      await client.deleteBucket(name);
+    });
 
     it("deleteBucket rejects with the S3 error code", async () => {
       const name = `bucket-${randomUUIDv7()}`;
@@ -1594,6 +1603,10 @@ describe("s3-server", () => {
       expect(await code(client.bucketExists("buntest-us-west-1"))).toBe("PermanentRedirect");
       const stranger = S3({ ...options, accessKeyId: "stranger", secretAccessKey: "stranger" });
       expect(await code(stranger.bucketExists("buntest"))).toBe("AccessDenied");
+      // A 404 with no body is the bucket, not a key.
+      expect(await code(S3(euWest1Server.clientOptions()).deleteBucket(`missing-${randomUUIDv7()}`))).toBe(
+        "NoSuchBucket",
+      );
     });
 
     it("sends the acl and object lock headers signed, and the LocationConstraint as XML", async () => {
@@ -1655,15 +1668,22 @@ describe("s3-server", () => {
       });
       const client = S3({ ...options, endpoint: server.url.href });
       // An empty bucket is the root of the endpoint, not a bucket.
-      for (const name of ["", "/", "\\"]) {
-        expect(await code(client.bucketExists(name))).toBe("ERR_S3_INVALID_PATH");
-        expect(await code(client.createBucket(name))).toBe("ERR_S3_INVALID_PATH");
-        expect(await code(client.deleteBucket(name))).toBe("ERR_S3_INVALID_PATH");
-      }
+      expect(await code(client.bucketExists(""))).toBe("ERR_S3_INVALID_PATH");
+      expect(await code(client.createBucket(""))).toBe("ERR_S3_INVALID_PATH");
+      expect(await code(client.deleteBucket(""))).toBe("ERR_S3_INVALID_PATH");
       expect(await code(S3({ ...options, bucket: undefined, endpoint: server.url.href }).bucketExists())).toBe(
         "ERR_S3_INVALID_PATH",
       );
       expect(await code(client.list(null, { bucket: "/" }))).toBe("ERR_S3_INVALID_PATH");
+      // A separator would address an object, not a bucket.
+      for (const name of ["/", "\\", "a/b", "a\\b"]) {
+        expect(() => client.bucketExists(name)).toThrow(/must not contain a slash/);
+        expect(() => client.createBucket(name)).toThrow(/must not contain a slash/);
+        expect(() => client.deleteBucket(name)).toThrow(/must not contain a slash/);
+      }
+      // The host of a virtual hosted style endpoint is the bucket.
+      const hosted = S3({ ...options, virtualHostedStyle: true, endpoint: `http://buntest.localhost:${server.port}` });
+      expect(() => hosted.deleteBucket("other")).toThrow(/virtualHostedStyle/);
       expect(() => client.bucketExists(5 as any)).toThrow(TypeError);
       expect(() => client.createBucket("x", { acl: "nope" as any })).toThrow(/acl must be one of/);
       expect(() => client.createBucket("x", { objectLockEnabled: "yes" as any })).toThrow(TypeError);

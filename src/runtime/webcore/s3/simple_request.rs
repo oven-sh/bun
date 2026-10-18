@@ -262,7 +262,7 @@ impl S3HttpSimpleTask {
                 .not_found(code, message, self.callback_context)?;
         } else {
             // A HEAD response has no body. Name the error S3 would have put there.
-            if !has_error_code {
+            if !has_error_code && self.response_buffer.list.is_empty() {
                 if let Some(metadata) = &self.result.metadata {
                     match metadata.response.status_code {
                         301 => {

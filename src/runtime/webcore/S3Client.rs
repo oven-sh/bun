@@ -776,6 +776,7 @@ struct BucketRequest {
     /// Only from the call, never the client's: S3 refuses a bucket ACL under enforced object ownership.
     acl: Option<ACL>,
     object_lock_enabled: bool,
+    request_payer: bool,
 }
 
 impl BucketRequest {
@@ -789,7 +790,24 @@ impl BucketRequest {
             if !name.is_string() {
                 return Err(global.throw_invalid_argument_type_value(b"name", b"string", name));
             }
-            aws_options.credentials.bucket = name.to_utf8(global)?.into_vec().into_boxed_slice();
+            let name = name.to_utf8(global)?;
+            // A separator would make the request an object request on the bucket before it.
+            if bun_core::strings::index_of_any(&name, b"/\\").is_some() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "The bucket name must not contain a slash"
+                )));
+            }
+            let credentials = &aws_options.credentials;
+            // The host is the bucket here, so a name could not reach the wire.
+            if credentials.virtual_hosted_style
+                && !credentials.endpoint.is_empty()
+                && *name != *credentials.bucket
+            {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "A virtualHostedStyle endpoint names its bucket. Pass no name, or a client for that bucket"
+                )));
+            }
+            aws_options.credentials.bucket = name.into_vec().into_boxed_slice();
         }
         let object_lock_enabled = match options {
             Some(opts) if opts.is_object() => opts
@@ -801,6 +819,7 @@ impl BucketRequest {
             credentials: core::mem::take(&mut aws_options.credentials),
             acl: aws_options.acl,
             object_lock_enabled,
+            request_payer: aws_options.request_payer,
         })
     }
 }
@@ -827,10 +846,7 @@ impl BucketTask {
         unsafe { bun_core::heap::take(this.cast::<Self>()) }
     }
 
-    fn reject(
-        mut self: Box<Self>,
-        err: &crate::webcore::s3::client::error_jsc::S3Error,
-    ) -> JsResult<()> {
+    fn reject(&mut self, err: &crate::webcore::s3::client::error_jsc::S3Error) -> JsResult<()> {
         let global_ref = self.global;
         let global = global_ref.get();
         let value = crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack(
@@ -902,6 +918,7 @@ impl BucketTask {
         crate::webcore::s3::client::head_bucket(
             &request.credentials,
             cx.context(),
+            request.request_payer,
             Self::on_exists,
             this.cast::<core::ffi::c_void>(),
         )?;
@@ -917,6 +934,7 @@ impl BucketTask {
             cx.context(),
             request.acl,
             request.object_lock_enabled,
+            request.request_payer,
             Self::on_created,
             this.cast::<core::ffi::c_void>(),
         )?;
@@ -930,6 +948,7 @@ impl BucketTask {
         crate::webcore::s3::client::delete_bucket(
             &request.credentials,
             cx.context(),
+            request.request_payer,
             Self::on_deleted,
             this.cast::<core::ffi::c_void>(),
         )?;

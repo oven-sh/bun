@@ -1609,8 +1609,8 @@ __attribute__((minsize)) static void rankWaitingModuleMocks(Zig::GlobalObject* g
         bool needsTime = false;
         auto enter = [&](UniquedStringImpl* key) {
             if (auto added = seen.add(key, load); !added.isNewEntry) {
-                auto [earlier, later] = std::minmax(merged(added.iterator->value), merged(load));
-                mergedInto[later] = earlier;
+                unsigned first = merged(added.iterator->value), second = merged(load);
+                mergedInto[std::max(first, second)] = std::min(first, second);
                 return;
             }
             if (auto index = indexOf.find(key); index != indexOf.end()) {

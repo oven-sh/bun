@@ -191,6 +191,10 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.fn({ length: 1.5 })).toThrow("1.5 is not a count");
   expect(() => b.fn({ args: { a: b.bool }, expected: { b: ["boolean"] } })).toThrow("expected: b is not an argument");
   expect(() => b.fn({ args: { a: b.bool }, expected: { a: [] } })).toThrow("expected: a expects nothing");
+  for (const a of [b.u32.validateInteger(), b.any, b.bool.loose])
+    expect(() => b.fn({ args: { a }, expected: { a: ["number"] } })).toThrow(
+      "expected: a is of a type that does not use it",
+    );
   expect(() => b.overloads({ args: { a: b.bool }, length: 1 }, { args: { a: b.f64 }, length: 2 })).toThrow(
     "length is given once",
   );

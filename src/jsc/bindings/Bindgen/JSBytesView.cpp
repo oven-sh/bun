@@ -69,14 +69,14 @@ std::span<const uint8_t> copyBytes(JSGlobalObject& globalObject, std::span<const
 {
     if (bytes.empty())
         return bytes;
-    uint8_t* data = nullptr;
-    if (!tryFastMalloc(bytes.size()).getValue(data)) [[unlikely]] {
+    auto* data = static_cast<uint8_t*>(WTF::UniqueArrayMalloc::tryMalloc(bytes.size()));
+    if (!data) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(getVM(&globalObject));
         throwOutOfMemoryError(&globalObject, scope);
         return bytes;
     }
     copy.reset(data);
-    auto copied = unsafeMakeSpan(data, bytes.size());
+    std::span copied { data, bytes.size() };
     memcpySpan(copied, bytes);
     return copied;
 }

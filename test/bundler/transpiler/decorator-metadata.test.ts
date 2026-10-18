@@ -799,7 +799,7 @@ describe("decorator metadata binds a type name when the class is lowered", () =>
       "returntype=undefined paramtypes=[Svc] type=Function\n",
     ],
     [
-      "an export of another block of the namespace",
+      "an export of another block of the namespace, in an exported class",
       `namespace ns { export class Bar {} }
        namespace ns {
          export class K { @d m(a: Bar) {} }

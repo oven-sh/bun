@@ -226,7 +226,7 @@ impl FSWatchTaskPosix {
                     self.ctx().emit_error(err, *close);
                     Ok(())
                 }
-                #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+                #[cfg(not(target_os = "freebsd"))]
                 Event::NoFilename(event_type) => {
                     self.ctx().emit_null_filename(*event_type);
                     Ok(())
@@ -358,10 +358,10 @@ pub(crate) enum Event {
         err: bun_sys::Error,
         close: bool,
     },
-    /// An event with no filename, surfaced to JS with `null`, matching node:
+    /// An event with no filename, surfaced to JS with `null` (node does this on Windows only):
     /// `Change` when the OS event queue overflowed and changes were lost,
     /// `Rename` when libuv could not convert a name to UTF-8 (Windows).
-    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+    #[cfg(not(target_os = "freebsd"))]
     NoFilename(WatchEventKind),
     Abort,
 }
@@ -912,7 +912,7 @@ impl FSWatcher {
         }
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+    #[cfg(not(target_os = "freebsd"))]
     pub(crate) fn emit_with_filename<const EVENT_TYPE: EventType>(&self, file_name: JSValue) {
         let Some(js_this) = self.js_this.try_get() else {
             return;
@@ -924,7 +924,7 @@ impl FSWatcher {
     }
 
     /// `Event::NoFilename`: deliver `(event, null)` regardless of encoding.
-    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+    #[cfg(not(target_os = "freebsd"))]
     fn emit_null_filename(&self, event_type: WatchEventKind) {
         match event_type {
             WatchEventKind::Rename => {

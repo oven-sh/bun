@@ -742,9 +742,8 @@ describe("fs.watch", () => {
     "FSEvents: events dropped for a stopped process are reported as ('change', null)",
     async () => {
       using dir = tempDir("fs-watch-fsevents-stopped", {});
-      const base = fs.realpathSync(String(dir));
       const flat: string[] = [];
-      let deep = base;
+      let deep = fs.realpathSync(String(dir));
       for (let i = 1; i <= 8; i++) flat.push((deep = path.join(deep, `a${i}`)));
       const tree = path.join(deep, "tree");
       const elsewhere = path.join(deep, "elsewhere");
@@ -764,29 +763,23 @@ describe("fs.watch", () => {
           tree,
           ...flat,
         ],
-        // Temporary: the child prints what FSEvents sent.
-        env: { ...bunEnv, BUN_FSEVENTS_TRACE: "1" },
+        env: bunEnv,
         stdout: "pipe",
-        stderr: "pipe",
+        stderr: "inherit",
       });
 
       const events: [who: string, type: string, name: string | null][] = [];
-      const trace: string[] = [];
       let progress = Promise.withResolvers<void>();
-      async function lines(stream: ReadableStream<Uint8Array>, each: (line: string) => void) {
+      const reading = (async () => {
         let rest = "";
-        for await (const chunk of stream.pipeThrough(new TextDecoderStream())) {
-          const parts = (rest + chunk).split("\n");
-          rest = parts.pop()!;
-          parts.forEach(each);
+        for await (const chunk of child.stdout.pipeThrough(new TextDecoderStream())) {
+          const lines = (rest + chunk).split("\n");
+          rest = lines.pop()!;
+          for (const line of lines) events.push(JSON.parse(line));
           progress.resolve();
           progress = Promise.withResolvers<void>();
         }
-      }
-      const reading = Promise.all([
-        lines(child.stdout, line => events.push(JSON.parse(line))),
-        lines(child.stderr, line => trace.push(line)),
-      ]);
+      })();
 
       const rounds: {
         files: number;
@@ -854,27 +847,10 @@ describe("fs.watch", () => {
         await reading;
       }
 
-      // Temporary: one line per batch, "[fsevents] events=N paths=N", then each event that has a stream flag.
-      const batches = trace.flatMap(line => {
-        const match = /^\[fsevents\] events=(\d+) paths=(\d+)(.*)$/.exec(line);
-        return match
-          ? [{ events: Number(match[1]), paths: Number(match[2]), stream: match[3].replaceAll(base, "") }]
-          : [];
-      });
-      const fsevents = {
-        batches: batches.length,
-        events: batches.reduce((sum, batch) => sum + batch.events, 0),
-        paths: batches.reduce((sum, batch) => sum + batch.paths, 0),
-        largestBatch: Math.max(0, ...batches.map(batch => batch.events)),
-        batchesWithStreamFlags: batches.filter(batch => batch.stream).length,
-        streamFlags: [...new Set(batches.map(batch => batch.stream).filter(Boolean))].slice(0, 20),
-      };
-
       const dropped = rounds.filter(round => round.nullFilename > 0);
       expect({
         rounds,
-        fsevents,
-        // The largest burst is more than FSEvents keeps for a process.
+        // FSEvents does not keep a burst for a stopped process. macOS 14 and 26 drop the first one.
         lossReported: dropped.length > 0,
         lossReportedToEveryWatcher: dropped.every(round => round.flatWatchersWithNull === flat.length),
         // The renames arrive by name, or the watcher says that events were lost.
@@ -882,14 +858,13 @@ describe("fs.watch", () => {
         namedAfterRoot: rounds.some(round => round.namedAfterRoot > 0),
       }).toEqual({
         rounds,
-        fsevents: "temporary: shows what FSEvents sent",
         lossReported: true,
         lossReportedToEveryWatcher: true,
         lossNotReported: false,
         namedAfterRoot: false,
       });
     },
-    60_000,
+    30_000,
   );
 
   // When inotify_add_watch fails for a subdirectory during the recursive walk

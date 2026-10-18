@@ -5,6 +5,7 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
+import diagnostics_channel from "node:diagnostics_channel";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -534,6 +535,312 @@ describe("frames on a stream that the client closed", () => {
         raw.send(Buffer.concat(late));
         await twoRoundTrips(raw);
       }
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+});
+
+describe.concurrent("a client closes a pushed stream (RFC 9113 §8.4.2)", () => {
+  // Expected values are what node v26.3.0 reports against the same raw server.
+
+  /** Connect, run `act` on the pushed stream inside 'stream', and record what the stream reports. */
+  function connectAndRecordPush(raw: Raw, act: (pushed: http2.ClientHttp2Stream) => void) {
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    const { promise: closed, resolve: onClosed, reject: onSessionGone } = Promise.withResolvers<void>();
+    closed.catch(() => {}); // not every test awaits it
+    client.on("close", () => onSessionGone(new Error("the session closed before the pushed stream did")));
+    const push = { streamEvents: [] as unknown[], events: [] as string[], body: "", closed };
+    client.on("stream", pushed => {
+      // `state` throws on a build that does not know the pushed stream.
+      let state: unknown;
+      try {
+        const { localClose, remoteClose, localWindowSize } = pushed.state;
+        state = { localClose, remoteClose, localWindowSize };
+      } catch (err) {
+        state = String(err);
+      }
+      push.streamEvents.push({ id: pushed.id, writableEnded: pushed.writableEnded, state });
+      pushed.on("aborted", () => push.events.push("aborted"));
+      pushed.on("push", headers => push.events.push(`push ${headers[":status"]}`));
+      pushed.on("error", (err: NodeJS.ErrnoException) => push.events.push(`error ${err.code}`));
+      pushed.on("end", () => push.events.push("end"));
+      pushed.on("close", () => {
+        push.events.push(`close rstCode=${pushed.rstCode}`);
+        onClosed();
+      });
+      act(pushed);
+    });
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.resume();
+    return { client, req, push };
+  }
+  const oneStreamEvent = [
+    { id: 2, writableEnded: true, state: { localClose: 1, remoteClose: 0, localWindowSize: 65535 } },
+  ];
+
+  /** SETTINGS, the SETTINGS ACK and PUSH_PROMISE(1 -> 2), then `more`, in one write. */
+  function sendPush(raw: Raw, ...more: Buffer[]) {
+    const promised = Buffer.alloc(4);
+    promised.writeUInt32BE(2, 0);
+    raw.send(
+      Buffer.concat([
+        encodeFrame(FrameType.SETTINGS, 0, 0),
+        encodeFrame(FrameType.SETTINGS, 0x1, 0),
+        encodeFrame(FrameType.PUSH_PROMISE, END_HEADERS, 1, Buffer.concat([promised, requestHeaderBlock("GET")])),
+        ...more,
+      ]),
+    );
+  }
+
+  /** What the client sent on the pushed stream, a late frame included. */
+  async function framesOnPushedStream(raw: Raw) {
+    await twoRoundTrips(raw);
+    return raw.frames
+      .filter(f => f.streamId === 2)
+      .map(f => (f.type === FrameType.RST_STREAM ? `RST_STREAM ${f.payload.readUInt32BE(0)}` : `frame type ${f.type}`));
+  }
+
+  /** Answer the request, then close the session gracefully and wait for its 'close'. */
+  async function finishRequestAndClose(raw: Raw, client: http2.ClientHttp2Session, req: http2.ClientHttp2Stream) {
+    const reqClosed = once(req, "close");
+    raw.sendFrame(FrameType.HEADERS, END_HEADERS | END_STREAM, 1, RESPONSE_200);
+    await reqClosed;
+    const sessionClosed = once(client, "close");
+    client.close();
+    await sessionClosed;
+    expect(client.destroyed).toBe(true);
+  }
+
+  const closes: { name: string; act: (pushed: http2.ClientHttp2Stream) => void; events: string[]; wire: string[] }[] = [
+    {
+      name: "close(NGHTTP2_REFUSED_STREAM)",
+      act: (pushed: http2.ClientHttp2Stream) => pushed.close(http2.constants.NGHTTP2_REFUSED_STREAM),
+      events: ["error ERR_HTTP2_STREAM_ERROR", "close rstCode=7"],
+      wire: ["RST_STREAM 7"],
+    },
+    {
+      name: "close(NGHTTP2_CANCEL)",
+      act: (pushed: http2.ClientHttp2Stream) => pushed.close(http2.constants.NGHTTP2_CANCEL),
+      events: ["close rstCode=8"],
+      wire: ["RST_STREAM 8"],
+    },
+    {
+      name: "close()",
+      act: (pushed: http2.ClientHttp2Stream) => pushed.close(),
+      events: ["end", "close rstCode=0"],
+      wire: ["RST_STREAM 0"],
+    },
+    {
+      name: "destroy()",
+      act: (pushed: http2.ClientHttp2Stream) => pushed.destroy(),
+      events: ["close rstCode=0"],
+      wire: ["RST_STREAM 0"],
+    },
+  ];
+  test.each(closes)(
+    "$name in the 'stream' event resets the stream and lets the session close",
+    async ({ act, events, wire }) => {
+      const raw = await Raw.listen();
+      const { client, req, push } = connectAndRecordPush(raw, act);
+      try {
+        await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+        sendPush(raw);
+        // The pushed stream reports 'close' before the reset can reach the server. The server sends
+        // nothing until then: a read between close(code) and the destroy of any stream can make
+        // the client repeat the RST_STREAM.
+        await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 2);
+        expect({
+          streamEvents: push.streamEvents,
+          events: push.events,
+          wire: await framesOnPushedStream(raw),
+        }).toEqual({ streamEvents: oneStreamEvent, events, wire });
+        await finishRequestAndClose(raw, client, req);
+      } finally {
+        client.destroy();
+        raw.close();
+      }
+    },
+  );
+
+  test("a pushed response that was in flight when the client reset the stream is ignored", async () => {
+    const raw = await Raw.listen();
+    const { client, req, push } = connectAndRecordPush(raw, pushed =>
+      pushed.close(http2.constants.NGHTTP2_REFUSED_STREAM),
+    );
+    try {
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      sendPush(raw);
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 2);
+      // The response that the server sent before the reset reached it.
+      raw.sendFrame(FrameType.HEADERS, END_HEADERS, 2, RESPONSE_200);
+      raw.sendFrame(FrameType.DATA, END_STREAM, 2, Buffer.from("late"));
+      // The client sends nothing for the late frames.
+      expect({
+        streamEvents: push.streamEvents,
+        events: push.events,
+        wire: await framesOnPushedStream(raw),
+      }).toEqual({
+        streamEvents: oneStreamEvent,
+        events: ["error ERR_HTTP2_STREAM_ERROR", "close rstCode=7"],
+        wire: ["RST_STREAM 7"],
+      });
+      // The late frames must not count as an open stream, or close() waits forever.
+      await finishRequestAndClose(raw, client, req);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("RST_STREAM(CANCEL) from the server closes the pushed stream without 'aborted'", async () => {
+    const raw = await Raw.listen();
+    const { client, req, push } = connectAndRecordPush(raw, () => {});
+    try {
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      sendPush(
+        raw,
+        encodeFrame(FrameType.HEADERS, END_HEADERS, 2, RESPONSE_200),
+        encodeFrame(FrameType.RST_STREAM, 0, 2, cancel),
+      );
+      await push.closed;
+      expect({ streamEvents: push.streamEvents, events: push.events }).toEqual({
+        streamEvents: oneStreamEvent,
+        events: ["push 200", "close rstCode=8"],
+      });
+      await finishRequestAndClose(raw, client, req);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("an unread pushed stream stops getting receive window", async () => {
+    const raw = await Raw.listen();
+    let pushed!: http2.ClientHttp2Stream;
+    const { client, req, push } = connectAndRecordPush(raw, stream => (pushed = stream));
+    try {
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      sendPush(raw, encodeFrame(FrameType.HEADERS, END_HEADERS, 2, RESPONSE_200));
+
+      const window = 65535; // the initial stream window and connection window
+      const total = 4 * window;
+      const chunk = Buffer.alloc(16384, "p");
+      let sent = 0;
+      let seen = 0;
+      let streamWindow = window;
+      let connectionWindow = window;
+      /** Apply the client's new WINDOW_UPDATE frames. Returns how much the server may send now. */
+      function applyWindowUpdates() {
+        for (; seen < raw.frames.length; seen++) {
+          const f = raw.frames[seen];
+          if (f.type !== FrameType.WINDOW_UPDATE) continue;
+          if (f.streamId === 0) connectionWindow += f.payload.readUInt32BE(0);
+          else if (f.streamId === 2) streamWindow += f.payload.readUInt32BE(0);
+        }
+        return Math.min(streamWindow, connectionWindow);
+      }
+      /** Send pushed DATA until `total` is out, or until the client grants no window in two round trips. */
+      async function sendWhileWindow() {
+        while (sent < total) {
+          if (applyWindowUpdates() === 0) {
+            await twoRoundTrips(raw);
+            if (applyWindowUpdates() === 0) return;
+          }
+          const n = Math.min(chunk.length, total - sent, streamWindow, connectionWindow);
+          raw.sendFrame(FrameType.DATA, 0, 2, chunk.subarray(0, n));
+          sent += n;
+          streamWindow -= n;
+          connectionWindow -= n;
+        }
+      }
+
+      // Nothing reads the pushed stream: the client may grant its window once more, not without end.
+      await sendWhileWindow();
+      expect(sent).toBeLessThanOrEqual(2 * window);
+
+      let received = 0;
+      pushed.on("data", (data: Buffer) => (received += data.length));
+      await sendWhileWindow();
+      raw.sendFrame(FrameType.DATA, END_STREAM, 2);
+      await push.closed;
+      expect({ sent, received, events: push.events }).toEqual({
+        sent: total,
+        received: total,
+        events: ["push 200", "end", "close rstCode=0"],
+      });
+      await finishRequestAndClose(raw, client, req);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // A subscriber gets the pushed stream before the 'stream' event. Its writable side has ended by then too.
+  test("destroy() in a diagnostics_channel subscriber is not an abort", async () => {
+    const raw = await Raw.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const onCreated = (message: unknown) => {
+      const { stream } = message as { stream: http2.ClientHttp2Stream };
+      if (stream.session !== client || stream.id !== 2) return;
+      stream.on("aborted", () => events.push("aborted"));
+      stream.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+      stream.on("close", () => {
+        events.push(`close rstCode=${stream.rstCode} aborted=${stream.aborted}`);
+        closed.resolve();
+      });
+      stream.destroy();
+    };
+    diagnostics_channel.subscribe("http2.client.stream.created", onCreated);
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.resume();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      sendPush(raw);
+      await closed.promise;
+      expect(events).toEqual(["close rstCode=0 aborted=false"]);
+      await finishRequestAndClose(raw, client, req);
+    } finally {
+      diagnostics_channel.unsubscribe("http2.client.stream.created", onCreated);
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a graceful GOAWAY leaves a pushed stream above its last-stream-id running", async () => {
+    const raw = await Raw.listen();
+    const { client, push } = connectAndRecordPush(raw, pushed => {
+      pushed.setEncoding("utf8");
+      pushed.on("data", (chunk: string) => (push.body += chunk));
+    });
+    try {
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      const sessionClosed = once(client, "close");
+      // GOAWAY(last-stream-id 1, NO_ERROR), then the pushed response on stream 2.
+      const goaway = Buffer.alloc(8);
+      goaway.writeUInt32BE(1, 0);
+      sendPush(
+        raw,
+        encodeFrame(FrameType.GOAWAY, 0, 0, goaway),
+        encodeFrame(FrameType.HEADERS, END_HEADERS, 2, RESPONSE_200),
+        encodeFrame(FrameType.DATA, END_STREAM, 2, Buffer.from("pushed")),
+      );
+      await push.closed;
+      expect({ events: push.events, body: push.body }).toEqual({
+        events: ["push 200", "end", "close rstCode=0"],
+        body: "pushed",
+      });
+      raw.sendFrame(FrameType.HEADERS, END_HEADERS | END_STREAM, 1, RESPONSE_200);
+      await sessionClosed;
     } finally {
       client.destroy();
       raw.close();

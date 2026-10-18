@@ -2611,9 +2611,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     this[bunHTTP2AsyncContextFrame] = undefined;
     const { ending } = this._writableState;
     this.push(null);
-    // A pushed stream's request was synthesized by the server, so its local (writable) half is
-    // closed by definition — closing it is not an abort and nothing must be sent on the wire.
-    if (!ending && !this[kPush]) {
+    if (!ending) {
       // If the writable side of the Http2Stream is still open, emit the
       // 'aborted' event and set the aborted flag.
       if (!this.aborted) {
@@ -4954,7 +4952,8 @@ function streamSocketClosed(stream: Http2Stream) {
 // A stream whose session was close()d before the socket finished connecting never reached the
 // peer; node destroys it with ERR_HTTP2_GOAWAY_SESSION (no $ERR intrinsic exists for this code).
 function rejectStreamAboveGoawayLastId(lastStreamId: number, stream: Http2Stream) {
-  if (typeof stream?.id === "number" && stream.id > lastStreamId) {
+  // RFC 9113 6.8: the last-stream-id covers only the streams this side opened, not a pushed stream.
+  if (typeof stream?.id === "number" && stream.id > lastStreamId && !stream[kPush]) {
     streamRejectedByGoawaySession(stream);
   }
 }
@@ -5054,6 +5053,8 @@ class ClientHttp2Session extends Http2Session {
       });
       self.#connections++;
       self.#parser?.setStreamContext(pushId, pushedStream);
+      // Like node's onSessionHeaders: a client never sends on a pushed stream, so close() is not an abort.
+      pushedStream.end();
       if (onClientStreamCreatedChannel.hasSubscribers) {
         onClientStreamCreatedChannel.publish({ stream: pushedStream, headers });
       }

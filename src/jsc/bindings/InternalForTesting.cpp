@@ -6,12 +6,13 @@
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "headers-handwritten.h"
 #include "webcore/HTTPHeaderMap.h"
-#include <wtf/FastMalloc.h>
+#include "webcore/JSWebSocket.h"
+#include "webcore/WebSocket.h"
+#include "node/JSNodeHTTPServerSocket.h"
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
 #include <atomic>
-#include <cmath>
 #include <memory>
 #if !OS(WINDOWS)
 #include <pthread.h>
@@ -64,29 +65,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_hasReifiedStatic, (JSC::JSGlobalObject * glo
 JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 #if ASAN_ENABLED
-    return JSValue::encode(jsBoolean(true));
-#else
-    return JSValue::encode(jsBoolean(false));
-#endif
-}
-
-// Caps every `tryFastMalloc` at `bytes`: a larger request returns null, as a
-// failed allocation does. `Infinity` lifts the cap. Returns false on a release
-// build, where WTF does not define `fastSetMaxSingleAllocationSize`. A
-// non-`try` fastMalloc over the cap asserts, so keep the window small.
-JSC_DEFINE_HOST_FUNCTION(jsFunction_setMaxSingleAllocationSizeForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    // Same guard as the declaration in wtf/FastMalloc.h.
-#if !defined(NDEBUG)
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    double bytes = callFrame->argument(0).toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (std::isnan(bytes) || bytes < 0) {
-        throwTypeError(globalObject, scope, "setMaxSingleAllocationSizeForTesting expects a non-negative number"_s);
-        return {};
-    }
-    WTF::fastSetMaxSingleAllocationSize(bytes >= static_cast<double>(SIZE_MAX) ? SIZE_MAX : static_cast<size_t>(bytes));
     return JSValue::encode(jsBoolean(true));
 #else
     return JSValue::encode(jsBoolean(false));
@@ -269,4 +247,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_spawnThreadsForTesting, (JSC::JSGlobalObject
 #endif
 }
 
+}
+
+// For setSocketOptions(): the sockets that C++ classes own. Null for anything else, and for one that isn't connected.
+extern "C" us_socket_t* Bun__usSocketForTesting(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (auto* webSocket = dynamicDowncast<WebCore::JSWebSocket>(value))
+        return webSocket->wrapped().usSocket();
+    if (auto* socket = dynamicDowncast<Bun::JSNodeHTTPServerSocket>(value))
+        return socket->socket;
+    return nullptr;
 }

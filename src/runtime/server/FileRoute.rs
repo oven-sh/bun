@@ -24,7 +24,7 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
 
 #[derive(bun_ptr::CellRefCounted)]
-pub struct FileRoute {
+pub(crate) struct FileRoute {
     ref_count: Cell<u32>,
     server: Cell<Option<AnyServer>>,
     blob: Blob,
@@ -41,7 +41,7 @@ pub struct FileRoute {
     has_date_header: bool,
 }
 
-pub struct InitOptions<'a> {
+pub(crate) struct InitOptions<'a> {
     pub(crate) server: Option<AnyServer>,
     pub(crate) status_code: u16, // default 200
     pub(crate) headers: Option<&'a FetchHeaders>,
@@ -129,7 +129,7 @@ impl FileRoute {
         RefPtr::new(FileRoute::new(blob, headers, opts.server, opts.status_code))
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<FileRoute>>> {
@@ -260,7 +260,7 @@ impl FileRoute {
         let fd_result: bun_sys::Result<Fd> = {
             #[cfg(windows)]
             {
-                let mut path_buffer = bun_paths::PathBuffer::uninit();
+                let mut path_buffer = bun_paths::path_buffer_pool::get();
                 path_buffer[..path.len()].copy_from_slice(path);
                 path_buffer[path.len()] = 0;
                 bun_sys::open(
@@ -325,19 +325,20 @@ impl FileRoute {
         resp: AnyResponse,
         method: Method,
     ) -> Serve {
-        let (can_serve_file, size, file_type, pollable): (bool, u64, FileType, bool) = 'brk: {
+        let (can_serve_file, offset, size, file_type, pollable) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
                 Ok(s) => s,
                 // file_type is never read because can_serve_file == false
-                Err(_) => break 'brk (false, 0, FileType::File, false),
+                Err(_) => break 'brk (false, 0, 0, FileType::File, false),
             };
 
             let stat_size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
-            let _size: u64 = stat_size.min(self.blob.size.get());
+            let offset: u64 = self.blob.offset.get().min(stat_size);
+            let size: u64 = self.blob.size.get().min(stat_size - offset);
 
             let mode = stat.st_mode as bun_sys::Mode;
             if bun_sys::S::ISDIR(mode) {
-                break 'brk (false, 0, FileType::File, false);
+                break 'brk (false, 0, 0, FileType::File, false);
             }
 
             // `Cell::take` → mutate → `set`: single-threaded event loop, no
@@ -347,20 +348,33 @@ impl FileRoute {
             self.stat_hash.set(sh);
 
             if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
-                break 'brk (true, _size, FileType::Pipe, true);
+                break 'brk (true, offset, size, FileType::Pipe, true);
             }
 
             if bun_sys::S::ISSOCK(mode) {
-                break 'brk (true, _size, FileType::Socket, true);
+                break 'brk (true, offset, size, FileType::Socket, true);
             }
 
-            break 'brk (true, _size, FileType::File, false);
+            break 'brk (true, offset, size, FileType::File, false);
         };
 
         if !can_serve_file {
             req.set_yield(true);
             return Serve::Done;
         }
+
+        let etag = self.headers.get(b"etag").filter(|v| !v.is_empty());
+        let last_modified_ms = if req.header(b"if-modified-since").is_some()
+            || req.header(b"if-unmodified-since").is_some()
+            || req.header(b"if-range").is_some()
+        {
+            let Ok(lmd) = self.last_modified_date() else {
+                return Serve::Done;
+            };
+            lmd
+        } else {
+            None
+        };
 
         // Range applies to the slice the route was configured with, not the
         // underlying file: a Bun.file(p).slice(a,b) route exposes only [a,b).
@@ -372,22 +386,11 @@ impl FileRoute {
             && self.status_code == 200
             && !self.has_content_range_header
         {
-            RangeRequest::from_request(req, size)
+            RangeRequest::from_request(req, size, etag, last_modified_ms)
         } else {
             RangeRequest::Result::None
         };
 
-        let etag = self.headers.get(b"etag").filter(|v| !v.is_empty());
-        let last_modified_ms = if req.header(b"if-modified-since").is_some()
-            || req.header(b"if-unmodified-since").is_some()
-        {
-            let Ok(lmd) = self.last_modified_date() else {
-                return Serve::Done;
-            };
-            lmd
-        } else {
-            None
-        };
         let status_code =
             status_for_preconditions(req, method, self.status_code, etag, last_modified_ms, range);
 
@@ -412,37 +415,40 @@ impl FileRoute {
             return Serve::Done;
         }
 
+        // `None` (read to EOF) is only for pipes and sockets; a file's body is its Content-Length.
         let (body_offset, body_len): (u64, Option<u64>) = match range {
             RangeRequest::Result::Satisfiable { .. } => {
                 let (start, len) = write_content_range(resp, range, size).unwrap();
-                (self.blob.offset.get() + start, Some(len))
+                (offset + start, Some(len))
             }
             RangeRequest::Result::Unsatisfiable => {
                 write_content_range(resp, range, size);
                 resp.end(b"", resp.should_close_connection());
                 return Serve::Done;
             }
-            RangeRequest::Result::None => (
+            RangeRequest::Result::None => {
                 if file_type == FileType::File {
-                    self.blob.offset.get()
+                    (offset, Some(size))
                 } else {
-                    0
-                },
-                if file_type == FileType::File && self.blob.size.get() > 0 {
-                    Some(size)
-                } else {
-                    None
-                },
-            ),
+                    (0, None)
+                }
+            }
         };
 
-        if file_type == FileType::File && !resp.state().has_written_content_length_header() {
-            resp.write_header_int(b"content-length", body_len.unwrap_or(size));
-            resp.mark_wrote_content_length_header();
+        if let Some(len) = body_len {
+            if !resp.state().has_written_content_length_header() {
+                resp.write_header_int(b"content-length", len);
+                resp.mark_wrote_content_length_header();
+            }
         }
 
         if method == Method::HEAD {
             resp.end_without_body(resp.should_close_connection());
+            return Serve::Done;
+        }
+
+        if body_len == Some(0) {
+            resp.end(b"", resp.should_close_connection());
             return Serve::Done;
         }
 
@@ -477,6 +483,7 @@ impl Drop for FileRoute {
 /// else (4) If-Modified-Since. Steps 1/2 yield 412 on failure and must run
 /// before steps 3/4 can yield 304. Preconditions only apply when the selected
 /// representation would otherwise be 200 (§13.1.1).
+/// Step 5, If-Range, is already applied to `range` by `RangeRequest::from_request`.
 pub(crate) fn status_for_preconditions(
     req: &AnyRequest,
     method: Method,

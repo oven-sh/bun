@@ -53,35 +53,14 @@ To run manually:
 
 */
 
+// The build installs @lezer/cpp before it runs this script.
+import type { SyntaxNode } from "@lezer/common";
+import { parser as cppParser } from "@lezer/cpp";
+import { mkdir, readFile, writeFile } from "fs/promises";
+import { join } from "path";
+import { bannedTypes } from "./shared-types.ts";
+
 const start = Date.now();
-let isInstalled = false;
-try {
-  const grammarfile = await Bun.file("node_modules/@lezer/cpp/src/cpp.grammar").text();
-  isInstalled = true;
-} catch (e) {}
-if (!isInstalled) {
-  if (process.argv.includes("--already-installed")) {
-    console.error("Lezer C++ grammar is not installed. Please run `bun install` to install it.");
-    process.exit(1);
-  }
-  const r = Bun.spawnSync([process.argv[0], "install", "--frozen-lockfile"], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (r.exitCode !== 0) {
-    console.error(r.stdout.toString());
-    console.error(r.stderr.toString());
-    process.exit(r.exitCode ?? 1);
-  }
-
-  const r2 = Bun.spawnSync([...process.argv, "--already-installed"], { stdio: ["inherit", "inherit", "inherit"] });
-  process.exit(r2.exitCode ?? 1);
-}
-
-type SyntaxNode = import("@lezer/common").SyntaxNode;
-const { parser: cppParser } = await import("@lezer/cpp");
-const { mkdir } = await import("fs/promises");
-const { join, relative } = await import("path");
-const { bannedTypes } = await import("./shared-types");
 
 type Point = {
   line: number;
@@ -149,19 +128,18 @@ function throwError(position: Srcloc, message: string): never {
   throw new PositionedErrorClass(position, message);
 }
 class PositionedErrorClass extends Error {
+  position: Srcloc;
   notes: { position: Srcloc; message: string }[] = [];
-  constructor(
-    public position: Srcloc,
-    message: string,
-  ) {
+  constructor(position: Srcloc, message: string) {
     super(message);
+    this.position = position;
   }
 }
 
 // Lezer works with offsets, but our errors need line/column. This utility handles the conversion.
 class LineInfo {
   private lineStarts: number[];
-  constructor(private source: string) {
+  constructor(source: string) {
     this.lineStarts = [0];
     for (let i = 0; i < source.length; i++) {
       if (source[i] === "\n") {
@@ -756,7 +734,7 @@ function closest(node: SyntaxNode | null, type: string): SyntaxNode | null {
 type CppParser = typeof cppParser;
 
 async function processFile(parser: CppParser, file: string, allFunctions: CppFn[]) {
-  const sourceCode = await Bun.file(file).text();
+  const sourceCode = await readFile(file, "utf8");
   if (!sourceCode.includes("[[ZIG_EXPORT(")) return;
 
   const sourceCodeLines = sourceCode.split("\n");
@@ -886,7 +864,7 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
 }
 
 async function renderError(position: Srcloc, message: string, label: string, color: string) {
-  const fileContent = await Bun.file(position.file).text();
+  const fileContent = await readFile(position.file, "utf8");
   const lines = fileContent.split("\n");
   const line = lines[position.start.line - 1];
   if (line === undefined) return;
@@ -898,12 +876,12 @@ async function renderError(position: Srcloc, message: string, label: string, col
   const after = line.substring(position.start.column - 1);
   console.error(`\x1b[90m${before}${after}\x1b[m`);
   let length = position.start.line === position.end.line ? position.end.column - position.start.column : 1;
-  console.error(`\x1b[m${" ".repeat(Bun.stringWidth(before))}${color}^${"~".repeat(Math.max(length - 1, 0))}\x1b[m`);
+  console.error(`\x1b[m${" ".repeat(before.length)}${color}^${"~".repeat(Math.max(length - 1, 0))}\x1b[m`);
 }
 
 async function readFileOrEmpty(file: string): Promise<string> {
   try {
-    const fileContents = await Bun.file(file).text();
+    const fileContents = await readFile(file, "utf8");
     return fileContents;
   } catch (e) {
     return "";
@@ -942,7 +920,7 @@ async function main() {
     console.error("usage: cppbind.ts <codegen-dir> <output> <cxx-sources-file>");
     process.exit(1);
   }
-  const allCppFiles = (await Bun.file(cxxSourcesPath).text())
+  const allCppFiles = (await readFile(cxxSourcesPath, "utf8"))
     .trim()
     .split("\n")
     .map(q => q.trim())
@@ -986,7 +964,7 @@ async function main() {
     rustWrap.join("\n") +
     "\n";
   if ((await readFileOrEmpty(rustFilePath)) !== rustContents) {
-    await Bun.write(rustFilePath, rustContents);
+    await writeFile(rustFilePath, rustContents);
   }
 
   if (process.env.CI) {

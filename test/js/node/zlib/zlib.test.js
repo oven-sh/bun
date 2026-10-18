@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { isDebug, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -135,6 +135,99 @@ describe("zlib", () => {
       });
     }
   });
+
+  describe("memLevel and strategy", () => {
+    const data = Buffer.from(Array.from({ length: 4000 }, (_, i) => Math.imul(i, 2654435761).toString(36)).join(" "));
+    for (const [compress, decompress, nodeCompress] of [
+      [gzipSync, gunzipSync, zlib.gzipSync],
+      [deflateSync, inflateSync, zlib.deflateRawSync],
+    ]) {
+      it.each([
+        { strategy: zlib.constants.Z_FILTERED, level: 9 },
+        { strategy: zlib.constants.Z_HUFFMAN_ONLY },
+        { strategy: zlib.constants.Z_RLE },
+        { strategy: zlib.constants.Z_FIXED },
+        { memLevel: 1 },
+        { memLevel: 9 },
+        { memLevel: 1, strategy: zlib.constants.Z_RLE, level: 9 },
+      ])(`${compress.name}: %j gives the bytes node:zlib gives, which are not the default's`, options => {
+        const compressed = Buffer.from(compress(data, options));
+        expect(compressed).toEqual(nodeCompress(data, options));
+        expect(compressed).not.toEqual(Buffer.from(compress(data, { level: options.level })));
+        expect(Buffer.from(decompress(compressed))).toEqual(data);
+      });
+
+      for (const [options, code] of [
+        [{ memLevel: 0 }, "ERR_OUT_OF_RANGE"],
+        [{ memLevel: 10 }, "ERR_OUT_OF_RANGE"],
+        [{ memLevel: 1.5 }, "ERR_OUT_OF_RANGE"],
+        [{ memLevel: "9" }, "ERR_INVALID_ARG_TYPE"],
+        [{ memLevel: null }, "ERR_INVALID_ARG_TYPE"],
+        [{ strategy: -1 }, "ERR_OUT_OF_RANGE"],
+        [{ strategy: 5 }, "ERR_OUT_OF_RANGE"],
+        [{ strategy: NaN }, "ERR_OUT_OF_RANGE"],
+        [{ strategy: "Z_RLE" }, "ERR_INVALID_ARG_TYPE"],
+      ]) {
+        it(`${compress.name}: ${util.inspect(options)} is refused`, () => {
+          expect(() => compress(data, options)).toThrow(expect.objectContaining({ code }));
+        });
+      }
+
+      it(`${compress.name}: the defaults are memLevel 8 and Z_DEFAULT_STRATEGY`, () => {
+        expect(compress(data, { memLevel: 8, strategy: zlib.constants.Z_DEFAULT_STRATEGY })).toEqual(compress(data));
+      });
+
+      it(`${compress.name}: libdeflate has neither`, () => {
+        const library = "libdeflate";
+        expect(compress(data, { library, memLevel: 1, strategy: 2 })).toEqual(compress(data, { library }));
+      });
+
+      // A low memLevel makes many short blocks.
+      it(`${compress.name}: what does not compress fits`, () => {
+        let state = 1;
+        const next = () => (state = (Math.imul(state, 1103515245) + 12345) >>> 0) >>> 16;
+        for (const length of [16, 127 * 32 + 1, 65537]) {
+          const noise = Buffer.from(Array.from({ length }, () => next() & 255));
+          for (const options of [
+            { memLevel: 1 },
+            { memLevel: 1, level: 0 },
+            { memLevel: 1, level: 1 },
+            { memLevel: 1, strategy: 4 },
+          ]) {
+            const compressed = Buffer.from(compress(noise, options));
+            expect(compressed.length).toBeGreaterThan(length);
+            // Stored blocks are as long as the room for output allows, so node:zlib gets as much of it.
+            expect(compressed).toEqual(nodeCompress(noise, { ...options, chunkSize: 2 * length + 64 }));
+            expect(Buffer.from(decompress(compressed))).toEqual(noise);
+          }
+        }
+      });
+    }
+
+    // Z_FIXED has no tree of its own, and a block of memLevel 9 that the window slid past is not stored:
+    // 9 bits for each byte from 144 up and 10 for each block, where deflateBound() allows 9 bits and 3 bytes in all.
+    // The first block is stored, which spares 4092 bytes, and each other uses up less than one: 5120 are the fewest.
+    it(
+      "an output longer than deflateBound() is whole",
+      () => {
+        const period = Buffer.alloc(37 * 37 * 38 * 3);
+        for (let i = 0; i < period.length; i += 3) {
+          const triple = i / 3;
+          period[i] = 144 + Math.floor(triple / (37 * 38));
+          period[i + 1] = 181 + (Math.floor(triple / 38) % 37);
+          period[i + 2] = 218 + (triple % 38);
+        }
+        const input = Buffer.alloc(5130 * 32768, period);
+        // One match in three blocks of 32767 symbols keeps each block starting just before a multiple of the window.
+        for (let i = 5 * 32767 + 16000; i + 4 < input.length; i += 3 * 32768) input.copyWithin(i, i - 30000, i - 29996);
+
+        const compressed = deflateSync(input, { memLevel: 9, strategy: zlib.constants.Z_FIXED, level: 2 });
+        expect(compressed.length).toBeGreaterThan(input.length + input.length / 8 + 3);
+        expect(Buffer.compare(inflateSync(compressed), input)).toBe(0);
+      },
+      isDebug ? 60_000 : undefined,
+    );
+  });
 });
 
 function* window(buffer, size, advance = size) {
@@ -158,6 +251,89 @@ describe("zlib.gunzip", () => {
         expect(buffer.Buffer.isBuffer(data)).toBe(true);
         resolve(true);
       });
+    });
+  });
+});
+
+describe("one-shot results", () => {
+  const input = Buffer.alloc(1024, "a");
+  const pairs = [
+    ["gzip", "gunzip"],
+    ["deflate", "inflate"],
+    ["deflateRaw", "inflateRaw"],
+    ["gzip", "unzip"],
+    ["brotliCompress", "brotliDecompress"],
+    ["zstdCompress", "zstdDecompress"],
+  ];
+  const backingStores = (compressed, decompressed) => ({
+    compressed: compressed.buffer.byteLength,
+    decompressed: decompressed.buffer.byteLength,
+  });
+
+  it.each(pairs)("%sSync and %sSync do not keep the 16 KB output chunk alive", (compress, decompress) => {
+    const compressed = zlib[`${compress}Sync`](input);
+    const decompressed = zlib[`${decompress}Sync`](compressed);
+    expect(decompressed).toEqual(input);
+    expect(backingStores(compressed, decompressed)).toEqual({
+      compressed: compressed.byteLength,
+      decompressed: decompressed.byteLength,
+    });
+  });
+
+  it.each(pairs)("%s and %s do not keep the 16 KB output chunk alive", async (compress, decompress) => {
+    const compressed = await util.promisify(zlib[compress])(input);
+    const decompressed = await util.promisify(zlib[decompress])(compressed);
+    expect(decompressed).toEqual(input);
+    expect(backingStores(compressed, decompressed)).toEqual({
+      compressed: compressed.byteLength,
+      decompressed: decompressed.byteLength,
+    });
+  });
+
+  // Random bytes do not compress, so both directions produce the same number of chunks.
+  // A fractional chunkSize is valid. It makes the offsets into the chunk fractional.
+  describe.each([
+    ["exactly one chunk", 16 * 1024, undefined],
+    ["full chunks and a small rest", 3 * 16 * 1024 + 5, undefined],
+    ["a large part of one large chunk", 40_000, 64 * 1024],
+    ["many small chunks", 10_000, 64],
+    ["a fractional chunkSize", 1000, 100.5],
+    ["a fractional chunkSize above the input size", 1000, 16 * 1024 + 0.5],
+  ])("%s", (_, size, chunkSize) => {
+    const data = randomFillSync(Buffer.alloc(size));
+    const options = { chunkSize };
+
+    it("round-trips with the sync functions", () => {
+      expect(zlib.inflateRawSync(zlib.deflateRawSync(data, options), options)).toEqual(data);
+      expect(zlib.zstdDecompressSync(zlib.zstdCompressSync(data, options), options)).toEqual(data);
+    });
+
+    it("round-trips with the callback functions", async () => {
+      const deflated = await util.promisify(zlib.deflateRaw)(data, options);
+      expect(await util.promisify(zlib.inflateRaw)(deflated, options)).toEqual(data);
+      const compressed = await util.promisify(zlib.zstdCompress)(data, options);
+      expect(await util.promisify(zlib.zstdDecompress)(compressed, options)).toEqual(data);
+    });
+
+    it("round-trips with _processChunk on one engine", () => {
+      const deflated = zlib.deflateRawSync(data);
+      const engine = new zlib.InflateRaw(options);
+      const half = deflated.length >> 1;
+      // The sync _processChunk closes the handle when it is done. minizlib keeps it open like this.
+      const handle = engine._handle;
+      const close = handle.close;
+      handle.close = () => {};
+      const parts = [];
+      try {
+        parts.push(Buffer.from(engine._processChunk(deflated.subarray(0, half), zlib.constants.Z_SYNC_FLUSH)));
+        engine._handle = handle;
+        parts.push(Buffer.from(engine._processChunk(deflated.subarray(half), zlib.constants.Z_SYNC_FLUSH)));
+      } finally {
+        handle.close = close;
+        engine._handle = handle;
+        engine.close();
+      }
+      expect(Buffer.concat(parts)).toEqual(data);
     });
   });
 });
@@ -815,5 +991,23 @@ describe("crc32", () => {
     expect(() => zlib.crc32(undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     // Omitted second arg defaults to value=0.
     expect(zlib.crc32("hello")).toBe(zlib.crc32("hello", 0));
+    // So does an explicit undefined, as a default parameter does in Node.
+    expect(zlib.crc32("hello", undefined)).toBe(zlib.crc32("hello", 0));
+  });
+
+  it.each([
+    [undefined, "undefined"],
+    [null, "null"],
+    [1, "type number (1)"],
+    [{}, "an instance of Object"],
+    [new String("a"), "an instance of String"],
+  ])("says what Node says of %p as the data", (data, received) => {
+    expect(() => zlib.crc32(data)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received ${received}`,
+      }),
+    );
   });
 });

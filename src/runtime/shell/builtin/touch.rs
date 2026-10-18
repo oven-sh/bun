@@ -8,12 +8,12 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Touch {
+pub(crate) struct Touch {
     pub(crate) state: State,
 }
 
 #[derive(Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Idle,
     Exec(ExecState),
@@ -21,7 +21,7 @@ pub enum State {
     Done,
 }
 
-pub struct ExecState {
+pub(crate) struct ExecState {
     pub(crate) started: bool,
     pub(crate) tasks_count: usize,
     pub(crate) tasks_done: usize,
@@ -95,7 +95,7 @@ impl Touch {
                     Action::Schedule(exec.args_start)
                 }
             }
-            State::WaitingWriteErr => return Yield::failed(),
+            State::WaitingWriteErr => return Yield::suspended(),
             State::Done => return Builtin::done(interp, cmd, 0),
         };
         match action {
@@ -233,7 +233,7 @@ impl OutputTaskVTable for Touch {
 }
 
 /// utimes() the path (creating it on ENOENT) on a worker thread.
-pub struct ShellTouchTask {
+pub(crate) struct ShellTouchTask {
     pub(crate) cmd: NodeId,
     pub(crate) filepath: Vec<u8>,
     pub(crate) cwd_path: Vec<u8>,
@@ -332,6 +332,10 @@ impl bun_event_loop::Taskable for ShellTouchTask {
             drop(bun_core::heap::take(this));
         }
     }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {
@@ -347,7 +351,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct Opts {}
+pub(crate) struct Opts {}
 
 impl FlagParser for Opts {
     fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult> {

@@ -622,12 +622,16 @@ impl PackageManagerCommand {
             Output::disable_buffering();
             let lockfile: &Lockfile = &pm.lockfile;
 
-            // Without a `node_modules`, everything in the lockfile is listed.
+            // Without a `node_modules`, everything that the lockfile resolves is listed.
             let mut on_disk = InstalledFilter::init();
-            let mut is_installed = |dir: &[u8], dep_id: DependencyID, or_in_store: bool| {
-                (on_disk.as_mut())
-                    .is_none_or(|on_disk| on_disk.is_installed(lockfile, dir, dep_id, or_in_store))
-            };
+            let mut is_installed =
+                |dir: &[u8], dep_id: DependencyID, or_in_store: bool| match on_disk.as_mut() {
+                    Some(on_disk) => on_disk.is_installed(lockfile, dir, dep_id, or_in_store),
+                    None => {
+                        (lockfile.buffers.resolutions[dep_id as usize] as usize)
+                            < lockfile.packages.len()
+                    }
+                };
 
             let resolutions = lockfile.buffers.resolutions.as_slice();
             // `--production` and `--omit` exclude a dependency group, along with every package that

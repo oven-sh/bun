@@ -418,6 +418,27 @@ describe.concurrent("bun pm ls lists what is on disk", () => {
     },
   );
 
+  test("an optional peer dependency that nothing provides is left out", async () => {
+    const { packageDir, bun } = await project(
+      { linker: "hoisted" },
+      {
+        "package.json": {
+          name: "foo",
+          dependencies: { "a-dep": "1.0.1" },
+          peerDependencies: { "no-deps": "1.0.0" },
+          peerDependenciesMeta: { "no-deps": { optional: true } },
+        },
+      },
+    );
+    expect(await bun("install")).toMatchObject({ exitCode: 0 });
+
+    const list = listed("<dir> node_modules (1 installed)", "└── a-dep@1.0.1");
+    expect(await bun("pm", "ls")).toEqual(list);
+    await rm(join(packageDir, "node_modules"), { recursive: true });
+    expect(await bun("pm", "ls")).toEqual(list);
+    expect(await bun("pm", "ls", "--all")).toEqual(listed("<dir> node_modules", "└── a-dep@1.0.1"));
+  });
+
   test("isolated: a dependency of the root that only a workspace member has linked", async () => {
     const { bun } = await project(
       { linker: "isolated" },

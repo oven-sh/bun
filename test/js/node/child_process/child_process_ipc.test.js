@@ -28,6 +28,7 @@ test.concurrent("a message that arrives before there is a 'message' listener is 
     child, disconnect() in the tick that adds it: []
     child, removeAllListeners('newListener'): ["end"]
     child, emit() replaced: ["emit(first)","first","emit(second)","second","emit(end)","end"]
+    child, listenerCount() replaced: ["restored","first","second","end"]
     child, listeners from the start, the first throws: ["second","end"]
     parent, a late listener: ["first","second","end"]
     parent, a handle: [["first","Server"],"second","end"]
@@ -39,6 +40,7 @@ test.concurrent("a message that arrives before there is a 'message' listener is 
     parent, disconnect() in the tick that adds it: []
     parent, removeAllListeners('newListener'): ["end"]
     parent, emit() replaced: ["emit(first)","first","emit(second)","second","emit(end)","end"]
+    parent, listenerCount() replaced: ["restored","first","second","end"]
     parent, listeners from the start, the first throws: ["second","end"]
     "
   `);

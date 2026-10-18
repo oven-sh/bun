@@ -3014,7 +3014,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionViResetModules, (JSC::JSGlobalObject * global
     return resetModules(globalObject, callframe, false);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionJestResetModules, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionJestResetModules, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     return resetModules(globalObject, callframe, true);
 }
@@ -3369,7 +3369,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateModuleMock, (JSC::JSGlobalObject * le
     RELEASE_AND_RETURN(scope, JSValue::encode(evaluateModuleMock(globalObject, moduleNamespace->moduleRecord(), dependency)));
 }
 
-static JSValue evaluateModuleMock(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, JSC::JSModuleNamespaceObject* dependency)
+__attribute__((minsize)) static JSValue evaluateModuleMock(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, JSC::JSModuleNamespaceObject* dependency)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

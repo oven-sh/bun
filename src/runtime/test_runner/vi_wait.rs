@@ -272,6 +272,7 @@ impl ViWait {
         }
     }
 
+    #[optimize(size)]
     fn on_value(
         &self,
         global: &JSGlobalObject,

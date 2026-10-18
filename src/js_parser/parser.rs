@@ -539,7 +539,7 @@ pub struct JSXImportSymbols {
 }
 
 impl JSXImportSymbols {
-    fn get(&self, name: &[u8]) -> Option<Ref> {
+    pub(crate) fn get(&self, name: &[u8]) -> Option<Ref> {
         if name == b"jsx" {
             return self.jsx.map(|jsx| jsx.ref_);
         }
@@ -629,27 +629,6 @@ impl JSXImportSymbols {
     }
 }
 
-// ─── GenerateImportSymbols impls (for `P::generate_import_stmt`) ───
-// `generate_import_stmt` maps a key to its string name via this trait, with
-// `Key = u8` (index into `ALL`) for `RuntimeImports` and
-// `Key = &'static [u8]` (the alias string itself) for `JSXImportSymbols`.
-
-impl crate::p::GenerateImportSymbols for RuntimeImports {
-    /// Index into [`RuntimeImports::ALL`].
-    type Key = u8;
-
-    #[inline]
-    fn get(&self, key: &u8) -> Option<Ref> {
-        // Disambiguate from the trait method: call the inherent `get(usize)`.
-        RuntimeImports::get(self, *key as usize)
-    }
-
-    #[inline]
-    fn alias_name(&self, key: &u8) -> &'static [u8] {
-        RuntimeImports::ALL[*key as usize]
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct ChaiImports(pub(crate) Vec<(&'static [u8], Ref)>);
 
@@ -658,35 +637,6 @@ impl ChaiImports {
         [b"assert".as_slice(), b"should"]
             .into_iter()
             .find(|&name| name == alias)
-    }
-}
-
-impl crate::p::GenerateImportSymbols for ChaiImports {
-    type Key = usize;
-
-    #[inline]
-    fn get(&self, key: &usize) -> Option<Ref> {
-        Some(self.0[*key].1)
-    }
-
-    #[inline]
-    fn alias_name(&self, key: &usize) -> &'static [u8] {
-        self.0[*key].0
-    }
-}
-
-impl crate::p::GenerateImportSymbols for JSXImportSymbols {
-    type Key = &'static [u8];
-
-    #[inline]
-    fn get(&self, key: &&'static [u8]) -> Option<Ref> {
-        // Disambiguate from the trait method: call the inherent `get(&[u8])`.
-        JSXImportSymbols::get(self, *key)
-    }
-
-    #[inline]
-    fn alias_name(&self, key: &&'static [u8]) -> &'static [u8] {
-        *key
     }
 }
 
@@ -1676,6 +1626,7 @@ impl Jest {
     ];
 
     #[cold]
+    #[optimize(size)]
     pub(crate) fn did_declare_unbound(&mut self, name: &[u8], symbol: Ref) {
         if let Some(global) = Self::GLOBALS
             .iter()

@@ -2473,23 +2473,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub(crate) fn generate_import_stmt<I, Sym>(
+    /// `imports` holds the name of each export and the symbol it is bound to.
+    pub(crate) fn generate_import_stmt(
         &mut self,
         import_path: &'a [u8],
-        imports: I,
+        imports: &[(&'static [u8], Ref)],
         parts: &mut ListManaged<'a, js_ast::Part>,
-        symbols: &Sym,
         additional_stmt: Option<Stmt>,
         prefix: &'static [u8],
         is_internal: bool,
         tag: bun_ast::PartTag,
-    ) -> Result<(), crate::Error>
-    where
-        I: AsRef<[<Sym as GenerateImportSymbols>::Key]>,
-        Sym: GenerateImportSymbols,
-    {
+    ) -> Result<(), crate::Error> {
         let arena = self.arena;
-        let imports = imports.as_ref();
         let import_record_i =
             self.add_import_record_by_range(ImportKind::Stmt, bun_ast::Range::NONE, import_path);
         {
@@ -2538,9 +2533,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         VecExt::append(&mut self.module_scope_mut().generated, namespace_ref);
-        for (alias, clause_item) in imports.iter().zip(clause_items.iter_mut()) {
-            let ref_ = symbols.get(alias).expect("unreachable");
-            let alias_name: &'static [u8] = symbols.alias_name(alias);
+        for (&(alias_name, ref_), clause_item) in imports.iter().zip(clause_items.iter_mut()) {
             *clause_item = js_ast::ClauseItem {
                 alias: js_ast::StoreStr::new(alias_name),
                 original_name: js_ast::StoreStr::new(alias_name),
@@ -10335,15 +10328,6 @@ impl LowerUsingDeclarationsContext {
 
         result
     }
-}
-
-// ─── Helper trait for generate_import_stmt's generic `symbols` param ───
-// Dispatches the alias lookup via `alias_name()`; implemented
-// for `RuntimeImports` (Key = u8 index) and `JSXImportSymbols` (Key = alias).
-pub trait GenerateImportSymbols {
-    type Key;
-    fn get(&self, key: &Self::Key) -> Option<Ref>;
-    fn alias_name(&self, key: &Self::Key) -> &'static [u8];
 }
 
 // ─── Module-level constructor fns ───

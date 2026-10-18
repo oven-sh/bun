@@ -771,7 +771,7 @@ extern "C" uint32_t Bun__TestFile__enterModuleGraph(Zig::GlobalObject* globalObj
     return graph->context().identifier();
 }
 
-extern "C" void Bun__TestFile__leaveModuleGraph(Zig::GlobalObject* globalObject)
+extern "C" __attribute__((minsize)) void Bun__TestFile__leaveModuleGraph(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto& state = moduleGraphState(globalObject);

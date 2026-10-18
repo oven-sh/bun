@@ -224,6 +224,7 @@ impl<'a> Scanner<'a> {
     }
 
     /// `handle` stays owned by the caller; the resolver caches the listing but not the fd.
+    #[optimize(size)]
     fn read_dir_with_name(
         &mut self,
         name: &[u8],

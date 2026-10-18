@@ -116,6 +116,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
+    #[optimize(size)]
     fn mock_api(&self, ref_: Ref) -> Option<MockApi> {
         if let Some(global) = self.jest.refs.iter().position(|global| global.eql(ref_)) {
             return self.global_mock_api(Jest::GLOBALS[global].as_bytes());
@@ -123,6 +124,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         self.imported_mock_apis.get(&ref_).copied()
     }
 
+    #[optimize(size)]
     fn unvisited_top_level_symbol(&self, name: Ref) -> Option<Ref> {
         self.module_scope()
             .members
@@ -139,6 +141,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     }
 
     /// Returns (api, method). For a `jest.mock(...).unmock(...)` chain, that's the last method.
+    #[optimize(size)]
     fn unvisited_top_level_mock_call(&self, expr: Expr) -> Option<(MockApi, &'a [u8])> {
         let mut callee = match expr.data {
             ExprData::EAwait(awaited) => awaited.value,
@@ -172,6 +175,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
+    #[optimize(size)]
     fn is_hoisted_mock_stmt(&self, stmt: &Stmt) -> bool {
         match stmt.data {
             StmtData::SExpr(expr) => matches!(
@@ -230,6 +234,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     }
 
     /// Must run before the visit pass.
+    #[optimize(size)]
     pub(crate) fn plan_mock_hoisting(&mut self, stmts: &[Stmt]) -> Option<&'a [MockHoistOrder]> {
         self.has_hoisted_mock_stmt = stmts.iter().any(|stmt| self.is_hoisted_mock_stmt(stmt));
         if !self.options.features.inject_jest_globals
@@ -266,6 +271,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     }
 
     /// Aliases a lowered import's names to its namespace, so `a` prints as `ns.a`.
+    #[optimize(size)]
     pub(crate) fn plan_import(&mut self, import: &S::Import, exported: &RefMap) -> MockHoistOrder {
         let record = &self.import_records.items()[import.import_record_index as usize];
         // An import of "bun" prints as `var`s that read `globalThis.Bun`.
@@ -318,6 +324,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     }
 
     /// `ImportKind::Dynamic` on an `S::Import`'s record tells `ImportScanner` to lower it.
+    #[optimize(size)]
     pub(crate) fn append_hoisted_mocks(
         &mut self,
         before: &mut BumpVec<'a, js_ast::Part>,
@@ -337,6 +344,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         before.append(imports);
     }
 
+    #[optimize(size)]
     pub(crate) fn lower_import_to_dynamic(&mut self, import: &S::Import, loc: js_ast::Loc) -> Stmt {
         let record = &self.import_records.items()[import.import_record_index as usize];
         let (path, path_loc) = (record.path.text, record.range.loc);

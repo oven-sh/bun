@@ -2334,16 +2334,17 @@ impl<'a> Parser<'a> {
             if i > 0 && wrap_mode == WrapMode::BunCommonjs {
                 p.generate_runtime_require_stmt(&runtime_imports[0..i], &mut before)?;
             } else if i > 0 {
-                // snapshot to break the `&mut self` ↔ `&self.runtime_imports`
-                // borrow overlap in `generate_import_stmt(symbols: &Sym)`; the callee
-                // never touches `self.runtime_imports`, so the clone is purely a
-                // borrow-checker workaround.
-                let symbols = p.runtime_imports.clone();
+                let imports: Vec<(&'static [u8], js_ast::Ref)> = runtime_imports[0..i]
+                    .iter()
+                    .map(|&key| {
+                        let symbol = p.runtime_imports.get(key as usize).expect("unreachable");
+                        (RuntimeImports::ALL[key as usize], symbol)
+                    })
+                    .collect();
                 p.generate_import_stmt(
                     RuntimeImports::NAME,
-                    &runtime_imports[0..i],
+                    &imports,
                     &mut before,
-                    &symbols,
                     None,
                     b"import_",
                     true,
@@ -2358,25 +2359,26 @@ impl<'a> Parser<'a> {
             && p.options.features.auto_import_jsx
             && p.options.jsx.runtime == options::JSX::Runtime::Automatic
         {
-            // `generate_import_stmt` takes `&mut self` plus `import_path: &'a [u8]`
-            // and `symbols: &Sym`, so the Pragma-owned `Box<[u8]>` paths are copied into the
-            // bump arena (giving them the required `'a` lifetime) and `jsx_imports` is moved
-            // out via `take` (it is `Default`) to avoid an overlapping `&self.jsx_imports`
-            // borrow. The callee never reads `self.jsx_imports`, so the take/restore is
-            // semantically a no-op.
+            // `generate_import_stmt` takes `import_path: &'a [u8]`, so the Pragma-owned `Box<[u8]>`
+            // paths are copied into the bump arena.
             let import_source: &'a [u8] = p.arena.alloc_slice_copy(p.options.jsx.import_source());
             let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
-            let jsx_imports = core::mem::take(&mut p.jsx_imports);
+            let with_symbols = |names: &[&'static [u8]]| -> Vec<(&'static [u8], js_ast::Ref)> {
+                names
+                    .iter()
+                    .map(|&name| (name, p.jsx_imports.get(name).expect("unreachable")))
+                    .collect()
+            };
 
             let mut buf: [&'static [u8]; 3] = [b"", b"", b""];
-            let runtime_import_names = jsx_imports.runtime_import_names(&mut buf);
+            let runtime_imports = with_symbols(p.jsx_imports.runtime_import_names(&mut buf));
+            let source_imports = with_symbols(p.jsx_imports.source_import_names());
 
-            if !runtime_import_names.is_empty() {
+            if !runtime_imports.is_empty() {
                 p.generate_import_stmt(
                     import_source,
-                    runtime_import_names,
+                    &runtime_imports,
                     &mut before,
-                    &jsx_imports,
                     None,
                     b"",
                     false,
@@ -2385,13 +2387,11 @@ impl<'a> Parser<'a> {
                 .expect("unreachable");
             }
 
-            let source_import_names = jsx_imports.source_import_names();
-            if !source_import_names.is_empty() {
+            if !source_imports.is_empty() {
                 p.generate_import_stmt(
                     package_name,
-                    source_import_names,
+                    &source_imports,
                     &mut before,
-                    &jsx_imports,
                     None,
                     b"",
                     false,
@@ -2399,18 +2399,14 @@ impl<'a> Parser<'a> {
                 )
                 .expect("unreachable");
             }
-
-            p.jsx_imports = jsx_imports;
         }
 
         if !p.chai_imports.0.is_empty() {
             let chai_imports = core::mem::take(&mut p.chai_imports);
-            let keys: Vec<usize> = (0..chai_imports.0.len()).collect();
             p.generate_import_stmt(
                 b"chai",
-                keys,
+                &chai_imports.0,
                 &mut before,
-                &chai_imports,
                 None,
                 b"import_",
                 false,

@@ -601,6 +601,7 @@ impl<'a> Arguments<'a, '_> {
         Ok(expansion)
     }
 
+    #[optimize(size)]
     fn option(
         &mut self,
         property: &G::Property,
@@ -840,6 +841,7 @@ fn arrow(arena: &Arena, args: &[js_ast::Ref], value: Expr) -> Expr {
     )
 }
 
+#[optimize(size)]
 fn throwing_function(arena: &Arena, type_error: js_ast::Ref, message: &[u8], loc: Loc) -> Expr {
     let value = Expr::init(
         E::New {
@@ -887,6 +889,7 @@ fn dot(target: Expr, name: &[u8]) -> Expr {
     )
 }
 
+#[optimize(size)]
 fn then_export(arena: &Arena, import: Expr, parameter: js_ast::Ref, name: &[u8]) -> Expr {
     let namespace = Expr::init(E::Identifier::init(parameter), import.loc);
     Expr::init(

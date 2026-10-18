@@ -3093,6 +3093,7 @@ impl ExpectMatcherContext {
 macro_rules! plain_host_fn {
     ($shim:ident, $function:path) => {
         bun_jsc::jsc_host_abi! {
+            #[optimize(size)]
             unsafe fn $shim(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue {
                 // SAFETY: JSC guarantees both pointers are live for the call.
                 let (global, frame) = unsafe { (&*global, &*frame) };

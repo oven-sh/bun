@@ -1479,6 +1479,11 @@ export const linkerFlags: Flag[] = [
     when: c => c.linux || c.freebsd,
     desc: "Export list + version script",
   },
+  {
+    flag: c => `-Wl,-T,${bunSectionScriptPath(c)}`,
+    when: c => c.linux || c.freebsd,
+    desc: "`.bun` after `.bss`, in a PT_LOAD of its own, so a --compile payload doesn't make `.bss` file-backed",
+  },
   // ─── FreeBSD ───
   {
     flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
@@ -1650,6 +1655,11 @@ export function versionScriptPath(cfg: Pick<Config, "cwd" | "freebsd">): string 
   return join(cfg.cwd, "src", cfg.freebsd ? "linker-freebsd.lds" : "linker.lds");
 }
 
+/** The ELF linker script that moves `.bun` after `.bss` (see the file). */
+export function bunSectionScriptPath(cfg: Pick<Config, "cwd">): string {
+  return join(cfg.cwd, "src", "linker-bun-section.lds");
+}
+
 /** `<buildDir>/exports.list`: the version script's `global:` block as lld's export list; configure writes it (bun.ts). */
 export function exportListPath(cfg: Pick<Config, "buildDir">): string {
   return join(cfg.buildDir, "exports.list");
@@ -1669,7 +1679,7 @@ export function linkDepends(cfg: Config): string[] {
     ? [join(cfg.cwd, "src/symbols.def")]
     : cfg.darwin
       ? [join(cfg.cwd, "src/symbols.txt")]
-      : [exportListPath(cfg), versionScriptPath(cfg)];
+      : [exportListPath(cfg), versionScriptPath(cfg), bunSectionScriptPath(cfg)];
   if (usesOrderFile(cfg)) depends.push(orderFilePath(cfg));
   return depends;
 }

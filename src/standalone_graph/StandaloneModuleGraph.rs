@@ -774,7 +774,7 @@ impl File {
         debug_assert!(bytes.as_ptr().addr().is_multiple_of(align_of::<u16>()));
         #[expect(
             clippy::cast_ptr_alignment,
-            reason = "`to_bytes` writes UTF-16 at an even offset and the section base is page-aligned (the 128-byte bytecode alignment relies on the same property)"
+            reason = "`to_bytes` writes UTF-16 at an even offset and the section base is at least 128-byte aligned (the bytecode alignment relies on the same property)"
         )]
         // SAFETY: even byte count at a 2-byte-aligned offset of a section that is never freed.
         unsafe {
@@ -1696,7 +1696,7 @@ pub(crate) fn to_bytes(
                 //     => O % 128 == 120
                 //
                 // - ELF (Linux): the payload is mapped by the kernel as part of the
-                //   RW PT_LOAD (see exe_format/elf.rs) at a page-aligned address, also
+                //   RW PT_LOAD (see exe_format/elf.rs) at a 128-byte-aligned address, also
                 //   preceded by the same 8-byte length header, so the same arithmetic
                 //   applies.
                 let bytecode = &output_files[output_file.bytecode_index as usize];
@@ -3381,7 +3381,7 @@ fn append_shared_bytecode(
 }
 
 /// JSC reads cached bytecode in place and expects its start 128-byte aligned once mapped. The section data begins
-/// 8 bytes after a page-aligned address (the length header), so the offset must be 120 mod 128.
+/// 8 bytes after an address that is at least 128-byte aligned (the length header), so the offset must be 120 mod 128.
 fn append_bytecode_aligned(
     string_builder: &mut bun_core::StringBuilder,
     bytecode: &[u8],

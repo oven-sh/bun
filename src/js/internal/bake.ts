@@ -12,6 +12,7 @@ const {
   serveOnFreePort,
   printBannerAndHandleShortcuts,
 } = require("internal/serve_cli");
+const setConfigPlugins = $newRustFunction("bake/config/plugins.rs", "setConfigPlugins", 2);
 
 // `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
 const ObjectKeys = Object.keys;
@@ -27,6 +28,9 @@ Usage:
 Serves the app in the working directory, with hot reloading:
 
   app/pages/**/*.html   Pages. The path is the URL: app/pages/docs/index.html is /docs.
+  bake.config.ts        Optional. Build plugins, as Bun plugins:
+                        export default defineConfig({ plugins: [...] }), with
+                        defineConfig from "bun:bake". Restart after you change it.
   app/server.ts         Optional. Its default export holds options of Bun.serve(), as
                         for \`export default\` in \`bun app.ts\` (a Hono app works). "fetch"
                         gets the requests that no page and no route matched.
@@ -102,6 +106,54 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
   return pages;
 }
 
+/** The plugins of `bake.config.ts`: its default export is a config, or a function that returns one. */
+async function loadConfig(cwd: string): Promise<{ plugins: unknown[]; names: string[] }> {
+  let file: string;
+  try {
+    file = Bun.resolveSync("./bake.config", cwd);
+  } catch (error: any) {
+    if (error?.code === "ERR_MODULE_NOT_FOUND") return { plugins: [], names: [] };
+    throw error;
+  }
+
+  const name = display(file);
+  let config = (await import(file)).default;
+  if ($isCallable(config)) config = await config({ mode: "development" });
+  if (config === null || typeof config !== "object") {
+    throw new TypeError(`"${name}" must have a default export: a config object, or a function that returns one.`);
+  }
+  const keys = ObjectKeys(config);
+  for (let i = 0; i < keys.length; i++) {
+    if (keys[i] !== "plugins") {
+      throw new TypeError(`"${name}": the config has "${keys[i]}", but "bun bake" only uses "plugins".`);
+    }
+  }
+  const list = config.plugins;
+  if (list === undefined) return { plugins: [], names: [] };
+  if (!$isArray(list)) throw $ERR_INVALID_ARG_TYPE("plugins", "array", list);
+
+  const plugins: unknown[] = [];
+  const names: string[] = [];
+  for (let i = 0, length = list.length; i < length; i++) {
+    const plugin = list[i];
+    if (plugin === null || typeof plugin !== "object") {
+      throw new TypeError(`"${name}": plugins[${i}] is not a plugin object.`);
+    }
+    const pluginName = plugin.name;
+    if (typeof pluginName !== "string" || pluginName === "") {
+      throw new TypeError(`"${name}": plugins[${i}] has no "name".`);
+    }
+    if (!$isCallable(plugin.setup)) {
+      throw new TypeError(
+        `"${name}": the plugin "${pluginName}" has no setup() function. "bun bake" takes Bun plugins.`,
+      );
+    }
+    plugins.push(plugin);
+    names.push(pluginName);
+  }
+  return { plugins, names };
+}
+
 async function loadAppServer(
   cwd: string,
 ): Promise<
@@ -155,6 +207,9 @@ async function start() {
   }
 
   const cwd = process.cwd();
+  const config = await loadConfig(cwd);
+  // Before `Bun.serve()`: the server loads them with the plugins of bunfig.toml.
+  setConfigPlugins(config.plugins, config.names);
   const pages = await loadPages(path.join(cwd, "app", "pages"));
   const app = await loadAppServer(cwd);
   if (pages.length === 0 && app === undefined) {

@@ -196,6 +196,21 @@ test.concurrent.each([
     args: ["--host="],
     error: `"--host" needs a hostname.`,
   },
+  {
+    name: "a bake.config.ts option it does not use",
+    files: { "app/pages/index.html": page, "bake.config.ts": `export default { plugin: [] };` },
+    error: `"bake.config.ts": the config has "plugin", but "bun bake" only uses "plugins".`,
+  },
+  {
+    name: "a plugin in bake.config.ts with no setup()",
+    files: { "app/pages/index.html": page, "bake.config.ts": `export default { plugins: [{ name: "half" }] };` },
+    error: `"bake.config.ts": the plugin "half" has no setup() function. "bun bake" takes Bun plugins.`,
+  },
+  {
+    name: "a bake.config.ts default export that is not an object",
+    files: { "app/pages/index.html": page, "bake.config.ts": `export default 1;` },
+    error: `"bake.config.ts" must have a default export: a config object, or a function that returns one.`,
+  },
 ])("bun bake rejects $name", async ({ files, args, error }) => {
   using dir = tempDir("bake-command-error", files);
 
@@ -490,4 +505,48 @@ test.concurrent.skipIf(isWindows)("bun bake keeps a unix socket from the export 
 
   const res = await fetch("http://localhost/", { unix: socket });
   expect(await res.text()).toBe("via unix");
+});
+
+/** The CSS that the page at `path` links to. */
+async function getPageCss(url: string, path: string) {
+  const html = await (await fetch(new URL(path, url))).text();
+  const hrefs = [...html.matchAll(/href="([^"]+\.css)"/g)].map(match => match[1]);
+  const css = await Promise.all(hrefs.map(async href => (await fetch(new URL(href, url))).text()));
+  return css.join("\n");
+}
+
+test.concurrent("bun bake loads the plugins of bake.config.ts, with those of bunfig.toml", async () => {
+  using dir = tempDir("bake-command-config", {
+    "bake.config.ts": `
+      import { defineConfig } from "bun:bake";
+      export default defineConfig(({ mode }) => ({
+        plugins: [{
+          name: "from-config",
+          setup(build) {
+            build.onLoad({ filter: /config\\.css$/ }, () => ({ contents: ".config-" + mode + " { color: red; }", loader: "css" }));
+          },
+        }],
+      }));
+    `,
+    "bunfig.toml": `[serve.static]\nplugins = ["./bunfig-plugin.ts"]\n`,
+    "bunfig-plugin.ts": `
+      export default {
+        name: "from-bunfig",
+        setup(build) {
+          build.onLoad({ filter: /bunfig\\.css$/ }, () => ({ contents: ".bunfig-plugin { color: red; }", loader: "css" }));
+        },
+      };
+    `,
+    "app/config.css": `.unchanged { color: red; }`,
+    "app/bunfig.css": `.unchanged { color: red; }`,
+    "app/pages/index.html": `<!doctype html><html><head><link rel="stylesheet" href="../config.css" /><link rel="stylesheet" href="../bunfig.css" /></head><body></body></html>`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const css = await getPageCss(url, "/");
+  expect(css).toContain(".config-development");
+  expect(css).toContain(".bunfig-plugin");
+  expect(css).not.toContain(".unchanged");
 });

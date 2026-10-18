@@ -1007,6 +1007,13 @@ impl ServePlugins {
             bunstring_array.push(BunString::from_bytes(raw_plugin));
         }
         let plugin_js_array = bun_string_jsc::to_js_array(global, &bunstring_array)?;
+        // `bun bake`: the plugin objects of `bake.config.ts`, after the names of bunfig.toml.
+        if let Some(config_plugins) = global.bun_vm().bake_config_plugins.get() {
+            let mut iter = config_plugins.array_iterator(global)?;
+            while let Some(config_plugin) = iter.next()? {
+                plugin_js_array.push(global, config_plugin)?;
+            }
+        }
         let bunfig_folder_bunstr = bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
 
         self.state = ServePluginsState::Pending {

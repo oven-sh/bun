@@ -21,17 +21,21 @@ test.concurrent("a message that arrives before there is a 'message' listener is 
     "child, a late listener: ["first","second","end"]
     child, a handle: [["first","Server"],"second","end"]
     child, a listener that throws: ["first","first","end"]
+    child, a listener that throws, added before another: ["end"]
     child, a listener that throws, then a listener for another event: ["first","first","first","end"]
     child, once: ["first","end"]
     child, added and removed in one tick: ["first","second","end"]
     child, disconnect() in the tick that adds it: []
+    child, removeAllListeners('newListener'): ["end"]
     parent, a late listener: ["first","second","end"]
     parent, a handle: [["first","Server"],"second","end"]
     parent, a listener that throws: ["first","first","end"]
+    parent, a listener that throws, added before another: ["end"]
     parent, a listener that throws, then a listener for another event: ["first","first","first","end"]
     parent, once: ["first","end"]
     parent, added and removed in one tick: ["first","second","end"]
     parent, disconnect() in the tick that adds it: []
+    parent, removeAllListeners('newListener'): ["end"]
     "
   `);
 });

@@ -261,8 +261,6 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         auto* exception = exceptionPtr.get();
 
         if (exception) [[unlikely]] {
-            if (listenerThrew)
-                *listenerThrew = true;
             auto errorIdentifier = vm.propertyNames->error;
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {
@@ -276,6 +274,10 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
                 }
                 expcep.append(errorValue);
                 fireEventListeners(errorIdentifier, WTF::move(expcep));
+            }
+            if (listenerThrew) {
+                *listenerThrew = true;
+                break;
             }
         }
     }

@@ -1613,6 +1613,27 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitPendingMessages, (JSGlobalObject * 
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionOnNewListener, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+{
+    auto* global = defaultGlobalObject(lexicalGlobalObject);
+    auto* process = global->processObject();
+    if (process->m_pendingMessages)
+        process->queueNextTick(global, JSFunction::create(JSC::getVM(global), global, 0, ""_s, Process_functionEmitPendingMessages, ImplementationVisibility::Private));
+    return JSValue::encode(jsUndefined());
+}
+
+// A real listener as in Node's setupChannel: it is counted, and removeAllListeners() takes it away.
+void Process::installPendingMessagesListener(JSC::VM& vm)
+{
+    auto* globalObject = defaultGlobalObject(this->globalObject());
+    if (!Bun__GlobalObject__hasIPC(globalObject))
+        return;
+    auto* onNewListener = JSFunction::create(vm, globalObject, 0, ""_s, Process_functionOnNewListener, ImplementationVisibility::Public);
+    wrapped().addListener(Identifier::fromString(vm, "newListener"_s), WebCore::JSEventListener::create(*onNewListener, *this, false, globalObject->world()), false, false);
+    vm.writeBarrier(this, onNewListener);
+    wrapped().setThisObject(this);
+}
+
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (Bun__isMainThreadVM()) {
@@ -1628,13 +1649,10 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
             return;
         }
 
-        auto* global = uncheckedDowncast<GlobalObject>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
-        auto& vm = JSC::getVM(global);
-        if (isAdded && global->processObject()->m_pendingMessages)
-            global->processObject()->queueNextTick(global, JSFunction::create(vm, global, 0, ""_s, Process_functionEmitPendingMessages, ImplementationVisibility::Private));
-
         // IPC handlers
         if (eventName == "message" || eventName == "disconnect") {
+            auto* global = uncheckedDowncast<GlobalObject>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
+            auto& vm = JSC::getVM(global);
             auto messageListenerCount = eventEmitter.listenerCount(vm.propertyNames->message);
             auto disconnectListenerCount = eventEmitter.listenerCount(Identifier::fromString(vm, "disconnect"_s));
             if (disconnectListenerCount >= 1 && Bun__shouldIgnoreOneDisconnectEventListener(global)) {
@@ -5164,6 +5182,7 @@ void Process::finishCreation(JSC::VM& vm)
 
     // Before the hook below: onDidChangeListeners loads the signal tables on any add.
     installDefaultWarningListener(vm);
+    installPendingMessagesListener(vm);
     wrapped().onDidChangeListener = &onDidChangeListeners;
 
     m_cpuUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {

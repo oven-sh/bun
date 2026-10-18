@@ -38,6 +38,7 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSObject> m_onWarning;
 
     void installDefaultWarningListener(JSC::VM&);
+    void installPendingMessagesListener(JSC::VM&);
 
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)

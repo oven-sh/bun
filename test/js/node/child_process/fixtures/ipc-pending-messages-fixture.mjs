@@ -4,15 +4,18 @@ import { once } from "node:events";
 import { createServer } from "node:net";
 
 const throws = "a listener that throws";
+const throwsBeforeAnother = "a listener that throws, added before another";
 const throwsThenOtherEvent = "a listener that throws, then a listener for another event";
 const variants = [
   "a late listener",
   "a handle",
   throws,
+  throwsBeforeAnother,
   throwsThenOtherEvent,
   "once",
   "added and removed in one tick",
   "disconnect() in the tick that adds it",
+  "removeAllListeners('newListener')",
 ];
 process.on("uncaughtException", error => {
   if (error.message !== throws) throw error;
@@ -48,15 +51,18 @@ function receive(target, variant, whenWritten) {
   };
   // In a child this is also what opens the channel, so that it is read with no 'message' listener.
   target.send("ready");
-  // Two turns of the loop after the sender's callback ran, the channel has been read.
   const throwAtFirst = message => {
     if (message === "first") throw new Error(throws);
   };
+  // Two turns of the loop after the sender's callback ran, the channel has been read.
   whenWritten(() =>
     setImmediate(setImmediate, () => {
       if (variant === throws) {
         listenAndAskForTheEnd();
         target.on("message", throwAtFirst);
+      } else if (variant === throwsBeforeAnother) {
+        target.on("message", throwAtFirst);
+        listenAndAskForTheEnd();
       } else if (variant === throwsThenOtherEvent) {
         listen();
         target.on("message", throwAtFirst);
@@ -74,6 +80,7 @@ function receive(target, variant, whenWritten) {
         listen();
         target.disconnect();
       } else {
+        if (variant === "removeAllListeners('newListener')") target.removeAllListeners("newListener");
         listenAndAskForTheEnd();
       }
     }),

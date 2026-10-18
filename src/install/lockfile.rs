@@ -2389,7 +2389,6 @@ impl Lockfile {
                             || (!dep.behavior.is_optional_peer()
                                 && bun_lock::resolve_peer_dep_version_based(
                                     dep,
-                                    None,
                                     &self.catalogs,
                                     &self.package_index,
                                     &self.overrides,

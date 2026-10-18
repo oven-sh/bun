@@ -231,6 +231,7 @@ pub(crate) fn packages_without_peer_provider(
     name_hash: PackageNameHash,
 ) -> DynamicBitSet {
     let lists = lockfile.packages.items_dependencies();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
     let mut provided = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
     let mut stack: Vec<PackageID> = (0..lists.len() as PackageID)
         .filter(|&id| peer_provider(lockfile, resolutions, id, name_hash).is_some())
@@ -241,7 +242,9 @@ pub(crate) fn packages_without_peer_provider(
     while let Some(id) = stack.pop() {
         let list = lists[id as usize];
         for row in list.begin() as usize..list.end() as usize {
-            if mark(&mut provided, resolutions[row]) {
+            // Hoisting rebinds peers, so following them would make the result depend on when this
+            // is called.
+            if !dependencies[row].behavior.is_peer() && mark(&mut provided, resolutions[row]) {
                 stack.push(resolutions[row]);
             }
         }

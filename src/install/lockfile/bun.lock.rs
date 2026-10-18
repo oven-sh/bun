@@ -2804,7 +2804,6 @@ pub(crate) fn parse_into_binary_lockfile(
         let peer_by_version = |dep: &Dependency| {
             resolve_peer_dep_version_based(
                 dep,
-                None,
                 catalogs,
                 package_index,
                 overrides,
@@ -3060,12 +3059,8 @@ pub(crate) fn parse_into_binary_lockfile(
 /// For the hoister this result is only a starting point: `tree::bind_served_peers` prefers the
 /// root's or the package's own dependency of that name if it is in range.
 /// `is_candidate` restricts the scan for lockfiles holding packages a reload will not see.
-///
-/// If more than one version is in range and `ranges` is given, the highest version that satisfies
-/// all of those ranges wins, so that packages with a peer dependency on the same name share one copy.
 pub(crate) fn resolve_peer_dep_version_based(
     dep: &Dependency,
-    ranges: Option<PeerRanges<'_>>,
     catalogs: &CatalogMap,
     package_index: &PackageIndexMap,
     overrides: &OverrideMap,
@@ -3074,22 +3069,14 @@ pub(crate) fn resolve_peer_dep_version_based(
     is_candidate: impl Fn(PackageID) -> bool,
 ) -> Option<PackageID> {
     let (range, name_hash) = version_based_peer_range(dep, catalogs, overrides, string_buf)?;
-    let candidates = package_index.get(&name_hash)?.as_slice();
-    let mut in_range = candidates.iter().copied().filter(|&id| {
-        pkg_resolutions
-            .get(id as usize)
-            .is_some_and(|res| res.satisfies_dependency_version(range, string_buf, string_buf))
-            && is_candidate(id)
-    });
-    let highest = in_range.next()?;
-    let (Some(ranges), Some(second)) = (ranges, in_range.next()) else {
-        return Some(highest);
-    };
-    [highest, second]
-        .into_iter()
-        .chain(in_range)
-        .find(|&id| ranges.all_accept(name_hash, &pkg_resolutions[id as usize]))
-        .or(Some(highest))
+    resolve_peer_dep_by_range(
+        range,
+        name_hash,
+        package_index,
+        pkg_resolutions,
+        string_buf,
+        is_candidate,
+    )
 }
 
 /// For each package name, the required peer dependencies on it that no package provides, one per
@@ -3099,17 +3086,33 @@ pub(crate) struct PeerRangeCache(
     core::cell::RefCell<HashMap<PackageNameHash, Box<[DependencyID]>>>,
 );
 
-/// What `resolve_peer_dep_version_based` needs to compare a version with the other peer ranges on
-/// the same name.
+/// Finds the version that packages with a peer dependency on the same name can share.
 #[derive(Clone, Copy)]
 pub(crate) struct PeerRanges<'a> {
     pub(crate) cache: &'a PeerRangeCache,
     pub(crate) lockfile: &'a BinaryLockfile,
-    /// Passed separately because the hoister holds `lockfile.buffers.resolutions` mutably.
-    pub(crate) resolutions: &'a [PackageID],
 }
 
 impl PeerRanges<'_> {
+    /// Returns the highest installed version that satisfies `peer` and every other required peer
+    /// range on that name that no package provides. As in pnpm, those packages share one copy.
+    pub(crate) fn shared_version(self, peer: &Dependency) -> Option<PackageID> {
+        let lockfile = self.lockfile;
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let pkg_resolutions = lockfile.packages.items_resolution();
+        let (range, name_hash) =
+            version_based_peer_range(peer, &lockfile.catalogs, &lockfile.overrides, string_buf)?;
+        let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
+        if candidates.len() < 2 {
+            return None;
+        }
+        candidates.iter().copied().find(|&id| {
+            let resolution = &pkg_resolutions[id as usize];
+            resolution.satisfies_dependency_version(range, string_buf, string_buf)
+                && self.all_accept(name_hash, resolution)
+        })
+    }
+
     fn all_accept(self, name_hash: PackageNameHash, resolution: &Resolution) -> bool {
         let lockfile = self.lockfile;
         let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -3129,8 +3132,9 @@ impl PeerRanges<'_> {
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
         let packages = lockfile.packages.items_resolution();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
         let missing =
-            super::reachable::packages_without_peer_provider(lockfile, self.resolutions, name_hash);
+            super::reachable::packages_without_peer_provider(lockfile, resolutions, name_hash);
         let mut rows: Vec<(u64, DependencyID)> = Vec::new();
         for (owner, list) in lockfile.packages.items_dependencies().iter().enumerate() {
             if !missing.is_set(owner) || packages[owner].tag != ResolutionTag::Npm {
@@ -3266,7 +3270,6 @@ pub(crate) fn rebind_peers_to_printed_packages(
         }
         if let Some(printed_target) = resolve_peer_dep_version_based(
             dep,
-            None,
             catalogs,
             package_index,
             overrides,

@@ -160,9 +160,7 @@ where
                 if self.unknown_long_flags_are_errors && !self.iter.last_is_from_bun_options() {
                     let ignored = self.ignored_long_flags;
                     let next = self.iter.remain().first().copied().unwrap_or_default();
-                    let value_is_next_arg = if ignored.except.contains(&name) {
-                        return Err(self.err(arg, None, Some(name), ArgError::InvalidArgument));
-                    } else if ignored.options.contains(&name) {
+                    let value_is_next_arg = if ignored.options.contains(&name) {
                         !next.starts_with(b"-")
                     } else if ignored.flags.contains(&name)
                         || name

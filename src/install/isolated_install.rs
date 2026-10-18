@@ -525,6 +525,12 @@ fn build_store(
     let dependencies = &lockfile.buffers.dependencies[..];
     let string_buf = &lockfile.buffers.string_bytes[..];
 
+    let peer_range_cache = lockfile::bun_lock::PeerRangeCache::default();
+    let peer_ranges = lockfile::bun_lock::PeerRanges {
+        cache: &peer_range_cache,
+        lockfile,
+    };
+
     let peer_ctx = store::node::TransitivePeerOrderedArraySetCtx {
         string_buf,
         pkg_names,
@@ -1073,7 +1079,8 @@ fn build_store(
                 // are deduplicated only if their package id and their transitive peer package
                 // ids are equal.
                 let peer_dep = &dependencies[peer_dep_id as usize];
-                let best_version = resolutions[peer_dep_id as usize];
+                let best_version = (peer_ranges.shared_version(peer_dep))
+                    .unwrap_or(resolutions[peer_dep_id as usize]);
                 let best_version = if is_omitted_peer(peer_dep)
                     || nested_folders.is_set_allow_out_of_bound(best_version as usize, false)
                 {

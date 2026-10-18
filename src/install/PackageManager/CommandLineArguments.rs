@@ -458,8 +458,8 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     b"flat", b"focus", b"foreground-scripts", b"format-package-lock", b"frozen-store", b"fund",
     b"global-style", b"har", b"hoist", b"ignore-manifest-check", b"ignore-platform",
     b"ignore-pnpmfile", b"ignore-workspace", b"ignore-workspace-root-check", b"immutable-cache",
-    b"include-github-actions", b"include-workspace-root", b"inline-builds", b"install-links",
-    b"iwr", b"json", b"legacy-bundling", b"link-duplicates", b"link-workspace-packages",
+    b"include-github-actions", b"inline-builds", b"install-links",
+    b"json", b"legacy-bundling", b"link-duplicates", b"link-workspace-packages",
     b"lockfile", b"long", b"merge-git-branch-lockfiles", b"no-frozen-lockfile", b"no-immutable",
     b"no-prefer-frozen-lockfile", b"no-production", b"node-version-check",
     b"omit-lockfile-registry-resolved", b"package-lock", b"parseable", b"patches", b"pnp",
@@ -471,7 +471,7 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     b"strict-allow-scripts", b"strict-peer-dependencies", b"strict-peer-deps", b"strict-semver",
     b"strict-ssl", b"symlink", b"tilde", b"timing", b"trust-lockfile", b"unicode",
     b"update-checksums", b"update-notifier", b"use-running-store-server", b"use-stderr",
-    b"use-store-server", b"verify-store-integrity", b"workspace-root", b"workspaces-update", b"ws",
+    b"use-store-server", b"verify-store-integrity", b"workspaces-update",
     b"yes",
     ],
     #[rustfmt::skip]
@@ -492,7 +492,6 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     b"user-agent", b"userconfig", b"virtual-store-dir", b"workspace-concurrency",
     b"workspace-packages",
     ],
-    except: &[],
 };
 
 /// `bun update` accepts these flags too, but there they select which dependencies to update, so no
@@ -1458,14 +1457,10 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 stop_after_positional_at: 0,
                 short_aliases: REWRITES.get_or_init(|| rewrites),
                 unknown_long_flags_are_errors: true,
-                ignored_long_flags: match subcommand {
-                    _ if foreign_flags.is_empty() => Default::default(),
-                    Subcommand::Install => IGNORED_FOREIGN_FLAGS,
-                    // For a command that edits a package.json, these flags choose which one.
-                    _ => clap::IgnoredLongFlags {
-                        except: &[b"workspace-root", b"ws", b"include-workspace-root", b"iwr"],
-                        ..IGNORED_FOREIGN_FLAGS
-                    },
+                ignored_long_flags: if foreign_flags.is_empty() {
+                    Default::default()
+                } else {
+                    IGNORED_FOREIGN_FLAGS
                 },
                 ..Default::default()
             },

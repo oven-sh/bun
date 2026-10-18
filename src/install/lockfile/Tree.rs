@@ -564,14 +564,14 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) linked: reachable::Linked,
 }
 
-/// The peer dependencies of the package that's being hoisted, each with the package it loads under
-/// that name from the highest folder checked so far. The bit set caches which packages have peers,
-/// and the range cache is for `Builder::peer_by_version`.
+/// The required peers of the package that's being hoisted, each with the in-range copy that the
+/// package loads from the highest folder checked so far. The bit sets cache which packages have
+/// peers, and which packages a regular dependency resolves to.
 #[derive(Default)]
 pub(crate) struct PeerProbes(
     Vec<(DependencyID, Option<PackageID>)>,
     Option<DynamicBitSet>,
-    bun_lock::PeerRangeCache,
+    Option<DynamicBitSet>,
 );
 
 impl PeerProbes {
@@ -590,7 +590,9 @@ impl PeerProbes {
         }
 
         let is_probed = |peer: &Dependency| {
-            peer.behavior.is_peer() && peer.version.tag == crate::dependency::VersionTag::Npm
+            peer.behavior.is_peer()
+                && !peer.behavior.is_optional_peer()
+                && peer.version.tag == crate::dependency::VersionTag::Npm
         };
         let with_peers = self.1.get_or_insert_with(|| {
             let lists = lockfile.packages.items_resolutions();
@@ -632,16 +634,14 @@ impl PeerProbes {
                 continue;
             }
 
-            // The package loads whatever its owner loads under this name: the owner's regular
-            // dependency, or else the owner's own peer. As in `reachable::peer_provider`, an alias
-            // of a package with a different name doesn't count.
-            let names = lockfile.packages.items_name_hash();
+            // The owner's own copy of the peer, if any, is the one the package finds from here.
             let owner_copy = (owner_deps.begin()..owner_deps.end())
-                .filter(|&dep_id| {
-                    deps[dep_id as usize].name_hash == peer.name_hash
-                        && names.get(resolutions[dep_id as usize] as usize) == Some(&peer.name_hash)
+                .find(|&dep_id| {
+                    let dep = &deps[dep_id as usize];
+                    dep.name_hash == peer.name_hash
+                        && !dep.behavior.is_peer()
+                        && resolutions[dep_id as usize] != invalid_package_id
                 })
-                .min_by_key(|&dep_id| deps[dep_id as usize].behavior.is_peer())
                 .map(|dep_id| resolutions[dep_id as usize]);
             if owner_copy.is_none_or(|id| {
                 pkg_resolutions[id as usize].satisfies_dependency_version(&peer.version, buf, buf)
@@ -651,9 +651,11 @@ impl PeerProbes {
         }
     }
 
-    /// Returns true if moving the package up to tree `tree_id` would change which package it loads
-    /// for one of its peers. As in pnpm, a plugin stays with the copy that its host provides, even if
-    /// the copy higher up is also in range.
+    /// Returns true if the package must not be hoisted into tree `tree_id`, because it would stop
+    /// loading the copy of a peer that it loads now. That's the case if the tree has:
+    /// - an out-of-range version, or
+    /// - a different version that was only installed for another package's peer dependency. Adding
+    ///   an unrelated package to a project must not split a plugin from its host.
     fn is_hidden_by(
         &mut self,
         lockfile: &Lockfile,
@@ -669,26 +671,35 @@ impl PeerProbes {
         while i < self.0.len() {
             let (peer_dep_id, provided) = self.0[i];
             let peer = &deps[peer_dep_id as usize];
-            let held = placed
+            let Some(held) = placed
                 .get(&(tree_id, peer.name_hash))
-                .map(|&dep_id| resolutions[dep_id as usize])
-                .filter(|&res_id| res_id != invalid_package_id);
-            match (held, provided) {
-                (None, _) => i += 1,
-                (Some(held), Some(provided)) if held == provided => i += 1,
-                (Some(_), Some(_)) => return true,
-                (Some(held), None)
-                    if pkg_resolutions[held as usize].satisfies_dependency_version(
-                        &peer.version,
-                        buf,
-                        buf,
-                    ) =>
+                .map(|&row| resolutions[row as usize])
+                .filter(|&res_id| res_id != invalid_package_id)
+            else {
+                i += 1;
+                continue;
+            };
+            let in_range = pkg_resolutions[held as usize].satisfies_dependency_version(
+                &peer.version,
+                buf,
+                buf,
+            );
+            match provided {
+                Some(_) if !in_range => return true,
+                Some(provided)
+                    if held != provided
+                        && !(self.2)
+                            .get_or_insert_with(|| regular_targets(lockfile, deps, resolutions))
+                            .is_set(held as usize) =>
                 {
+                    return true;
+                }
+                _ if in_range => {
                     self.0[i].1 = Some(held);
                     i += 1;
                 }
                 // Out of range wherever the package ends up.
-                (Some(_), None) => {
+                _ => {
                     self.0.swap_remove(i);
                 }
             }
@@ -696,6 +707,21 @@ impl PeerProbes {
 
         false
     }
+}
+
+/// Returns the packages that a dependency other than a peer dependency resolves to.
+fn regular_targets(
+    lockfile: &Lockfile,
+    deps: &[Dependency],
+    resolutions: &[PackageID],
+) -> DynamicBitSet {
+    let mut set = DynamicBitSet::init_empty(lockfile.packages.len()).unwrap_or_oom();
+    for (dep, &id) in deps.iter().zip(resolutions) {
+        if !dep.behavior.is_peer() && id != invalid_package_id {
+            set.set(id as usize);
+        }
+    }
+    set
 }
 
 pub struct BuilderEntry {
@@ -800,11 +826,6 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         let lockfile = self.lockfile();
         bun_lock::resolve_peer_dep_version_based(
             &self.dependencies[dep_id as usize],
-            Some(bun_lock::PeerRanges {
-                cache: &self.peer_probes.2,
-                lockfile,
-                resolutions: &*self.resolutions,
-            }),
             &lockfile.catalogs,
             &lockfile.package_index,
             &lockfile.overrides,

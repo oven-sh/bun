@@ -384,7 +384,8 @@ pub struct ParseOptions<'a> {
     /// place among the others. For a command that hands flags on: `bun check --strict`. Otherwise
     /// such a flag is skipped.
     pub unknown_long_flags_are_positional: bool,
-    /// Such a flag fails the parse, unless it comes from `BUN_OPTIONS`, which is for every command.
+    /// Such a flag fails the parse, unless it comes from `BUN_OPTIONS`, which applies to every
+    /// command.
     pub unknown_long_flags_are_errors: bool,
     pub ignored_long_flags: IgnoredLongFlags,
 }
@@ -397,8 +398,6 @@ pub struct IgnoredLongFlags {
     pub flags: &'static [&'static [u8]],
     /// Skips `--name=value` and `--name value`, unless `value` starts with a dash.
     pub options: &'static [&'static [u8]],
-    /// Names from the two lists above that fail the parse after all.
-    pub except: &'static [&'static [u8]],
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -451,7 +450,8 @@ impl<Id: 'static> Args<Id> {
         self.clap.options(name)
     }
 
-    /// Whether the parameter was passed. Works for flags and for parameters that take values.
+    /// Returns true if the parameter was passed. Works for flags and for parameters that take
+    /// values.
     pub fn has(&self, name: &'static [u8]) -> bool {
         self.clap.has(name)
     }

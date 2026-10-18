@@ -17110,7 +17110,7 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     [["add", "--recursive", "./dep"], "add", "--recursive"],
     // These choose which package.json a dependency is saved to.
     [["add", "--workspace-root", "./dep"], "add", "--workspace-root"],
-    [["add", "--ws", "./dep"], "add", "--ws"],
+    [["install", "--ws", "./dep"], "install", "--ws"],
     [["add", "--save-catalog-name=tools", "./dep"], "add", "--save-catalog-name"],
     // Ignoring these would turn a safety setting off.
     [["install", "--config.frozen-lockfile=true"], "install", "--config.frozen-lockfile"],

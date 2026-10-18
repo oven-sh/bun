@@ -53,11 +53,12 @@ const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
 fn bind_existing(
     this: &mut PackageManager,
     dependency_id: DependencyID,
+    // `bun update` and `bun audit fix` resolve a peer that they move as a regular dependency.
     is_peer: bool,
     package_id: PackageID,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
-    if !(this.lockfile).is_row_only_for_peers(dependency_id, is_peer) {
+    if !is_peer && !this.lockfile.is_below_only_peers(dependency_id) {
         this.lockfile.unmark_only_peers(package_id);
     }
     success_fn(this, dependency_id, package_id);
@@ -186,21 +187,9 @@ pub(crate) fn advance(this: &mut PackageManager) {
     loop {
         while let Some(head) = this.lockfile.scratch.dependency_list_queue.head() {
             // `dedupe::collapse_appended` may drop the package, and what its rows lack with it.
-            let may_be_dropped = head.rows.len > 0
-                && (this.lockfile).is_row_only_for_peers(head.rows.begin(), false);
+            let may_be_dropped = this.lockfile.is_below_only_peers(head.rows.begin());
             for id in head.rows.begin()..head.rows.end() {
                 let dependency = queued_row(this, id, head).clone();
-                if may_be_dropped
-                    && matches!(
-                        dependency.version.tag,
-                        dependency::version::Tag::Git
-                            | dependency::version::Tag::Github
-                            | dependency::version::Tag::Tarball
-                    )
-                {
-                    this.remote_packages.held.push(id);
-                    continue;
-                }
                 let resolution = this.lockfile.buffers.resolutions[id as usize];
                 let log_mark = this.log_mut().msgs.len();
                 match bind_row(
@@ -1244,6 +1233,7 @@ fn request_remote_package_ahead(
         );
     if resolution != invalid_package_id
         || this.options.runtime_auto_install
+        || this.lockfile.is_below_only_peers(id)
         // Whether another package may name a tarball in the project is decided, and reported, once.
         || (is_local_tarball && !this.lockfile.is_dependency_of_local_package(id))
     {
@@ -1828,6 +1818,10 @@ pub(crate) fn bind_row(
         version,
         version_was_replaced,
     } = asked;
+    if version.tag.is_remote_package() && this.lockfile.is_below_only_peers(id) {
+        this.remote_packages.held.push(id);
+        return Ok(Row::Done);
+    }
     let mut loaded_manifest: Option<Npm::PackageManifest> = None;
 
     match version.tag {
@@ -1902,10 +1896,10 @@ pub(crate) fn bind_row(
                         if !has_failure && !this.network_task_has_failed(task_id) {
                             return Ok(wait_for(this, task_id));
                         }
+                        // Whoever else marked the task as failed reported why, as `--offline` does.
                         if let Some(installed) = installed(this) {
                             bind_existing(this, id, true, installed, success_fn)?;
                         } else if has_failure {
-                            // Whoever else marked the task as failed reported why, as `--offline` does.
                             report_manifest_failure(this, task_id, id, dependency, &name_str);
                         }
                         return Ok(Row::Done);
@@ -2007,13 +2001,14 @@ pub(crate) fn bind_row(
 
                     if this.options.offline == OfflineMode::Offline {
                         let installed = installed(this);
-                        // Any other releases the reservation: a later required edge still reports.
-                        if dependency.behavior.is_required() && installed.is_none() {
-                            if this.lockfile.is_row_only_for_peers(id, false) {
-                                let _ = this.network_dedupe_map.remove(&task_id);
-                            } else {
-                                this.mark_network_task_failed(task_id);
-                            }
+                        let fails = dependency.behavior.is_required() && installed.is_none();
+                        if fails && !this.lockfile.is_below_only_peers(id) {
+                            this.mark_network_task_failed(task_id);
+                        } else {
+                            // It releases the reservation: a later required edge still reports.
+                            let _ = this.network_dedupe_map.remove(&task_id);
+                        }
+                        if fails {
                             this.log_mut().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
@@ -2022,8 +2017,6 @@ pub(crate) fn bind_row(
                                     bstr::BStr::new(&name_str),
                                 ),
                             );
-                        } else {
-                            let _ = this.network_dedupe_map.remove(&task_id);
                         }
                         if let Some(installed) = installed {
                             bind_existing(this, id, true, installed, success_fn)?;
@@ -2375,7 +2368,7 @@ fn report_manifest_failure(
     // `log_held` and `fail_update_requests` read this list to see who needs the manifest.
     task_callback_list(this, task_id).push(TaskCallbackContext::Dependency(id));
     let is_of_project = this.lockfile.is_workspace_dependency(id);
-    let may_be_dropped = this.lockfile.is_row_only_for_peers(id, false);
+    let may_be_dropped = this.lockfile.is_below_only_peers(id);
     let can_hold = this.held_messages.is_some();
     let Some(failure) = this.manifest_failures.get_mut(&task_id) else {
         return;
@@ -3152,7 +3145,7 @@ fn get_or_put_resolved_package_with_find_result(
     if should_update && !latest_for_target && !behavior.is_peer() {
         if let Some(id) = this.lockfile.patched_package_satisfying(name_hash, version) {
             this.kept_patched.push(id);
-            return bind_existing(this, dependency_id, behavior.is_peer(), id, success_fn);
+            return bind_existing(this, dependency_id, false, id, success_fn);
         }
     }
     let patched = if latest_for_target || behavior.is_peer() || !has_patched_versions(this) {
@@ -3176,6 +3169,7 @@ fn get_or_put_resolved_package_with_find_result(
     } else {
         Some(version)
     };
+    let is_peer = behavior.is_peer() && !latest_for_target;
     let inside_bundle = this.lockfile.is_row_inside_bundle(dependency_id, behavior);
     let existing = if inside_bundle {
         this.lockfile
@@ -3198,7 +3192,7 @@ fn get_or_put_resolved_package_with_find_result(
                 meta.libc = find_result.package.libc;
             }
         }
-        return bind_existing(this, dependency_id, behavior.is_peer(), id, success_fn);
+        return bind_existing(this, dependency_id, is_peer, id, success_fn);
     }
 
     // A damaged file in the cache is fetched again.
@@ -3226,8 +3220,7 @@ fn get_or_put_resolved_package_with_find_result(
     if version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact() {
         this.lockfile.mark_exact_pin(package_id);
     }
-    let only_for_peers = (this.lockfile)
-        .is_row_only_for_peers(dependency_id, behavior.is_peer() && !latest_for_target);
+    let only_for_peers = is_peer || this.lockfile.is_below_only_peers(dependency_id);
     if only_for_peers {
         this.lockfile.mark_only_peers(package_id);
     }
@@ -3969,9 +3962,10 @@ fn locked_version_in_lockfile<'a>(
         .then(|| (res.npm().version, lockfile.buffers.string_bytes.as_slice()))
 }
 
-/// Decides whether a peer dependency can fall back to `candidate`, an installed version that's
-/// outside its range. Returns false only if `candidate` is a private dependency of unrelated
-/// packages. In that case the peer gets its own version from the registry.
+/// The registry has no answer for a peer dependency. Decides whether the peer takes `candidate`, an
+/// installed version that's outside its range, by the rules of `dedupe::Pass::find_spare`. Returns
+/// false only if `candidate` is a private dependency of unrelated packages. In that case the peer
+/// needs its own version from the registry, so the failure is reported.
 ///
 /// The peer shares `candidate` if any of these is true:
 /// - A package above it in the dependency graph depends on that name. For example, `react@17` in a
@@ -4174,7 +4168,8 @@ impl PackageManager {
     }
 
     /// Logs the held messages. It runs after dedupe, and an error only fails the install if a
-    /// dependency that is still in the tree needs the missing package or version.
+    /// dependency that is still in the tree needs the missing package or version. What is about an
+    /// `only_peers` package that dedupe dropped is not logged at all.
     #[cold]
     pub(crate) fn log_held(&mut self) {
         use bun_ast::Kind;

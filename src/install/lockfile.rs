@@ -37,8 +37,8 @@ use crate::update_request::UpdateRequest;
 use crate::{
     self as Install, DependencyID, ExternalSlice, Features, PackageID, PackageManager,
     PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash, dependency,
-    dependency::Dependency, dependency::DependencyExt as _, initialize_store,
-    invalid_dependency_id, invalid_package_id, npm as Npm,
+    dependency::Dependency, dependency::DependencyExt as _, dependency::TagExt as _,
+    initialize_store, invalid_dependency_id, invalid_package_id, npm as Npm,
 };
 use bun_install_types::NodeLinker::NodeLinker;
 
@@ -954,12 +954,7 @@ impl Lockfile {
                     && (package == owner
                         || (!dep.behavior.is_bundled() && dep.behavior.is_enabled(root_features)))
                     && (self.buffers.resolutions[id as usize] != invalid_package_id
-                        || matches!(
-                            dep.version.tag,
-                            dependency::version::Tag::Git
-                                | dependency::version::Tag::Github
-                                | dependency::version::Tag::Tarball
-                        ))
+                        || dep.version.tag.is_remote_package())
             })
         })
     }
@@ -2563,13 +2558,11 @@ impl Lockfile {
         (self.only_peers).is_set_allow_out_of_bound(id as usize, false)
     }
 
-    /// Is the row resolved as a peer dependency, or owned by an `only_peers` package? `bun update`
-    /// and `bun audit fix` resolve a peer row as a regular one, so `is_peer` is not the row's own.
-    pub(crate) fn is_row_only_for_peers(&self, id: DependencyID, is_peer: bool) -> bool {
-        is_peer
-            || (self.only_peers.bit_length() != 0
-                && (self.get_parent_pkg_of_dependency(id))
-                    .is_some_and(|owner| self.is_only_for_peers(owner)))
+    /// Is the row owned by an `only_peers` package?
+    pub(crate) fn is_below_only_peers(&self, id: DependencyID) -> bool {
+        self.only_peers.bit_length() != 0
+            && (self.get_parent_pkg_of_dependency(id))
+                .is_some_and(|owner| self.is_only_for_peers(owner))
     }
 
     /// Another row resolves to `id` now, and so to what `id` depends on.

@@ -636,11 +636,12 @@ pub fn install_with_manager(
     direct_deps_before.redirect_dependents(&mut manager.lockfile, direct_only);
     transitive.redirect_dependents(&mut manager.lockfile);
     redirect_moved_edges(&mut manager.lockfile, &named.moved, direct_only);
-    collapse_appended(
+    collapse_and_resolve_held(
         manager,
         &root,
         log_level,
         match manager.subcommand {
+            // `dedupe_before_install` has done it.
             Subcommand::Dedupe => |_| {},
             // `bun audit fix` moved its rows to the fixed versions on purpose.
             Subcommand::Audit => crate::dedupe::collapse_appended_peers,
@@ -1783,7 +1784,7 @@ fn resolve_peers_of_failed_providers(manager: &mut PackageManager) -> bool {
 
 /// Runs `collapse`, then resolves `RemotePackages::held` for the packages that it kept. What that
 /// adds is collapsed again.
-fn collapse_appended(
+fn collapse_and_resolve_held(
     manager: &mut PackageManager,
     root: &lockfile::Package,
     log_level: Options::LogLevel,
@@ -2524,7 +2525,7 @@ fn reresolve_rows_outside_overrides(
         resolve_pending_tasks(manager, root, log_level, &mut NamedUpdates::default())?;
     }
     redirect_moved_edges(&mut manager.lockfile, &moved, false);
-    collapse_appended(
+    collapse_and_resolve_held(
         manager,
         root,
         log_level,

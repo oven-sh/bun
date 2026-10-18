@@ -296,14 +296,15 @@ pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 
 pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
 
-/// What a message in `PackageManager::held_messages` is about. Only "the registry has no such
-/// package" and "no such version" are held. A request that failed is reported right away.
+/// What a message in `PackageManager::held_messages` is about. Of most dependencies, only "the
+/// registry has no such package" and "no such version" are held, and a request that failed is
+/// reported right away. Of a dependency of a `Lockfile::only_peers` package, every message is.
 #[derive(Clone, Copy)]
 pub(crate) enum HeldAbout {
-    /// The manifest has no version that this dependency accepts.
+    /// This dependency could not be resolved.
     Row(DependencyID),
-    /// The registry has no such package. The dependencies that needed its manifest are in this
-    /// task's entry of `task_queue`.
+    /// The request for a manifest got none. The dependencies that needed it are in this task's
+    /// entry of `task_queue`.
     Task(Task::Id),
 }
 
@@ -606,9 +607,8 @@ pub struct PackageManager {
     pub(crate) kept_patched: Vec<PackageID>,
     pub kept_patched_text: Vec<u8>,
 
-    // `Some` while `bun install` resolves. A "no such package" or "no such version" message about a
-    // dependency that dedupe may still drop is kept here until `log_held` decides whether to log
-    // it.
+    // `Some` while `bun install` resolves. A message about a dependency that dedupe may still drop
+    // is kept here until `log_held` decides whether to log it.
     pub(crate) held_messages: Option<Vec<(HeldAbout, Vec<bun_ast::Msg>)>>,
     pub(crate) manifest_failures:
         HashMap<Task::Id, ManifestFailure, bun_collections::IdentityContext<Task::Id>>,

@@ -24,9 +24,9 @@ struct Pass<'a> {
     /// Versions no edge may move onto; see `dedupe_lockfile`.
     closed: &'a DynamicBitSet,
     /// `collapse_appended`: edges onto loaded packages (ids below) stay, and so do root/workspace
-    /// rows other than peers.
+    /// rows, but for a peer that resolves to a `Lockfile::only_peers` package.
     frozen_below: Option<PackageID>,
-    /// `collapse_appended_peers`.
+    /// `collapse_appended_peers`: the rows of every package stay like root/workspace rows.
     moves_only_peers: bool,
     /// Per group: each edge with the package that owns it.
     edges: Vec<Vec<(DependencyID, PackageID)>>,
@@ -257,7 +257,6 @@ impl<'a> Pass<'a> {
                 self.cur_c[e] = cur_c;
                 let row = e * n;
 
-                // Of these rows, only a peer that got a version of its own moves.
                 let frozen = self.frozen_below.is_some_and(|below| {
                     ((self.is_direct(owner) || self.moves_only_peers)
                         && !(dep.behavior.is_peer() && lockfile.is_only_for_peers(target)))
@@ -423,16 +422,19 @@ impl<'a> Pass<'a> {
 
     /// `collapse_appended`. The peers of one name share a version, in range or not, because a second
     /// copy would split a package from its plugins: `@octokit/rest` and its plugins share one
-    /// `@octokit/core`. This marks in `spare` the `Lockfile::only_peers` versions to remove:
-    /// - all of them, if the highest of the other versions satisfies a peer;
+    /// `@octokit/core`. This marks in `spare` the `Lockfile::only_peers` versions to remove. One
+    /// that a regular dependency, a peer without a range (`latest`) or a patch holds stays. Of the
+    /// others:
+    /// - all, if the highest version that is not `only_peers` satisfies a peer;
     /// - else the ones that satisfy no peer. A peer does not count if a package above it depends on
     ///   the name: `react@17` in a workspace is used by every library under that workspace.
-    /// - If there are no other versions, all but one: peers that nothing provides share a version.
-    ///   It is the one that satisfies the most peers of the project, then of the packages that are
-    ///   not `only_peers`, then of all, and the highest of several. A version could otherwise stay
-    ///   for a package below itself.
+    /// - If no version stays, all but one: peers that nothing provides share a version. It is the
+    ///   one that satisfies the most peers of the root and the workspaces, then of the packages
+    ///   that are not `only_peers`, then of all, and the highest of several. A version could
+    ///   otherwise stay for a package below itself.
     ///
-    /// If only peers hold the versions of bun.lock, a peer of the project keeps the version it got.
+    /// If only peers hold the versions of bun.lock, a peer of the root or of a workspace keeps the
+    /// version it got.
     fn find_spare(&mut self, cur: &[PackageID], live: &DynamicBitSet) {
         let Some(below) = self.frozen_below else {
             return;
@@ -441,24 +443,24 @@ impl<'a> Pass<'a> {
         if lockfile.only_peers.bit_length() == 0 {
             return;
         }
-        // The hoister binds a peer to the copy that the project depends on, so what the peer is
+        // The hoister binds a peer to the copy that the root depends on, so what the peer is
         // resolved to may not stay, nor the peers below that.
         let deps = lockfile.buffers.dependencies.as_slice();
         let root = lockfile.packages.items_dependencies()[0];
-        let mut of_project: Vec<(PackageNameHash, PackageID)> = (root.begin() as usize
+        let mut of_root: Vec<(PackageNameHash, PackageID)> = (root.begin() as usize
             ..root.end() as usize)
             .filter(|&row| !deps[row].behavior.is_peer() && cur[row] != invalid_package_id)
             .map(|row| (deps[row].name_hash, cur[row]))
             .collect();
-        of_project.sort_unstable();
+        index_sort::sort_vec_by(&mut of_root, |a, b| a.cmp(b));
         let mut hoisted: Option<Vec<PackageID>> = None;
         for (row, dep) in deps.iter().enumerate() {
             if dep.behavior.is_peer()
                 && cur[row] != invalid_package_id
-                && let Ok(i) = of_project.binary_search_by_key(&dep.name_hash, |&(name, _)| name)
-                && cur[row] != of_project[i].1
+                && let Ok(i) = of_root.binary_search_by_key(&dep.name_hash, |&(name, _)| name)
+                && cur[row] != of_root[i].1
             {
-                hoisted.get_or_insert_with(|| cur.to_vec())[row] = of_project[i].1;
+                hoisted.get_or_insert_with(|| cur.to_vec())[row] = of_root[i].1;
             }
         }
         let still_live =
@@ -1264,8 +1266,8 @@ pub fn collapse_appended(manager: &mut PackageManager) {
     collapse(manager, false);
 }
 
-/// The same where the other dependencies were moved to their versions on purpose: only what
-/// `Pass::find_spare` is about.
+/// The same where the other dependencies were moved to their versions on purpose: only peers move,
+/// off the versions that `Pass::find_spare` removes.
 pub fn collapse_appended_peers(manager: &mut PackageManager) {
     collapse(manager, true);
 }

@@ -547,13 +547,16 @@ impl PackageManager {
         let _ = self.remote_packages.arrived.insert(task_id, arrived);
     }
 
+    /// The task was started and has not failed.
+    fn may_still_arrive(&self, task_id: Task::Id) -> bool {
+        self.network_dedupe_map.contains_key(&task_id) && !self.network_task_has_failed(task_id)
+    }
+
     /// For each task that fetches a git, GitHub or tarball package: the lowest dependency that
     /// waits for it. A task that has failed is skipped, and so is one that was never started.
     fn remote_rows_waiting(&self) -> impl core::iter::Iterator<Item = (DependencyID, Task::Id)> {
         self.remote_packages.tasks.iter().filter_map(|&task_id| {
-            if !self.network_dedupe_map.contains_key(&task_id)
-                || self.network_task_has_failed(task_id)
-            {
+            if !self.may_still_arrive(task_id) {
                 return None;
             }
             let lowest = (self.task_queue.get(&task_id)?.iter())
@@ -569,12 +572,11 @@ impl PackageManager {
     /// Does `row` wait for a git, GitHub or tarball package that may still arrive?
     pub(crate) fn waits_for_remote_package(&self, row: DependencyID) -> bool {
         self.remote_packages.tasks.iter().any(|task_id| {
-            self.network_dedupe_map.contains_key(task_id)
-                && !self.network_task_has_failed(*task_id)
+            self.may_still_arrive(*task_id)
                 && self.task_queue.get(task_id).is_some_and(|waiting| {
                     (waiting.iter()).any(
-                        |waiter| matches!(*waiter, TaskCallbackContext::Dependency(id) if id == row),
-                    )
+                    |waiter| matches!(*waiter, TaskCallbackContext::Dependency(id) if id == row),
+                )
                 })
         })
     }

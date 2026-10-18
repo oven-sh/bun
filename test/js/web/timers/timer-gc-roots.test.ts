@@ -34,9 +34,10 @@ concurrentUnlessDebug("Strong handles are backed by StrongRootBlock", () => {
       expect(protectedAfter).toBeLessThan(10);
       expect(exitCode).toBe(0);
     },
-    // Only a debug build needs more than the default. The fixture takes 8 to 16 s there (up to 21 s with the
-    // exception check validation that the test runner turns on), and it cannot run fewer statements: they have to
-    // span more than two blocks. No CI lane runs a debug build, so every lane keeps the default.
+    // Only a debug build needs more than the default: the fixture takes 8 to 16 s there, and up to 21 s with the
+    // exception check validation that the test runner turns on. It cannot run fewer statements: a block that is
+    // not the head of the list goes empty only when the statements fill two new blocks. No CI lane runs a debug
+    // build, so every lane keeps the default.
     isDebug ? 60_000 : undefined,
   );
 
@@ -137,7 +138,7 @@ concurrentUnlessDebug("AbortSignal.timeout is released when its wrapper is colle
 
   // Skipped on a debug build: these 50,000 iterations take 47 to 49 s there. A count that fits the timeout, N = 1200,
   // leaves RSS too little signal: 6 to 11 MiB when the timeouts are released, 12 to 15 MiB when they are not. The
-  // next test is the debug build's check.
+  // next test counts the timers on every build.
   test.skipIf(isDebug)(
     "AbortSignal.any([timeout, controller.signal]).abort releases the timeout",
     async () => {
@@ -174,9 +175,8 @@ concurrentUnlessDebug("AbortSignal.timeout is released when its wrapper is colle
     15_000,
   );
 
-  // The check above as an exact count, for a debug build. A fake timer can be counted, and AbortSignal.timeout() arms
-  // one.
-  test.skipIf(!isDebug)("AbortSignal.any([timeout, controller.signal]).abort leaves no timer armed", async () => {
+  // The same loop with an exact count in place of RSS. A fake timer can be counted, and AbortSignal.timeout() arms one.
+  test("AbortSignal.any([timeout, controller.signal]).abort leaves no timer armed", async () => {
     const src = `
       import { heapStats } from "bun:jsc";
       import { jest } from "bun:test";

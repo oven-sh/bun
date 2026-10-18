@@ -3,8 +3,8 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::bindgen::{
-    self, BufferSource, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper,
-    JsWrapperStrong, WithValue,
+    self, BufferSource, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _, JsScope,
+    JsWrapper, JsWrapperStrong, PinnedBytes, StringOrJsBytes,
 };
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
@@ -64,7 +64,7 @@ pub(crate) fn next_color(color: TestColor) -> TestColor {
     }
 }
 
-pub(crate) fn options_echo<'a>(_: &JsHeap<'a>, options: TestOptions<'a>) -> TestOptionsEcho<'a> {
+pub(crate) fn options_echo<'a>(_: &JsHeap<'a>, options: &TestOptions<'a>) -> TestOptionsEcho<'a> {
     TestOptionsEcho {
         count: options.count,
         flag: options.flag,
@@ -110,8 +110,8 @@ pub(crate) fn describe_anything<'a>(cx: &mut JsScope<'a>, value: TestAnything<'a
     }
 }
 
-pub(crate) fn describe_defaults<'a>(heap: &JsHeap<'a>, options: TestOuter<'a>) -> Vec<u8> {
-    let inner = match options.inner {
+pub(crate) fn describe_defaults<'a>(heap: &JsHeap<'a>, options: &TestOuter<'a>) -> Vec<u8> {
+    let inner = match &options.inner {
         Some(inner) => {
             let name = bstr::BStr::new(inner.name);
             format!("a={} b={} name={name}", inner.a, inner.b)
@@ -202,12 +202,30 @@ pub(crate) fn sum_bytes(bytes: &[u8]) -> u32 {
     sum(bytes)
 }
 
-pub(crate) fn sum_bytes_optional(bytes: Option<&[u8]>) -> Option<u32> {
-    bytes.map(sum)
-}
-
 pub(crate) fn sum_bytes_then_text(bytes: &[u8], text: &[u8]) -> u32 {
     sum(bytes) + sum(text)
+}
+
+pub(crate) fn fill_buffer<'a>(
+    heap: &JsHeap<'a>,
+    buffer: JsLocal<'a, BufferSource>,
+    value: u8,
+) -> usize {
+    // SAFETY: no other argument has bytes.
+    unsafe {
+        buffer.with_bytes_mut(heap, |bytes| {
+            bytes.fill(value);
+            bytes.len()
+        })
+    }
+}
+
+pub(crate) fn sum_bytes_if_any(bytes: Option<&[u8]>, _: &[u8]) -> i32 {
+    bytes.map_or(-1, |bytes| sum(bytes) as i32)
+}
+
+pub(crate) fn string_or_object_echo(text: bun_core::String) -> bun_core::String {
+    text
 }
 
 pub(crate) fn sum_before_and_after_callback<'a>(
@@ -216,20 +234,72 @@ pub(crate) fn sum_before_and_after_callback<'a>(
     callback: JsLocal<'a>,
 ) -> bindgen::Result<'a, [u32; 2]> {
     let before = buffer.with_bytes(&cx.heap, sum);
+    call(cx, callback)?;
+    Ok([before, buffer.with_bytes(&cx.heap, sum)])
+}
+
+pub(crate) fn bytes_of(data: &[u8]) -> Vec<u8> {
+    data.to_vec()
+}
+
+pub(crate) fn bytes_of_then(data: &[u8], _: f64) -> Vec<u8> {
+    data.to_vec()
+}
+
+pub(crate) fn bytes_of_then_copied(data: Vec<u8>, _: f64) -> Vec<u8> {
+    data
+}
+
+fn call<'a>(cx: &mut JsScope<'a>, callback: JsLocal<'a>) -> bindgen::Result<'a, ()> {
     let Some(callback) = callback.as_callable() else {
         return Err(cx
             .heap
             .type_error(format_args!("callback must be a function")));
     };
     callback.call(cx, JsLocal::UNDEFINED, &[])?;
-    Ok([before, buffer.with_bytes(&cx.heap, sum)])
+    Ok(())
 }
 
-pub(crate) fn with_value_echo<'a>(_: &JsHeap<'a>, text: WithValue<'a, &'a [u8]>) -> JsLocal<'a> {
-    if text.converted.is_empty() {
-        return JsLocal::UNDEFINED;
+pub(crate) fn bytes_before_and_after_callback<'a>(
+    cx: &mut JsScope<'a>,
+    data: JsBytes<'a>,
+    callback: JsLocal<'a>,
+) -> bindgen::Result<'a, [Vec<u8>; 2]> {
+    let before = data.get(&cx.heap).to_vec();
+    call(cx, callback)?;
+    Ok([before, data.get(&cx.heap).to_vec()])
+}
+
+pub(crate) fn pinned_bytes_after_callback<'a>(
+    cx: &mut JsScope<'a>,
+    data: PinnedBytes,
+    callback: JsLocal<'a>,
+) -> bindgen::Result<'a, Vec<u8>> {
+    call(cx, callback)?;
+    let (bytes, data) = std::thread::scope(|scope| {
+        scope
+            .spawn(move || (data.to_vec(), data))
+            .join()
+            .expect("the thread does not panic")
+    });
+    drop(data);
+    Ok(bytes)
+}
+
+pub(crate) fn string_as_is_or_bytes<'a>(heap: &JsHeap<'a>, data: StringOrJsBytes<'a>) -> Vec<u8> {
+    match data {
+        StringOrJsBytes::Bytes(bytes) => [&[0], bytes.get(heap)].concat(),
+        StringOrJsBytes::String(text) if text.is_8bit() => [&[1], text.latin1()].concat(),
+        StringOrJsBytes::String(text) => [&[2], bytemuck::cast_slice(text.utf16())].concat(),
     }
-    text.value
+}
+
+pub(crate) fn bytes_of_are_same_memory(data: &[u8], again: &[u8]) -> bool {
+    core::ptr::eq(data, again)
+}
+
+pub(crate) fn as_big_int(value: u64) -> u64 {
+    value
 }
 
 pub(crate) fn fail<'a>(
@@ -241,6 +311,11 @@ pub(crate) fn fail<'a>(
         TestFailure::Type => heap.type_error(format_args!("a type error")),
         TestFailure::Range => heap.range_error(format_args!("a range error")),
         TestFailure::Plain => heap.error(format_args!("an error")),
+        TestFailure::Code => heap.error_with_code(
+            crate::ErrorCode::INVALID_ARG_VALUE,
+            format_args!("an error with a code"),
+        ),
+        TestFailure::OutOfMemory => bun_alloc::AllocError.into(),
         TestFailure::Syscall => {
             bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::open).into_error(heap)
         }
@@ -302,6 +377,14 @@ impl TestCounterClass for TestCounter {
         self.count
     }
 
+    fn add_length<'a>(&mut self, text: &'a [u8], times: i32) -> i32 {
+        self.increment((text.len() as i32).wrapping_mul(times))
+    }
+
+    fn add_number(&mut self, by: i32) -> i32 {
+        self.increment(by)
+    }
+
     fn listen<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>, listener: JsLocal<'a>) {
         this.set_listener_field(heap, listener);
     }
@@ -328,6 +411,14 @@ impl TestCounterClass for TestCounter {
 
     fn alive() -> usize {
         ALIVE.load(Ordering::SeqCst)
+    }
+
+    fn static_count() -> usize {
+        Self::alive()
+    }
+
+    fn limit<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+        Err(heap.range_error(format_args!("there is no limit")))
     }
 }
 

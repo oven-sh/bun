@@ -4828,7 +4828,10 @@ pub mod bv2_impl {
                                 content_hash: content_hashes_for_additional_files[index],
                                 // SAFETY: see `asset_naming` above.
                                 public_path: unsafe {
-                                    &(*self_ptr).transpiler_for_target(target).options.public_path
+                                    &(*self_ptr)
+                                        .transpiler_for_target(target)
+                                        .options
+                                        .public_path
                                 },
                             });
                         }

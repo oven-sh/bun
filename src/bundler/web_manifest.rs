@@ -317,8 +317,12 @@ pub(crate) fn with_paths<'a>(
         );
         out.push(b'"');
         for part in path {
-            write!(out, "{}", bun_core::fmt::format_json_string_utf8(part, unquoted))
-                .expect("oom");
+            write!(
+                out,
+                "{}",
+                bun_core::fmt::format_json_string_utf8(part, unquoted)
+            )
+            .expect("oom");
         }
         out.push(b'"');
     }

@@ -1095,7 +1095,10 @@ describe("web app manifest", () => {
   const link = `<link rel="manifest" href="./site.webmanifest">`;
   const script = `<script type="module" src="./app.js"></script>`;
 
-  async function buildPage(files: Parameters<typeof tempDir>[1], config: (root: string) => Partial<BuildConfig> = () => ({})) {
+  async function buildPage(
+    files: Parameters<typeof tempDir>[1],
+    config: (root: string) => Partial<BuildConfig> = () => ({}),
+  ) {
     const dir = tempDir("html-web-manifest", files);
     const root = String(dir);
     const outdir = join(root, "out");
@@ -1109,7 +1112,14 @@ describe("web app manifest", () => {
     for (const output of result.outputs) {
       outputs[relative(outdir, output.path).replaceAll("\\", "/")] = await output.text();
     }
-    return { root, outdir, result, outputs, logs: result.logs.map(String), [Symbol.dispose]: () => dir[Symbol.dispose]() };
+    return {
+      root,
+      outdir,
+      result,
+      outputs,
+      logs: result.logs.map(String),
+      [Symbol.dispose]: () => dir[Symbol.dispose](),
+    };
   }
 
   /** The one output whose path matches `pattern`. */
@@ -1125,7 +1135,10 @@ describe("web app manifest", () => {
   const named = (manifestPath: string, src: string) => new URL(src, "http://out/" + manifestPath).pathname.slice(1);
 
   /** Every output that is not JavaScript, sorted. */
-  const copied = (outputs: Outputs) => Object.keys(outputs).filter(path => !path.endsWith(".js")).sort();
+  const copied = (outputs: Outputs) =>
+    Object.keys(outputs)
+      .filter(path => !path.endsWith(".js"))
+      .sort();
 
   describe("with every list", () => {
     const files = {
@@ -1133,6 +1146,7 @@ describe("web app manifest", () => {
       "site.webmanifest": `{
   "name": "x",
   "start_url": "./index.html",
+  "scope": "./",
   "icons": [
     { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icon-512.png",   "sizes": "512x512" },
@@ -1350,13 +1364,14 @@ describe("web app manifest", () => {
           ),
         }),
       ],
-      ...[["app.js", "index.html"], ["index.html", "app.js"]].map(
-        (entrypoints): (typeof routes)[number] => [
-          `when ${entrypoints[0]} is the first of two entry points that reach it`,
-          { ...onDisk, "app.js": `import url from "./site.webmanifest"; console.log(url);` },
-          root => ({ entrypoints: entrypoints.map(file => join(root, file)) }),
-        ],
-      ),
+      ...[
+        ["app.js", "index.html"],
+        ["index.html", "app.js"],
+      ].map((entrypoints): (typeof routes)[number] => [
+        `when ${entrypoints[0]} is the first of two entry points that reach it`,
+        { ...onDisk, "app.js": `import url from "./site.webmanifest"; console.log(url);` },
+        root => ({ entrypoints: entrypoints.map(file => join(root, file)) }),
+      ]),
     ];
 
     test.each(routes)("%s", async (_, files, config) => {
@@ -1507,10 +1522,11 @@ describe("web app manifest", () => {
 
   test("standalone HTML inlines it as written", async () => {
     const manifest = `{"icons":[{"src":"./a.png"}]}`;
-    using built = await buildPage(
-      { "index.html": page(link), "site.webmanifest": manifest, "a.png": "PNG a" },
-      () => ({ compile: true, target: "browser", outdir: undefined }),
-    );
+    using built = await buildPage({ "index.html": page(link), "site.webmanifest": manifest, "a.png": "PNG a" }, () => ({
+      compile: true,
+      target: "browser",
+      outdir: undefined,
+    }));
     expect(built.logs).toEqual([]);
     const [html] = Object.values(built.outputs);
     const [, inlined] = html.match(/rel="manifest" href="data:application\/manifest\+json;base64,([^"]+)"/)!;

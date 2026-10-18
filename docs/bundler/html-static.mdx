@@ -410,6 +410,36 @@ Run `bun build --watch` to watch for changes and rebuild automatically. This wor
 
 <Info>You've never seen a watch mode this fast.</Info>
 
+### Web app manifests
+
+A web app manifest names its images with paths that the browser resolves against the manifest's own URL. `bun build` copies the manifest under a hashed name, so it also copies the images that the manifest names and writes their new paths into the copy.
+
+```html index.html icon="file-code"
+<link rel="manifest" href="./site.webmanifest" />
+```
+
+```json site.webmanifest icon="file-json"
+{
+  "name": "My App",
+  "icons": [{ "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" }]
+}
+```
+
+Bun follows a relative `src` in these lists:
+
+- `icons`
+- `screenshots`
+- `shortcuts[].icons`
+- `file_handlers[].icons`
+
+Bun leaves every other value in the manifest as written:
+
+- A `src` that starts with `/`, or that has a scheme such as `https:` or `data:`.
+- A `src` that names no file. The build does not fail.
+- `start_url`, `scope`, and `shortcuts[].url`.
+
+The development server and [standalone HTML](/bundler/standalone-html) use the manifest as written. They do not follow the images that it names.
+
 ## Plugin API
 
 For more control, configure the bundler through the JavaScript API and use Bun's built-in `HTMLRewriter` to preprocess HTML.
@@ -458,6 +488,7 @@ Bun automatically handles all common web assets:
 - **Stylesheets** (`<link rel="stylesheet">`) are run through Bun's CSS parser & bundler
 - **Images** (`<img>`, `<picture>`) are copied and hashed
 - **Media** (`<video>`, `<audio>`, `<source>`) are copied and hashed
+- **Web app manifests** (`<link rel="manifest">`) are copied and hashed. `bun build` also copies the [images that the manifest names](#web-app-manifests)
 - Any `<link>` tag with an `href` attribute pointing to a local file is rewritten to the new path, and hashed
 
 Bun resolves all paths relative to your HTML file, so you can organize your project however you want.

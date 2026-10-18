@@ -102,6 +102,8 @@ Images, fonts, WASM binaries, videos, audio files, SVGs: Bun base64-encodes any 
 
 Bun leaves external URLs (like CDN links or absolute URLs) untouched.
 
+Bun inlines a web app manifest as written and does not follow the images that it names. A relative `src` in the manifest cannot be resolved against the `data:` URI.
+
 ## Using with React
 
 React apps need no extra configuration: Bun transpiles JSX and resolves npm packages.

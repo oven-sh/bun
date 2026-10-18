@@ -5053,14 +5053,14 @@ class ClientHttp2Session extends Http2Session {
       });
       self.#connections++;
       self.#parser?.setStreamContext(pushId, pushedStream);
+      // Like node's onSessionHeaders: a client never sends on a pushed stream, so close() is not an abort.
+      pushedStream.end();
       if (onClientStreamCreatedChannel.hasSubscribers) {
         onClientStreamCreatedChannel.publish({ stream: pushedStream, headers });
       }
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: pushedStream, headers });
       }
-      // Like node's onSessionHeaders: a client never sends on a pushed stream, so close() is not an abort.
-      pushedStream.end();
       self.emit("stream", pushedStream, headers, flags, rawheaders);
     },
     frameError: withStreamFrame(

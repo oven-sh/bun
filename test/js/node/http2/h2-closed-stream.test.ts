@@ -5,6 +5,7 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
+import diagnostics_channel from "node:diagnostics_channel";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -775,6 +776,41 @@ describe.concurrent("a client closes a pushed stream (RFC 9113 §8.4.2)", () => 
       });
       await finishRequestAndClose(raw, client, req);
     } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // A subscriber gets the pushed stream before the 'stream' event. Its writable side has ended by then too.
+  test("destroy() in a diagnostics_channel subscriber is not an abort", async () => {
+    const raw = await Raw.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const onCreated = (message: unknown) => {
+      const { stream } = message as { stream: http2.ClientHttp2Stream };
+      if (stream.session !== client || stream.id !== 2) return;
+      stream.on("aborted", () => events.push("aborted"));
+      stream.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+      stream.on("close", () => {
+        events.push(`close rstCode=${stream.rstCode} aborted=${stream.aborted}`);
+        closed.resolve();
+      });
+      stream.destroy();
+    };
+    diagnostics_channel.subscribe("http2.client.stream.created", onCreated);
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.resume();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      sendPush(raw);
+      await closed.promise;
+      expect(events).toEqual(["close rstCode=0 aborted=false"]);
+      await finishRequestAndClose(raw, client, req);
+    } finally {
+      diagnostics_channel.unsubscribe("http2.client.stream.created", onCreated);
       client.destroy();
       raw.close();
     }

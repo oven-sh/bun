@@ -131,6 +131,9 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
  */
 let configKeyInServer: string | undefined;
 
+/** Whether the server has the routers of a framework, once it started. */
+let frameworkRoutesInServer: boolean | undefined;
+
 /** The `framework` object of a plugin, and the plugin's name. */
 type FrameworkPlugin = { object: object; plugin: string };
 
@@ -212,6 +215,10 @@ function loadFramework(name: string, dir: string, pluginName: string, value: any
     throw new BakeError(`"${name}": the plugins "${other.plugin}" and "${pluginName}" both have a framework.`, true);
   }
   const fail = (message: string) => new BakeError(`"${name}": the framework of "${pluginName}": ${message}`, true);
+  // The dev server would load them instead of the plugins of bake.config.ts and bunfig.toml.
+  if (value?.plugins !== undefined) {
+    throw fail(`"plugins" is not supported in "bun bake". Add build plugins to "plugins" of ${name}.`);
+  }
   try {
     checkFramework(value);
   } catch (error: any) {
@@ -233,27 +240,48 @@ function loadFramework(name: string, dir: string, pluginName: string, value: any
     resolve(router.clientEntryPoint, "clientEntryPoint");
   }
   resolve(value.serverComponents?.serverRuntimeImportSource, "serverRuntimeImportSource");
-  resolve(value.reactFastRefresh?.importSource, "reactFastRefresh.importSource");
+  resolve(
+    value.reactFastRefresh === true ? "react-refresh/runtime" : value.reactFastRefresh?.importSource,
+    "reactFastRefresh.importSource",
+  );
   return { object: value as object, plugin: pluginName };
 }
 
 /**
- * Whether `app/pages/` has a `.tsx` or `.jsx` page. Files and folders that start with `_`, such as
- * `_layout.tsx`, are not pages. The dev server's router finds and serves the pages itself.
+ * The `.tsx` and `.jsx` pages of the default framework in `app/pages/`, relative to it. Files and
+ * folders that start with `_`, such as `_layout.tsx`, are not pages. The dev server's router finds
+ * and serves the pages itself; this finds them as it does, symlinked folders too.
  */
-function hasComponentPages(pagesDir: string): boolean {
+function componentPages(pagesDir: string): string[] {
   try {
-    for (const relative of new Bun.Glob("**/*.{tsx,jsx}").scanSync({ cwd: pagesDir, onlyFiles: true })) {
-      if (!relative.split(/[\\/]/).some(part => part.startsWith("_"))) return true;
-    }
+    return [
+      ...new Bun.Glob("**/*.{tsx,jsx}").scanSync({ cwd: pagesDir, onlyFiles: true, followSymlinks: true }),
+    ].filter(relative => !relative.split(/[\\/]/).some(part => part.startsWith("_")));
   } catch (error: any) {
-    if (error?.code !== "ENOENT") throw error;
+    if (error?.code === "ENOENT") return [];
+    throw error;
   }
-  return false;
 }
 
-/** The React major versions that the default framework is tested with. */
-const supportedReactMajors = [18, 19];
+/** A component page and an `.html` page cannot have the same URL: one file is the page. */
+function checkPageClashes(pagesDir: string, components: string[], pages: Page[]) {
+  const htmlOfRoute = new Map(pages.map(page => [page.route, page.file]));
+  for (const relative of components) {
+    let route = relative.replaceAll("\\", "/").replace(/\.[jt]sx$/, "");
+    if (route === "index") route = "";
+    else if (route.endsWith("/index")) route = route.slice(0, -"/index".length);
+    const html = htmlOfRoute.get(route);
+    if (html !== undefined) {
+      throw new BakeError(
+        `"${display(path.join(pagesDir, relative))}" and "${display(html)}" are both the page "/${route}". Move the script of the .html page out of app/pages/.`,
+        false,
+      );
+    }
+  }
+}
+
+/** The first React major version with what the default framework uses: `hydrateRoot`, streaming. */
+const minimumReactMajor = 18;
 
 /** The version in `name/package.json`, resolved from the project, or `undefined` when not installed. */
 function installedVersion(name: string, cwd: string): string | undefined {
@@ -277,10 +305,11 @@ function checkReactForPages(cwd: string) {
     const missing = [react === undefined && "react", reactDom === undefined && "react-dom"].filter(Boolean).join(" ");
     throw new BakeError(`app/pages/ has .tsx pages, which need React. Install it: bun add ${missing}`, false);
   }
+  // `0.0.0-experimental-...` and `0.0.0-canary-...` are builds of React's next release.
   const major = Number(react.split(".")[0]);
-  if (!supportedReactMajors.includes(major)) {
+  if (major < minimumReactMajor && !react.startsWith("0.0.0-")) {
     throw new BakeError(
-      `"bun bake" renders .tsx pages with React ${supportedReactMajors.join(" or ")}, but this project has react ${react}. Upgrade React.`,
+      `"bun bake" renders .tsx pages with React ${minimumReactMajor} or newer, but this project has react ${react}. Upgrade React.`,
       false,
     );
   }
@@ -370,9 +399,17 @@ async function start() {
   const pages = await loadPages(pagesDir);
   // A framework plugin has its own routers. Without one, the default framework routes the `.tsx`
   // and `.jsx` pages of app/pages/, with the project's React.
-  const defaultFrameworkPages = config.framework === undefined && hasComponentPages(pagesDir);
+  const components = config.framework === undefined ? componentPages(pagesDir) : [];
+  checkPageClashes(pagesDir, components, pages);
+  const defaultFrameworkPages = components.length > 0;
   if (defaultFrameworkPages) checkReactForPages(cwd);
   const frameworkRoutes = config.framework !== undefined || defaultFrameworkPages;
+  // The server sets up the router of a framework when it starts: start again for the first page of
+  // the default framework, or when the last one is gone.
+  if (frameworkRoutesInServer !== undefined && frameworkRoutes !== frameworkRoutesInServer) {
+    // Does not return: on a failure it prints the error and exits.
+    restartProcess();
+  }
   const app = await loadAppServer(cwd);
   if (pages.length === 0 && !frameworkRoutes && app === undefined) {
     throw new BakeError(
@@ -457,6 +494,7 @@ async function start() {
     throw error;
   }
   configKeyInServer ??= config.key;
+  frameworkRoutesInServer ??= frameworkRoutes;
   const elapsed = (performance.now() - initial).toFixed(2);
 
   const listed: { route: string; file: string }[] = [];

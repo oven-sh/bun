@@ -267,12 +267,38 @@ test.concurrent.each([
     name: "a framework with clientPages and serverComponents",
     files: {
       "bake.config.ts": `export default { plugins: [{ name: "a", framework: {
-        fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./r.ts", clientPages: true }],
+        fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./r.ts", clientEntryPoint: "./r.ts", clientPages: true }],
         serverComponents: { separateSSRGraph: false, serverRuntimeImportSource: "./rt.ts" },
       } }] };`,
     },
     waits: true,
     error: `"bake.config.ts": the framework of "a": 'fileSystemRouterTypes[n].clientPages' cannot be used with 'serverComponents'`,
+  },
+  {
+    name: "a framework with plugins",
+    files: {
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: { plugins: [], fileSystemRouterTypes: [] } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the framework of "a": "plugins" is not supported in "bun bake". Add build plugins to "plugins" of bake.config.ts.`,
+  },
+  {
+    name: "a framework with clientPages and no clientEntryPoint",
+    files: {
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: {
+        fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./r.ts", clientPages: true }],
+      } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the framework of "a": 'fileSystemRouterTypes[0].clientPages' needs a 'clientEntryPoint'`,
+  },
+  {
+    name: "a .tsx page and an .html page at the same URL",
+    files: {
+      "app/pages/index.html": page,
+      "app/pages/index.tsx": `document.title = "a script of the .html page";`,
+    },
+    error: `"app/pages/index.tsx" and "app/pages/index.html" are both the page "/". Move the script of the .html page out of app/pages/.`,
   },
   {
     name: "a framework entry point that cannot be found",
@@ -1046,7 +1072,7 @@ test.concurrent.each([
   {
     name: "React is too old",
     packages: { react: "17.0.2", "react-dom": "17.0.2" },
-    error: `"bun bake" renders .tsx pages with React 18 or 19, but this project has react 17.0.2. Upgrade React.`,
+    error: `"bun bake" renders .tsx pages with React 18 or newer, but this project has react 17.0.2. Upgrade React.`,
   },
   {
     name: "react and react-dom differ",
@@ -1137,6 +1163,84 @@ test.concurrent("a framework with clientPages puts the pages of a route in its b
   expect(bundle).toContain(`route: { page: "app/pages/index.ts", layouts: [] }`);
   expect(bundle).toContain("home-page-module");
   expect(bundle).not.toContain("about-page-module");
+});
+
+test.concurrent("bun bake sends a page's new code to a page load after an edit", async () => {
+  using dir = tempDir("bake-command-page-edit", {
+    "app/pages/index.tsx": `export default function Home() { return <h1>{"first-version"}</h1>; }`,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+  const bundle = async () => {
+    const html = await (await fetch(url)).text();
+    const src = html.match(/<script type="module" src="([^"]+)"/)![1];
+    return await (await fetch(new URL(src, url))).text();
+  };
+  expect(await bundle()).toContain("first-version");
+
+  await Bun.write(
+    join(String(dir), "app/pages/index.tsx"),
+    `export default function Home() { return <h1>{"second-version"}</h1>; }`,
+  );
+  // Until the dev server has the edit. Before, it served the bundle it made before the edit.
+  let code = await bundle();
+  while (!code.includes("second-version")) code = await bundle();
+  expect(code).not.toContain("first-version");
+});
+
+test.concurrent("bun bake starts again for the first .tsx page, at the next reload", async () => {
+  using dir = tempDir("bake-command-first-page", {
+    "app/pages/index.html": page,
+    "app/server.ts": `export default { fetch: () => new Response("fallback") };`,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  expect(await get(url, "/about")).toBe("200 fallback");
+
+  await Bun.write(join(String(dir), "app/pages/about.tsx"), `export default () => <h1>about</h1>;`);
+  // A new file in app/pages/ does not reload; an edit to app/server.ts does.
+  const before = output.text.length;
+  await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("fallback 2") };`);
+  await output.waitFor(new RegExp(`^[\\s\\S]{${before}}[\\s\\S]*url: http`));
+  const next = output.text.slice(before).match(/url: (http:\/\/\S+)/)![1];
+  expect(await (await fetch(new URL("/about", next))).text()).toContain("<h1>about</h1>");
+});
+
+test.concurrent("bun bake renders pages and layouts made with memo() and forwardRef()", async () => {
+  using dir = tempDir("bake-command-memo", {
+    "app/pages/index.tsx": `
+      import { memo } from "react";
+      export default memo(function Home() { return <h1>memo page</h1>; });
+    `,
+    "app/pages/_layout.tsx": `
+      import { forwardRef } from "react";
+      export default forwardRef(function Layout({ children }, ref) { return <main ref={ref}>{children}</main>; });
+    `,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+  expect(await (await fetch(url)).text()).toContain("<main><h1>memo page</h1></main>");
+});
+
+test.concurrent("bun bake rejects a route with dir and style in app/server.ts", async () => {
+  using dir = tempDir("bake-command-dir-style", {
+    "app/pages/index.ts": `export default () => "x";`,
+    "r.ts": `export function render() { return new Response("x"); }`,
+    "bake.config.ts": `export default { plugins: [{ name: "fw", framework: { fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./r.ts", extensions: [".ts"] }] } }] };`,
+    "app/server.ts": `export default { routes: { "/x/*": { dir: "app/x", style: "nextjs-pages" } } };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/does not support a route with "dir" and "style"/);
+  expect(output.text).not.toContain("url: ");
 });
 
 test.concurrent("bun bake reports a page that a route of app/server.ts hides", async () => {

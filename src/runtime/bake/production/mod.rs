@@ -515,6 +515,19 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         Global::crash();
     }
 
+    // Only the dev server puts the pages in the browser build and gives the client entry `route`.
+    if framework
+        .file_system_router_types
+        .iter()
+        .any(|fsr| fsr.client_pages)
+    {
+        bun_core::err_generic!(
+            "'fileSystemRouterTypes[n].clientPages' is not supported in a production build yet"
+        );
+        Output::flush();
+        Global::crash();
+    }
+
     bun_core::pretty_errorln!("Bundling routes");
     Output::flush();
 

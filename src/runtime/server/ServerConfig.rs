@@ -583,6 +583,9 @@ impl ServerConfig {
     ) -> JsResult<ServerConfig> {
         let vm = arguments.vm;
         let env = vm.env_loader();
+        // `bun bake` sets this for its own `Bun.serve()`, with a framework or for the `.tsx` pages
+        // of the default one. Taken first: it is for this one call, even when an option throws.
+        let bake_pages = core::mem::take(&mut global.bun_vm().as_mut().bake_pages);
 
         let mut args = ServerConfig {
             development: if let Some(hmr) = vm.transpiler.options.transform_options.serve_hmr {
@@ -880,9 +883,11 @@ impl ServerConfig {
                 });
             }
 
-            // `bun bake` sets this for its own `Bun.serve()`, with a framework or for the `.tsx` pages
-            // of the default one.
-            let bake_pages = core::mem::take(&mut global.bun_vm().as_mut().bake_pages);
+            if bake_pages && !init_ctx.framework_router_list.is_empty() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "\"bun bake\" does not support a route with \"dir\" and \"style\". Add a framework to bake.config.ts instead."
+                )));
+            }
 
             // When HTML bundles are provided, ensure DevServer options are ready
             // The presence of these options causes Bun.serve to initialize things.

@@ -185,16 +185,6 @@ impl router::InsertionHandler for DevServer {
     ) -> Result<(), AllocError> {
         DevServer::on_router_collision_error(self, rel_path, other_id, file_kind)
     }
-
-    fn on_static_page(&mut self, route_path: &[u8], rel_path: &[u8]) -> Result<(), AllocError> {
-        if self
-            .server
-            .is_some_and(|server| server.has_route(route_path))
-        {
-            report_hidden_page(route_path, rel_path);
-        }
-        Ok(())
-    }
 }
 
 pub(super) fn to_opaque_file_id<const SIDE: bake::Side>(

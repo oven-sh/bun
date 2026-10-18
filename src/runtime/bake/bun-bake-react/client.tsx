@@ -11,7 +11,7 @@ const Page = page.default;
 let element = <Page params={params} />;
 for (const layout of layouts) {
   const Layout = layout.default;
-  if (typeof Layout === "function") element = <Layout params={params}>{element}</Layout>;
+  element = <Layout params={params}>{element}</Layout>;
 }
 hydrateRoot(document.getElementById("root")!, element);
 

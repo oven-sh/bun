@@ -14,7 +14,8 @@ type RouteMetadata = {
 
 export async function render(request: Request, meta: RouteMetadata): Promise<Response> {
   const Page = meta.pageModule.default;
-  if (typeof Page !== "function") {
+  // A function, or what memo(), forwardRef() and lazy() return: React checks the type.
+  if (Page == null) {
     throw new TypeError("A page must have a default export: the React component of the page.");
   }
   const params = meta.params ?? {};
@@ -22,7 +23,10 @@ export async function render(request: Request, meta: RouteMetadata): Promise<Res
   // The first layout is the inner-most.
   for (const layout of meta.layouts) {
     const Layout = layout.default;
-    if (typeof Layout === "function") element = <Layout params={params}>{element}</Layout>;
+    if (Layout == null) {
+      throw new TypeError("A layout must have a default export: the React component of the layout.");
+    }
+    element = <Layout params={params}>{element}</Layout>;
   }
 
   const stream = await renderToReadableStream(

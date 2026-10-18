@@ -445,6 +445,13 @@ impl Framework {
                 let client_pages = fsr_opts
                     .get_boolean_strict(global, "clientPages")?
                     .unwrap_or(false);
+                // The client entry point is what loads the pages in the browser.
+                if client_pages && client_entry_point.is_none() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'fileSystemRouterTypes[{}].clientPages' needs a 'clientEntryPoint'",
+                        i
+                    )));
+                }
 
                 let style = style_from_js(
                     match fsr_opts.get(global, "style")? {

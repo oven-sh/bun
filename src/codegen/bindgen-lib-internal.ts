@@ -145,9 +145,9 @@ export function indent(text: string, by: number): string {
     .join("\n");
 }
 
-/** C++ statements that engage `optional`, a `std::optional`, then fill what it holds: `fill` is given a name for that. */
 const cppThenCheck = (statement: string, check: string) => (check ? `${statement}\n${check}` : statement);
 
+/** C++ statements that engage `optional`, a `std::optional`, then fill what it holds: `fill` is given a name for that. */
 export function cppEmplace(optional: string, fill: (target: string) => string): string {
   const [first, ...rest] = optional.split(/\W+/);
   const target = `${first}${rest.map(part => part[0].toUpperCase() + part.slice(1)).join("")}Value`;

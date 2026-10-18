@@ -429,6 +429,24 @@ describe("strings", () => {
     expect(thrownBy(new Uint8Array(2), {}, 1)).toBe(`${invalid}TestFlag must be an object`);
   });
 
+  it("an argument that throws stops the next from being converted", () => {
+    const notRead = {
+      get flag() {
+        return expect.unreachable();
+      },
+      toString: () => expect.unreachable(),
+    };
+    const throws = {
+      get flag() {
+        throw new Error("the first");
+      },
+    };
+    expect(() => bindgen.expectedMessage(1, notRead)).toThrow("data is not a buffer.");
+    expect(() => bindgen.expectedMessage(new Uint8Array(2), 1, notRead)).toThrow('The "options" argument');
+    expect(() => bindgen.expectedMessage(new Uint8Array(2), throws, notRead)).toThrow("the first");
+    expect(() => bindgen.sumBytesIfAny(1, notRead)).toThrow("bytes must be a string");
+  });
+
   it.each(texts)("round trips %j", text => {
     expect(bindgen.stringLength(text)).toBe(text.length);
     expect(bindgen.utf8Echo(text)).toBe(text);

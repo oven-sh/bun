@@ -591,22 +591,25 @@ function cppCallBody(signature: Signature, symbol: string, leading: readonly str
       lines.push(cppStaticContext(ctx, `ArgumentMessageContext { ${asciiLiteral(name)}, ${asciiLiteral(expected)} }`));
     } else if (expected) {
       lines.push(`static constexpr WTF::ASCIILiteral expected${i}[] = { ${expected.map(asciiLiteral).join(", ")} };`);
-      // It holds the argument, so it is made where a conversion takes it: an absent argument makes none.
+      // It holds the argument, so it is made where a conversion takes it.
       ctx = `Bun::Bindgen::asLvalue(Bun::Bindgen::NodeArgumentContext { ${asciiLiteral(name)}, expected${i}, argument${i}.value() })`;
     } else {
       lines.push(cppStaticContext(ctx, `LiteralConversionContext { ${asciiLiteral(name)} }`));
     }
     readLast.push(...type.cppReadLast(`converted${i}`, `argument${i}.value()`));
-    lines.push(
-      ...cppDeclareConverted(
-        type,
-        `converted${i}`,
-        `argument${i}.value()`,
-        ctx,
-        name,
-        "RETURN_IF_EXCEPTION(scope, {});",
-      ),
+    const converted = cppDeclareConverted(
+      type,
+      `converted${i}`,
+      `argument${i}.value()`,
+      ctx,
+      name,
+      "RETURN_IF_EXCEPTION(scope, {});",
     );
+    assert(
+      !expected || converted.some(line => line.includes(ctx)),
+      `expected: ${name} is of a type that words its own errors`,
+    );
+    lines.push(...converted);
   });
   lines.push(...readLast);
   const args = signature.args.map(({ type }, i) => {

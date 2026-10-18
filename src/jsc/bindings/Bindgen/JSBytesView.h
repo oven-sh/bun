@@ -1,7 +1,7 @@
 #pragma once
 #include "root.h"
 #include "Bindgen/JSStringUTF8View.h"
-#include <wtf/MallocSpan.h>
+#include <wtf/UniqueArray.h>
 #include <wtf/text/WTFString.h>
 
 namespace Bun::Bindgen {
@@ -9,11 +9,12 @@ namespace Bun::Bindgen {
 // The bytes of a BufferSource or of a Blob whose bytes are in memory, where they are now. The data is not null.
 std::span<const uint8_t> bytesOfBlobOrBuffer(JSC::JSValue);
 std::span<const uint8_t> bytesOfBlobOrBuffer(JSC::JSValue, bool& isShared);
+
 bool isSharedBuffer(JSC::JSValue);
 
-// Optional: ~MallocSpan calls free, of null too.
-using BytesCopy = std::optional<WTF::MallocSpan<uint8_t>>;
-// The bytes of `copy`, which become those given. Allocating it can throw.
+// Not a MallocSpan, which calls free when it holds nothing too.
+using BytesCopy = WTF::UniqueArray<uint8_t>;
+// A copy of the bytes, which `copy` holds, or the bytes themselves if there are none. Allocating it can throw.
 std::span<const uint8_t> copyBytes(JSC::JSGlobalObject&, std::span<const uint8_t>, BytesCopy& copy);
 
 // Whether it is a Blob. Throws for one whose bytes are not in memory: a file.
@@ -41,7 +42,7 @@ public:
             m_bytes = bytesOfBlobOrBuffer(argument);
     }
 
-    // The bytes of a shared buffer become those of `copy`. Whether it copied, which can throw.
+    // The bytes of a shared buffer become those of `copy`. Whether it is one: copying can throw.
     ALWAYS_INLINE bool copyIfShared(JSC::JSGlobalObject& globalObject, JSC::JSValue argument, BytesCopy& copy)
     {
         if (!m_isBlobOrBuffer || !isSharedBuffer(argument)) [[likely]]
@@ -74,7 +75,7 @@ private:
     bool m_isBlobOrBuffer { false };
 };
 
-// Those, or the UTF-8 of a string.
+// The bytes of a Blob or a buffer, or the UTF-8 of a string.
 class JSBytesView : public JSBlobOrBufferView {
 public:
     // Not `= default`: see JSStringUTF8View.

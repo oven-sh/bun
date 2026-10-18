@@ -152,7 +152,7 @@ private:
         if constexpr (options.toStringOtherwise)
             isRefused = (options.refuseUndefined && value.isUndefined()) || (options.refuseNull && value.isNull());
         else
-            isRefused = !options.fromString || options.refuseStringObject || !value.inherits<JSC::StringObject>();
+            isRefused = options.refuseStringObject || !value.inherits<JSC::StringObject>();
         if (isRefused) {
             ctx.throwTypeMustBe(globalObject, scope, expected);
             return;

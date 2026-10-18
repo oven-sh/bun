@@ -69,15 +69,16 @@ std::span<const uint8_t> copyBytes(JSGlobalObject& globalObject, std::span<const
 {
     if (bytes.empty())
         return bytes;
-    // Not a Vector, which holds less than a buffer can.
-    copy = MallocSpan<uint8_t>::tryMalloc(bytes.size());
-    if (!*copy) [[unlikely]] {
+    uint8_t* data = nullptr;
+    if (!tryFastMalloc(bytes.size()).getValue(data)) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(getVM(&globalObject));
         throwOutOfMemoryError(&globalObject, scope);
         return bytes;
     }
-    memcpySpan(copy->mutableSpan(), bytes);
-    return copy->span();
+    copy.reset(data);
+    auto copied = unsafeMakeSpan(data, bytes.size());
+    memcpySpan(copied, bytes);
+    return copied;
 }
 
 }

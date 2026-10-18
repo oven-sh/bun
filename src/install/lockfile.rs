@@ -942,8 +942,7 @@ impl Lockfile {
             .any(|root_dependency| root_dependency.eql(dependency, buf, buf))
     }
 
-    /// The root or the workspace whose package.json declares the row `id`, with the name hash that
-    /// `get_workspace_package_id` finds it by (`None` for the root).
+    /// The root or workspace whose package.json declares the row `id`, and the name hash that `get_workspace_package_id` finds it by (`None`: the root).
     pub(crate) fn declaring_workspace(
         &self,
         id: DependencyID,

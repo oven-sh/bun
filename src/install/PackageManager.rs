@@ -366,17 +366,14 @@ impl Default for ManifestFailure {
     }
 }
 
-/// An optional row that got no manifest and took a package of bun.lock that its range accepts
-/// (`enqueue::keep_locked`). `bun update` has not checked that package.
+/// An optional row that got no answer from the registry and took a package of bun.lock (`enqueue::keep_locked`); `bun update` has not checked that package.
 pub(crate) struct KeptLocked {
     /// Both by their ids before `clean_lockfile`.
     pub(crate) row: DependencyID,
     pub(crate) package: PackageID,
     /// The manifest request that failed. `None`: `--offline` sent none.
     pub(crate) task: Option<Task::Id>,
-    /// The package.json entry of the row, by what finds it again after `clean_lockfile`: the
-    /// workspace that declares it, as `PackageManager::workspace_name_hash` names it, and its key.
-    /// `None`: a row of an installed package.
+    /// Finds the package.json entry of the row after `clean_lockfile`: its workspace, as `PackageManager::workspace_name_hash` names it, and its key. `None`: a row of an installed package.
     pub(crate) entry: Option<(Option<PackageNameHash>, PackageNameHash)>,
 }
 

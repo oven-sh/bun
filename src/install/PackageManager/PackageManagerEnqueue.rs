@@ -208,8 +208,7 @@ pub(crate) fn advance(this: &mut PackageManager) {
                         return;
                     }
                     Err(err) if head.from_command => add_dependency_error(this, &dependency, err),
-                    // Unless `keep_locked` gave it a package, it stays unresolved, which
-                    // `verify_resolutions` reports if it matters.
+                    // Unless `keep_locked` gave it a package, it stays unresolved, which `verify_resolutions` reports if it matters.
                     Err(_) => {}
                 }
             }
@@ -1869,8 +1868,7 @@ pub(crate) fn bind_row(
         dependency::version::Tag::DistTag
         | dependency::version::Tag::Folder
         | dependency::version::Tag::Npm => {
-            // A `break` is a row that the registry gave no answer for, with the task of a request
-            // that failed: the request could not be made, or `--offline` forbids it.
+            // A `break` is a row that the registry gave no answer for, with the task of the request if one failed: `keep_locked` decides what the row gets.
             let unanswered: crate::Result<Option<Task::Id>> = 'retry_from_manifests_ptr: loop {
                 let mut resolve_result_ = get_or_put_resolved_package(
                     this,
@@ -2049,8 +2047,7 @@ pub(crate) fn bind_row(
                     }
 
                     if this.options.offline == OfflineMode::Offline {
-                        // A request of the command fails like a required dependency. Any other
-                        // releases the reservation: a later required edge still reports.
+                        // A request of the command fails like a required dependency; any other row releases the reservation, so a later required edge still reports.
                         if dependency.behavior.is_required()
                             || fails_update_request(this, task_id, id, &name_str)
                         {
@@ -2083,8 +2080,7 @@ pub(crate) fn bind_row(
                         loaded_manifest.as_ref(),
                         dependency.behavior.is_optional(),
                     ) {
-                        // The failure is on record as reported, which fails a request of the
-                        // command for the dependency.
+                        // The failure is on record as reported, which fails a request of the command that names the dependency.
                         report_manifest_failure(this, task_id, id, dependency, &name_str);
                         break 'retry_from_manifests_ptr Err(err);
                     }
@@ -2492,8 +2488,7 @@ fn report_manifest_failure(
     run_tasks::fail_update_requests(this, task_id, name, None, is_unanswered);
 }
 
-/// Whether a request of the command names `dependency`, whose manifest cannot be had. That fails
-/// the request as a failed manifest request does: the command exits 1 and saves nothing.
+/// Fails the requests of the command that name `dependency`, whose manifest cannot be had, as a failed manifest request does, and returns whether there is one.
 #[cold]
 fn fails_update_request(
     this: &mut PackageManager,
@@ -2509,10 +2504,7 @@ fn fails_update_request(
     run_tasks::fail_update_requests(this, task_id, name, None, false)
 }
 
-/// `err` is "no version in range" for an optional `dependency`, from a manifest that is not the
-/// registry's answer of this run: what a cached copy lacks may have been published since
-/// (`ManifestOrigin`), and `--offline` cannot ask. Returns whether that fails a request of the
-/// command.
+/// `Some` if `err` is "no version in range" from a cached manifest for an optional `dependency`: what a cached copy lacks may have been published since (`ManifestOrigin`), and `--offline` cannot ask. The value says whether that fails a request of the command.
 #[cold]
 fn lacks_version_in_cache(
     this: &mut PackageManager,
@@ -2538,8 +2530,7 @@ fn holds_patched(latest_for_target: bool, behavior: Behavior) -> bool {
     !latest_for_target && !behavior.is_peer()
 }
 
-/// The registry gave no answer for `dependency`. An optional one takes a package of bun.lock that
-/// its range accepts, as an install that asks the registry nothing leaves it.
+/// The registry gave no answer for `dependency`: an optional one takes a package of bun.lock that its range accepts, as an install that asks the registry nothing leaves it.
 #[cold]
 #[inline(never)]
 fn keep_locked(
@@ -2580,8 +2571,7 @@ fn keep_locked(
             && lockfile.packages.items_resolution()[package]
                 .satisfies_dependency_version(version, buf, buf)
     };
-    // The package that the row had. A row that had none, or whose range now rejects it, takes a
-    // patched package as it does when the registry answers, else the highest.
+    // The package that the row had, else a patched one as when the registry answers, else the highest.
     let had = declared_by.and_then(|(owner, _)| this.direct_before.package_of(owner, dependency));
     let Some(package) = had
         .filter(accepts)

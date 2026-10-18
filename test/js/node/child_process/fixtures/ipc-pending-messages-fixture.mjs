@@ -20,6 +20,7 @@ const variants = [
   "added and removed in one tick",
   "disconnect() in the tick that adds it",
   "removeAllListeners('newListener')",
+  "on() down to the stack limit",
   returns1AsTheyArrive,
   returns1InTheTick,
   "the listenerCount() of node:events",
@@ -92,6 +93,16 @@ function receive(target, variant) {
     } else if (variant === "disconnect() in the tick that adds it") {
       listen();
       target.disconnect();
+    } else if (variant === "on() down to the stack limit") {
+      (function recurse() {
+        try {
+          target.on("another event", recurse).off("another event", recurse);
+          recurse();
+        } catch (error) {
+          got[0] = error.name;
+        }
+      })();
+      listenAndAskForTheEnd();
     } else if (variant === returns1InTheTick) {
       target.listenerCount = () => 1;
       target.on("another event", () => {});
@@ -116,7 +127,6 @@ function receive(target, variant) {
         throw new RangeError(countThrows);
       };
     }
-    // In a child this is also what opens the channel, so that it is read with no 'message' listener.
     target.send("ready");
   });
   return got;

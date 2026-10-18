@@ -2172,6 +2172,13 @@ bun_core::comptime_string_map! {
 /// Whether `GetSpellingSuggestion` would suggest `candidate` for `name` if it were the only
 /// candidate.
 pub(crate) fn is_close(name: &[u8], candidate: &[u8]) -> bool {
+    // FOR SPEED, its first test, which most candidates fail: every name in scope is asked for every name that is not found.
+    if name.is_ascii() {
+        let maximum_length_difference = 2.max((name.len() as f64 * 0.34) as usize);
+        if candidate.len().abs_diff(name.len()) > maximum_length_difference {
+            return false;
+        }
+    }
     let only = std::iter::once(candidate);
     get_spelling_suggestion(name, only, get_candidate_name, |a, b| a.cmp(b)).is_some()
 }
@@ -2297,11 +2304,17 @@ impl SuggestionLookup for Checker<'_, '_> {
     }
 }
 
-/// By `meaning` and by the text of the name: what `getSuggestionForSymbolNameLookup` finds in
-/// `globals`. A program without the types of its test framework asks for the same few names
-/// thousands of times.
-pub(crate) type SuggestionsAmongGlobals =
-    std::cell::RefCell<FxHashMap<u32, FxHashMap<Vec<u8>, Option<SpellingSuggestion>>>>;
+/// What `getSuggestionForSymbolNameLookup` finds. A program without the types of its test framework asks for the same
+/// few names thousands of times, from everywhere in a file.
+#[derive(Default)]
+pub(crate) struct KnownSuggestions {
+    /// In `globals`, by `meaning` and by the text of the name.
+    among_globals: FxHashMap<u32, FxHashMap<Vec<u8>, Option<SpellingSuggestion>>>,
+    /// In the locals of a scope, by the scope, `meaning` and the name.
+    among_locals: FxHashMap<(FileId, ScopeId, u32, Atom), Option<SpellingSuggestion>>,
+}
+
+pub(crate) type SuggestionsAmongGlobals = std::cell::RefCell<KnownSuggestions>;
 
 impl Files<'_> {
     /// `getSuggestedSymbolForNonexistentSymbol`, and whether the result is among the locals of a
@@ -2363,9 +2376,21 @@ impl Files<'_> {
                     if s.kind == ScopeKind::InferConstraint {
                         return None;
                     }
-                    let locals = bound.table(s.locals).iter().filter(is_in_table);
-                    let locals = locals.map(|&(candidate, id)| (candidate, files.sym(file, id)));
-                    get_spelling_suggestion_for_name(files, text, locals.filter(fits).map(named))
+                    let key = (file, scope, meaning.bits(), name);
+                    let known =
+                        among_globals.and_then(|it| it.borrow().among_locals.get(&key).copied());
+                    known.unwrap_or_else(|| {
+                        let locals = bound.table(s.locals).iter().filter(is_in_table);
+                        let locals =
+                            locals.map(|&(candidate, id)| (candidate, files.sym(file, id)));
+                        let locals = locals.filter(fits).map(named);
+                        let suggestion = get_spelling_suggestion_for_name(files, text, locals);
+                        if let Some(among_globals) = among_globals {
+                            let known = &mut among_globals.borrow_mut().among_locals;
+                            known.insert(key, suggestion);
+                        }
+                        suggestion
+                    })
                 }
                 SymbolTable::Exports(container) => get_spelling_suggestion_for_name(
                     files,
@@ -2373,8 +2398,10 @@ impl Files<'_> {
                     files.each_export(container).filter(fits).map(named),
                 ),
                 SymbolTable::Globals
-                    if let Some(known) = among_globals
-                        .and_then(|it| it.borrow().get(&meaning.bits())?.get(text).copied()) =>
+                    if let Some(known) = among_globals.and_then(|it| {
+                        let known = it.borrow();
+                        known.among_globals.get(&meaning.bits())?.get(text).copied()
+                    }) =>
                 {
                     known
                 }
@@ -2408,8 +2435,8 @@ impl Files<'_> {
                         globals.filter(fits).map(named).chain(words),
                     );
                     if let Some(among_globals) = among_globals {
-                        let mut among_globals = among_globals.borrow_mut();
-                        let of_meaning = among_globals.entry(meaning.bits()).or_default();
+                        let mut known = among_globals.borrow_mut();
+                        let of_meaning = known.among_globals.entry(meaning.bits()).or_default();
                         of_meaning.insert(text.to_vec(), suggestion);
                     }
                     suggestion

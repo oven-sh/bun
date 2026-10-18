@@ -483,7 +483,8 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
             // single-threaded, and this thread doesn't have a live reference to the old directory.
             unsafe { *self.directory.get() = longer };
         }
-        let fresh = Box::<[T], A>::new_uninit_slice_in(SEGMENT, self.alloc.clone());
+        let fresh = Box::<[T], A>::try_new_uninit_slice_in(SEGMENT, self.alloc.clone())
+            .unwrap_or_else(|_| bun_alloc::out_of_memory());
         let fresh = Box::into_raw_with_allocator(fresh).0;
         let installed = self.directory()[at].compare_exchange(
             null_mut(),
@@ -1036,7 +1037,7 @@ impl<C: Zeroed, A: Allocator + Clone, const N: usize> Newest<C, A, N> {
         assert!(len.is_power_of_two());
         let layout = Slice::<C>::layout(len);
         let Ok(block) = self.alloc.allocate_zeroed(layout) else {
-            std::alloc::handle_alloc_error(layout)
+            bun_alloc::out_of_memory()
         };
         let first = block.cast::<C>().as_ptr();
         // SAFETY: `block` has room for `len` cells and is aligned for them, and all zero bytes are a valid `C`.

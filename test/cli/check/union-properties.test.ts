@@ -2811,11 +2811,12 @@ export {};
   },
 };
 
-// Whether an intersection reduces to `never` is decided by the constituents that share a name with another one, and is kept
-// for those: from the third intersection on that has them, whatever else it has. Up to 8 constituents are compared pair by
-// pair. A property of a union is created when it is asked for, with the types of what it combines, so what asks for it
-// by name must not list the others. So each program here has the same constituents in four intersections or more, with
-// sizes on both sides of those numbers, and none of that must change what is reported.
+// Whether an intersection reduces to `never` is decided name by name, from the properties that several constituents have.
+// If the constituents have 16 properties or more, what a name has added to the answer is kept for the next intersection of
+// the same object types, from the third one on, for as long as those that have the name have the same type arguments. Up
+// to 8 constituents are compared pair by pair. A property of a union is created when it is asked for, with the types of
+// what it combines, so what asks for it by name must not list the others. So each program here has the same constituents
+// in four intersections or more, with sizes on both sides of those numbers, and none of that must change what is reported.
 
 /** `text(1)` .. `text(4)` */
 const four = (text: (i: number) => string) => [1, 2, 3, 4].map(text);
@@ -2823,8 +2824,8 @@ const four = (text: (i: number) => string) => [1, 2, 3, 4].map(text);
 // `errors`: what TypeScript 7.0.2 reports about `program(count)`, for every `count` in `sizes`, after the name of the file.
 const reduced: typeof members = {
   "an intersection of the same object types and one more that shares no name with them": {
-    // There are 4 constituents besides.
-    sizes: [0, 4, 5, 40],
+    // There are 4 constituents besides, with 8 properties.
+    sizes: [0, 3, 4, 5, 40],
     program: count => `
 interface P { kind: "p"; same: string; a?: 1 }
 interface Q { kind: "q"; same: string; b?: 1 }
@@ -3274,6 +3275,144 @@ export {};
 (38,7): error TS2322: Type 'unknown' is not assignable to type 'never'.
 `,
   },
+  "no property of a union is created that nothing asks for": {
+    sizes: [2, 9],
+    program: count => {
+      // An index signature of the members, the type of a parameter, and what the type parameter is intersected with for
+      // the argument. Each is used in the initializer of a variable that the type of `shape` depends on.
+      const inInitializer = [
+        ["[k: string]: unknown; ", "", ""],
+        ["", "{ id: string } & { extra: number }", "{ extra: 1 }"],
+        ["", "{ id: string }", "{ extra: 1 }"],
+        ["", "{ id: string } & { extra: number }", "{ extra: 1; id: string }"],
+        ["", "{ id: string } & { extra: number }", "{ extra: 1; shape?: 1 }"],
+        ["", "{ id?: string }", "{ extra: 1 }"],
+        ["", "{ id: string; shape?: unknown }", "{ extra: 1 }"],
+        ["", "{ id: string; shape?: string }", "{ extra: 1 }"],
+      ];
+      const programs = inInitializer.map(
+        ([index, target, source], n) => `
+interface A${n} { ${index}id: string; shape?: 1 }
+interface B${n} { ${index}id: string; shape?: keyof typeof shapes${n} }
+type Members${n} = A${n} | B${n}${each(count - 2, i => ` | (A${n} & { t${i}?: ${i} })`, "")};
+declare function accept${n}(t: ${target || "unknown"}): 1;
+const shapes${n} = { circle: (<U extends Members${n}>${target ? `() => accept${n}(null! as U & ${source}))()` : `(p: Omit<U, "id">) => p[0])(null!)`} };
+const whole${n}: never = shapes${n};`,
+      );
+      return `${programs.join("")}\nexport {};\n`;
+    },
+    errors: `
+(7,7): error TS2322: Type '{ circle: unknown; }' is not assignable to type 'never'.
+(13,7): error TS2322: Type '{ circle: 1; }' is not assignable to type 'never'.
+(19,7): error TS2322: Type '{ circle: 1; }' is not assignable to type 'never'.
+(25,7): error TS2322: Type '{ circle: 1; }' is not assignable to type 'never'.
+(27,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(30,7): error TS7022: 'shapes4' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(30,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(31,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(33,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(36,7): error TS7022: 'shapes5' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(36,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(37,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(39,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(42,7): error TS7022: 'shapes6' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(42,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(43,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(48,62): error TS2345: Argument of type 'U & { extra: 1; }' is not assignable to parameter of type '{ id: string; shape?: string | undefined; }'.
+(49,7): error TS2322: Type '{ circle: 1; }' is not assignable to type 'never'.
+`,
+  },
+  "the properties of the constraint of a type parameter are created where an intersection with it is reduced": {
+    sizes: [2, 9],
+    program: count => {
+      // More type parameters of a function, and what it returns. Each is called in the initializer of a variable that the
+      // type of `shape` depends on.
+      const inInitializer = [
+        ["", "(null! as U & { extra: 1; id: string }).id"],
+        ["", "(null! as U & { extra: 1; id: string }).extra"],
+        ["", "(null! as { extra: 1; id?: string } & U).extra"],
+        ["", '(null! as U & { extra: 1; id: "a" }).extra'],
+        ["", "(null! as U & { extra: 1; shape?: 1 }).extra"],
+        [", V extends C | D", "(null! as U & V).id"],
+        [", V extends C | D", "(null! as V & U).id"],
+        [", V extends C | D", "(null! as U & V & { z: 1 }).z"],
+        [", V extends E | F", "(null! as U & V).id"],
+        [", V extends G | H", "(null! as U & V).id"],
+        ["", "(null! as U & (C | D)).id"],
+        ["", "(null! as U & C).id"],
+        ["", "(null! as (U & C) | D).id"],
+        ["", "null! as keyof (U & C)"],
+        ["", "({ ...(null! as U & C) })"],
+        ["", "{ const { id } = null! as U & C; return id; }"],
+        ["", "{ for (const k in null! as U & C) return k; return 1; }"],
+        ["", '"id" in (null! as U & C)'],
+      ];
+      const programs = inInitializer.map(
+        ([more, returned], n) => `
+interface A${n} { id: string; shape?: 1 }
+interface B${n} { id: string; shape?: keyof typeof shapes${n} }
+type Members${n} = A${n} | B${n}${each(count - 2, i => ` | (A${n} & { t${i}?: ${i} })`, "")};
+const shapes${n} = { circle: (<U extends Members${n}${more}>() => ${returned})() };
+const whole${n}: never = shapes${n};`,
+      );
+      return `
+interface C { id: string; other?: 1 }
+interface D { id: string; other?: 2 }
+interface E { name: string; other?: 1 }
+interface F { name: string; other?: 2 }
+interface G { name: string; shape?: 1 }
+interface H { name: string; shape?: 2 }${programs.join("")}\nexport {};\n`;
+    },
+    errors: `
+(12,7): error TS2322: Type '{ circle: string; }' is not assignable to type 'never'.
+(17,7): error TS2322: Type '{ circle: 1; }' is not assignable to type 'never'.
+(22,7): error TS2322: Type '{ circle: 1; }' is not assignable to type 'never'.
+(27,7): error TS2322: Type '{ circle: 1; }' is not assignable to type 'never'.
+(29,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(31,7): error TS7022: 'shapes4' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(31,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(32,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(37,7): error TS2322: Type '{ circle: string; }' is not assignable to type 'never'.
+(42,7): error TS2322: Type '{ circle: string; }' is not assignable to type 'never'.
+(47,7): error TS2322: Type '{ circle: 1; }' is not assignable to type 'never'.
+(52,7): error TS2322: Type '{ circle: string; }' is not assignable to type 'never'.
+(54,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(56,7): error TS7022: 'shapes9' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(56,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(57,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(59,29): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(61,7): error TS7022: 'shapes10' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(61,29): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(62,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(67,7): error TS2322: Type '{ circle: string; }' is not assignable to type 'never'.
+(69,29): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(71,7): error TS7022: 'shapes12' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(71,29): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(72,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(74,29): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(76,7): error TS7022: 'shapes13' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(76,29): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(77,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(79,29): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(81,7): error TS7022: 'shapes14' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(81,29): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(82,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(84,29): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(86,7): error TS7022: 'shapes15' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(86,29): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(86,66): error TS7022: 'id' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(87,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(89,29): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(91,7): error TS7022: 'shapes16' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(91,29): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(91,69): error TS7022: 'k' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(92,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(94,29): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(96,7): error TS7022: 'shapes17' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(96,29): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(97,7): error TS2322: Type 'any' is not assignable to type 'never'.
+`,
+  },
   "an intersection with a type parameter whose constraint is a union, compared with object types": {
     sizes: [2, 9, 130],
     program: count => {
@@ -3484,10 +3623,11 @@ test.concurrent.skipIf(!tsc)("members of another file, on any number of threads,
 
 // The style rules of a theme: an indexed access into an interface of `count` props types, each an intersection, by a type
 // parameter, intersected with `Record<string, unknown>` and with object types that share none, one or all of their names.
+// One of the props types has an `ownerState` and a `theme` of its own.
 const themed = (count: number) => `
 interface Common { className?: string; style?: { color?: string }; children?: unknown }
 interface Html { id?: string; kind?: string; title?: string; hidden?: boolean; className?: string }
-${each(count, i => `interface Own${i} { variant?: "v${i}" | "w"; size${i}?: ${i}; kind: "k${i}"; classes?: { root${i}?: string } }`, " ")}
+${each(count, i => `interface Own${i} { variant?: "v${i}" | "w"; size${i}?: ${i}; kind: "k${i}"; classes?: { root${i}?: string }${i === 1 ? "; ownerState?: { open?: boolean }; theme?: A" : ""} }`, " ")}
 ${each(count, i => `type Props${i} = Own${i} & Common & Omit<Html, keyof Own${i} | keyof Common>;`, " ")}
 interface List { ${each(count, i => `C${i}: Props${i};`, " ")} }
 type Primitive = string | number | null | undefined;

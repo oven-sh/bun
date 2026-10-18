@@ -61,7 +61,7 @@ pub(super) const SHADOW: bool = false;
 #[derive(PartialEq, Eq, Debug)]
 pub(super) struct Traces {
     work: u64,
-    first_new_type_id: TypeId,
+    first_new_type_id: NewTypes,
     non_cacheable_mark: (u64, u64),
     instantiation_count: u32,
     reported: usize,

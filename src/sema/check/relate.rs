@@ -123,6 +123,13 @@ pub(super) const CALLBACK: u8 = BIVARIANT_CALLBACK | STRICT_CALLBACK;
 /// `incompatibleErrorReporter` is `reportIncompatibleConstructSignatureReturn`. Set with `reportErrors` only.
 const CONSTRUCT_SIGNATURE: u8 = 32;
 
+/// `false`: `properties_of_apparent_type_related_to` and `augmented_property` make an object of an apparent type that is a
+/// union, as before.
+const ASKS_APPARENT_UNIONS_BY_NAME: bool = true;
+/// They make the object as well. It is a panic that names the types and the file if a property of the target is found in
+/// the one and not in the other, or with another type, or if the object has other global types. For debugging.
+const CHECKS_APPARENT_UNIONS_BY_NAME: bool = false;
+
 /// `getRelationKey`: the source, the target, and flags. The flags hold the relation in the low four bits and the intersection
 /// state above it.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -864,6 +871,21 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `getPropertyOfType(source, name)` in `propertiesRelatedTo`. `of_source`: the union that is asked by name, or else the
+    /// type and the members that `property_among` takes.
+    #[inline]
+    fn property_of_source(
+        &mut self,
+        of_source: (Option<TypeId>, TypeId, Members<'p>),
+        inherited: &mut Inherited<'p>,
+        name: Atom,
+    ) -> Option<(&'p Prop<'p>, MapperId)> {
+        match of_source {
+            (Some(union), ..) => self.get_property_of_type(union, name),
+            (None, ty, members) => self.property_among(ty, &members, inherited, name),
+        }
+    }
+
     pub(super) fn inherited_of(&self, shape: &Shape) -> Inherited<'p> {
         let mut globals = [known::Object; 3];
         let mut count = 0;
@@ -926,11 +948,27 @@ impl<'p, 's> Checker<'p, 's> {
         // global types in which they find `name` has.
         let mut globals: SmallVec<[TypeId; 4]> = SmallVec::new();
         for &part in parts.iter() {
-            let part = self.reduced_apparent_type_as_object(part);
-            let Some(members) = self.members(part) else {
-                continue;
+            let part = self.reduced_apparent_type(part);
+            // The object that `union_as_object` makes has every property of the union, and no signature.
+            let is_asked = !(ASKS_APPARENT_UNIONS_BY_NAME && self.is_union(part));
+            let of_union = self.inherited_of(&Shape::new_in(self.arena));
+            let of_part = if is_asked || CHECKS_APPARENT_UNIONS_BY_NAME {
+                let object = match self.is_union(part) {
+                    true => self.union_as_object(part),
+                    false => part,
+                };
+                let Some(members) = self.members(object) else {
+                    continue;
+                };
+                let of_part = self.inherited_of(members.shape());
+                let globals = |it: &Inherited<'p>| (it.globals, it.count);
+                if !is_asked && globals(&of_part) != globals(&of_union) {
+                    self.fact_differs_for("the global types of a union", &[part]);
+                }
+                of_part
+            } else {
+                of_union
             };
-            let of_part = self.inherited_of(members.shape());
             for &global in &of_part.globals[..of_part.count] {
                 let global = self.plain_global_ref(global);
                 let has_name = |it: Members<'p>| it.resolved.prop(name).is_some();
@@ -4358,7 +4396,7 @@ impl<'p, 's> Checker<'p, 's> {
         for &on_stack in stack {
             if self.has_matching_recursion_identity(on_stack, identity) {
                 // `t.id >= lastTypeId`
-                if last.is_none_or(|last| self.creation_order(on_stack, last).is_ge()) {
+                if last.is_none_or(|last| self.types().is_created_no_earlier(on_stack, last)) {
                     count += 1;
                     if count >= max_depth {
                         return true;
@@ -4406,7 +4444,7 @@ impl<'p, 's> Checker<'p, 's> {
             };
             if matches {
                 // `t.id >= lastTypeId`
-                if last.is_none_or(|last| self.creation_order(on_stack, last).is_ge()) {
+                if last.is_none_or(|last| self.types().is_created_no_earlier(on_stack, last)) {
                     count += 1;
                     if count >= max_depth {
                         return true;
@@ -4731,11 +4769,38 @@ impl<'p, 's> Checker<'p, 's> {
                 &mut None,
             );
         }
+        // Only for the type of an object literal does `propertiesRelatedTo` list the properties of the source. The others
+        // it asks for by the names of those of the target, and a property of a union is created when it is asked for,
+        // with the types of what it combines. If every member has an index signature, the list is made of the names
+        // of all of them: of 150 props types of 300 properties each, where the target has `theme` and `ownerState`.
+        let properties =
+            if ASKS_APPARENT_UNIONS_BY_NAME && !is_object_literal_kind(self.data(target)) {
+                if CHECKS_APPARENT_UNIONS_BY_NAME {
+                    self.check_apparent_union_by_name(apparent, &members, target);
+                }
+                apparent
+            } else {
+                self.object_of_apparent_union(apparent, &members)
+            };
+        self.properties_related_to_noting::<REPORT>(
+            r,
+            source,
+            Some(properties),
+            target,
+            &[],
+            optionals_only,
+            state,
+            &mut None,
+        )
+    }
+
+    /// An object type with the properties of the union `apparent`. `members`: the apparent types of its members.
+    fn object_of_apparent_union(&mut self, apparent: TypeId, members: &[TypeId]) -> TypeId {
         // `getPropertiesOfUnionOrIntersectionType`: "The properties of a union type are those that are present in all constituent
         // types, so we only need to check the properties of the first type without index signature".
         let mut props: ArenaVec<Prop> = ArenaVec::new_in(self.arena);
         let mut names_of_props = FxHashSet::<Atom>::default();
-        for &current in &members {
+        for &current in members {
             let Some(of_current) = self.members(current) else {
                 continue;
             };
@@ -4753,20 +4818,40 @@ impl<'p, 's> Checker<'p, 's> {
                 break;
             }
         }
-        let properties = self.synth(Shape {
+        self.synth(Shape {
             props,
             ..Shape::new_in(self.arena)
-        });
-        self.properties_related_to_noting::<REPORT>(
-            r,
-            source,
-            Some(properties),
-            target,
-            &[],
-            optionals_only,
-            state,
-            &mut None,
-        )
+        })
+    }
+
+    /// Under `CHECKS_APPARENT_UNIONS_BY_NAME`: what is found in the union `apparent` by the name of each property of
+    /// `target`, against what is found in `object_of_apparent_union`.
+    #[cold]
+    #[inline(never)]
+    fn check_apparent_union_by_name(
+        &mut self,
+        apparent: TypeId,
+        members: &[TypeId],
+        target: TypeId,
+    ) {
+        let listed = self.object_of_apparent_union(apparent, members);
+        let (Some(of_list), Some(of_target)) = (self.members(listed), self.listed_members(target))
+        else {
+            return;
+        };
+        let mut inherited = self.inherited_of(of_list.shape());
+        for prop in &of_target.shape().props {
+            let found = [
+                self.property_among(listed, &of_list, &mut inherited, prop.name),
+                self.get_property_of_type(apparent, prop.name),
+            ];
+            let [long_way, by_name] = found.map(|found| {
+                found.map(|(found, mapper)| (found.flags, self.type_of_prop(found, mapper)))
+            });
+            if long_way != by_name {
+                self.fact_differs_for("a property of a union by name", &[apparent, target]);
+            }
+        }
     }
 
     /// `isSourceIntersectionNeedingExtraCheck`
@@ -6076,7 +6161,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `properties`: an object type with the properties `getPropertiesOfType(source)` returns,
-    /// where `members(source)` lacks them.
+    /// where `members(source)` lacks them. Or a union, which is asked for each by name.
     /// `both`: set to the `members` of `source` and of `target`, if they were requested and are
     /// final.
     fn properties_related_to_noting<const REPORT: bool>(
@@ -6265,7 +6350,11 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let provisional = self.provisional_shapes.len();
-        let has_properties = properties.unwrap_or(source);
+        let by_name = properties.filter(|&it| self.is_union(it));
+        let has_properties = match by_name {
+            Some(_) => self.synth(Shape::new_in(self.arena)),
+            None => properties.unwrap_or(source),
+        };
         let (Some(sm), Some(tm)) = (self.members(has_properties), self.listed_members(target))
         else {
             return Ternary::FALSE;
@@ -6287,10 +6376,11 @@ impl<'p, 's> Checker<'p, 's> {
             && !self.is_empty_array_literal_type(source)
             && !self.is_tuple(source);
         let mut inherited = self.inherited_of(sm.shape());
+        let of_source = (by_name, has_properties, sm);
         // `getUnmatchedProperty`
         for tp in &tm.shape().props {
             if !(require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
-                || (self.property_among(has_properties, &sm, &mut inherited, tp.name)).is_some()
+                || (self.property_of_source(of_source, &mut inherited, tp.name)).is_some()
                 // `isStaticPrivateIdentifierProperty`
                 || self.is_static_private_name(tp)
             {
@@ -6311,8 +6401,7 @@ impl<'p, 's> Checker<'p, 's> {
                 for tp in &tm.shape().props {
                     if !self.is_static_private_name(tp)
                         && (require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
-                        && (self.property_among(has_properties, &sm, &mut inherited, tp.name))
-                            .is_none()
+                        && (self.property_of_source(of_source, &mut inherited, tp.name)).is_none()
                     {
                         unmatched.push(tp);
                     }
@@ -6365,7 +6454,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let Some((sp, source_mapper)) =
-                self.property_among(has_properties, &sm, &mut inherited, tp.name)
+                self.property_of_source(of_source, &mut inherited, tp.name)
             else {
                 continue;
             };

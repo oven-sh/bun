@@ -547,6 +547,20 @@ fn a_reference_to_a_kept_value_stays_good_while_the_task_keeps_more() {
     assert_eq!(tables.shapes.handle(&task, &first), Some(handle));
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+fn a_permission_tells_whether_the_task_has_held_back_since_its_computation_began() {
+    let session = Session::new();
+    let task = begin(&session, 0);
+    let outer = Stored::since(task.held_back());
+    assert!(!task.has_held_back_since(outer));
+    task.hold_back();
+    let inner = Stored::since(task.held_back());
+    assert!(task.has_held_back_since(outer));
+    assert!(!task.has_held_back_since(inner));
+    assert!(task.has_held_back_since(Stored::new()));
+}
+
 // ───────────────────────────── the order of publishing ─────────────────────────────
 
 #[test]

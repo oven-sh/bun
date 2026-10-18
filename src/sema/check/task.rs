@@ -25,17 +25,26 @@ use crate::table::{Applied, Entries, Finishing, Handle, Payload, Publish, Share}
 use crate::types::{Link, Marks, OwnRecords, OwnStore};
 use crate::util::SharedSort;
 use crate::util::{InParallel, for_each_mut};
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::{Cell, RefCell, UnsafeCell};
 
 /// Permission to store a finished result. Only `Checker::leave` and the scopes in check/mod.rs
 /// create one.
+///
+/// It holds `Task::held_back` as of the beginning of the computation: see `Task::has_held_back_since`.
 #[derive(Copy, Clone)]
-pub struct Stored(());
+pub struct Stored(u64);
 
 impl Stored {
+    /// For a result of which nobody knows when its computation began. `Task::held_back` never gets this far.
     #[inline]
     pub(super) fn new() -> Stored {
-        Stored(())
+        Stored(u64::MAX)
+    }
+
+    /// `held_back`: `Task::held_back` when the computation began.
+    #[inline]
+    pub(super) fn since(held_back: u64) -> Stored {
+        Stored(held_back)
     }
 }
 
@@ -70,6 +79,8 @@ pub struct Task<'s> {
     pub(super) listings: Vec<(Sym, bool)>,
     /// See `Finished::assignments_walked`. It is added to under `&Checker`.
     pub(super) assignments_walked: RefCell<Vec<(FileId, Node, bool)>>,
+    /// See `hold_back`.
+    held_back: Cell<u64>,
     /// The types, signatures, mappers and component lists that the task has created.
     pub(crate) own: OwnStore<'s>,
     /// Interior-mutable because every access to a table takes `&Task`: some are made under `&Checker`. See `Task::buffer`.
@@ -94,6 +105,7 @@ impl<'s> Task<'s> {
             order_dependent_variances: Vec::new(),
             listings: Vec::new(),
             assignments_walked: RefCell::default(),
+            held_back: Cell::new(0),
             own: OwnStore::new_in(arena),
             buffer: UnsafeCell::new(Buffer::new()),
             file_local: UnsafeCell::new(FileLocalTables::new()),
@@ -130,6 +142,26 @@ impl<'s> Task<'s> {
     /// The index of the task in its step.
     pub(super) fn index(&self) -> Option<u32> {
         self.place.map(|(_, index)| index)
+    }
+
+    /// Whatever is being computed now depends on more than its key and the program. Every computation in progress is
+    /// meant, so this is a count, which each of them compares when it ends: `has_held_back_since`.
+    #[inline]
+    pub(crate) fn hold_back(&self) {
+        self.held_back.set(self.held_back.get() + 1);
+    }
+
+    /// How often `hold_back` was called.
+    #[inline]
+    pub(crate) fn held_back(&self) -> u64 {
+        self.held_back.get()
+    }
+
+    /// Whether `hold_back` was called since the computation began whose result `stored` permits to store, or nobody knows
+    /// when that was.
+    #[inline]
+    pub fn has_held_back_since(&self, stored: Stored) -> bool {
+        stored.0 != self.held_back.get()
     }
 
     /// From now on the task visits `file`: the entries keyed by its nodes are stored densely. The

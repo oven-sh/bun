@@ -561,7 +561,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `Readings`. A computation whose result a table keeps begins with `enter` or with `begin_scope`. In the order of
     /// `TRACES`.
     fn traces_of_inference(&self) -> [u64; TRACES.len()] {
-        let [atoms, components, mappers, signatures, types] = self.task.own.lengths();
+        let [atoms, components, mappers, signatures, types] = self.task.own.created();
         [
             self.work,
             self.scopes_begun,

@@ -9207,6 +9207,290 @@ export const r: [never, never, never] = [c, d, e];
       expect(exitCode).toBe(1);
     });
 
+    // In program order more-patterns.d.ts comes first. An import in the body of an ambient module is not among
+    // `file.Imports()`: no file has `only/nested.svg` or `icons/big/nested.png` there.
+    test("of the ambient module patterns that match a specifier, the longest prefix wins, then the first", async () => {
+      using dir = project({
+        "augments.ts": `import a, { added } from "a.svg";
+import z, { added as missing } from "z.svg";
+import { first, third } from "twice/a";
+import { third as none } from "twice/c";
+declare module "a.svg" { export const added: "added to a.svg"; }
+declare module "twice/a" { export const third: 3; }
+export const all: never[] = [a, added, z, missing, first, third, none];
+`,
+        "file.ts": `export default "the file" as const;
+`,
+        "imports.ts": `import a from "a.svg";
+import b from "icons/a.svg";
+import c from "icons/a.png";
+import d from "icons/big/a.svg";
+import e from "logos/a.svg";
+import f from "logos/a.png";
+import g from "aba";
+import h from "abba";
+import i from "abcba";
+import j from "exact.svg";
+import k from "./file";
+import l from "./other/file";
+import m from "./missing.svg";
+import n from ".svg";
+import o from "svg";
+import { first, second } from "twice/a";
+import { nested } from "outer";
+export const all: never[] = [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, first, second, nested];
+`,
+        "more-patterns.d.ts": `declare module "twice/*" { export const second: 2; }
+declare module "icons/big/*.svg" { const it: "icons/big/*.svg"; export default it; }
+declare module "outer" {
+  import inner from "only/nested.svg";
+  import big from "icons/big/nested.png";
+  export const nested: [typeof inner, typeof big];
+}
+`,
+        "patterns.d.ts": `declare module "*.svg" { const it: "*.svg"; export default it; }
+declare module "icons/*" { const it: "icons/*"; export default it; }
+declare module "icons/*.svg" { const it: "icons/*.svg"; export default it; }
+declare module "icons/big/*" { const it: "icons/big/*"; export default it; }
+declare module "logos/*.svg" { const it: "logos/*.svg"; export default it; }
+declare module "logos/*" { const it: "logos/*"; export default it; }
+declare module "ab*ba" { const it: "ab*ba"; export default it; }
+declare module "exact.svg" { const it: "exact.svg"; export default it; }
+declare module "*/file" { const it: "*/file"; export default it; }
+declare module "twice/*" { export const first: 1; }
+`,
+        "requires.ts": `import a = require("a.svg");
+import b = require("icons/a.svg");
+import type e = require("logos/a.svg");
+import g = require("aba");
+export const all: never[] = [a.default, b.default, null! as typeof e.default, g];
+`,
+        "types.ts": `import type a from "a.svg";
+import type { default as b } from "icons/a.svg";
+type D = typeof import("icons/big/a.svg").default;
+type G = typeof import("aba");
+export { default as e } from "logos/a.svg";
+export * from "twice/b";
+export const all: never[] = [null! as typeof a, null! as typeof b, null! as D, null! as G, import("icons/a.png")];
+`,
+      });
+      const [{ stdout, exitCode }, ...others] = await Promise.all(
+        [8, 2, 1].map(threads => check(dir, ["--threads", String(threads)])),
+      );
+      expect(stdout).toMatchInlineSnapshot(`
+        "augments.ts(2,13): error TS2614: Module '"*.svg"' has no exported member 'added'. Did you mean to use 'import added from "*.svg"' instead?
+        augments.ts(7,30): error TS2322: Type '"*.svg"' is not assignable to type 'never'.
+        augments.ts(7,33): error TS2322: Type '"added to a.svg"' is not assignable to type 'never'.
+        augments.ts(7,40): error TS2322: Type '"*.svg"' is not assignable to type 'never'.
+        augments.ts(7,43): error TS2322: Type 'any' is not assignable to type 'never'.
+        augments.ts(7,52): error TS2322: Type '1' is not assignable to type 'never'.
+        augments.ts(7,59): error TS2322: Type '3' is not assignable to type 'never'.
+        augments.ts(7,66): error TS2322: Type '3' is not assignable to type 'never'.
+        imports.ts(7,15): error TS2307: Cannot find module 'aba' or its corresponding type declarations.
+        imports.ts(15,15): error TS2307: Cannot find module 'svg' or its corresponding type declarations.
+        imports.ts(18,30): error TS2322: Type '"*.svg"' is not assignable to type 'never'.
+        imports.ts(18,33): error TS2322: Type '"icons/*"' is not assignable to type 'never'.
+        imports.ts(18,36): error TS2322: Type '"icons/*"' is not assignable to type 'never'.
+        imports.ts(18,39): error TS2322: Type '"icons/big/*.svg"' is not assignable to type 'never'.
+        imports.ts(18,42): error TS2322: Type '"logos/*.svg"' is not assignable to type 'never'.
+        imports.ts(18,45): error TS2322: Type '"logos/*"' is not assignable to type 'never'.
+        imports.ts(18,48): error TS2322: Type 'any' is not assignable to type 'never'.
+        imports.ts(18,51): error TS2322: Type '"ab*ba"' is not assignable to type 'never'.
+        imports.ts(18,54): error TS2322: Type '"ab*ba"' is not assignable to type 'never'.
+        imports.ts(18,57): error TS2322: Type '"exact.svg"' is not assignable to type 'never'.
+        imports.ts(18,60): error TS2322: Type '"the file"' is not assignable to type 'never'.
+        imports.ts(18,63): error TS2322: Type '"*/file"' is not assignable to type 'never'.
+        imports.ts(18,66): error TS2322: Type '"*.svg"' is not assignable to type 'never'.
+        imports.ts(18,69): error TS2322: Type '"*.svg"' is not assignable to type 'never'.
+        imports.ts(18,72): error TS2322: Type 'any' is not assignable to type 'never'.
+        imports.ts(18,75): error TS2322: Type '1' is not assignable to type 'never'.
+        imports.ts(18,82): error TS2322: Type '2' is not assignable to type 'never'.
+        imports.ts(18,90): error TS2322: Type '["*.svg", "icons/big/*"]' is not assignable to type 'never'.
+        requires.ts(1,1): error TS1202: Import assignment cannot be used when targeting ECMAScript modules. Consider using 'import * as ns from "mod"', 'import {a} from "mod"', 'import d from "mod"', or another module format instead.
+        requires.ts(2,1): error TS1202: Import assignment cannot be used when targeting ECMAScript modules. Consider using 'import * as ns from "mod"', 'import {a} from "mod"', 'import d from "mod"', or another module format instead.
+        requires.ts(4,1): error TS1202: Import assignment cannot be used when targeting ECMAScript modules. Consider using 'import * as ns from "mod"', 'import {a} from "mod"', 'import d from "mod"', or another module format instead.
+        requires.ts(4,20): error TS2307: Cannot find module 'aba' or its corresponding type declarations.
+        requires.ts(5,30): error TS2322: Type '"*.svg"' is not assignable to type 'never'.
+        requires.ts(5,41): error TS2322: Type '"icons/*"' is not assignable to type 'never'.
+        requires.ts(5,52): error TS2322: Type '"logos/*.svg"' is not assignable to type 'never'.
+        requires.ts(5,79): error TS2322: Type 'any' is not assignable to type 'never'.
+        types.ts(4,24): error TS2307: Cannot find module 'aba' or its corresponding type declarations.
+        types.ts(7,30): error TS2322: Type '"*.svg"' is not assignable to type 'never'.
+        types.ts(7,49): error TS2322: Type '"icons/*"' is not assignable to type 'never'.
+        types.ts(7,68): error TS2322: Type '"icons/big/*.svg"' is not assignable to type 'never'.
+        types.ts(7,80): error TS2322: Type 'any' is not assignable to type 'never'.
+        types.ts(7,92): error TS2322: Type 'Promise<typeof import("icons/*")>' is not assignable to type 'never'."
+      `);
+      for (const other of others) expect(other.stdout).toBe(stdout);
+      expect(exitCode).toBe(1);
+    });
+
+    // `cloneTypeAsModuleType` and `combineValueAndTypeSymbols` make a symbol for an alias. Which aliases get one is
+    // decided before the first file is checked: from the symbol tables, or where `export =` is an alias, by resolving it.
+    test("`import * as ns` and names imported from `export =`", async () => {
+      using dir = project({
+        "ambient.d.ts": `declare module "emitter" {
+  class Emitter { on(): "on"; }
+  namespace Emitter { interface Options { o: 1 } const flag: "flag"; }
+  export = Emitter;
+}
+declare module "settings" {
+  const settings: { value: "value"; both: "the value both" };
+  namespace settings { type both = "the type both"; }
+  export = settings;
+}
+declare module "with a namespace import" {
+  import * as all from "emitter";
+  import { Options, flag } from "emitter";
+  import { both, value } from "settings";
+  export const result: [typeof all, Options, typeof flag, both, typeof both, typeof value];
+}
+`,
+        "cls.d.ts": `declare class C { m(): "m"; static s: "s"; }
+declare namespace C { interface I { i: 1 } }
+export = C;
+`,
+        "es.ts": `export const a = 1;
+export type T = "T of es";
+export default 2;
+`,
+        "fn.d.ts": `declare function fn(): "fn";
+declare namespace fn { const prop: "prop"; type Ty = "Ty"; }
+export = fn;
+`,
+        "names.ts": `import { prop, Ty } from "./fn";
+import { I, s } from "./cls";
+import { value, both, only } from "./obj";
+import { both as both2, only as only2, value as value2, none } from "./through";
+import { a as starA, T as StarT } from "./star";
+import { x } from "./ring2";
+import { Options, flag } from "emitter";
+import { both as both3 } from "settings";
+import { default as d } from "./obj";
+export const values: never[] = [prop, s, value, both, both2, value2, none, starA, x, flag, both3, d];
+export const types: never[] = [null! as Ty, null! as I, null! as both, null! as only, null! as both2, null! as only2, null! as StarT, null! as Options, null! as both3];
+export const notValues = [only, only2, I];
+`,
+        "namespaces.ts": `import * as es from "./es";
+import * as fn from "./fn";
+import * as cls from "./cls";
+import * as obj from "./obj";
+import * as through from "./through";
+import * as star from "./star";
+import * as ring from "./ring1";
+import * as missing from "./missing";
+import * as emitter from "emitter";
+import { a, T } from "./es";
+export const all: never[] = [es, fn, cls, obj, through, star, ring, missing, emitter, a, null! as T];
+export const members: never[] = [es.a, es.default, fn.prop, fn(), new cls(), cls.s, obj.value, through.both, star.a];
+export const types: never[] = [null! as es.T, null! as fn.Ty, null! as cls.I, null! as obj.both, null! as through.only, null! as star.T];
+`,
+        "obj.d.ts": `declare const obj: { value: "value"; both: "the value both" };
+declare namespace obj { type both = "the type both"; type only = "only a type"; }
+export = obj;
+`,
+        "plain.ts": `import two, { a, type T } from "./es";
+import { result } from "with a namespace import";
+export const all: never[] = [two, a, null! as T, result];
+`,
+        "reexports.ts": `export { both, only, value } from "./obj";
+export { both as again } from "./through";
+export * as ns from "./fn";
+export * from "./cls";
+import * as self from "./reexports";
+export const all: never[] = [self, self.both, self.again, self.ns, null! as self.both, null! as self.only];
+`,
+        "ring1.d.ts": `import other = require("./ring2");
+export = other;
+`,
+        "ring2.d.ts": `import other = require("./ring1");
+export = other;
+`,
+        "star.d.ts": `import * as es from "./es";
+export = es;
+`,
+        "through.d.ts": `import obj = require("./obj");
+export = obj;
+`,
+      });
+      const [{ stdout, exitCode }, ...others] = await Promise.all(
+        [8, 2, 1].map(threads => check(dir, ["--threads", String(threads)])),
+      );
+      expect(stdout).toMatchInlineSnapshot(`
+        "names.ts(4,57): error TS2305: Module '"./through"' has no exported member 'none'.
+        names.ts(6,10): error TS2305: Module '"./ring2"' has no exported member 'x'.
+        names.ts(10,33): error TS2322: Type '"prop"' is not assignable to type 'never'.
+        names.ts(10,39): error TS2322: Type '"s"' is not assignable to type 'never'.
+        names.ts(10,42): error TS2322: Type '"value"' is not assignable to type 'never'.
+        names.ts(10,49): error TS2322: Type '"the value both"' is not assignable to type 'never'.
+        names.ts(10,55): error TS2322: Type '"the value both"' is not assignable to type 'never'.
+        names.ts(10,62): error TS2322: Type '"value"' is not assignable to type 'never'.
+        names.ts(10,70): error TS2322: Type 'any' is not assignable to type 'never'.
+        names.ts(10,76): error TS2322: Type 'number' is not assignable to type 'never'.
+        names.ts(10,83): error TS2322: Type 'any' is not assignable to type 'never'.
+        names.ts(10,86): error TS2322: Type '"flag"' is not assignable to type 'never'.
+        names.ts(10,92): error TS2322: Type '"the value both"' is not assignable to type 'never'.
+        names.ts(10,99): error TS2322: Type '{ value: "value"; both: "the value both"; }' is not assignable to type 'never'.
+        names.ts(11,32): error TS2322: Type '"Ty"' is not assignable to type 'never'.
+        names.ts(11,45): error TS2322: Type 'I' is not assignable to type 'never'.
+        names.ts(11,57): error TS2322: Type '"the type both"' is not assignable to type 'never'.
+        names.ts(11,72): error TS2322: Type '"only a type"' is not assignable to type 'never'.
+        names.ts(11,87): error TS2322: Type '"the type both"' is not assignable to type 'never'.
+        names.ts(11,103): error TS2322: Type '"only a type"' is not assignable to type 'never'.
+        names.ts(11,119): error TS2322: Type '"T of es"' is not assignable to type 'never'.
+        names.ts(11,135): error TS2322: Type 'Options' is not assignable to type 'never'.
+        names.ts(11,153): error TS2322: Type '"the type both"' is not assignable to type 'never'.
+        names.ts(12,27): error TS2693: 'only' only refers to a type, but is being used as a value here.
+        names.ts(12,33): error TS2693: 'only2' only refers to a type, but is being used as a value here.
+        names.ts(12,40): error TS2693: 'I' only refers to a type, but is being used as a value here.
+        namespaces.ts(8,26): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        namespaces.ts(11,30): error TS2322: Type 'typeof import("<dir>/es")' is not assignable to type 'never'.
+        namespaces.ts(11,34): error TS2322: Type 'typeof fn' is not assignable to type 'never'.
+        namespaces.ts(11,38): error TS2322: Type 'typeof C' is not assignable to type 'never'.
+        namespaces.ts(11,43): error TS2322: Type '{ value: "value"; both: "the value both"; }' is not assignable to type 'never'.
+        namespaces.ts(11,48): error TS2322: Type '{ value: "value"; both: "the value both"; }' is not assignable to type 'never'.
+        namespaces.ts(11,57): error TS2322: Type 'typeof import("<dir>/es")' is not assignable to type 'never'.
+        namespaces.ts(11,63): error TS2322: Type 'any' is not assignable to type 'never'.
+        namespaces.ts(11,69): error TS2322: Type 'any' is not assignable to type 'never'.
+        namespaces.ts(11,78): error TS2322: Type 'typeof Emitter' is not assignable to type 'never'.
+        namespaces.ts(11,87): error TS2322: Type 'number' is not assignable to type 'never'.
+        namespaces.ts(11,90): error TS2322: Type '"T of es"' is not assignable to type 'never'.
+        namespaces.ts(12,34): error TS2322: Type 'number' is not assignable to type 'never'.
+        namespaces.ts(12,40): error TS2322: Type 'number' is not assignable to type 'never'.
+        namespaces.ts(12,52): error TS2322: Type '"prop"' is not assignable to type 'never'.
+        namespaces.ts(12,61): error TS2349: This expression is not callable.
+          Type 'typeof fn' has no call signatures.
+        namespaces.ts(12,61): error TS2322: Type 'any' is not assignable to type 'never'.
+        namespaces.ts(12,67): error TS2322: Type 'any' is not assignable to type 'never'.
+        namespaces.ts(12,71): error TS2351: This expression is not constructable.
+          Type 'typeof C' has no construct signatures.
+        namespaces.ts(12,78): error TS2322: Type '"s"' is not assignable to type 'never'.
+        namespaces.ts(12,85): error TS2322: Type '"value"' is not assignable to type 'never'.
+        namespaces.ts(12,96): error TS2322: Type '"the value both"' is not assignable to type 'never'.
+        namespaces.ts(12,110): error TS2322: Type 'number' is not assignable to type 'never'.
+        namespaces.ts(13,32): error TS2322: Type '"T of es"' is not assignable to type 'never'.
+        namespaces.ts(13,47): error TS2322: Type '"Ty"' is not assignable to type 'never'.
+        namespaces.ts(13,63): error TS2322: Type 'I' is not assignable to type 'never'.
+        namespaces.ts(13,79): error TS2322: Type '"the type both"' is not assignable to type 'never'.
+        namespaces.ts(13,98): error TS2322: Type '"only a type"' is not assignable to type 'never'.
+        namespaces.ts(13,121): error TS2322: Type '"T of es"' is not assignable to type 'never'.
+        plain.ts(3,30): error TS2322: Type 'number' is not assignable to type 'never'.
+        plain.ts(3,35): error TS2322: Type 'number' is not assignable to type 'never'.
+        plain.ts(3,38): error TS2322: Type '"T of es"' is not assignable to type 'never'.
+        plain.ts(3,50): error TS2322: Type '[typeof Emitter, Options, "flag", "the type both", "the value both", "value"]' is not assignable to type 'never'.
+        reexports.ts(3,21): error TS2498: Module '"<dir>/fn"' uses 'export =' and cannot be used with 'export *'.
+        reexports.ts(4,15): error TS2498: Module '"<dir>/cls"' uses 'export =' and cannot be used with 'export *'.
+        reexports.ts(6,30): error TS2322: Type 'typeof import("<dir>/reexports")' is not assignable to type 'never'.
+        reexports.ts(6,36): error TS2322: Type '"the value both"' is not assignable to type 'never'.
+        reexports.ts(6,47): error TS2322: Type '"the value both"' is not assignable to type 'never'.
+        reexports.ts(6,59): error TS2322: Type 'typeof fn' is not assignable to type 'never'.
+        reexports.ts(6,68): error TS2322: Type '"the type both"' is not assignable to type 'never'.
+        reexports.ts(6,88): error TS2322: Type '"only a type"' is not assignable to type 'never'."
+      `);
+      for (const other of others) expect(other.stdout).toBe(stdout);
+      expect(exitCode).toBe(1);
+    });
+
     test("declarations augmented through a chain of two re-exports", async () => {
       using dir = project({
         "aug1.ts": `export {};

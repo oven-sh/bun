@@ -4,13 +4,18 @@ use super::relate::Ternary;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
 use crate::table::Handle;
-use crate::util::{PositionSet, SharedSort};
+use crate::util::SharedSort;
 use smallvec::{SmallVec, smallvec};
 
 #[path = "unlisted_intersections.rs"]
 mod unlisted;
 use unlisted::Constituents;
 pub(super) use unlisted::UnlistedIntersections;
+
+#[path = "intersection_reduction.rs"]
+mod reduction;
+pub use reduction::MEMBER_COUNTS;
+pub(super) use reduction::{MemberCount, Reductions};
 
 /// `thisAssignmentDeclarationKind`, with its location.
 #[derive(Copy, Clone)]
@@ -205,6 +210,20 @@ impl<'s> Resolved<'s> {
         both.fold(0, |any, (a, b)| any | a & b) != 0
     }
 
+    /// Whether a property of one has the name of a property of the other. The names of the one that has fewer are looked
+    /// up in the other.
+    fn shares_a_name_with(&self, other: &Self) -> bool {
+        if !self.may_share_a_name_with(other) {
+            return false;
+        }
+        let (few, many) = match self.shape.props.len() < other.shape.props.len() {
+            true => (self, other),
+            false => (other, self),
+        };
+        let mut few = few.shape.props.iter();
+        few.any(|prop| many.prop(prop.name).is_some())
+    }
+
     #[inline]
     pub fn prop(&self, name: Atom) -> Option<&Prop<'s>> {
         self.position(name).map(|at| &self.shape.props[at])
@@ -393,6 +412,10 @@ impl std::hash::Hash for PropOfConstituent<'_> {
 /// From this length on, a list of properties that is searched for every constituent of a union or an intersection has a
 /// hash set beside it.
 pub(super) const LONG_PROP_LIST: usize = 8;
+
+/// `false`: `reduce_apparent_type_of_intersection_in_progress` also takes an intersection whose apparent type is a union
+/// for another intersection, as before.
+const LEAVES_APPARENT_UNIONS_TO_THEIR_MEMBERS: bool = true;
 
 /// How the looked-up property is used (`getAssignmentTargetKind`, `accessKind`).
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1295,6 +1318,14 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
+    /// Whether `members`, which `members(ty)` has returned, are the stored ones. Those stay where they are for as long as
+    /// the task runs. Others are replaced later, and do not outlive the file.
+    fn has_stored_members(&self, ty: TypeId, members: Members<'p>) -> bool {
+        self.resolved_members(ty).is_some_and(|stored| {
+            std::ptr::eq(stored.resolved, members.resolved) && stored.mapper == members.mapper
+        })
+    }
+
     /// `resolveStructuredTypeMembers` of a type reference that has `ObjectFlagsUnresolvedMembers`:
     /// the members that its class or interface declares. `mapper`: of the members of `ty`.
     /// `None`: `ty` is no such type reference. See `unresolved_members`.
@@ -1462,19 +1493,29 @@ impl<'p, 's> Checker<'p, 's> {
                 // inherits: a `this` type in its place is not the reference that keeps these members.
                 let is_at_base_types = !matches!(self.data(this), TypeData::ThisParam(_))
                     && self.base_types_so_far.iter().any(|it| it.0 == target);
+                let gets_no_declared_index_infos = self.gets_no_declared_index_infos(target, ty);
+                let has_circular_base_types =
+                    (self.p.circular_base_types.get(&self.task, &target)).is_some();
+                // Which shape it gets, and what is in that, follows from what this checker is in the middle of, or from a
+                // note that not every task has.
+                let depends_on_state = is_other_inheriting
+                    || is_at_base_types
+                    || gets_no_declared_index_infos
+                    || has_circular_base_types
+                    || binding == MemberBinding::Early;
+                // For the members of `ty`, also where the shape is there already. For the shape: see below.
+                if depends_on_state {
+                    self.note_state_was_read();
+                }
                 let (key, under) = if declared != ty
                     && (inherits_from_type_arguments
-                        || self
-                            .p
-                            .circular_base_types
-                            .get(&self.task, &target)
-                            .is_some()
+                        || has_circular_base_types
                         || is_other_inheriting
                         || is_at_base_types)
                 {
                     (ty, mapper)
                 } else if binding == MemberBinding::Early
-                    || self.gets_no_declared_index_infos(target, ty)
+                    || gets_no_declared_index_infos
                     || is_other_inheriting
                 {
                     // The declared type is the key of the shape that the others share: its own
@@ -1496,6 +1537,9 @@ impl<'p, 's> Checker<'p, 's> {
                     |c| {
                         if are_provisional && key == ty {
                             c.mark_tainted_from(c.frames.len() - 1);
+                        }
+                        if depends_on_state {
+                            c.note_state_was_read();
                         }
                         let bases = BaseMembers::Inherited;
                         c.build_declared_shape(target, under, binding, bases, Some(key), Some(ty))
@@ -4639,6 +4683,8 @@ impl<'p, 's> Checker<'p, 's> {
             };
         }
         if let Some((shape, stored)) = self.list_unlisted_intersection(ty) {
+            self.tally(MemberCount::IntersectionsListed, 1);
+            self.tally(MemberCount::PropertiesListed, shape.props.len());
             return self.keep_shape(ty, shape, stored);
         }
         let q = Query::Properties(ty);
@@ -4659,6 +4705,7 @@ impl<'p, 's> Checker<'p, 's> {
         let left = self.leave(q);
         let shape = match (waiting, left) {
             (Some(waiting), Ok(stored)) if !is_in_place => {
+                self.tally(MemberCount::IntersectionsLeftUnlisted, 1);
                 return self.leave_unlisted(ty, parts, shape, waiting, stored);
             }
             (Some(waiting), _) => {
@@ -4666,6 +4713,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
             (None, _) => shape,
         };
+        self.tally(MemberCount::IntersectionsListed, 1);
+        self.tally(MemberCount::PropertiesListed, shape.props.len());
         match left {
             Ok(_) if is_in_place => {
                 // `d.resolvedProperties = props`: the list stays as it is, unless an evaluation
@@ -7335,6 +7384,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.never_in_progress.contains(&ty) {
             return false;
         }
+        self.tally(MemberCount::Reduced, 1);
         let scope = self.begin_scope();
         self.never_in_progress.push(ty);
         self.never_in_progress_from.push(self.stack.len());
@@ -7350,8 +7400,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // It lists the properties: while the members of a constituent are in place, the
             // list it assigns lacks them.
-            let from = self.resolution_start;
-            if (members.iter()).any(|&member| self.stack[from..].contains(&Query::Shape(member))) {
+            let mut in_progress = self.stack[self.resolution_start..].iter();
+            if in_progress.any(|q| matches!(q, Query::Shape(of) if members.contains(of))) {
                 self.properties_of_intersection(ty, &members, false);
             } else if self.listing_alias(ty, &members, false).is_some() {
                 // `getReducedType` assigns the list. It is the complete one, and it is kept: a
@@ -7373,7 +7423,10 @@ impl<'p, 's> Checker<'p, 's> {
                 .p
                 .never_intersections
                 .insert(&self.task, ty, is_never, stored),
-            Err(_) => is_never,
+            Err(_) => {
+                self.tally(MemberCount::NotStored, 1);
+                is_never
+            }
         }
     }
 
@@ -7406,6 +7459,16 @@ impl<'p, 's> Checker<'p, 's> {
                 || self.apparent_type(part) != part
         });
         if !is_another_type {
+            return;
+        }
+        // With a member whose apparent type is a union, as that of `U extends A | B`, the result is a union of
+        // intersections. Each is reduced where the union is, and none of them lists the properties of `A | B`.
+        if LEAVES_APPARENT_UNIONS_TO_THEIR_MEMBERS
+            && parts.iter().any(|&part| {
+                let apparent = self.apparent_type(part);
+                self.is_union(apparent)
+            })
+        {
             return;
         }
         self.never_in_progress.push(ty);
@@ -7484,19 +7547,8 @@ impl<'p, 's> Checker<'p, 's> {
                 } else if let Some(members) = self.members(part)
                     && !members.shape().props.is_empty()
                 {
-                    let count = members.shape().props.len();
-                    let shares_a_name = seen.iter().any(|earlier| {
-                        if !members.resolved.may_share_a_name_with(earlier.resolved) {
-                            return false;
-                        }
-                        let (few, many) = match count < earlier.shape().props.len() {
-                            true => (&members, earlier),
-                            false => (earlier, &members),
-                        };
-                        let mut few = few.shape().props.iter();
-                        few.any(|prop| many.resolved.prop(prop.name).is_some())
-                    });
-                    if shares_a_name {
+                    let mut earlier = seen.iter();
+                    if earlier.any(|it| members.resolved.shares_a_name_with(it.resolved)) {
                         return true;
                     }
                     seen.push(members);
@@ -7537,13 +7589,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// `is_apparent`: for `getApparentType(ty)`, in whose classes `this` is `ty`. In those of `ty`
     /// itself it is the class (`resolveTypeReferenceMembers`), so `p?: this["z"]` of `C` asks for
     /// `C["z"]` first and for `ty["z"]` in the reduction of the apparent type.
+    ///
+    /// What is left out is an examination that resolves nothing any more: see check/intersection_reduction.rs.
     fn may_have_never_reduced_property(&mut self, ty: TypeId, is_apparent: bool) -> NeverReduced {
         let TypeData::Intersection(parts) = self.data(ty) else {
             return NeverReduced::No;
         };
         let mut all: SmallVec<[Members<'p>; 4]> = SmallVec::new();
+        // With `ty` for `this`, the members are those of no other intersection.
+        let mut may_be_kept = reduction::ENABLED && !is_apparent;
         for &written in parts.iter() {
             let part = self.apparent_type(written);
+            // `getPropertiesOfType(current)` lists the properties of a constraint that is a union, and so creates them all.
             let part = if self.is_union(part) {
                 self.union_as_object(part)
             } else {
@@ -7558,9 +7615,45 @@ impl<'p, 's> Checker<'p, 's> {
                 self.members(part)
             };
             if let Some(members) = members {
+                may_be_kept = may_be_kept && self.has_stored_members(part, members);
                 all.push(members);
             }
         }
+        let properties = all.iter().map(|members| members.shape().props.len()).sum();
+        self.tally(MemberCount::WithSharedName, 1);
+        self.tally(MemberCount::Constituents, all.len());
+        self.tally(MemberCount::PropertiesOfConstituents, properties);
+        if may_be_kept && properties >= reduction::MIN_PROPERTIES {
+            return self.never_reduced_by_constituents(ty, parts, &all);
+        }
+        self.tally(MemberCount::NothingIsKeptFor, 1);
+        let names = reduction::SharedNames::of(&all);
+        self.examine_shared_properties(ty, parts, &all, is_apparent, &names, None)
+    }
+
+    /// Whether the members of the constituents `parts` of `whole` are what they are in the shape of `whole`, where each has
+    /// `whole` for `this` (`members_of_constituent`).
+    fn is_shape_of_whole(&mut self, whole: TypeId, parts: &[TypeId]) -> bool {
+        parts.iter().all(|&written| {
+            let part = self.apparent_type(written);
+            self.is_deferred(written)
+                || self.is_union(part)
+                || !matches!(self.data(part), TypeData::Tuple { .. })
+                    && self.type_with_this_argument(part, whole) == part
+        })
+    }
+
+    /// `may_have_never_reduced_property`, once the constituents `parts` of `ty` were asked for their members, `all`.
+    /// `names`: `SharedNames::of(all)`. `kept`: see check/intersection_reduction.rs.
+    fn examine_shared_properties(
+        &mut self,
+        ty: TypeId,
+        parts: &[TypeId],
+        all: &[Members<'p>],
+        is_apparent: bool,
+        names: &reduction::SharedNames,
+        mut kept: Option<&mut reduction::Kept>,
+    ) -> NeverReduced {
         // `isLiteralType`, `isPatternLiteralType`
         let is_literal = |c: &Self, t: TypeId| {
             c.is_boolean(t) || c.is_pattern_literal(t) || c.is_every_type_unit(t)
@@ -7578,44 +7671,23 @@ impl<'p, 's> Checker<'p, 's> {
         let mut is_shape_of_whole = is_apparent.then_some(true);
         // What `build_intersection_shape` leaves out where it asks whether the property is optional.
         let is_of_no_member = |c: &Self, prop: &Prop| matches!(prop.source, PropSource::Symbol(sym) if !c.is_member_symbol(sym));
-        let mut seen = crate::util::FxHashSet::<Atom>::default();
         // `prop_set` from `LONG_PROP_LIST` entries on: those, and the ones that come after.
         let mut long_prop_set = crate::util::FxHashSet::<PropOfConstituent<'_>>::default();
-        // FOR SPEED, a name that no later member has is passed over: there is nothing to combine it with, and no later
-        // member asks `seen` for it. A few members are compared pair by pair. The pairs grow with the square of the
-        // members, so for more of them the members that have each name are counted.
-        const FEW_MEMBERS: usize = 8;
-        let mut members_with_name = FxHashMap::<Atom, u32>::default();
-        if all.len() > FEW_MEMBERS {
-            for member in &all {
-                for prop in &member.shape().props {
-                    *members_with_name.entry(prop.name).or_default() += 1;
-                }
-            }
-        }
-        // The positions of the properties of a member that are looked at.
-        let mut shared = PositionSet::default();
-        for (at, &member) in all.iter().enumerate() {
-            let rest = &all[at + 1..];
-            if rest.is_empty() {
-                break;
-            }
-            let props = &member.shape().props;
-            shared.reset(props.len());
-            if all.len() > FEW_MEMBERS {
-                for (position, prop) in props.iter().enumerate() {
-                    if members_with_name.get(&prop.name).is_some_and(|&n| n > 1) {
-                        shared.insert(position);
-                    }
-                }
-            } else {
-                Self::add_positions_of_shared_names(member, rest, &mut shared);
-            }
-            for position in shared.iter() {
-                let prop = &props[position];
-                // Of two members only the first gets here, and all its names are new.
-                if all.len() > 2 && !seen.insert(prop.name) {
-                    continue;
+        for place in 0..names.len() {
+            let holders = names.holders(place);
+            let Some((&(at, position), later_holders)) = holders.split_first() else {
+                continue;
+            };
+            let member = all[at as usize];
+            let prop = &member.shape().props[position as usize];
+            let left_out = (kept.as_deref_mut())
+                .and_then(|kept| self.kept_of_name(kept, place, all, holders))
+                .filter(|it| !it.has_two_symbols || is_shape_of_whole.is_some());
+            let is_examined = left_out.is_none() || reduction::SHADOW;
+            let before = (is_examined && kept.is_some()).then(|| self.begin_name_of_reduction());
+            let of_name = 'name: {
+                if let Some(left_out) = left_out.as_ref().filter(|_| !is_examined) {
+                    break 'name left_out.clone();
                 }
                 // `singleProp` is `prop`, instantiated. With the identity that is `prop` itself.
                 let mut single_copy: Option<Prop<'s>> = None;
@@ -7628,10 +7700,9 @@ impl<'p, 's> Checker<'p, 's> {
                 let mut prop_set: SmallVec<[PropOfConstituent<'_>; 4]> = SmallVec::new();
                 long_prop_set.clear();
                 let mut scope = None;
-                for &later in rest {
-                    let Some(other) = later.resolved.prop(prop.name) else {
-                        continue;
-                    };
+                for &(later, position) in later_holders {
+                    let later = all[later as usize];
+                    let other = &later.shape().props[position as usize];
                     // One property under one mapper is one property, whatever that makes of it.
                     if std::ptr::eq(prop, other) && member.mapper == later.mapper {
                         continue;
@@ -7692,22 +7763,17 @@ impl<'p, 's> Checker<'p, 's> {
                     has_literal = has_literal || is_literal(self, second);
                 }
                 let Some(scope) = scope else {
-                    continue;
+                    break 'name reduction::OfName {
+                        adds: reduction::Adds::Nothing,
+                        has_two_symbols: false,
+                    };
                 };
                 // `createUnionOrIntersectionProperty` resolves the type of a property of two
                 // symbols at once, and defers that of more (`CheckFlagsDeferredType`).
                 let (mut resolved_type, mut is_new) = (None, false);
                 if types.len() == 2 {
-                    let whole = ty;
-                    let of_shape = *is_shape_of_whole.get_or_insert_with(|| {
-                        parts.iter().all(|&written| {
-                            let part = self.apparent_type(written);
-                            self.is_deferred(written)
-                                || self.is_union(part)
-                                || !matches!(self.data(part), TypeData::Tuple { .. })
-                                    && self.type_with_this_argument(part, whole) == part
-                        })
-                    });
+                    let of_shape =
+                        *is_shape_of_whole.get_or_insert_with(|| self.is_shape_of_whole(ty, parts));
                     let known = match of_shape {
                         true => self.p.intersected_props.get(&self.task, &(ty, prop.name)),
                         false => None,
@@ -7727,10 +7793,29 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 let may_be_discriminant =
                     !every.contains(PropFlags::OPTIONAL) && is_non_uniform && has_literal;
-                if some.contains(PropFlags::PRIVATE) || may_be_discriminant && has_one_of_no_member
+                let has_two_symbols = types.len() == 2;
+                let adds = if some.contains(PropFlags::PRIVATE)
+                    || may_be_discriminant && has_one_of_no_member
                 {
-                    asks = true;
+                    reduction::Adds::Question
                 } else if may_be_discriminant {
+                    reduction::Adds::Discriminant(types, resolved_type)
+                } else {
+                    reduction::Adds::Nothing
+                };
+                reduction::OfName {
+                    adds,
+                    has_two_symbols,
+                }
+            };
+            if let (Some(kept), Some(before)) = (kept.as_deref_mut(), before) {
+                let left_out = left_out.as_ref();
+                self.end_name_of_reduction(ty, kept, place, before, &of_name, left_out);
+            }
+            match of_name.adds {
+                reduction::Adds::Nothing => {}
+                reduction::Adds::Question => asks = true,
+                reduction::Adds::Discriminant(types, resolved_type) => {
                     discriminants.push((types, resolved_type));
                 }
             }
@@ -7749,35 +7834,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         NeverReduced::No
-    }
-
-    /// Adds the positions of the properties of `member` whose name one of `others` has too. Of two members, the names of
-    /// the one that has fewer are looked up in the other.
-    fn add_positions_of_shared_names(
-        member: Members<'p>,
-        others: &[Members<'p>],
-        positions: &mut PositionSet,
-    ) {
-        let props = &member.shape().props;
-        for other in others {
-            if !member.resolved.may_share_a_name_with(other.resolved) {
-                continue;
-            }
-            let of_other = &other.shape().props;
-            if of_other.len() < props.len() {
-                for prop in of_other {
-                    if let Some(position) = member.resolved.position(prop.name) {
-                        positions.insert(position);
-                    }
-                }
-            } else {
-                for (position, prop) in props.iter().enumerate() {
-                    if other.resolved.prop(prop.name).is_some() {
-                        positions.insert(position);
-                    }
-                }
-            }
-        }
     }
 
     /// An intersection, or `ObjectFlagsContainsIntersections`.
@@ -8934,6 +8990,7 @@ pub(super) fn members_among(declarations: &[(FileId, Decl)]) -> SmallVec<[(FileI
 }
 
 /// What `Checker::may_have_never_reduced_property` has found.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum NeverReduced {
     No,
     Yes,

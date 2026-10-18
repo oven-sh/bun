@@ -3029,20 +3029,12 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = match hir[node].kind {
             TypeNodeKind::Array(element) => {
                 let element = self.type_from_node(file, element);
-                if readonly {
-                    self.readonly_array_of(element)
-                } else {
-                    self.array_of(element)
-                }
+                self.array_as(element, readonly, FirstRequest::FROM_TYPE_NODE)
             }
             // `createTypeReferenceEx(target, elementTypes, ..)`: the target of `[...X[]]`.
             TypeNodeKind::Tuple(elems) if array.is_some() => {
                 let element = self.type_from_tuple_element(file, hir[elems.at(0)]);
-                if readonly {
-                    self.readonly_array_of(element)
-                } else {
-                    self.array_of(element)
-                }
+                self.array_as(element, readonly, FirstRequest::FROM_TYPE_NODE)
             }
             TypeNodeKind::Tuple(elems) => {
                 let mut types = self.tuple_element_types_from_nodes(file, elems);
@@ -3059,7 +3051,7 @@ impl<'p, 's> Checker<'p, 's> {
                         (*ty, *flag) = (element, ElemFlags::REST.with_label(label));
                     }
                 }
-                self.normalized_tuple(&types, &flags, readonly)
+                self.normalized_tuple_as(&types, &flags, readonly, FirstRequest::FROM_TYPE_NODE)
             }
             _ => TypeId::ERROR,
         };
@@ -3092,7 +3084,9 @@ impl<'p, 's> Checker<'p, 's> {
             .as_ref()
             .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
         let first_new_type_id = self.types().first_new_type_id();
-        let ty = self.deferred_type_reference(reference, alias);
+        let ty = (self.types()).as_first_request(FirstRequest::FROM_TYPE_NODE, || {
+            self.deferred_type_reference(reference, alias)
+        });
         self.types().mark_from_type_node(ty, first_new_type_id);
         ty
     }
@@ -3953,7 +3947,7 @@ impl<'p, 's> Checker<'p, 's> {
         // the type created here. The target of an alias reference is created by instantiation and gets no flag.
         self.declared_type(sym);
         let first_new_type_id = self.types().first_new_type_id();
-        let ty = self.type_reference(sym, args);
+        let ty = self.class_or_interface_reference(sym, args, FirstRequest::FROM_TYPE_NODE);
         self.types().mark_from_type_node(ty, first_new_type_id);
         ty
     }
@@ -4089,6 +4083,35 @@ impl<'p, 's> Checker<'p, 's> {
         self.type_reference_type(sym, args, None)
     }
 
+    /// `getTypeFromClassOrInterfaceReference`. `first_request`: see `Types::as_first_request`.
+    fn class_or_interface_reference(
+        &mut self,
+        sym: Sym,
+        args: &[TypeId],
+        first_request: FirstRequest,
+    ) -> TypeId {
+        let declared = self.declared_type(sym);
+        let params = self.local_type_params_of_symbol(sym);
+        if params.is_empty() {
+            return declared;
+        }
+        let filled = self.fill_type_args(&params, args);
+        // Only its own type parameters get type arguments. The outer type parameters of the
+        // declaration are passed through unchanged.
+        let all = self.type_arguments(declared);
+        let outer = &all[..all.len().saturating_sub(params.len())];
+        let args = if outer.is_empty() {
+            filled
+        } else {
+            outer.iter().copied().chain(filled).collect()
+        };
+        let key = TypeKey::Ref {
+            target: sym,
+            args: &args,
+        };
+        self.intern_key_as(key, first_request)
+    }
+
     /// `getTypeReferenceType`. `alias`: the alias passed to `getTypeAliasInstantiation`, where
     /// `sym` is a generic type alias.
     pub(super) fn type_reference_type(
@@ -4099,25 +4122,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         let flags = self.files().flags(sym);
         if flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE) {
-            let declared = self.declared_type(sym);
-            let params = self.local_type_params_of_symbol(sym);
-            if params.is_empty() {
-                return declared;
-            }
-            let filled = self.fill_type_args(&params, args);
-            // `getTypeFromClassOrInterfaceReference`: only its own type parameters get type
-            // arguments. The outer type parameters of the declaration are passed through unchanged.
-            let all = self.type_arguments(declared);
-            let outer = &all[..all.len().saturating_sub(params.len())];
-            let args = if outer.is_empty() {
-                filled
-            } else {
-                outer.iter().copied().chain(filled).collect()
-            };
-            return self.intern_key(TypeKey::Ref {
-                target: sym,
-                args: &args,
-            });
+            return self.class_or_interface_reference(sym, args, FirstRequest::NONE);
         }
         if flags.contains(SymFlags::TYPE_ALIAS) {
             let (declared, has_no_type_parameters) = self.type_alias_links(sym);

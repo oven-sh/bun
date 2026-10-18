@@ -14,7 +14,7 @@
 //!   table, so the list is the same whenever it is made, whatever is in progress by then.
 //! - The properties wait only if the list would have been stored: the query ended without a cycle or a taint and no
 //!   counter moved. Otherwise the list is made at once, and goes the way it went before.
-//! - The members of a constituent are kept by reference, so they have to be the stored ones (`are_members_stored`): others
+//! - The members of a constituent are kept by reference, so they have to be the stored ones (`has_stored_members`): others
 //!   do not outlive the file.
 //! - The list of some intersections is noted for `Program::validate` when it is assigned (`listing_alias`). Those are listed.
 //! - A task whose entries another task reads lists as before (`Task::is_read_later`). Another task would otherwise find
@@ -219,16 +219,8 @@ impl<'p, 's> Checker<'p, 's> {
             && constituents.len() <= MOST_CONSTITUENTS
             // Two properties of one constituent that have one name are combined as well.
             && (constituents.iter()).all(|it| it.members.resolved.has_distinct_names())
-            && constituents.iter().all(|it| self.are_members_stored(it))
+            && (constituents.iter()).all(|it| self.has_stored_members(it.asked, it.members))
             && self.listing_alias(whole, parts, false).is_none()
-    }
-
-    fn are_members_stored(&self, constituent: &Constituent<'p>) -> bool {
-        let members = constituent.members;
-        self.resolved_members(constituent.asked)
-            .is_some_and(|stored| {
-                std::ptr::eq(stored.resolved, members.resolved) && stored.mapper == members.mapper
-            })
     }
 
     /// The properties of the intersection `ty` of `parts` stay in `constituents`. `combined`, `constituents`: what

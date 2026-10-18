@@ -44,6 +44,66 @@ test.concurrent.skipIf(!tsc)("one thread enters every cycle where `tsc --singleT
   expect(ours).toEqual(theirs);
 });
 
+/**
+ * `depth` layers of `width` modules. Each re-exports two modules of the layer below with `export *`, and imports a name
+ * and a namespace from them. The first 8 of a layer are rings of two, with an alias that goes round. Some export a
+ * default that does not exist, which the module above imports. The lowest layer imports from an ambient module.
+ */
+function modulesInLayers(width: number, depth: number) {
+  const files: Record<string, string> = {
+    "ambient.d.ts": `declare module "hub" { export { spoke as viaHub } from "spoke"; export * from "spoke"; }\ndeclare module "spoke" { export const spoke: "spoke"; export default missingInSpoke; }\n`,
+  };
+  for (let level = 0; level < depth; level++) {
+    for (let i = 0; i < width; i++) {
+      const name = `l${level}_${i}`;
+      const [below, other, partner] = [`l${level - 1}_${i}`, `l${level - 1}_${(i * 7 + level) % width}`, i ^ 1];
+      const lines = [`export const ${name} = "${name}" as const;`, `export type L${level}_${i} = ${level};`];
+      const read = [name];
+      // Every other layer has a `shared` of its own, which hides those of the two modules below.
+      if (level % 2 === 0) lines.push(`export const shared = "shared by ${name}" as const;`);
+      if (level > 0) {
+        lines.push(`export * from "./${below}";`, `export * from "./${other}";`);
+        lines.push(`import { ${below} as below, l0_${i} as lowest, type L0_${i} } from "./${below}";`);
+        lines.push(`import * as ns from "./${other}";`);
+        read.push("below", "lowest", `null! as L0_${i}`, "ns.shared", `ns.${other}`);
+      } else {
+        lines.push(`import { viaHub, spoke } from "hub";`);
+        read.push("viaHub", "spoke");
+      }
+      if (i < 8) {
+        lines.push(`import { l${level}_${partner} as partner } from "./l${level}_${partner}";`);
+        lines.push(`export { ring${level}_${partner} as ring${level}_${i} } from "./l${level}_${partner}";`);
+        read.push("partner");
+      }
+      if (i % 9 === 4) lines.push(`export default missing${level}_${i};`);
+      if (i % 9 === 4 && level > 0) {
+        lines.push(`import fromBelow from "./${below}";`);
+        read.push("fromBelow");
+      }
+      // `never` puts the types in the messages.
+      lines.push(`export const read${level}_${i}: never[] = [${read.join(", ")}];`);
+      files[`${name}.ts`] = lines.join("\n") + "\n";
+    }
+  }
+  return files;
+}
+
+// What an alias and an `export *` lead to is found before the first file is checked: layer by layer of the import graph,
+// 64 rings of modules to a task, and a layer begins when the one below is done. A layer here has 68 rings.
+test.concurrent.skipIf(!tsc)("aliases through layers of modules, on any number of threads", async () => {
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": tsconfig,
+    ...modulesInLayers(72, isDebug || isASAN ? 3 : 5),
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    ...[1, 2, 3, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  for (const code of ["TS2303", "TS2304", "TS2308", "TS2322"]) expect(theirs.join("\n")).toContain(code);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
 /** The error lines of `cmd`, which are in the format of `tsc --pretty false`, by line of `a.ts`. */
 async function errorsOf(cmd: string[], cwd: string) {
   await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });

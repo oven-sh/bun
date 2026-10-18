@@ -293,6 +293,7 @@ fn run(args: &[String]) {
                 split_publishes_everything: has("--split-publishes-everything"),
                 checkers: number("--checkers=", defaults.checkers),
                 reproduces_symbol_ids: defaults.reproduces_symbol_ids,
+                orders_types_by_content: defaults.orders_types_by_content || has("--content-order"),
                 projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
                 after_file_is_for_checked_files: defaults.after_file_is_for_checked_files,
                 checks_only_named: defaults.checks_only_named,
@@ -538,6 +539,11 @@ fn run(args: &[String]) {
                         .map(|(name, count)| format!("{name} {count}"))
                         .collect();
                     error_line!("inference walks: {}", walks.join(", "));
+                    let members = bun_sema::check::MEMBER_COUNTS.iter();
+                    let members: Vec<String> = (members.zip(report.members))
+                        .map(|(name, count)| format!("{name} {count}"))
+                        .collect();
+                    error_line!("members: {}", members.join(", "));
                     let by_step = report.steps.iter().map(|step| step.entries.published);
                     let by_step: Vec<String> = by_step.map(|n| n.to_string()).collect();
                     error_line!("entries published by step: {}", by_step.join(" "));

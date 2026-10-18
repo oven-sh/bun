@@ -634,7 +634,7 @@ impl<'p, 's> Checker<'p, 's> {
                 shortcut = None;
             }
         }
-        self.union_of_type_set(types, members, shortcut)
+        self.union_of_type_set(types, members, shortcut, FirstRequest::NONE)
     }
 
     /// The members of `types`, each once, by id.
@@ -647,12 +647,13 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The end of `getUnionTypeWorker`: the union of `members`, what is left of the `typeSet` of
-    /// `actual`. They are in order if there is a `shortcut`.
+    /// `actual`. They are in order if there is a `shortcut`. `first_request`: see `Types::as_first_request`.
     fn union_of_type_set(
         &mut self,
         actual: &[TypeId],
         mut members: Flat,
         shortcut: Option<Shortcut>,
+        first_request: FirstRequest,
     ) -> TypeId {
         let is_total_order = match shortcut {
             Some(shortcut) => {
@@ -666,7 +667,9 @@ impl<'p, 's> Checker<'p, 's> {
         if members.is_empty() {
             return TypeId::NEVER;
         }
-        let union = self.union_of_named_unions(actual, &members);
+        let union = (self.types()).as_first_request(first_request, || {
+            self.union_of_named_unions(actual, &members)
+        });
         if is_total_order {
             self.note_sorted_runs(union, actual, &members, shortcut);
         }
@@ -853,12 +856,12 @@ impl<'p, 's> Checker<'p, 's> {
         if shortcut.is_some() && members.len() != all && !self.may_lose_members(actual) {
             shortcut = None;
         }
-        let first_new_type_id = self.types().first_new_type_id();
+        let first_request = match includes_removed_pattern {
+            true => FirstRequest::WITHOUT_PRIMITIVE_UNION,
+            false => FirstRequest::NONE,
+        };
         // Without a shortcut, they were ordered by id up to here.
-        let union = self.union_of_type_set(actual, members, shortcut);
-        if includes_removed_pattern && self.types().is_new_since(union, first_new_type_id) {
-            self.types().mark_without_primitive_union(union);
-        }
+        let union = self.union_of_type_set(actual, members, shortcut, first_request);
         (union, inspected)
     }
 
@@ -1288,7 +1291,7 @@ impl<'p, 's> Checker<'p, 's> {
             .map(|(&m, _)| m)
             .collect();
         let shortcut = self.order_as_in(union, &mut kept);
-        self.union_of_type_set(types, kept, shortcut)
+        self.union_of_type_set(types, kept, shortcut, FirstRequest::NONE)
     }
 
     /// `removeSubtypes`, keyProperty: the first property of `ty` whose type is a unit type, and
@@ -1349,25 +1352,26 @@ impl<'p, 's> Checker<'p, 's> {
                                 new_origin = OriginKey::Union(&left);
                             }
                         }
-                        let first_new_type_id = self.types().first_new_type_id();
-                        let filtered = self.types().intern_key_with(
-                            TypeKey::Union(&kept),
-                            &ProvenanceKey {
-                                alias: None,
-                                origin: new_origin,
-                                is_enum: false,
-                                stored_under: None,
-                                is_array_literal: false,
-                                is_array_pattern: false,
-                                has_other_instantiation: false,
-                            },
-                        );
                         // `ObjectFlagsPrimitiveUnion` is forwarded.
-                        if self.types().is_new_since(filtered, first_new_type_id)
-                            && !self.is_primitive_union(ty)
-                        {
-                            self.types().mark_without_primitive_union(filtered);
-                        }
+                        let first_request = match self.is_primitive_union(ty) {
+                            true => FirstRequest::NONE,
+                            false => FirstRequest::WITHOUT_PRIMITIVE_UNION,
+                        };
+                        let types = self.types();
+                        let filtered = types.as_first_request(first_request, || {
+                            types.intern_key_with(
+                                TypeKey::Union(&kept),
+                                &ProvenanceKey {
+                                    alias: None,
+                                    origin: new_origin,
+                                    is_enum: false,
+                                    stored_under: None,
+                                    is_array_literal: false,
+                                    is_array_pattern: false,
+                                    has_other_instantiation: false,
+                                },
+                            )
+                        });
                         self.note_part(filtered, ty);
                         filtered
                     }
@@ -1816,8 +1820,14 @@ impl<'p, 's> Checker<'p, 's> {
             self.get_symbol_id(alias);
         }
         if includes & tf::UNION == 0 {
-            let created =
-                self.intern_key_with_alias(TypeKey::Intersection(&set), alias, OriginKey::None);
+            let first_request = match is_constrained_type_variable {
+                _ if no_constraint_reduction || set.len() != 2 => FirstRequest::NONE,
+                true => FirstRequest::CONSTRAINED_TYPE_VARIABLE,
+                false => FirstRequest::NO_CONSTRAINED_TYPE_VARIABLE,
+            };
+            let created = (self.types()).as_first_request(first_request, || {
+                self.intern_key_with_alias(TypeKey::Intersection(&set), alias, OriginKey::None)
+            });
             if !no_constraint_reduction && set.len() == 2 {
                 self.types()
                     .set_constrained_type_variable(created, is_constrained_type_variable);

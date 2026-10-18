@@ -13,6 +13,12 @@ use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
 use smallvec::SmallVec;
 use std::ops::ControlFlow;
 
+/// `false`: `type_of_property_access` reduces the type on the left before it takes its apparent type, as before.
+const REDUCES_NO_LEFT_TYPE: bool = true;
+
+/// It does that as well. It is a panic that names the type and the file if the result is another type. For debugging.
+const CHECKS_LEFT_TYPE_REDUCED: bool = false;
+
 /// See `Checker::pattern_that_may_expect`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum PatternKind {
@@ -1104,7 +1110,19 @@ impl<'p, 's> Checker<'p, 's> {
                 .map(|ty| (ty, Found::Property)),
             found => found,
         };
-        let apparent = self.reduced_apparent_type(receiver);
+        // `getPropertyOfType(apparentType, ..)` reduces the apparent type, and nothing reduces `leftType`. To reduce
+        // `U & { id: string }` lists the properties of the constraint of `U`, which creates them.
+        let apparent = if REDUCES_NO_LEFT_TYPE {
+            if !self.never_in_progress.is_empty() {
+                self.reduce_apparent_type_of_intersection_in_progress(access.apparent);
+            }
+            self.reduced(access.apparent)
+        } else {
+            self.reduced_apparent_type(receiver)
+        };
+        if CHECKS_LEFT_TYPE_REDUCED && self.reduced_apparent_type(receiver) != apparent {
+            self.fact_differs_for("the reduced apparent type of a left type", &[receiver]);
+        }
         let Some((declared, how)) = found else {
             // A cycle whose head is this expression or a caller: the members are not all known. One
             // that began and ended in the lookup, as two interfaces that extend each other, is

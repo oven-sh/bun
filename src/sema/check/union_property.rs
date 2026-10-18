@@ -24,7 +24,7 @@
 //! - A member about which more than that is needed has no facts, and is asked each time.
 //! - The members that are visited are visited in the order of the union.
 
-use super::shape::{LONG_PROP_LIST, PropertyHolder, is_plain_object};
+use super::shape::{LONG_PROP_LIST, MemberCount, PropertyHolder, is_plain_object};
 use super::shortcuts::{TypeNumbers, task_fact};
 use super::*;
 use crate::util::{FxHashSet, PositionSet};
@@ -44,6 +44,13 @@ const MIN_MEMBERS_FOR_SUMMARY: usize = 128;
 /// A name with more holders than this is looked up in every member. The holders are those in any union: to find one among
 /// the members takes about 2 instructions a member, to visit a member that has facts and not the name about 50.
 const MOST_HOLDERS_TO_FIND: usize = 16;
+
+/// `false`: `add_member_property` copies every property before it compares it with the first, as before.
+const COMPARES_WITHOUT_A_COPY: bool = true;
+
+/// It makes the copy as well. It is a panic that names the member and the file if the copy is not equal to the first.
+/// For debugging.
+const CHECKS_WITH_A_COPY: bool = false;
 
 /// The flags that say which accessors a property has, besides `READONLY`.
 const ACCESSOR_KIND: PropFlags = PropFlags::ACCESSOR.union(PropFlags::WRITE_ONLY);
@@ -341,6 +348,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<Prop<'s>> {
         let skips = skip_object_function_property_augment;
         let parts = self.parts(containing_type);
+        self.tally(MemberCount::UnionPropertiesCreated, 1);
         let uses_facts =
             parts.len() >= MIN_MEMBERS_FOR_FACTS && !skips && self.do_member_facts_hold();
         let mut walk = Walk {
@@ -537,6 +545,7 @@ impl<'p, 's> Checker<'p, 's> {
         at: usize,
         current: TypeId,
     ) {
+        self.tally(MemberCount::MembersVisited, 1);
         // No other kind of type has facts.
         let may_have_facts =
             walk.uses_facts && self.flags(current) & (tf::OBJECT | tf::INTERSECTION) != 0;
@@ -796,6 +805,7 @@ impl<'p, 's> Checker<'p, 's> {
         at: usize,
         current: TypeId,
     ) -> Option<MemberLookup<'p>> {
+        self.tally(MemberCount::MembersVisitedWithoutFacts, 1);
         let before = self.non_cacheable_mark();
         let t = self.apparent_type(current);
         // An intersection with a member whose apparent type is `never`, such as a conditional
@@ -838,8 +848,13 @@ impl<'p, 's> Checker<'p, 's> {
         if !builder.insert_symbol((std::ptr::from_ref(prop), mapper)) {
             return;
         }
-        let mut prop = prop.clone_in(self.arena);
-        self.instantiate_prop(&mut prop, mapper);
+        // It changes neither the flags nor the kind of source.
+        let instantiation = self.instantiation_of_prop(prop, mapper);
+        let instantiated = |arena: &'s Arena| {
+            let mut copy = prop.clone_in(arena);
+            instantiation.apply_to(&mut copy);
+            copy
+        };
         // `prop.Flags&SymbolFlagsClassMember`: a variable of a module or of `globalThis` is
         // not considered.
         if !matches!(prop.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym)) {
@@ -851,7 +866,7 @@ impl<'p, 's> Checker<'p, 's> {
             builder.first_owner = t;
             builder.first_at = Some(at);
             builder.flags |= prop.flags & ACCESSOR_KIND;
-            builder.prop_set.push(prop);
+            builder.prop_set.push(instantiated(self.arena));
             return;
         }
         let single = &builder.prop_set[0];
@@ -860,19 +875,31 @@ impl<'p, 's> Checker<'p, 's> {
             true => p.flags & (ACCESSOR_KIND | PropFlags::READONLY),
             false => PropFlags::empty(),
         };
-        if accessors(&prop) != accessors(single) {
+        if accessors(prop) != accessors(single) {
             builder.flags.remove(ACCESSOR_KIND);
         }
+        // FOR SPEED, no copy is made of a property that is equal to `singleProp`, field by field: of `theme` in 150
+        // intersections with `{ theme: Theme }`. `compare_properties` begins with that test.
+        let is_single_once_more = COMPARES_WITHOUT_A_COPY && instantiation.makes(single, prop);
+        let copy = (!is_single_once_more || CHECKS_WITH_A_COPY).then(|| instantiated(self.arena));
         // `isInstantiation`: instantiations of one property that
         // `compareProperties` finds equal are one property.
-        let is_same = single.source == prop.source && self.compare_properties(single, &prop);
+        let is_same = match &copy {
+            Some(copy) => single.source == copy.source && self.compare_properties(single, copy),
+            None => true,
+        };
+        if is_single_once_more && copy.as_ref().is_some_and(|copy| copy != single) {
+            self.fact_differs("a property of a member is the first once more", &[t]);
+        }
         if is_same {
             builder.merged_instantiations = matches!(single.source, PropSource::Symbol(symbol)
             if (self.files().parent_of_symbol(symbol)).is_some_and(|parent| {
                 !self.local_type_params_of_symbol(parent).is_empty()
             }));
-        } else if builder.is_new_prop(&prop) {
-            builder.prop_set.push(prop);
+        } else if let Some(copy) = copy
+            && builder.is_new_prop(&copy)
+        {
+            builder.prop_set.push(copy);
         }
     }
 

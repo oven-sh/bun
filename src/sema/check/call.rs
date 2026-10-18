@@ -3255,6 +3255,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<TypeId> {
         if self.iife_resolving.contains(&(file, call)) {
             // `anySignature`: the contextual type is `any`.
+            self.note_state_was_read();
             return Some(TypeId::ANY);
         }
         let pulls = self.pulls_contextual_types();
@@ -3312,6 +3313,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .any(|r| r.0 == file && r.1 == call)
             && self.stack.contains(&Query::Call(file, call))
         {
+            self.note_state_was_read();
             return Some(TypeId::ANY);
         }
         let resolved = self.resolved_signature(file, call);

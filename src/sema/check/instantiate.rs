@@ -1143,8 +1143,19 @@ impl<'p, 's> Checker<'p, 's> {
         flags: &[ElemFlags],
         readonly: bool,
     ) -> TypeId {
+        self.normalized_tuple_as(elems, flags, readonly, FirstRequest::NONE)
+    }
+
+    /// `normalized_tuple`. `first_request`: for the result if it is one tuple or array, see `Types::as_first_request`.
+    pub(super) fn normalized_tuple_as(
+        &mut self,
+        elems: &[TypeId],
+        flags: &[ElemFlags],
+        readonly: bool,
+        first_request: FirstRequest,
+    ) -> TypeId {
         if !flags.iter().any(|f| f.contains(ElemFlags::VARIADIC)) {
-            return self.tuple(elems, flags, readonly);
+            return self.tuple_as(elems, flags, readonly, first_request);
         }
         let is_spread = |i: usize| flags[i].contains(ElemFlags::VARIADIC);
         // `[A, ...(X | Y)]` is `[A, ...X] | [A, ...Y]`, and `[A, ...never]` is `never`.
@@ -1230,7 +1241,7 @@ impl<'p, 's> Checker<'p, 's> {
             out_elems.push(element);
             out_flags.push(ElemFlags::REST.with_label(flag.labeled_declaration()));
         }
-        self.tuple(&out_elems, &out_flags, readonly)
+        self.tuple_as(&out_elems, &out_flags, readonly, first_request)
     }
 
     /// The key under which `instantiations` caches the entry for the single signature type `ty` and

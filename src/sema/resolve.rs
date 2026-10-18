@@ -377,6 +377,7 @@ impl Options {
             drops_unreferenced,
             captures_suggestions,
             emits_first,
+            orders_types_by_content,
             current_directory,
             lib_dir,
             libs,
@@ -467,7 +468,7 @@ impl Options {
         } = self;
         let _ = write!(
             key,
-            "{skip_lib_check:?} {skip_default_lib_check:?} {no_check:?} {drops_unreferenced:?} {captures_suggestions:?} {emits_first:?} {current_directory:?} {lib_dir:?} "
+            "{skip_lib_check:?} {skip_default_lib_check:?} {no_check:?} {drops_unreferenced:?} {captures_suggestions:?} {emits_first:?} {orders_types_by_content:?} {current_directory:?} {lib_dir:?} "
         );
         let _ = write!(
             key,
@@ -770,6 +771,9 @@ pub struct Options {
     /// Each file is emitted before it is checked. Not a TypeScript option: its tests read types and
     /// symbols from such a program.
     pub emits_first: bool,
+    /// Where TypeScript orders two types by their ids, they are ordered by what they are made of
+    /// (`crate::types::TypeStore::ordered_by_content_in`). Not a TypeScript option.
+    pub orders_types_by_content: bool,
     /// `GetCurrentDirectory`
     pub current_directory: Vec<u8>,
     /// Where `lib.*.d.ts` are.
@@ -2680,8 +2684,14 @@ impl<'h> Resolver<'h> {
         }
         let mut not_linked: Vec<Vec<u8>> = Vec::new();
         let mut seen: Vec<&[u8]> = Vec::new();
+        // The directories of the files so far: thousands of files are in hundreds of directories.
+        let mut asked: FxHashSet<&[u8]> = FxHashSet::default();
         for path in emitted {
-            let Some((directory, package)) = self.package_scope(dirname::<Posix>(path)) else {
+            let of_file = dirname::<Posix>(path);
+            if !asked.insert(of_file) {
+                continue;
+            }
+            let Some((directory, package)) = self.package_scope(of_file) else {
                 continue;
             };
             if seen.contains(&directory) {

@@ -11,8 +11,8 @@ use crate::session::{Arena, ArenaVec, Session};
 use crate::table::{ById, Frozen};
 use crate::util::memory::{Length, Stable};
 use crate::util::{
-    AppendVec, FxHashMap, FxHasher, GrowingPlaces, InParallel, LocalVec, for_each_mut, place_of,
-    shard_among, spread_hash,
+    AppendVec, FxHashMap, FxHasher, GrowingPlaces, InParallel, LocalVec, SharedSort, for_each_mut,
+    place_of, shard_among, spread_hash,
 };
 use bun_alloc::{ArenaBox, vec_from_iter_in};
 use std::alloc::Allocator;
@@ -1559,6 +1559,27 @@ impl ProvenanceKey<'_> {
     }
 }
 
+/// What `getUnionTypeEx`, `getIntersectionTypeEx` and `createTypeReferenceEx` set on a type only if they create it: the
+/// first request decides. A bit set. A record has it from the start: `Types::as_first_request`.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct FirstRequest(u8);
+
+impl FirstRequest {
+    pub const NONE: FirstRequest = FirstRequest(0);
+    /// `ObjectFlagsFromTypeNode`
+    pub const FROM_TYPE_NODE: FirstRequest = FirstRequest(1);
+    /// No `ObjectFlagsPrimitiveUnion`, although every member is primitive.
+    pub const WITHOUT_PRIMITIVE_UNION: FirstRequest = FirstRequest(1 << 1);
+    /// `ObjectFlagsIsConstrainedTypeVariable`, or a request that has decided against it.
+    pub const CONSTRAINED_TYPE_VARIABLE: FirstRequest = FirstRequest(1 << 2);
+    pub const NO_CONSTRAINED_TYPE_VARIABLE: FirstRequest = FirstRequest(1 << 3);
+
+    #[inline]
+    fn has(self, flag: FirstRequest) -> bool {
+        self.0 & flag.0 != 0
+    }
+}
+
 pub struct TypeRecord<'s> {
     created: Made<'s>,
     /// `Type.flags`: `tf`.
@@ -1574,8 +1595,8 @@ pub struct TypeRecord<'s> {
     is_ordered_by_id: AtomicBool,
     /// See `Types::set_constrained_type_variable`: 0 until then, 1 for false, 2 for true.
     constrained_type_variable: std::sync::atomic::AtomicU8,
-    /// See `Types::mark_without_primitive_union`.
-    is_without_primitive_union: AtomicBool,
+    /// `FirstRequest::WITHOUT_PRIMITIVE_UNION`
+    is_without_primitive_union: bool,
     /// See `Types::mark_sorted_run`.
     is_sorted_run: AtomicBool,
     id: TypeId,
@@ -1584,6 +1605,18 @@ pub struct TypeRecord<'s> {
 const _: () = assert!(size_of::<TypeRecord<'static>>() <= 64);
 
 type MapperRecord<'s> = (Mapping<'s>, ObjectFlags);
+
+/// Where a type comes in `Types::content_order`. Computed once, from the interning key, when the type is created. No id is
+/// in it, so it is the same in every task, at every thread count and in every run.
+#[derive(Copy, Clone)]
+struct Rank {
+    /// One more than the greatest height of a type that the key mentions, itself or through a mapper, a signature, an alias
+    /// or an origin, and 1 if it mentions none. So a type comes after every type that it is made of.
+    height: u32,
+    /// A hash of the key in which a type counts as its own `content`, a mapper, a signature and a list of components as
+    /// what they hold, an atom as its text, and a symbol or a node as its file and its number in the file.
+    content: u64,
+}
 
 /// What is asked of a type most often. A record is read for its `TypeData`.
 #[derive(Copy, Clone)]
@@ -1621,6 +1654,9 @@ struct Summaries<L: Length, A: Allocator + Clone> {
     /// at once: `fact`. See `Types::add_facts` for what may be here. What was found out about a
     /// task-local type is not published with it.
     facts: Stable<AtomicU8, L, A>,
+    /// `Rank::height` and `Rank::content`. Empty unless `TypeStore::orders_by_content`.
+    heights: Stable<u32, L, A>,
+    contents: Stable<u64, L, A>,
 }
 
 impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
@@ -1630,6 +1666,8 @@ impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
             object_flags: Stable::new_in(alloc.clone()),
             member_flags: Stable::new_in(alloc.clone()),
             facts: Stable::new_in(alloc.clone()),
+            heights: Stable::new_in(alloc.clone()),
+            contents: Stable::new_in(alloc.clone()),
             class: Stable::new_in(alloc),
         }
     }
@@ -1664,9 +1702,23 @@ impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
         self.facts.get(index)
     }
 
-    /// Returns the index. One thread at a time: the columns are added to one after the other.
+    /// Only if every `push` had a rank.
     #[inline]
-    fn push(&self, summary: TypeSummary) -> u32 {
+    fn rank(&self, index: u32) -> Rank {
+        Rank {
+            height: *self.heights.get(index),
+            content: *self.contents.get(index),
+        }
+    }
+
+    /// Returns the index. One thread at a time: the columns are added to one after the other.
+    /// `rank`: `Some` iff `TypeStore::orders_by_content`.
+    #[inline]
+    fn push(&self, summary: TypeSummary, rank: Option<Rank>) -> u32 {
+        if let Some(rank) = rank {
+            self.heights.push(rank.height);
+            self.contents.push(rank.content);
+        }
         self.flags.push(summary.flags);
         self.object_flags.push(summary.object_flags);
         self.member_flags.push(summary.member_flags);
@@ -1938,6 +1990,8 @@ pub struct OwnStore<'s> {
     has_ordered_by_own_id: Cell<bool>,
     /// See `Types::is_unresolved_name`.
     has_unresolved_names: Cell<bool>,
+    /// See `Types::as_first_request`.
+    first_request: Cell<FirstRequest>,
     summaries: Summaries<Cell<u32>, std::alloc::Global>,
 }
 
@@ -1957,6 +2011,7 @@ impl<'s> OwnStore<'s> {
             unimported_files: Bits(Vec::new()),
             has_ordered_by_own_id: Cell::new(false),
             has_unresolved_names: Cell::new(false),
+            first_request: Cell::new(FirstRequest::NONE),
         }
     }
 
@@ -2132,6 +2187,15 @@ pub struct TypeStore<'s> {
     string_literals: [ById<Atom, TypeId, Frozen, &'s Session>; 2],
     /// See `Types::is_unresolved_name`.
     has_unresolved_names: AtomicBool,
+    /// `Some`: `Types::creation_order` is `Types::content_order`, and every type has a `Rank`. It has the texts of the
+    /// published atoms, which a rank is made of.
+    texts: Option<Interner<'s>>,
+}
+
+/// See `Types::first_new_type_id`: how many types the task had created.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct NewTypes {
+    own: u32,
 }
 
 /// The shared store together with the task-local store, which is all that a task sees.
@@ -2275,6 +2339,15 @@ impl ComponentsId {
 
 impl<'s> TypeStore<'s> {
     pub fn new_in(session: &'s Session) -> Self {
+        Self::with_order_in(session, None)
+    }
+
+    /// `new_in`, for a store in which `Types::creation_order` is `Types::content_order`. `atoms`: of the program.
+    pub fn ordered_by_content_in(session: &'s Session, atoms: Interner<'s>) -> Self {
+        Self::with_order_in(session, Some(atoms))
+    }
+
+    fn with_order_in(session: &'s Session, texts: Option<Interner<'s>>) -> Self {
         let store = TypeStore {
             session,
             types: Interned::new_in(session),
@@ -2284,6 +2357,7 @@ impl<'s> TypeStore<'s> {
             components: Interned::new_in(session),
             string_literals: [ById::new_in(session), ById::new_in(session)],
             has_unresolved_names: AtomicBool::new(false),
+            texts,
         };
         // First: the flags of a type are those of its mapper too.
         let no_pairs = (Mapping::empty(), ObjectFlags::empty());
@@ -2346,14 +2420,26 @@ impl<'s> TypeStore<'s> {
     /// Adds to `summaries` those of the types with an id less than `below`, which are all stored.
     /// Between steps, on one thread.
     fn summarize_types(&self, below: u32) {
+        // For the ranks. Everything that a published record references is published.
+        let own = (self.orders_by_content() && self.summaries.len() < below)
+            .then(|| OwnStore::new_in(self.session.arena()));
+        let types = own.as_ref().map(|own| Types::new(self, own));
         for id in self.summaries.len()..below {
             // What a record references has a lower id.
-            let summary = self.types.items.get(id).summary(|member| {
+            let record = self.types.items.get(id);
+            let summary = record.summary(|member| {
                 debug_assert!(member.0 < id);
                 self.summaries.member_flags(member.0)
             });
-            self.summaries.push(summary);
+            let rank = types.map(|types| types.rank_of_type(&record.created));
+            self.summaries.push(summary, rank);
         }
+    }
+
+    /// See `Types::creation_order`.
+    #[inline]
+    pub fn orders_by_content(&self) -> bool {
+        self.texts.is_some()
     }
 }
 
@@ -2583,7 +2669,8 @@ impl<'p, 's> Types<'p, 's> {
     fn new_own_record(&self, created: Made<'s>, id: u32) -> TypeRecord<'s> {
         let record = self.new_record(created, id);
         let summary = record.summary(|member| self.member_flags_and_more(member));
-        let index = self.own.summaries.push(summary);
+        let rank = (self.published.orders_by_content()).then(|| self.rank_of_type(&record.created));
+        let index = self.own.summaries.push(summary, rank);
         debug_assert_eq!(index | LOCAL, id);
         record
     }
@@ -2992,20 +3079,37 @@ impl<'p, 's> Types<'p, 's> {
                 created.1.as_deref(),
                 Some(Provenance { origin: UnionOrigin::Union(types), .. }) if has_ordered_by_id(types)
             );
+        let first_request = self.own.first_request.get();
+        let constrained_type_variable =
+            if first_request.has(FirstRequest::CONSTRAINED_TYPE_VARIABLE) {
+                2
+            } else {
+                u8::from(first_request.has(FirstRequest::NO_CONSTRAINED_TYPE_VARIABLE))
+            };
         TypeRecord {
             flags: Self::flags_of(&created),
             object_flags: flags,
             has_type_variables_in_alias_only: has_type_variables_in_alias
                 && is_union_or_intersection
                 && !flags.contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES),
-            is_from_type_node: AtomicBool::new(false),
+            is_from_type_node: AtomicBool::new(first_request.has(FirstRequest::FROM_TYPE_NODE)),
             is_ordered_by_id: AtomicBool::new(is_ordered_by_id),
-            constrained_type_variable: std::sync::atomic::AtomicU8::new(0),
-            is_without_primitive_union: AtomicBool::new(false),
+            constrained_type_variable: std::sync::atomic::AtomicU8::new(constrained_type_variable),
+            is_without_primitive_union: first_request.has(FirstRequest::WITHOUT_PRIMITIVE_UNION),
             is_sorted_run: AtomicBool::new(false),
             created,
             id: TypeId(id),
         }
+    }
+
+    /// A type that `create` creates has `flags` from the start. `create` asks for one type and evaluates nothing: whatever
+    /// else it created would get them too. A type that exists is unchanged.
+    #[inline]
+    pub fn as_first_request(&self, flags: FirstRequest, create: impl FnOnce() -> TypeId) -> TypeId {
+        let around = self.own.first_request.replace(flags);
+        let id = create();
+        self.own.first_request.set(around);
+        id
     }
 
     /// The creation order of `a` and `b`, which is the order of their ids, as in tsgo. For the
@@ -3015,12 +3119,105 @@ impl<'p, 's> Types<'p, 's> {
     /// Between two published types it is final. If either is task-local, it is this task's order:
     /// the merge step may assign the two ids in the opposite order, because one of them may be
     /// merged with the record of a lower task. See `mark_ordered_by_id`.
+    ///
+    /// If the store `orders_by_content` it is `content_order`, which is final between any two types: nothing is marked.
     #[inline]
     pub fn creation_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+        if self.published.orders_by_content() {
+            return self.content_order(a, b);
+        }
         if (a.0 | b.0) & LOCAL != 0 {
             self.own.has_ordered_by_own_id.set(true);
         }
         a.0.cmp(&b.0)
+    }
+
+    /// `a.id >= b.id` in `isDeeplyNestedType`, which takes a higher id for a sign of a newer instantiation, one that a
+    /// recursion has caused. In `content_order` only the heights count for that: the instantiations of a recursion that goes
+    /// from one literal type to the next have one height, and the hash would count about every other one of them.
+    #[inline]
+    pub fn is_created_no_earlier(&self, a: TypeId, b: TypeId) -> bool {
+        match self.published.orders_by_content() {
+            true => self.rank(a).height >= self.rank(b).height,
+            false => self.creation_order(a, b).is_ge(),
+        }
+    }
+
+    /// Only if the store `orders_by_content`.
+    #[inline]
+    fn rank(&self, id: TypeId) -> Rank {
+        if id.0 & LOCAL == 0 {
+            self.published.summaries.rank(id.0)
+        } else {
+            self.own.summaries.rank(id.0 & !LOCAL)
+        }
+    }
+
+    /// By `Rank`: the height, then the hash. A function of the program, where the order of ids is a function of who has
+    /// created what first. It is a total order: two types with one rank are ordered by what their keys say.
+    fn content_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+        if a == b {
+            return std::cmp::Ordering::Equal;
+        }
+        let (x, y) = (self.rank(a), self.rank(b));
+        (x.height.cmp(&y.height))
+            .then_with(|| x.content.cmp(&y.content))
+            .then_with(|| self.compare_contents(a, b))
+    }
+
+    /// The keys of `a` and `b`, written out, are compared item by item. Where both mention a type, those two are compared by
+    /// `content_order`: they are lower than `a` and `b`, so this ends. Two keys that are equal all the way are one key, for
+    /// which a task sees one type.
+    #[cold]
+    fn compare_contents(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+        let (x, y) = (self.said_by(a), self.said_by(b));
+        let mut order = x.len().cmp(&y.len());
+        for pair in x.iter().zip(&y) {
+            if order.is_ne() {
+                break;
+            }
+            order = match pair {
+                (Said::Word(x), Said::Word(y)) => x.cmp(y),
+                (Said::Type(x), Said::Type(y)) => self.content_order(*x, *y),
+                (Said::Word(_), Said::Type(_)) => std::cmp::Ordering::Less,
+                (Said::Type(_), Said::Word(_)) => std::cmp::Ordering::Greater,
+            };
+        }
+        // So that it is an order whatever happens.
+        order.then_with(|| a.0.cmp(&b.0))
+    }
+
+    fn said_by(&self, id: TypeId) -> Vec<Said> {
+        let mut saying = Saying {
+            types: *self,
+            said: Vec::new(),
+        };
+        self.record(id).created.visit(&mut saying);
+        saying.said
+    }
+
+    /// The text of an atom, published or not. `Atom::NONE` has none.
+    fn text(&self, atom: Atom) -> &'p [u8] {
+        if atom.is_none() {
+            return &[];
+        }
+        if atom.is_own() {
+            return self.own.atom_bytes(atom);
+        }
+        (self.published.texts.as_ref()).map_or(&[][..], |texts| texts.bytes(atom))
+    }
+
+    fn rank_of_type(&self, created: &Made) -> Rank {
+        let mut ranking = Ranking::new(*self);
+        visit_type_as_content(created, &mut ranking);
+        // `getFreshTypeOfLiteralType` creates the fresh type from the regular one, which its key does not mention.
+        if let TypeData::BigIntLit { fresh: true, .. } = created.0 {
+            ranking.height = ranking.height.max(1);
+        }
+        Rank {
+            height: ranking.height + 1,
+            content: ranking.lanes.0[0],
+        }
     }
 
     /// Whether `creation_order` has been called with a task-local type since the last call to this
@@ -3208,11 +3405,12 @@ impl<'p, 's> Types<'p, 's> {
         ))
     }
 
-    /// For `mark_from_type_node`: a lower bound for the id of every type that the task creates from
-    /// now on.
+    /// For `is_new_since`, and to see whether the task has created a type between two calls.
     #[inline]
-    pub fn first_new_type_id(&self) -> TypeId {
-        TypeId(self.own.types.records.len() | LOCAL)
+    pub fn first_new_type_id(&self) -> NewTypes {
+        NewTypes {
+            own: self.own.types.records.len(),
+        }
     }
 
     /// `ObjectFlagsFromTypeNode`: `id` is the type of a type node. `first_new_type_id` was taken
@@ -3220,12 +3418,12 @@ impl<'p, 's> Types<'p, 's> {
     /// sets the flags only on a type that it creates: one that an instantiation created earlier is
     /// unchanged. If two tasks of a step create the type, the record of the lower task is
     /// published, with its flag.
-    pub fn mark_from_type_node(&self, id: TypeId, first_new_type_id: TypeId) {
+    pub fn mark_from_type_node(&self, id: TypeId, first_new_type_id: NewTypes) {
         if id.0 & LOCAL == 0 {
             return;
         }
         // Not tsgo's rule: a bound type gets the flag even if an instantiation created it earlier.
-        if id.0 >= first_new_type_id.0 || self.own.types.is_bound(id.0 & !LOCAL) {
+        if self.is_new_since(id, first_new_type_id) || self.own.types.is_bound(id.0 & !LOCAL) {
             let record = self.record(id);
             record.is_from_type_node.store(true, Ordering::Relaxed);
         }
@@ -3259,23 +3457,14 @@ impl<'p, 's> Types<'p, 's> {
 
     /// Whether the task has created `id` since `first_new_type_id` was taken.
     #[inline]
-    pub fn is_new_since(&self, id: TypeId, first_new_type_id: TypeId) -> bool {
-        id.0 & LOCAL != 0 && id.0 >= first_new_type_id.0
+    pub fn is_new_since(&self, id: TypeId, first_new_type_id: NewTypes) -> bool {
+        id.0 & LOCAL != 0 && id.0 & !LOCAL >= first_new_type_id.own
     }
 
-    /// The union `id`, which the task has just created, is without `ObjectFlagsPrimitiveUnion`
-    /// although every member is primitive: the flags are those of the first request.
-    pub fn mark_without_primitive_union(&self, id: TypeId) {
-        let record = self.record(id);
-        record
-            .is_without_primitive_union
-            .store(true, Ordering::Relaxed);
-    }
-
+    /// `FirstRequest::WITHOUT_PRIMITIVE_UNION`
     #[inline]
     pub fn is_without_primitive_union(&self, id: TypeId) -> bool {
-        let record = self.record(id);
-        record.is_without_primitive_union.load(Ordering::Relaxed)
+        self.record(id).is_without_primitive_union
     }
 
     #[inline]
@@ -4366,9 +4555,15 @@ impl<'a> Content<'a> {
             self.lanes.add(b);
         }
     }
+}
 
-    /// Hashes `items` as a set: the result does not depend on their order. `kind`: that of the
-    /// record.
+/// A visitor that hashes what it is shown.
+trait Hashing: Visitor {
+    /// Hashes `items` as a set: the result does not depend on their order.
+    fn unordered<T: Follow>(&mut self, items: &[T]);
+}
+
+impl Hashing for Content<'_> {
     fn unordered<T: Follow>(&mut self, items: &[T]) {
         let mut sum = [0u64; 2];
         for item in items {
@@ -4426,12 +4621,18 @@ impl Visitor for Content<'_> {
 /// `Types::mark_ordered_by_id`.
 fn content_of_type(created: &Made, of: &[Vec<ContentHash>; 5]) -> ContentHash {
     let mut content = Content::new(of, Kind::Type);
+    visit_type_as_content(created, &mut content);
+    content.lanes.0
+}
+
+/// See `content_of_type`.
+fn visit_type_as_content<V: Hashing>(created: &Made, content: &mut V) {
     match &created.0 {
         data @ TypeData::Union(members) => {
             content.plain(&std::mem::discriminant(data));
             content.unordered(members);
         }
-        data => data.visit(&mut content),
+        data => data.visit(content),
     }
     content.plain(&created.1.is_some());
     if let Some(provenance) = &created.1 {
@@ -4444,21 +4645,145 @@ fn content_of_type(created: &Made, of: &[Vec<ContentHash>; 5]) -> ContentHash {
             is_array_pattern,
             has_other_instantiation,
         } = &**provenance;
-        alias.visit(&mut content);
+        alias.visit(content);
         match origin {
             UnionOrigin::Union(types) => {
                 content.plain(&std::mem::discriminant(origin));
                 content.unordered(types);
             }
-            origin => origin.visit(&mut content),
+            origin => origin.visit(content),
         }
-        is_enum.visit(&mut content);
-        stored_under.visit(&mut content);
-        is_array_literal.visit(&mut content);
-        is_array_pattern.visit(&mut content);
-        has_other_instantiation.visit(&mut content);
+        is_enum.visit(content);
+        stored_under.visit(content);
+        is_array_literal.visit(content);
+        is_array_pattern.visit(content);
+        has_other_instantiation.visit(content);
     }
-    content.lanes.0
+}
+
+/// Computes a `Rank`.
+struct Ranking<'p, 's> {
+    types: Types<'p, 's>,
+    /// The first lane is `Rank::content`.
+    lanes: Lanes,
+    /// The greatest height of a type that it was shown.
+    height: u32,
+}
+
+impl<'p, 's> Ranking<'p, 's> {
+    fn new(types: Types<'p, 's>) -> Ranking<'p, 's> {
+        Ranking {
+            types,
+            lanes: Lanes::START,
+            height: 0,
+        }
+    }
+}
+
+impl Hashing for Ranking<'_, '_> {
+    fn unordered<T: Follow>(&mut self, items: &[T]) {
+        let mut sum = 0u64;
+        for item in items {
+            let mut one = Ranking::new(self.types);
+            item.visit(&mut one);
+            sum = sum.wrapping_add(one.lanes.0[0]);
+            self.height = self.height.max(one.height);
+        }
+        self.lanes.add(items.len() as u64);
+        self.lanes.add(sum);
+    }
+}
+
+/// Only a type has a `Rank` of its own. What else has an id is walked in place.
+impl Visitor for Ranking<'_, '_> {
+    #[inline]
+    fn atom(&mut self, atom: Atom) {
+        let text = crate::atom::hash_of(self.types.text(atom));
+        self.lanes.add(text ^ u64::from(atom.is_none()));
+    }
+    fn components(&mut self, id: ComponentsId) {
+        self.types.components(id).visit(self);
+    }
+    /// The pairs are stored in the order of the ids of the type parameters.
+    fn mapper(&mut self, id: MapperId) {
+        let pairs = self.types.mapping(id);
+        self.unordered(pairs);
+    }
+    fn sig(&mut self, id: SigId) {
+        self.types.sig(id).visit(self);
+    }
+    #[inline]
+    fn ty(&mut self, id: TypeId) {
+        let rank = self.types.rank(id);
+        self.lanes.add(rank.content);
+        self.height = self.height.max(rank.height);
+    }
+    #[inline]
+    fn file(&mut self, file: FileId) {
+        self.lanes.add(u64::from(file.0));
+    }
+    #[inline]
+    fn plain<T: Hash + ?Sized>(&mut self, value: &T) {
+        value.hash(&mut self.lanes);
+    }
+}
+
+/// A part of the key of a type, written out for `Types::compare_contents`.
+enum Said {
+    Word(u64),
+    Type(TypeId),
+}
+
+/// Writes out a key. As in `Rank::content`, nothing in the words is an id.
+struct Saying<'p, 's> {
+    types: Types<'p, 's>,
+    said: Vec<Said>,
+}
+
+/// What `Hash` writes, as words.
+struct Spelling<'a>(&'a mut Vec<Said>);
+
+impl Hasher for Spelling<'_> {
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.push(Said::Word(bytes.len() as u64));
+        for chunk in bytes.chunks(8) {
+            let mut word = [0; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.0.push(Said::Word(u64::from_le_bytes(word)));
+        }
+    }
+    fn finish(&self) -> u64 {
+        0
+    }
+}
+
+impl Visitor for Saying<'_, '_> {
+    fn atom(&mut self, atom: Atom) {
+        self.said.push(Said::Word(u64::from(atom.is_none())));
+        Spelling(&mut self.said).write(self.types.text(atom));
+    }
+    fn components(&mut self, id: ComponentsId) {
+        self.types.components(id).visit(self);
+    }
+    /// The pairs are stored in the order of the ids of the type parameters.
+    fn mapper(&mut self, id: MapperId) {
+        let types = self.types;
+        let mut pairs = types.mapping(id).to_vec();
+        pairs.shared_sort_by(|x, y| types.content_order(x.0, y.0));
+        pairs.visit(self);
+    }
+    fn sig(&mut self, id: SigId) {
+        self.types.sig(id).visit(self);
+    }
+    fn ty(&mut self, id: TypeId) {
+        self.said.push(Said::Type(id));
+    }
+    fn file(&mut self, file: FileId) {
+        self.said.push(Said::Word(u64::from(file.0)));
+    }
+    fn plain<T: Hash + ?Sized>(&mut self, value: &T) {
+        value.hash(&mut Spelling(&mut self.said));
+    }
 }
 
 /// The number of parts into which the merge step partitions the records by content hash. One thread
@@ -4561,6 +4886,13 @@ impl<'s> OwnStore<'s> {
             self.sigs.records.len() as usize,
             self.types.records.len() as usize,
         ]
+    }
+
+    /// How many records of each kind the task has created, in the order of `KINDS`. For who wants to know whether a
+    /// computation has created one.
+    #[inline]
+    pub(crate) fn created(&self) -> [usize; 5] {
+        self.lengths()
     }
 
     /// Runs at the end of the task. `marks`: the records referenced by the entries that the task
@@ -5212,5 +5544,178 @@ mod tests {
             assert_eq!(ComponentsId(number).mentions_own(), is_mentioned);
         }
         assert!(!Atom::NONE.mentions_own());
+    }
+
+    /// Calls `make` with a new store that orders by content, twice. It creates two types: the first time it is told to
+    /// create what they are made of in the opposite order. Returns the order of the two by rank and by what their keys
+    /// say, after it has made sure that both are the same both times, and the reverse for the reverse.
+    fn orders_of(
+        make: impl Fn(Types<'_, '_>, &Interner<'_>, bool) -> (TypeId, TypeId),
+    ) -> [std::cmp::Ordering; 2] {
+        let orders = [true, false].map(|is_reversed| {
+            let session = Session::new();
+            let atoms = Interner::new_in(&session);
+            let store = TypeStore::ordered_by_content_in(&session, atoms);
+            let own = OwnStore::new_in(session.arena());
+            let types = Types::new(&store, &own);
+            let (a, b) = make(types, &atoms, is_reversed);
+            assert_ne!(a, b);
+            let orders = [types.creation_order(a, b), types.compare_contents(a, b)];
+            let reverse = [types.creation_order(b, a), types.compare_contents(b, a)];
+            assert_eq!(orders.map(std::cmp::Ordering::reverse), reverse);
+            assert!(orders.iter().all(|order| order.is_ne()));
+            orders
+        });
+        assert_eq!(orders[0], orders[1]);
+        orders[0]
+    }
+
+    /// `first()` and `second()`, called in the opposite order if `is_reversed`.
+    fn both<T>(is_reversed: bool, first: impl FnOnce() -> T, second: impl FnOnce() -> T) -> (T, T) {
+        if is_reversed {
+            let second = second();
+            return (first(), second);
+        }
+        let first = first();
+        (first, second())
+    }
+
+    #[test]
+    fn content_order_does_not_depend_on_which_type_was_created_first() {
+        orders_of(|types, _, is_reversed| {
+            both(
+                is_reversed,
+                || types.intern(TypeData::Keyof(TypeId::STRING)),
+                || types.intern(TypeData::Keyof(TypeId::NUMBER)),
+            )
+        });
+    }
+
+    #[test]
+    fn a_type_comes_after_what_it_is_made_of() {
+        let session = Session::new();
+        let store = TypeStore::ordered_by_content_in(&session, Interner::new_in(&session));
+        let own = OwnStore::new_in(session.arena());
+        let types = Types::new(&store, &own);
+        // The outer ones first, as far as that goes: `keyof keyof number` is older than `keyof string`.
+        let of_number = types.intern(TypeData::Keyof(TypeId::NUMBER));
+        let outer = types.intern(TypeData::Keyof(of_number));
+        let of_string = types.intern(TypeData::Keyof(TypeId::STRING));
+        for (part, whole) in [
+            (TypeId::NUMBER, of_number),
+            (of_number, outer),
+            (TypeId::NUMBER, outer),
+            (of_string, outer),
+        ] {
+            assert!(types.creation_order(part, whole).is_lt());
+            assert!(types.creation_order(whole, part).is_gt());
+            assert!(types.is_created_no_earlier(whole, part));
+            assert!(!types.is_created_no_earlier(part, whole));
+        }
+        // Of one height.
+        assert!(types.is_created_no_earlier(of_string, of_number));
+        assert!(types.is_created_no_earlier(of_number, of_string));
+        assert!(types.creation_order(outer, outer).is_eq());
+    }
+
+    #[test]
+    fn keys_that_differ_in_a_type_are_ordered_as_the_two_types() {
+        fn inner(types: Types<'_, '_>, is_reversed: bool) -> (TypeId, TypeId) {
+            both(
+                is_reversed,
+                || types.intern(TypeData::Keyof(TypeId::STRING)),
+                || types.intern(TypeData::Keyof(TypeId::NUMBER)),
+            )
+        }
+        let [of_inner, _] = orders_of(|types, _, is_reversed| inner(types, is_reversed));
+        let [_, by_keys] = orders_of(|types, _, is_reversed| {
+            let (a, b) = inner(types, is_reversed);
+            both(
+                !is_reversed,
+                || types.intern(TypeData::Keyof(a)),
+                || types.intern(TypeData::Keyof(b)),
+            )
+        });
+        assert_eq!(by_keys, of_inner);
+    }
+
+    #[test]
+    fn an_atom_counts_as_its_text() {
+        let pairs: [[&[u8]; 2]; 2] = [[b"left", b"right"], [b"a text of more than a word", b"a"]];
+        for texts in pairs {
+            orders_of(|types, atoms, is_reversed| {
+                let (a, b) = both(
+                    is_reversed,
+                    || atoms.intern(texts[0]),
+                    || atoms.intern(texts[1]),
+                );
+                let literal = |value| {
+                    types.intern(TypeData::StringLit {
+                        value,
+                        fresh: false,
+                    })
+                };
+                (literal(a), literal(b))
+            });
+        }
+    }
+
+    #[test]
+    fn a_mapper_counts_as_its_pairs_in_any_order() {
+        orders_of(|types, _, is_reversed| {
+            let parameter = |number, mapper| {
+                types.intern(TypeData::TypeParam(FileId(0), TypeParamId(number), mapper))
+            };
+            // A mapper stores its pairs in the order of the ids of the type parameters.
+            let (p, q) = both(
+                is_reversed,
+                || parameter(0, MapperId::IDENTITY),
+                || parameter(1, MapperId::IDENTITY),
+            );
+            let one = types.mapper(vec![(p, TypeId::STRING), (q, TypeId::NUMBER)]);
+            let other = types.mapper(vec![(p, TypeId::NUMBER), (q, TypeId::STRING)]);
+            (parameter(2, one), parameter(2, other))
+        });
+    }
+
+    #[test]
+    fn a_union_has_one_rank_however_its_members_are_ordered() {
+        let session = Session::new();
+        let store = TypeStore::ordered_by_content_in(&session, Interner::new_in(&session));
+        let own = OwnStore::new_in(session.arena());
+        let types = Types::new(&store, &own);
+        let rank_of = |members: [TypeId; 3]| {
+            let members = ShortList::copy_from_slice_in(&members, session.arena());
+            let rank = types.rank_of_type(&(TypeData::Union(members), None));
+            (rank.height, rank.content)
+        };
+        let [a, b, c] = [TypeId::STRING, TypeId::NUMBER, TypeId::NULL];
+        assert_eq!(rank_of([a, b, c]), rank_of([c, a, b]));
+        assert_ne!(rank_of([a, b, c]), rank_of([a, b, TypeId::UNDEFINED]));
+    }
+
+    #[test]
+    fn a_published_type_keeps_its_rank() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let store = TypeStore::ordered_by_content_in(&session, atoms);
+        let mut own = OwnStore::new_in(session.arena());
+        let types = Types::new(&store, &own);
+        let inner = types.intern(TypeData::Keyof(TypeId::STRING));
+        let outer = types.intern(TypeData::Keyof(inner));
+        let ranks = [inner, outer].map(|ty| (types.rank(ty).height, types.rank(ty).content));
+        let mut marks = Marks::new(&own);
+        outer.visit(&mut marks);
+        let taken = own.finish(marks);
+        let on_this_thread: InParallel<'_> = &|count, work| (0..count).for_each(work);
+        let (links, _) = store.link(&atoms, vec![taken], on_this_thread, &|_| {});
+        let (mut inner, mut outer) = (inner, outer);
+        inner.follow(&links[0]);
+        outer.follow(&links[0]);
+        assert!(!inner.is_local() && !outer.is_local());
+        let own = OwnStore::new_in(session.arena());
+        let types = Types::new(&store, &own);
+        let published = [inner, outer].map(|ty| (types.rank(ty).height, types.rank(ty).content));
+        assert_eq!(published, ranks);
     }
 }

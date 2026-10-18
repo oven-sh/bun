@@ -122,7 +122,7 @@ use task::{Open, OrderDependent, Stored, Task};
 
 pub use call::ResolvedCall;
 pub use infer::INFERENCE_WALK_COUNTS;
-pub use shape::Members;
+pub use shape::{MEMBER_COUNTS, Members};
 pub use spans::compute_ecma_line_starts;
 
 const RECENT_SIGS: usize = 256;
@@ -459,7 +459,10 @@ impl<'s> Program<'s> {
         let scopes = bases(|m| m.bound.scopes.len());
         let type_params = bases(|m| m.hir.type_params.len());
         let symbols = bases(|m| m.bound.symbols.len());
-        let types = TypeStore::new_in(session);
+        let types = match files.options.orders_types_by_content {
+            true => TypeStore::ordered_by_content_in(session, files.atoms),
+            false => TypeStore::new_in(session),
+        };
         let arena = session.arena();
         let auto_array_type =
             types.publish_constant(match files.global_type_of_arity(known::Array, 1) {
@@ -769,6 +772,7 @@ impl<'s> Program<'s> {
             reduced_unions: Default::default(),
             union_members: Default::default(),
             unlisted_intersections: Default::default(),
+            reductions: Default::default(),
             never_in_progress_from: Vec::new(),
             reverse_mapped_inferences_from: Vec::new(),
             defaults_in_progress: Vec::new(),
@@ -915,6 +919,8 @@ struct Scope {
     frames: u32,
     /// `non_cacheable_mark()` when it began, for `end_scope_by_counters`.
     counters: (u64, u64),
+    /// `Task::held_back` when it began, for `Stored::since`.
+    held_back: u64,
 }
 
 /// A query that may be circular.
@@ -1125,6 +1131,8 @@ struct QueryFrame {
     is_quick_type: bool,
     /// `Checker::current_source_element` when it was pushed.
     source_element: Option<CurrentNode>,
+    /// `Task::held_back` when it was pushed, for `Stored::since`.
+    held_back: u64,
 }
 
 /// Which diagnostics of a file `check_file` computes.
@@ -1496,6 +1504,8 @@ pub struct Checker<'p, 's> {
     union_members: union_property::UnionMembers<'p>,
     /// See check/unlisted_intersections.rs.
     unlisted_intersections: shape::UnlistedIntersections<'p>,
+    /// See check/intersection_reduction.rs.
+    reductions: shape::Reductions,
     /// The height of `stack` at which `is_empty_intersection` began, for each one in progress.
     pub(super) never_in_progress_from: Vec<usize>,
     /// The height of `stack` at which the worker of each `inferReverseMappedType` in progress began.
@@ -1803,7 +1813,8 @@ pub struct Checker<'p, 's> {
     stack_limit: usize,
     /// Number of queries made so far.
     pub work: u64,
-    /// Number of calls of `begin_scope` so far.
+    /// Number of calls of `begin_scope` so far for an answer that stays once it is stored. Not those of a memo that
+    /// forgets, as `FlowMemo::types_with_facts` does: it begins one more for the same question, which computes nothing new.
     scopes_begun: u64,
     /// `enter` takes its slow path when `work` has this value: the next value of `work` while `refused_expressions` is not empty,
     /// `WORK_TRAP_DISARMED` otherwise.
@@ -1872,6 +1883,13 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub fn intern_key(&self, key: TypeKey<'_>) -> TypeId {
         self.types().intern_key(key)
+    }
+
+    /// `intern_key`. `first_request`: see `Types::as_first_request`.
+    #[inline]
+    fn intern_key_as(&self, key: TypeKey<'_>, first_request: FirstRequest) -> TypeId {
+        let types = self.types();
+        types.as_first_request(first_request, || types.intern_key(key))
     }
 
     /// A copy of `items`, to store in a type, a signature or a value of a table.
@@ -1977,6 +1995,7 @@ impl<'p, 's> Checker<'p, 's> {
         if used > self.stack_limit {
             self.ran_out_of_stack.set(true);
             self.times_cut_short.set(self.times_cut_short.get() + 1);
+            self.note_state_was_read();
             return true;
         }
         false
@@ -2068,6 +2087,7 @@ impl<'p, 's> Checker<'p, 's> {
             may_substitute_constraints: false,
             is_quick_type: false,
             source_element: self.current_source_element,
+            held_back: self.task.held_back(),
         });
         true
     }
@@ -3107,7 +3127,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.left_frame = Some(frame);
             return Err(Open);
         }
-        Ok(Stored::new())
+        Ok(Stored::since(frame.held_back))
     }
 
     /// `leave` for `module` or `exports`: the first time, its entry stays on `typeResolutions`.
@@ -3220,6 +3240,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn mark_tainted_by_pattern_from(&mut self, from: usize) {
         self.lowest_taint = self.lowest_taint.min(from);
         self.note_taint_event(from);
+        self.note_state_was_read();
         for frame in &mut self.frames[from..] {
             frame.tainted = true;
             frame.drops_reported = true;
@@ -3256,6 +3277,7 @@ impl<'p, 's> Checker<'p, 's> {
             outer_taint: std::mem::replace(&mut self.lowest_taint, usize::MAX),
             frames: self.frames.len() as u32,
             counters: self.non_cacheable_mark(),
+            held_back: self.task.held_back(),
         }
     }
 
@@ -3279,14 +3301,18 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     fn end_scope_as(
         &mut self,
-        Scope { outer_taint, .. }: Scope,
+        Scope {
+            outer_taint,
+            held_back,
+            ..
+        }: Scope,
         is_open: bool,
     ) -> Result<Stored, Open> {
         self.lowest_taint = self.lowest_taint.min(outer_taint);
         if is_open {
             Err(Open)
         } else {
-            Ok(Stored::new())
+            Ok(Stored::since(held_back))
         }
     }
 
@@ -3518,11 +3544,21 @@ impl<'p, 's> Checker<'p, 's> {
         is_valid.then_some(entry.raw)
     }
 
+    /// `Task::hold_back`: the computations in progress have read something that holds only while the stack of this checker is
+    /// as it is: a query in progress, members that are in place, `anySignature`, the incomplete type of a loop, a limit, or a
+    /// result that follows from one of these. Most of them store nothing then. Some do, as tsgo does, by a test of their own
+    /// (`end_scope_as`, `end_scope_by_counters`, a frame that members in place do not taint): that is for this task alone.
+    #[inline]
+    fn note_state_was_read(&self) {
+        self.task.hold_back();
+    }
+
     /// Increments `cycles`.
     #[inline]
     fn note_cycle(&mut self) {
         self.cycles += 1;
         self.cycle_at = self.work;
+        self.note_state_was_read();
     }
 
     /// Increments `cycles` for a request for members that got those in place. See
@@ -3532,6 +3568,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.cycles += 1;
         self.members_in_place_hits += 1;
         self.members_in_place_hit_at = self.work;
+        self.note_state_was_read();
     }
 
     /// Increments `any_signature_reads`.
@@ -3539,6 +3576,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn note_any_signature(&mut self) {
         self.any_signature_reads += 1;
         self.any_signature_read_at = self.work;
+        self.note_state_was_read();
     }
 
     /// Increments `limits`.
@@ -3546,6 +3584,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn note_limit(&mut self) {
         self.limits += 1;
         self.limit_at = self.work;
+        self.note_state_was_read();
     }
 
     /// A provisional value was just read, stored when `stack` was `depth` deep: the results of the
@@ -3999,17 +4038,31 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn array_of(&mut self, element: TypeId) -> TypeId {
-        self.global_ref(known::Array, &[element])
+        self.array_as(element, false, FirstRequest::NONE)
     }
 
-    /// `globalReadonlyArrayType` is `globalArrayType` if `ReadonlyArray` does not exist.
     pub fn readonly_array_of(&mut self, element: TypeId) -> TypeId {
-        let name = if self.global_type_of_arity(known::ReadonlyArray, 1).is_some() {
+        self.array_as(element, true, FirstRequest::NONE)
+    }
+
+    /// `global_ref` for `Array`, or for `ReadonlyArray`: `globalReadonlyArrayType` is `globalArrayType` if that does not
+    /// exist. `first_request`: see `Types::as_first_request`.
+    pub(super) fn array_as(
+        &mut self,
+        element: TypeId,
+        readonly: bool,
+        first_request: FirstRequest,
+    ) -> TypeId {
+        let name = if readonly && self.global_type_of_arity(known::ReadonlyArray, 1).is_some() {
             known::ReadonlyArray
         } else {
             known::Array
         };
-        self.global_ref(name, &[element])
+        let args = &[element];
+        match self.global_type_of_arity(name, 1) {
+            Some(target) => self.intern_key_as(TypeKey::Ref { target, args }, first_request),
+            None => TypeId::EMPTY_OBJECT,
+        }
     }
 
     /// `createPromiseType`
@@ -4118,15 +4171,27 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `createNormalizedTupleTypeEx`, once the variadic elements that are known have been spread (`normalized_tuple`).
     pub fn tuple(&mut self, elems: &[TypeId], flags: &[ElemFlags], readonly: bool) -> TypeId {
+        self.tuple_as(elems, flags, readonly, FirstRequest::NONE)
+    }
+
+    /// `tuple`. `first_request`: for the result, see `Types::as_first_request`.
+    pub(super) fn tuple_as(
+        &mut self,
+        elems: &[TypeId],
+        flags: &[ElemFlags],
+        readonly: bool,
+        first_request: FirstRequest,
+    ) -> TypeId {
         if !flags
             .iter()
             .any(|f| f.intersects(ElemFlags::OPTIONAL | ElemFlags::REST | ElemFlags::VARIADIC))
         {
-            return self.intern_key(TypeKey::Tuple {
+            let key = TypeKey::Tuple {
                 elems,
                 flags,
                 readonly,
-            });
+            };
+            return self.intern_key_as(key, first_request);
         }
         // `TupleNormalizer.add`: an optional element may be undefined.
         let mut types = Vec::with_capacity(elems.len());
@@ -4174,17 +4239,14 @@ impl<'p, 's> Checker<'p, 's> {
         if let ([element], [only]) = (&types[..], &infos[..])
             && only.contains(ElemFlags::REST)
         {
-            return if readonly {
-                self.readonly_array_of(*element)
-            } else {
-                self.array_of(*element)
-            };
+            return self.array_as(*element, readonly, first_request);
         }
-        self.intern_key(TypeKey::Tuple {
+        let key = TypeKey::Tuple {
             elems: &types,
             flags: &infos,
             readonly,
-        })
+        };
+        self.intern_key_as(key, first_request)
     }
 
     pub fn synth(&self, mut shape: Shape<'s>) -> TypeId {

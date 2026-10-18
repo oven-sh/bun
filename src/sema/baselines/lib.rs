@@ -1363,6 +1363,8 @@ pub struct Setup<'a> {
     pub declarations: bool,
     /// Whether the `.trace.json` baselines are compared.
     pub traces: bool,
+    /// `PlanOptions::orders_types_by_content`
+    pub orders_types_by_content: bool,
     pub threads: usize,
     /// Only every n-th test, in the order of their paths. 1: all of them.
     pub every: usize,
@@ -1808,6 +1810,7 @@ fn run_one(
                 // The tests run side by side, each on one thread. The plan of several threads is the
                 // one with steps, publishing and validation.
                 tasks_on_one_thread: true,
+                orders_types_by_content: setup.orders_types_by_content,
                 ..Default::default()
             },
             retains_everything: false,
@@ -2337,7 +2340,7 @@ impl Drop for Watched {
 }
 
 /// `[--bundle=file] --lib=<dir> --testlib=<dir> [--only=substring] [--every=n [--first=i]] [--threads=n] [--report=file]
-/// [--out=dir] [--types-and-symbols] [--declarations] [--traces]
+/// [--out=dir] [--types-and-symbols] [--declarations] [--traces] [--content-order]
 /// <name>=<tests>=<baselines>=<file with the names of all the baselines> ..`
 ///
 /// With `--bundle`, the directories and the file with the names are paths in it.
@@ -2379,6 +2382,8 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         types_and_symbols: args.iter().any(|it| it == "--types-and-symbols"),
         declarations: args.iter().any(|it| it == "--declarations"),
         traces: args.iter().any(|it| it == "--traces"),
+        orders_types_by_content: bun_sema_driver::PlanOptions::default().orders_types_by_content
+            || args.iter().any(|it| it == "--content-order"),
         threads: number("threads").unwrap_or(8),
         every: number("every").unwrap_or(1),
         first: number("first").unwrap_or(0),

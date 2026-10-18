@@ -22,7 +22,8 @@ use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::task::{Finished, Published};
 use bun_sema::check::{
-    FOREIGN_EVALUATION_KINDS, INFERENCE_WALK_COUNTS, Program, Requested, compute_ecma_line_starts,
+    FOREIGN_EVALUATION_KINDS, INFERENCE_WALK_COUNTS, MEMBER_COUNTS, Program, Requested,
+    compute_ecma_line_starts,
 };
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::{ExprTag, FileKind};
@@ -460,6 +461,9 @@ pub struct PlanOptions {
     /// TypeScript's own baselines: its test runner compiles every test in one process, and
     /// `nextSymbolId` belongs to the process.
     pub reproduces_symbol_ids: bool,
+    /// `Options::orders_types_by_content` of every program: the order of two types that TypeScript orders by their ids does
+    /// not depend on which of them was created first.
+    pub orders_types_by_content: bool,
     /// How many projects of a `tsc -b` run are loaded or checked at the same time, at most, if each reads the sources of
     /// what it references. Otherwise four times as many. Each occupies memory.
     pub projects_at_once: usize,
@@ -533,6 +537,7 @@ impl Default for PlanOptions {
             one_thread_max_cost: 1 << 20,
             checkers: 0,
             reproduces_symbol_ids: true,
+            orders_types_by_content: false,
             projects_at_once: 4,
             after_file_is_for_checked_files: false,
             checks_only_named: false,
@@ -1317,6 +1322,8 @@ pub struct Report {
     pub deepest_stack: usize,
     /// `Checker::inference_walk_counts`, summed over the tasks.
     pub inference_walks: [u64; INFERENCE_WALK_COUNTS.len()],
+    /// `Checker::member_counts`, summed over the tasks.
+    pub members: [u64; MEMBER_COUNTS.len()],
 }
 
 impl Report {
@@ -1356,6 +1363,9 @@ impl Report {
         }
         self.deepest_stack = self.deepest_stack.max(other.deepest_stack);
         for (sum, more) in self.inference_walks.iter_mut().zip(other.inference_walks) {
+            *sum += more;
+        }
+        for (sum, more) in self.members.iter_mut().zip(other.members) {
             *sum += more;
         }
     }
@@ -3835,6 +3845,9 @@ fn may_declare_a_global(
         && !(is_javascript(path) && has(b"require"))
 }
 
+/// Off: the thread that makes the plan estimates the cost of every file by itself.
+const ESTIMATES_COSTS_ON_ALL_THREADS: bool = true;
+
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they
 /// refer to are checked.
 /// `is_owned_elsewhere`: of a file of a referenced project, which is loaded but not checked.
@@ -3974,6 +3987,7 @@ fn check_named_files(
     let written = std::mem::take(&mut project.raw_compiler_options);
     let is_true = |name: &[u8]| written.contains(&(name.to_vec(), Json::Bool(true)));
     project.options.drops_unreferenced = !request.retains_everything;
+    project.options.orders_types_by_content = request.plan_options.orders_types_by_content;
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that is allocated in it, so it is dropped last.
@@ -4239,6 +4253,7 @@ fn check_named_files(
     let incomplete: Guarded<Vec<Incomplete>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
     let inference_walks = Guarded::new([0u64; INFERENCE_WALK_COUNTS.len()]);
+    let members = Guarded::new([0u64; MEMBER_COUNTS.len()]);
     // `Files::parse_and_bind` retains the text of every file except those of the default library.
     let text_of = |file: FileId| {
         let module = &program.files.modules[file.idx()];
@@ -4401,6 +4416,9 @@ fn check_named_files(
             for (sum, more) in inference_walks.lock().iter_mut().zip(walks) {
                 *sum += more;
             }
+            for (sum, more) in members.lock().iter_mut().zip(checker.member_counts()) {
+                *sum += more;
+            }
             let mut outcome = Outcome {
                 finished: task.map(|_| checker.end_task()),
                 checked,
@@ -4489,7 +4507,14 @@ fn check_named_files(
         let type_nodes = hir.types.len() * request.plan_options.type_node_cost;
         tags.filter(|&tag| is_identifier(tag)).count() + type_nodes + 1
     };
-    let costs: Vec<usize> = to_check.iter().map(|&file| cost_of(file)).collect();
+    // It reads every expression of the program.
+    let costs: Vec<AtomicUsize> = to_check.iter().map(|_| AtomicUsize::new(0)).collect();
+    let estimate = |index: usize| costs[index].store(cost_of(to_check[index]), Ordering::Relaxed);
+    match ESTIMATES_COSTS_ON_ALL_THREADS {
+        true => host.parallel(costs.len(), &estimate),
+        false => (0..costs.len()).for_each(estimate),
+    }
+    let costs: Vec<usize> = costs.into_iter().map(AtomicUsize::into_inner).collect();
     let size_of = |index: usize| costs[index];
     // `PlanOptions::split_files`: the text of file `index` in at most `parts` ranges of about the same length, each from the start of
     // a statement to the start of another. Empty: the file is not split. In a declaration file nothing is inferred and no node is
@@ -4940,6 +4965,7 @@ fn check_named_files(
     }
     report.deepest_stack = deepest_stack.into_inner();
     report.inference_walks = *inference_walks.lock();
+    report.members = *members.lock();
     report.steps = std::mem::take(&mut *steps.lock());
     report.incomplete = std::mem::take(&mut *incomplete.lock());
     report.incomplete.shared_sort();

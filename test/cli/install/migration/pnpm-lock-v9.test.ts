@@ -4715,9 +4715,112 @@ snapshots:
       },
     });
     const bunLock = await bunLockOf(dir);
-    expect(bunLock).toMatch(/"no-deps": \["no-deps@1\.0\.0", "[^"]*", \{ "dependencies": \{ "a-dep": "1\.0\.1" \} \}/);
-    // To bun that is a row the package declares.
-    expect(bunLock).not.toContain("packageExtensions");
+    // The registry's no-deps@1.0.0 doesn't declare a-dep, so the extension added it. It gets the extension's range.
+    expect(bunLock).toMatch(
+      /"no-deps": \["no-deps@1\.0\.0", "[^"]*", \{ "dependencies": \{ "a-dep": "\^1\.0\.1" \} \}/,
+    );
+    expect((Bun.JSON5.parse(bunLock) as any).packageExtensions).toEqual({
+      "no-deps@1.0.0": { dependencies: ["a-dep"] },
+    });
+    expect(bunLock).toContain(`"a-dep": ["a-dep@1.0.1"`);
+  });
+
+  // pnpm-lock.yaml doesn't separate the dependencies that packageExtensions added from a package's own. The registry
+  // does: no-deps@1.0.0 declares nothing, and one-dep@1.0.0 already declares no-deps, so its extension had no effect.
+  describe("packageExtensions after the migration", () => {
+    const rules = {
+      "no-deps@1": { dependencies: { "a-dep": "1.0.1" } },
+      "one-dep": { dependencies: { "no-deps": "1.0.1" } },
+    };
+    async function migrated() {
+      const { packageDir: dir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "package-extensions-later",
+            dependencies: { "one-dep": "1.0.0" },
+            pnpm: { packageExtensions: rules },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+packageExtensionsChecksum: sha256-x
+
+importers:
+
+  .:
+    dependencies:
+      one-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  a-dep@1.0.1:
+    resolution: {integrity: ${A_DEP_1_0_1_INTEGRITY}}
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  a-dep@1.0.1: {}
+
+  no-deps@1.0.1:
+    dependencies:
+      a-dep: 1.0.1
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+`,
+        },
+      });
+      expect(await migrate(dir)).toMatchObject({ stderr: expect.not.stringContaining("error:"), exitCode: 0 });
+      return dir;
+    }
+    async function setRules(dir: string, packageExtensions: object) {
+      const { pnpm, ...json } = await Bun.file(join(dir, "package.json")).json();
+      await Bun.write(join(dir, "package.json"), JSON.stringify({ ...json, packageExtensions }));
+    }
+    const locked = async (dir: string) => Object.keys((Bun.JSON5.parse(await bunLockOf(dir)) as any).packages).sort();
+
+    test.concurrent("only undeclared dependencies count as added, and the next install changes nothing", async () => {
+      const dir = await migrated();
+      const bunLock = await bunLockOf(dir);
+      expect((Bun.JSON5.parse(bunLock) as any).packageExtensions).toEqual({
+        "no-deps@1.0.1": { dependencies: ["a-dep"] },
+      });
+      expect(await run(dir, "install", "--frozen-lockfile")).toMatchObject({ exitCode: 0 });
+      await expectInstallToLeaveUnchanged(dir, bunLock);
+    });
+
+    test.concurrent("an edited extension takes effect", async () => {
+      const dir = await migrated();
+      await setRules(dir, { ...rules, "no-deps@1": { dependencies: { "a-dep": "1.0.2" } } });
+      expect(await run(dir, "install", "--frozen-lockfile")).toMatchObject({
+        stderr: expect.stringContaining("note: packageExtensions in package.json changed since bun.lock was saved"),
+        exitCode: 1,
+      });
+      expect(await run(dir, "install")).toMatchObject({ exitCode: 0 });
+      expect(await bunLockOf(dir)).toContain(`"a-dep": ["a-dep@1.0.2"`);
+    });
+
+    test.concurrent(
+      "removing extensions removes what they added and nothing that a package declares itself",
+      async () => {
+        const dir = await migrated();
+        await setRules(dir, {});
+        expect(await run(dir, "install", "--frozen-lockfile")).toMatchObject({
+          stderr: expect.stringContaining("note: packageExtensions in package.json changed since bun.lock was saved"),
+          exitCode: 1,
+        });
+        expect(await run(dir, "install")).toMatchObject({ exitCode: 0 });
+        expect(await locked(dir)).toEqual(["no-deps", "one-dep"]);
+      },
+    );
   });
 
   test.concurrent("link: version with a semver specifier resolves to the workspace (pnpm/pnpm#7712)", async () => {

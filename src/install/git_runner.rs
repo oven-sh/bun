@@ -409,21 +409,28 @@ fn strip_node_modules(checkout: &bun_sys::Dir) -> bun_sys::Maybe<()> {
         Err(err) if err.get_errno() == bun_sys::E::ENOENT => return Ok(()),
         Err(_) => {}
     }
+    crate::initialize_mini_store();
     if bundles_dependencies(checkout) {
         return Ok(());
     }
     checkout.delete_tree(b"node_modules")
 }
 
-fn bundles_dependencies(checkout: &bun_sys::Dir) -> bool {
-    const KEYS: &[&[u8]] = &[b"bundleDependencies", b"bundledDependencies"];
-    let Ok(contents) = read_package_json_in(checkout) else {
+/// The caller must initialize an AST store on this thread first.
+pub(crate) fn bundles_dependencies(package_dir: &bun_sys::Dir) -> bool {
+    let Ok(contents) = read_package_json_in(package_dir) else {
         return false;
     };
-    crate::initialize_mini_store();
     let source = bun_ast::Source::init_path_string("package.json", &contents[..]);
-    crate::bun_json::ParsedJson::parse_package_json(&source, &mut bun_ast::Log::init())
-        .is_ok_and(|parsed| parsed.root.has_any_property_named(KEYS))
+    crate::bun_json::ParsedJson::parse_package_json(&source, &mut bun_ast::Log::init()).is_ok_and(
+        |parsed| {
+            let root = &parsed.root;
+            // Either `true` or a non-empty list of names. `as_array` returns `None` for `[]`.
+            (root.get(b"bundleDependencies"))
+                .or_else(|| root.get(b"bundledDependencies"))
+                .is_some_and(|field| field.as_bool() == Some(true) || field.as_array().is_some())
+        },
+    )
 }
 
 /// Reads the `package.json` in a package's folder, without following a symlink.

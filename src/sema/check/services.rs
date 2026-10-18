@@ -352,10 +352,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         })
     }
 
-    pub fn source_file(&mut self, file_name: &[u8]) -> Option<FileId> {
-        self.c.files().by_path.get(file_name)
-    }
-
     /// `checker.getAmbientModules().find(it => it.name === '"name"')`
     pub fn ambient_module(&mut self, name: &[u8]) -> Option<SymbolRef> {
         let name = self.c.atoms().lookup(name)?;

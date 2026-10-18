@@ -1238,7 +1238,9 @@ impl<'a> PackageInstall<'a> {
                 root_node_modules_dir,
             ),
             resolution::Tag::Root => self.verify_directory_exists(root_node_modules_dir),
-            resolution::Tag::Symlink => self.verify_link(root_node_modules_dir),
+            resolution::Tag::Symlink | resolution::Tag::Workspace => {
+                self.verify_link(root_node_modules_dir)
+            }
             resolution::Tag::Folder => {
                 let tree_id = self.node_modules.tree_id;
                 if self.lockfile.is_workspace_tree_id(tree_id)
@@ -1250,7 +1252,7 @@ impl<'a> PackageInstall<'a> {
                     self.verify_directory_exists(root_node_modules_dir)
                 }
             }
-            _ => self.verify_package_json_name_and_version(root_node_modules_dir, resolution.tag),
+            _ => self.verify_package_json_name_and_version(root_node_modules_dir),
         };
 
         verified
@@ -1331,17 +1333,11 @@ impl<'a> PackageInstall<'a> {
         ))
     }
 
-    fn verify_package_json_name_and_version(
-        &mut self,
-        root_node_modules_dir: &Dir,
-        resolution_tag: resolution::Tag,
-    ) -> bool {
+    fn verify_package_json_name_and_version(&mut self, root_node_modules_dir: &Dir) -> bool {
         // The first attempt treats a short read as the end of the file, which saves a `read` call.
         // A few file systems return short reads earlier and truncate the JSON, so retry until EOF.
-        self.verify_installed_package_json(root_node_modules_dir, resolution_tag, false)
-            .or_else(|| {
-                self.verify_installed_package_json(root_node_modules_dir, resolution_tag, true)
-            })
+        self.verify_installed_package_json(root_node_modules_dir, false)
+            .or_else(|| self.verify_installed_package_json(root_node_modules_dir, true))
             .unwrap_or(false)
     }
 
@@ -1349,7 +1345,6 @@ impl<'a> PackageInstall<'a> {
     fn verify_installed_package_json(
         &mut self,
         root_node_modules_dir: &Dir,
-        resolution_tag: resolution::Tag,
         until_eof: bool,
     ) -> Option<bool> {
         let mut body_pool = Npm::Registry::BodyPool::get();
@@ -1368,15 +1363,9 @@ impl<'a> PackageInstall<'a> {
         let source = &source;
 
         // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
-        let minimum =
-            if resolution_tag == resolution::Tag::Workspace && self.package_version.is_empty() {
-                // workspaces aren't required to have a version
-                br#"{"name":""}"#.len() + self.package_name.len()
-            } else {
-                br#"{"name":"","version":""}"#.len()
-                    + self.package_name.len()
-                    + self.package_version.len()
-            };
+        let minimum = br#"{"name":"","version":""}"#.len()
+            + self.package_name.len()
+            + self.package_version.len();
 
         if source.contents().len() < minimum {
             return None;
@@ -1390,11 +1379,7 @@ impl<'a> PackageInstall<'a> {
         if package_json_checker.parse().is_err() || package_json_checker.has_errors() {
             return None;
         }
-        if !package_json_checker.has_found_name {
-            return Some(false);
-        }
-        // workspaces aren't required to have a version
-        if !package_json_checker.has_found_version && resolution_tag != resolution::Tag::Workspace {
+        if !package_json_checker.has_found_name || !package_json_checker.has_found_version {
             return Some(false);
         }
 

@@ -241,6 +241,75 @@ describe("FormData", () => {
     }
   }
 
+  // https://github.com/oven-sh/bun/issues/45707
+  // https://github.com/oven-sh/bun/issues/33012
+  describe("a file part's type is its Content-Type header", () => {
+    const boundary = "formdataboundary";
+    const headers = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
+    // [name, filename, part Content-Type]. The filename extension never agrees
+    // with the declared type, so a guess from the extension is visible.
+    const parts = [
+      ["heic-as-heic", "photo.heic", "image/heic"],
+      ["noext-as-png", "noext", "image/png"],
+      ["txt-as-octet", "a.txt", "application/octet-stream"],
+      ["png-as-jpeg", "a.png", "image/jpeg"],
+      ["bmp-as-bmp", "a.bmp", "image/bmp"],
+      ["webp-noext", "banner", "image/webp"],
+    ] as const;
+    const expected = Object.fromEntries(parts.map(([name, , type]) => [name, type]));
+
+    // Browsers and undici send Content-Disposition first, then Content-Type.
+    const dispositionFirst =
+      parts
+        .map(
+          ([name, filename, type]) =>
+            `--${boundary}\r\nContent-Disposition: form-data; name="${name}"; filename="${filename}"\r\nContent-Type: ${type}\r\n\r\nAAA\r\n`,
+        )
+        .join("") + `--${boundary}--\r\n`;
+    const contentTypeFirst =
+      parts
+        .map(
+          ([name, filename, type]) =>
+            `--${boundary}\r\nContent-Type: ${type}\r\nContent-Disposition: form-data; name="${name}"; filename="${filename}"\r\n\r\nAAA\r\n`,
+        )
+        .join("") + `--${boundary}--\r\n`;
+
+    function parse(C: typeof Response | typeof Request, body: string) {
+      return (
+        C === Response ? new Response(body, { headers }) : new Request("http://x/", { method: "POST", body, headers })
+      ).formData();
+    }
+
+    function types(form: FormData) {
+      return Object.fromEntries([...form.entries()].map(([name, value]) => [name, (value as File).type]));
+    }
+
+    for (const C of [Response, Request] as const) {
+      it(`Content-Disposition before Content-Type (${C.name})`, async () => {
+        const form = await parse(C, dispositionFirst);
+        expect(types(form)).toEqual(expected);
+        expect(form.get("noext-as-png")).toBeInstanceOf(File);
+        expect((form.get("noext-as-png") as File).name).toBe("noext");
+      });
+
+      it(`Content-Type before Content-Disposition (${C.name})`, async () => {
+        const form = await parse(C, contentTypeFirst);
+        expect(types(form)).toEqual(expected);
+      });
+    }
+
+    it("Bun.serve request.formData()", async () => {
+      using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          return Response.json(types(await req.formData()));
+        },
+      });
+      const res = await fetch(server.url, { method: "POST", headers, body: dispositionFirst });
+      expect(await res.json()).toEqual(expected);
+    });
+  });
+
   it("should throw on missing final boundary", async () => {
     const response = new Response('-foo\r\nContent-Disposition: form-data; name="foo"\r\n\r\nbar\r\n', {
       headers: {

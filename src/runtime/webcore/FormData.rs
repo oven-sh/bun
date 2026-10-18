@@ -289,7 +289,10 @@ pub(crate) fn for_each_multipart_entry<C>(
         let mut filename: Option<bun_semver::String> = None;
         let mut header_chunk = header;
         let mut is_file = false;
-        while !header_chunk.is_empty() && (filename.is_none() || name.len() == 0) {
+        // Read every header line: `Content-Type` normally follows
+        // `Content-Disposition`, so a loop that stops once it has the name and
+        // the filename never sees it.
+        while !header_chunk.is_empty() {
             let line_end = strings::index_of(header_chunk, b"\r\n")
                 .ok_or(crate::Error::IsMissingHeaderLineEnd)?;
             let line = &header_chunk[..line_end];

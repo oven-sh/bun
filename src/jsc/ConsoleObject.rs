@@ -529,6 +529,12 @@ fn message_with_type_and_level_(
                     print_options.enable_colors = colors_prop.to_boolean();
                 }
             }
+            // Node defaults this to false; Bun keeps console.log's default, hooks on: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/console/constructor.js#L447-L453
+            if let Some(custom_inspect) =
+                opts.get_common_string(global, crate::CommonString::InspectOptionCustomInspect)?
+            {
+                print_options.disable_inspect_custom = !custom_inspect.to_boolean();
+            }
         }
     }
 
@@ -1175,6 +1181,8 @@ pub struct FormatOptions {
     pub single_line: bool,
     pub default_indent: u16,
     pub error_display_level: ErrorDisplayLevel,
+    /// Run no `[nodejs.util.inspect.custom]` function for this call.
+    pub disable_inspect_custom: bool,
 }
 
 impl Default for FormatOptions {
@@ -1189,6 +1197,7 @@ impl Default for FormatOptions {
             single_line: false,
             default_indent: 0,
             error_display_level: ErrorDisplayLevel::Full,
+            disable_inspect_custom: false,
         }
     }
 }
@@ -1346,7 +1355,8 @@ pub fn format2(
         fmt.stack_check = StackCheck::init();
         fmt.can_throw_stack_overflow = true;
         fmt.error_display_level = options.error_display_level;
-        let tag = formatter::Tag::get(vals[0], global)?;
+        fmt.disable_inspect_custom = options.disable_inspect_custom;
+        let tag = fmt.tag_of_stand_in(vals[0])?;
         if fmt.write_indent(writer).is_err() {
             return Ok(());
         }
@@ -1388,6 +1398,9 @@ pub fn format2(
 
         return Ok(());
     }
+
+    // Only console.dir sets the option, and it formats one value.
+    debug_assert!(!options.disable_inspect_custom);
 
     // Reborrow through the guard so SB sees body writes as children of the
     // guard's borrow (see `FlushOnDrop` doc).
@@ -2072,6 +2085,16 @@ pub mod formatter {
             Self::get_advanced(value, global_this, TagOptions::empty())
         }
 
+        // Not inlined: as a tail call in `get_advanced` it is a loop that LLVM specializes on `opts`, and every caller pays.
+        #[inline(never)]
+        fn get_global_proxy_target(
+            value: JSValue,
+            global_this: &JSGlobalObject,
+            opts: TagOptions,
+        ) -> JsResult<TagResult> {
+            Self::get_advanced(value.get_proxy_target(), global_this, opts)
+        }
+
         pub(crate) fn get_advanced(
             value: JSValue,
             global_this: &JSGlobalObject,
@@ -2192,7 +2215,7 @@ pub mod formatter {
 
             if js_type == jsc::JSType::GlobalProxy {
                 if !opts.contains(TagOptions::HIDE_GLOBAL) {
-                    return Tag::get(value.get_proxy_target(), global_this);
+                    return Tag::get_global_proxy_target(value, global_this, opts);
                 }
                 return Ok(TagResult {
                     tag: TagPayload::GlobalObject,
@@ -3384,6 +3407,15 @@ pub mod formatter {
             opts
         }
 
+        /// Classifies a top-level value or a stand-in for the printed one (Proxy target, `toJSON` result): the global prints in full.
+        pub(super) fn tag_of_stand_in(&self, value: JSValue) -> JsResult<TagResult> {
+            Tag::get_advanced(
+                value,
+                self.global_this,
+                self.tag_opts() - TagOptions::HIDE_GLOBAL,
+            )
+        }
+
         #[inline(never)]
         fn print_undefined<const C: bool>(
             &mut self,
@@ -3505,7 +3537,7 @@ pub mod formatter {
             // `Proxy { target: ..., handlers: ... }` — this is default off so
             // it is not used.
             self.format::<C>(
-                Tag::get(target, self.global_this)?,
+                self.tag_of_stand_in(target)?,
                 writer_,
                 target,
                 self.global_this,
@@ -3779,6 +3811,7 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
         ) -> JsResult<()> {
+            debug_assert!(!self.disable_inspect_custom);
             // Call custom inspect function. Will return the error if there is
             // one; we'll need to pass the callback through to the "this" value
             // in here.
@@ -4168,7 +4201,7 @@ pub mod formatter {
                 let prev_quote_keys = self.quote_keys;
                 self.quote_keys = true;
                 let _r = defer_restore!(self.quote_keys, prev_quote_keys);
-                let tag = Tag::get(result, self.global_this)?;
+                let tag = self.tag_of_stand_in(result)?;
                 return self.format::<C>(tag, writer_, result, self.global_this);
             }
 
@@ -5182,7 +5215,8 @@ pub mod formatter {
                     }
 
                     if let Some(children) = children_prop {
-                        let tag = Tag::get(children, self.global_this)?;
+                        let children_tag_opts = tag_opts - TagOptions::HIDE_GLOBAL;
+                        let tag = Tag::get_advanced(children, self.global_this, children_tag_opts)?;
 
                         let print_children =
                             matches!(tag.tag.tag(), Tag::String | Tag::JSX | Tag::Array);
@@ -5225,7 +5259,11 @@ pub mod formatter {
                                                 self.failed = true;
                                             }
                                             self.format::<C>(
-                                                Tag::get(children, self.global_this)?,
+                                                Tag::get_advanced(
+                                                    children,
+                                                    self.global_this,
+                                                    children_tag_opts,
+                                                )?,
                                                 writer_,
                                                 children,
                                                 self.global_this,

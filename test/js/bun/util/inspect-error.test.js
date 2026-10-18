@@ -510,3 +510,62 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// The dump of an error's own properties runs no [util.inspect.custom] function.
+describe("own properties are printed without their inspect.custom hook", () => {
+  const custom = Symbol.for("nodejs.util.inspect.custom");
+  let calls = 0;
+  let gets = 0;
+  const hook = () => (calls++, "HOOK");
+  class K {
+    [custom]() {
+      return hook();
+    }
+  }
+  // The hook is behind an accessor, so a read of the hook counts too.
+  class G {
+    get [custom]() {
+      gets++;
+      return hook;
+    }
+  }
+  const jsx = props => ({ $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props });
+
+  // Prints an error that has `value` as a property. Returns the text of the property and the hooks that ran.
+  function inspectProperty(value) {
+    const error = new Error("boom");
+    error.property = value;
+    calls = gets = 0;
+    const text = Bun.inspect(error).split("error: boom\n")[1].split("\n\n")[0];
+    return { text, calls, gets };
+  }
+
+  test.each([
+    ["a Proxy of an object with an accessor hook", () => new Proxy(new G(), {})],
+    ["a Proxy in an array", () => [new Proxy(new K(), {})]],
+    ["the result of toJSON()", () => Object.assign(new URLSearchParams("a=1"), { toJSON: () => new G() })],
+    ["JSX children", () => jsx({ children: new G() })],
+    ["JSX children of JSX children", () => jsx({ children: jsx({ children: new G() }) })],
+  ])("%s", (_, make) => {
+    const { calls, gets } = inspectProperty(make());
+    expect({ calls, gets }).toEqual({ calls: 0, gets: 0 });
+  });
+
+  test("a Proxy of globalThis", () => {
+    globalThis[custom] = hook;
+    try {
+      const { calls, gets } = inspectProperty(new Proxy(globalThis, {}));
+      expect({ calls, gets }).toEqual({ calls: 0, gets: 0 });
+    } finally {
+      delete globalThis[custom];
+    }
+  });
+
+  test("a Proxy prints like its target", () => {
+    expect(inspectProperty(new Proxy(new K(), {}))).toEqual({
+      text: " property: K {\n  [Symbol(nodejs.util.inspect.custom)]: [Function],\n},",
+      calls: 0,
+      gets: 0,
+    });
+  });
+});

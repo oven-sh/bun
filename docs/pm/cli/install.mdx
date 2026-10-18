@@ -631,7 +631,7 @@ Command lines written for npm, Yarn or pnpm keep working. `bun install`, `bun ci
 | `--non-interactive`                                            | Nothing: an install asks no questions           |
 | `--prefer-frozen-lockfile`                                     | Nothing: the default                            |
 
-`--name value` works like `--name=value`, and `--audit=false` like `--no-audit`. A flag that the table shows without a value doesn't accept one: `--legacy-peer-deps=true` is an error. Bun still installs peer dependencies with `--legacy-peer-deps`; use `--omit=peer` to skip them.
+`--name value` works like `--name=value`, and `--audit=false` like `--no-audit`. A flag that the table shows without a value is ignored if it has one, like `--legacy-peer-deps=true`. Bun still installs peer dependencies with `--legacy-peer-deps`; use `--omit=peer` to skip them.
 
 `bun remove` doesn't save any dependency, so it ignores the five `--save-*` flags. For `bun update`, `--dev`, `--production` and `--no-optional` choose what gets updated, so three rows differ:
 

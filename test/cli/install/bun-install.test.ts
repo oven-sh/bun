@@ -17023,6 +17023,13 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     ["--min-release-age", "7"],
     ["--config.frozen-lockfile=true"],
     ["--config.ignore-scripts=true"],
+    ["--allow-git=none"],
+    ["--legacy-peer-deps=true"],
+    ["--save-dev=false"],
+    ["--no-ignore-scripts"],
+    ["--no-offline"],
+    ["--no-save-peer"],
+    ["--no-cache-folder"],
     // Unlike `--noproxy`, this one has no value, so the package after it still counts.
     ["--no-proxy"],
   ].flat();

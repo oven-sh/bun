@@ -466,10 +466,15 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     b"update-checksums", b"update-notifier", b"use-running-store-server", b"use-stderr",
     b"use-store-server", b"verify-store-integrity", b"workspace-root", b"workspaces-update", b"ws",
     b"yes",
+    // These are in `FOREIGN_FLAGS` too, which doesn't match them if they have a value.
+    b"ignore-engines", b"ignore-optional", b"immutable", b"legacy-peer-deps", b"non-interactive",
+    b"package-lock-only", b"prefer-frozen-lockfile", b"save-catalog", b"save-dev", b"save-exact",
+    b"save-optional", b"save-peer", b"save-prod", b"shamefully-hoist", b"unsafe-perm",
     ],
     #[rustfmt::skip]
     options: &[
-    b"allow-build", b"allow-scripts", b"also", b"before", b"cache", b"cache-folder", b"cache-max",
+    b"allow-build", b"allow-directory", b"allow-file", b"allow-git", b"allow-remote",
+    b"allow-scripts", b"also", b"before", b"cache", b"cache-folder", b"cache-max",
     b"cache-min", b"cert", b"changed-files-ignore-pattern", b"child-concurrency", b"dir",
     b"enjoy-by", b"fetch-min-speed-ki-bps", b"fetch-retries", b"fetch-retry-factor", b"fetch-retry-maxtimeout",
     b"fetch-retry-mintimeout", b"fetch-timeout", b"fetch-warn-timeout-ms", b"filter-prod",

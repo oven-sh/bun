@@ -396,7 +396,8 @@ pub struct ParseOptions<'a> {
 pub struct IgnoredLongFlags {
     /// Skips `--name`, `--no-name`, `--name=value`, `--name true` and `--name false`.
     pub flags: &'static [&'static [u8]],
-    /// Skips `--name=value` and `--name value`, unless `value` starts with a dash.
+    /// Skips `--name=value` and `--name value`, unless `value` starts with a dash. Also skips
+    /// `--no-name`, like for the command's own flags.
     pub options: &'static [&'static [u8]],
     /// Skips every `--name` and `--name=value` whose name starts with one of these.
     pub prefixes: &'static [&'static [u8]],

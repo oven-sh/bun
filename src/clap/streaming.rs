@@ -163,9 +163,13 @@ where
                     let value_is_next_arg = if ignored.options.contains(&name) {
                         !next.starts_with(b"-")
                     } else if ignored.flags.contains(&name)
-                        || name
-                            .strip_prefix(b"no-")
-                            .is_some_and(|positive| ignored.flags.contains(&positive))
+                        || name.strip_prefix(b"no-").is_some_and(|positive| {
+                            ignored.flags.contains(&positive)
+                                || ignored.options.contains(&positive)
+                                || params
+                                    .iter()
+                                    .any(|param| param.names.matches_long(positive))
+                        })
                     {
                         next == b"true" || next == b"false"
                     } else if ignored

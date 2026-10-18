@@ -186,7 +186,8 @@ async function start() {
   // are Bake's, and the flags come before the export's own `port` and `hostname`.
   const exported = app?.server;
   // Each is read once: a getter may return a new value on each read.
-  const exportedHostname = exported?.hostname;
+  // `host` is an alias of `hostname` in `Bun.serve()`.
+  const exportedHostname = exported?.hostname ?? exported?.host;
   const exportedPort = exported?.port;
   // A `unix` socket in the export is kept unless a flag asks for a TCP address.
   const useUnix = exported?.unix !== undefined && flags.hostname === undefined && flags.port === undefined;

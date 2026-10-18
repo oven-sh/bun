@@ -450,7 +450,7 @@ test.concurrent("bun bake uses Bun.serve options from the export, and its flags 
   using dir = tempDir("bake-command-options", {
     "app/server.ts": `
       export default {
-        hostname: "127.0.0.1",
+        host: "127.0.0.1",
         fetch: () => { throw new Error("boom"); },
         error: () => new Response("from the error option", { status: 500 }),
       };

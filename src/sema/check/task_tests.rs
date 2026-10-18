@@ -4,7 +4,7 @@
 use super::*;
 use crate::atom::Interner;
 use crate::bind::SymbolId;
-use crate::check::commit::{CommitPolicy, Commits};
+use crate::check::commit::Commits;
 use crate::jitter::Jitter;
 use crate::local::{Found, Hashed, LOCAL, MaybeLocal, SlotNumber, spread_word};
 use crate::program::Sym;
@@ -590,7 +590,7 @@ fn begin_committing<'s>(
     index: u32,
 ) -> Task<'s> {
     let mut task = begin(session, &tables.types, index);
-    let view = commits.view(3, CommitPolicy::default(), Jitter::default());
+    let view = commits.view(3, Jitter::default());
     task.see_commits(view, false, 0);
     task
 }
@@ -603,7 +603,7 @@ fn begin_writing_at_once<'s>(
     index: u32,
 ) -> Task<'s> {
     let mut task = begin(session, &tables.types, index);
-    let view = commits.view(3, CommitPolicy::default(), Jitter::default());
+    let view = commits.view(3, Jitter::default());
     task.see_commits(view, false, 1 << 2 | 1 << 3 | 1 << 5 | 1 << 6);
     task
 }
@@ -855,7 +855,7 @@ fn without_stamps_an_entry_counts_as_soon_as_it_is_stored() {
         ignores_stamps: true,
         ..Jitter::default()
     };
-    second.see_commits(commits.view(3, CommitPolicy::default(), jitter), false, 0);
+    second.see_commits(commits.view(3, jitter), false, 0);
     second.begin_file(A, true);
     assert_eq!(tables.by_node.get(&second, &(A, 1)), None);
     tables.by_node.insert(&first, (A, 1), STRING, stored());
@@ -935,7 +935,7 @@ fn an_entry_is_written_at_once_if_nothing_was_held_back_since_its_computation_be
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn of_two_entries_written_at_once_the_first_stays_and_a_difference_is_counted() {
+fn the_first_of_two_entries_written_immediately_is_kept() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let first = begin_writing_at_once(&session, &tables, &commits, 0);
@@ -946,14 +946,12 @@ fn of_two_entries_written_at_once_the_first_stays_and_a_difference_is_counted() 
     // The same again.
     let kept = (tables.by_id).rewrite(&second, STRING, NUMBER, from_now(&second));
     assert_eq!(kept, NUMBER);
-    assert!(second.differing.borrow().by_table.is_empty());
     // `rewrite` looks no further than the task's own part, as for a key that `get` has not found.
     (tables.by_id).rewrite(&second, STRING, STRING, from_now(&second));
     let spread = crate::util::spread_hash(&(STRING, STRING));
     let key = (STRING, STRING);
     let kept = (tables.by_key).insert_absent(&second, spread, key, STRING, from_now(&second));
     assert_eq!(kept, NUMBER);
-    assert_eq!(second.differing.borrow().by_table, [0, 0, 1, 0, 0, 0, 1]);
     for task in [&first, &second] {
         assert_eq!(tables.by_id.get(task, &STRING), Some(NUMBER));
         assert_eq!(tables.by_key.get(task, &(STRING, STRING)), Some(NUMBER));
@@ -997,7 +995,6 @@ fn what_a_task_holds_back_under_a_key_is_what_it_goes_by() {
     assert_eq!(kept, NUMBER);
     assert_eq!(tables.by_id.get(&other, &STRING), None);
     assert_eq!(tables.by_key.get(&other, &(STRING, STRING)), None);
-    assert!(task.differing.borrow().by_table.is_empty());
 }
 
 #[test]
@@ -1071,30 +1068,4 @@ fn what_a_task_finds_out_about_a_record_of_a_file_that_it_visits_stays_in_the_ta
         tables.by_id.get(&begin_publishing(2), &of_file),
         Some(NUMBER)
     );
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn an_entry_that_loses_at_a_commit_is_compared_on_request() {
-    let session = Session::new();
-    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
-    let first = begin_committing(&session, &tables, &commits, 0);
-    let mut second = begin(&session, &tables.types, 1);
-    let policy = CommitPolicy {
-        compares_lost: true,
-        ..CommitPolicy::default()
-    };
-    second.see_commits(commits.view(3, policy, Jitter::default()), false, 0);
-    for (task, value) in [(&first, STRING), (&second, NUMBER)] {
-        tables.by_node.insert(task, (A, 1), value, stored());
-        tables.by_node.insert(task, (A, 2), STRING, stored());
-        tables.by_id.insert(task, STRING, value, stored());
-        (tables.shapes).insert_ref(task, STRING, Box::new([value]), stored());
-        (tables.shapes).insert_ref(task, NUMBER, Box::new([STRING]), stored());
-        (tables.by_key).insert(task, (STRING, STRING), value, stored());
-    }
-    assert_eq!(commit(&tables, &commits, &first, 1), 6);
-    assert_eq!(commit(&tables, &commits, &second, 2), 0);
-    assert!(first.differing.borrow().by_table.is_empty());
-    assert_eq!(second.differing.borrow().by_table, [1, 0, 1, 1, 0, 0, 1]);
 }

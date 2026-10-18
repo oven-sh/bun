@@ -487,8 +487,6 @@ fn check_and_lint_in(
         progress: None,
         only: None,
         order: 1,
-        digests: false,
-        task_clock: None,
         plan_options: bun_sema_driver::PlanOptions {
             after_file_is_for_checked_files: true,
             // As in an editor, which is what `projectService` of typescript-eslint is.

@@ -5215,22 +5215,6 @@ impl<'s> OwnStore<'s> {
     }
 }
 
-// ───────────────────────────── the merge step ─────────────────────────────
-
-/// Statistics of one merge step, by kind.
-#[derive(Copy, Clone, Default)]
-pub struct LinkCounts {
-    /// The number of records the tasks of the step publish, before any are merged.
-    pub linked: [usize; KINDS.len()],
-    /// The number of them that were merged with the record of a lower task.
-    pub joined: [usize; KINDS.len()],
-}
-
-impl LinkCounts {
-    pub const NAMES: [&str; KINDS.len()] =
-        ["atoms", "components", "mappers", "signatures", "types"];
-}
-
 /// Skipped under Miri, which can't run mimalloc (foreign code).
 #[cfg(all(test, not(miri)))]
 mod tests {

@@ -17,7 +17,6 @@
 //! The other way to run tasks, without steps and barriers, is in `super::commit`.
 
 use super::commit::View;
-use super::self_check::DifferingEntries;
 use super::sink::Reported;
 use super::{Program, Query};
 use crate::jitter::Place;
@@ -74,8 +73,6 @@ pub struct Task<'s> {
     pub(super) diagnostics: Vec<(Option<Query>, Reported)>,
     /// Whether a query of this task has re-entered itself.
     pub(super) closed_a_cycle: bool,
-    /// How many queries about a source file of another component the task has evaluated, by `FOREIGN_EVALUATION_KINDS`.
-    pub(super) foreign_evaluations: [u32; 14],
     /// See `Finished::order_dependent_variances`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
     /// See `Finished::assignments_walked`. It is added to under `&Checker`.
@@ -111,8 +108,6 @@ pub struct Task<'s> {
     /// How many of `diagnostics`, from the first on, were logged before `stop_writing_at_once`. `usize::MAX`: it was not
     /// called since the last commit.
     logged_before_the_stop: Cell<usize>,
-    /// See `super::self_check`.
-    pub(crate) differing: RefCell<DifferingEntries>,
     /// The types, signatures, mappers and component lists that the task has created.
     pub(crate) own: OwnStore<'s>,
     /// Interior-mutable because every access to a table takes `&Task`: some are made under `&Checker`. See `Task::buffer`.
@@ -130,7 +125,6 @@ impl<'s> Task<'s> {
             files_in_doubt: Vec::new(),
             diagnostics: Vec::new(),
             closed_a_cycle: false,
-            foreign_evaluations: [0; 14],
             order_dependent_variances: Vec::new(),
             assignments_walked: RefCell::default(),
             held_back: Cell::new(0),
@@ -148,7 +142,6 @@ impl<'s> Task<'s> {
             at_once: Cell::new(0),
             at_once_unless_stopped: 0,
             logged_before_the_stop: Cell::new(usize::MAX),
-            differing: RefCell::default(),
             own: OwnStore::new_in(arena, types),
             buffer: UnsafeCell::new(Buffer::new()),
             file_local: UnsafeCell::new(FileLocalTables::new()),
@@ -245,11 +238,6 @@ impl<'s> Task<'s> {
     #[inline]
     pub(crate) fn commits(&self) -> bool {
         self.view.is_some()
-    }
-
-    /// `CommitPolicy::compares_lost`
-    pub(crate) fn compares_lost_entries(&self) -> bool {
-        self.view.as_ref().is_some_and(View::compares_lost)
     }
 
     /// Whether a commit of the task will store what it stores now.
@@ -395,8 +383,6 @@ impl<'s> Task<'s> {
             stored,
             waits: self.waits.get(),
             lost_because_of: self.is_lost.get(),
-            foreign_evaluations: self.foreign_evaluations,
-            differing: self.differing.take(),
         };
         self.drop_everything();
         ended
@@ -446,7 +432,7 @@ impl<'s> Task<'s> {
         (self.place, self.file) = (None, None);
         self.files_in_doubt.clear();
         self.diagnostics.clear();
-        (self.closed_a_cycle, self.foreign_evaluations) = (false, [0; 14]);
+        self.closed_a_cycle = false;
         self.order_dependent_variances.clear();
         self.assignments_walked.get_mut().clear();
         (self.view, self.is_believed) = (None, false);
@@ -461,7 +447,6 @@ impl<'s> Task<'s> {
         self.waits.set([Duration::ZERO; 3]);
         (self.at_once_unless_stopped, self.at_once) = (0, Cell::new(0));
         self.logged_before_the_stop.set(usize::MAX);
-        *self.differing.get_mut() = DifferingEntries::default();
         // Outside the plan it publishes nothing.
         let sharing = self.own.sharing().min(Sharing::Finds);
         self.own.clear();
@@ -501,8 +486,6 @@ pub struct Ended {
     pub waits: [Duration; 3],
     /// `Some`: the task was lost, and why.
     pub lost_because_of: Option<&'static str>,
-    pub foreign_evaluations: [u32; 14],
-    pub differing: DifferingEntries,
 }
 
 /// Variances that a task computed during a cycle (`variances_worker` was re-entered for a symbol in progress), so their value depends on
@@ -538,21 +521,6 @@ impl OrderDependent<'_> {
             && (some(self.variances, &|it| it & 24 != 0) != some(serial, &|it| it & 24 != 0)
                 || some(self.variances, &|it| is(it, 0)) != some(serial, &|it| is(it, 0)))
     }
-}
-
-/// Statistics of a barrier, for `--timing`. Each is a function of the program. `buffered ==
-/// published + lost`.
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
-pub struct Published {
-    /// The entries that the tasks passed to the barrier.
-    pub buffered: u64,
-    pub published: u64,
-    /// Lost to a task with a lower index in the step, or to the published state.
-    pub lost: u64,
-    /// See `Applied::digest`. 0 unless requested.
-    pub digest: u64,
-    /// `(buffered, published)` of each table, in the order of `table_names`.
-    pub by_table: Vec<(u64, u64)>,
 }
 
 /// The `Buffered` tables keyed by a type, a signature or a mapper, except for `relations` and for the small ones that say something

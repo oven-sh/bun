@@ -79,13 +79,6 @@ impl<'s> Checker<'_, 's> {
         self.ran_out_of_stack.replace(false)
     }
 
-    /// How many entries of `relations` this checker has stored under a generic key whose hash
-    /// included a task-local id. Such an entry is bound to its task: after the link the same two
-    /// references hash differently. A function of the program.
-    pub fn generic_relation_entries_not_published(&self) -> u64 {
-        self.generic_relation_entries_not_published
-    }
-
     /// `checkSourceFile`
     pub(super) fn check_source_file(&mut self, file: FileId) {
         self.deferred_nodes.clear();

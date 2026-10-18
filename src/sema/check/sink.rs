@@ -376,8 +376,7 @@ impl super::Program<'_> {
         reported.retain(|(owner, diagnostic)| {
             !owner.is_some_and(|q| {
                 let winner = self.commit_of_entry(q);
-                q.syntax().is_some_and(|(file, _)| file == diagnostic.file)
-                    && winner.is_some_and(|commit| !is_own(commit))
+                q.syntax() == Some(diagnostic.file) && winner.is_some_and(|commit| !is_own(commit))
             })
         });
     }
@@ -874,9 +873,8 @@ impl Checker<'_, '_> {
             }
             _ => true,
         };
-        (owner.iter().chain(in_progress)).any(|&q| {
-            is_asked_by_check(q) && q.syntax().is_none_or(|(visited, _)| is_in_time(visited))
-        })
+        (owner.iter().chain(in_progress))
+            .any(|&q| is_asked_by_check(q) && q.syntax().is_none_or(is_in_time))
     }
 
     /// Whether `checkVariableLikeDeclaration` `returns_before_type_of_symbol` for every name that
@@ -921,7 +919,7 @@ impl Checker<'_, '_> {
         // See `withhold_until_the_file_ends`.
         let in_doubt = &self.task.files_in_doubt;
         let is_withheld = |q: Query| {
-            !matches!(q, Query::Cond(..)) && q.syntax().is_some_and(|it| in_doubt.contains(&it.0))
+            !matches!(q, Query::Cond(..)) && q.syntax().is_some_and(|file| in_doubt.contains(&file))
         };
         for (at, it) in logged.iter_mut().enumerate() {
             if is_between_files

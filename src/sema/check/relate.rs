@@ -4412,7 +4412,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `relation.set(key, entry)` for a key that has no entry.
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
-        self.generic_relation_entries_not_published += u64::from(key.is_hash_of_own_ids());
         self.relation_sizes[usize::from(key.2 & 0xf)] += 1;
         if self.keeps_relations_for_this_task {
             self.relations_of_this_task.entry(key).or_insert(entry);

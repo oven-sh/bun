@@ -70,7 +70,6 @@ pub(crate) mod regexp_scanner;
 mod relate;
 mod related;
 mod related_expected;
-pub mod self_check;
 pub mod services;
 mod shape;
 mod shortcuts;
@@ -847,7 +846,6 @@ impl<'s> Program<'s> {
             task_facts: Default::default(),
             counterparts_of_literals: Default::default(),
             relation_sizes: [0; 6],
-            generic_relation_entries_not_published: 0,
             variances_cut_short: Default::default(),
             free_relaters: Vec::new(),
             spare_inferences: Vec::new(),
@@ -1147,47 +1145,27 @@ fn is_guarded(q: Query) -> bool {
     )
 }
 
-/// The names that go with `Finished::foreign_evaluations`, for `--timing`.
-pub const FOREIGN_EVALUATION_KINDS: [&str; 14] = Query::SYNTAX_KINDS;
-
 impl Query {
-    /// The kinds whose key names syntax, for `Task::foreign_evaluations`. The first eight are inference, and `--timing` sums them. The
-    /// others are mostly type syntax, which every task resolves for itself.
-    const SYNTAX_KINDS: [&'static str; 14] = [
-        "Expr",
-        "Call",
-        "LiteralProp",
-        "Return",
-        "ReturnAtFirstLook",
-        "Pat",
-        "InitializerIsUndefined",
-        "Symbol",
-        "TypeNode",
-        "Declared",
-        "Cond",
-        "Enum",
-        "Bases",
-        "BaseConstructor",
-    ];
-
-    /// The file whose syntax the key names, and the index of the kind in `SYNTAX_KINDS`. `None`: the key is a type or a signature.
+    /// Returns the file whose syntax the key refers to, or `None` if the key is a type or a signature.
     #[inline]
-    fn syntax(self) -> Option<(FileId, usize)> {
-        Some(match self {
-            Query::Expr(file, _) | Query::ExprInFlowLoop(file, _) => (file, 0),
-            Query::Call(file, _) => (file, 1),
-            Query::LiteralProp(file, _) => (file, 2),
-            Query::Return(file, _) => (file, 3),
-            Query::ReturnAtFirstLook(file, _) => (file, 4),
-            Query::Pat(file, _) | Query::ParameterSymbol(file, _) => (file, 5),
-            Query::InitializerIsUndefined(file, _) => (file, 6),
-            Query::Symbol(sym) => (sym.file, 7),
-            Query::TypeNode(file, _) => (file, 8),
-            Query::Declared(sym) => (sym.file, 9),
-            Query::Cond(file, ..) => (file, 10),
-            Query::Enum(file, _) => (file, 11),
-            Query::Bases(sym) => (sym.file, 12),
-            Query::BaseConstructor(sym) => (sym.file, 13),
+    fn syntax(self) -> Option<FileId> {
+        match self {
+            Query::Expr(file, _)
+            | Query::ExprInFlowLoop(file, _)
+            | Query::Call(file, _)
+            | Query::LiteralProp(file, _)
+            | Query::Return(file, _)
+            | Query::ReturnAtFirstLook(file, _)
+            | Query::Pat(file, _)
+            | Query::ParameterSymbol(file, _)
+            | Query::InitializerIsUndefined(file, _)
+            | Query::TypeNode(file, _)
+            | Query::Cond(file, ..)
+            | Query::Enum(file, _) => Some(file),
+            Query::Symbol(sym)
+            | Query::Declared(sym)
+            | Query::Bases(sym)
+            | Query::BaseConstructor(sym) => Some(sym.file),
             Query::ReturnOfSignature(_)
             | Query::Shape(_)
             | Query::Properties(_)
@@ -1197,8 +1175,8 @@ impl Query {
             | Query::TypeArguments(_)
             | Query::AliasTarget(_)
             | Query::WriteType(..)
-            | Query::Comparison(_) => return None,
-        })
+            | Query::Comparison(_) => None,
+        }
     }
 }
 
@@ -1634,9 +1612,6 @@ pub struct Checker<'p, 's> {
     /// has stored. Those of the files that a single checker would have checked before are not
     /// counted.
     relation_sizes: [i32; 6],
-    /// Entries of `relations` under a generic key whose hash included a task-local id. They are not
-    /// published: see `relate::Key`.
-    pub(super) generic_relation_entries_not_published: u64,
     variances_cut_short: FxHashMap<Sym, (u64, &'s [u8])>,
     #[expect(
         clippy::vec_box,
@@ -2267,11 +2242,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.stack.push(q);
         self.in_progress[class as usize] += 1;
-        if let Some((file, kind)) = q.syntax()
-            && Some(file) != self.task.file
-        {
-            self.note_foreign_evaluation(file, kind);
-        }
         // A query made under a context that a non-cacheable query has pushed is non-cacheable too.
         let tainted = !self.inference_contexts.is_empty() && self.is_innermost_tainted();
         // Diagnostics reported under a loop in progress are kept (`taint_from`).
@@ -2300,23 +2270,6 @@ impl<'p, 's> Checker<'p, 's> {
             held_back: self.task.held_back(),
         });
         true
-    }
-
-    /// Counts the evaluation of a query about `file`, which is not the file the task is checking,
-    /// if `file` is a source file in another component of the import graph. Nothing has published
-    /// the result, so the task computes its own copy. A declaration file does not count: every task
-    /// resolves nodes of the library for itself.
-    #[inline(never)]
-    fn note_foreign_evaluation(&mut self, file: FileId, kind: usize) {
-        let Some(own) = self.task.file else {
-            return;
-        };
-        let component_of = &self.files.components.of_file;
-        if self.hir(file).kind != FileKind::Declaration
-            && component_of[file.idx()] != component_of[own.idx()]
-        {
-            self.task.foreign_evaluations[kind] += 1;
-        }
     }
 
     /// The slow path of the first test in `enter`. `false`: `q` is not refused.
@@ -2544,7 +2497,7 @@ impl<'p, 's> Checker<'p, 's> {
             to_visit: Vec::new(),
         };
         self.stack[from..].iter().all(|&q| {
-            mentioned.is_found = q.syntax().is_some_and(|(file, _)| is_near(file));
+            mentioned.is_found = q.syntax().is_some_and(is_near);
             match q {
                 Query::Shape(ty)
                 | Query::Properties(ty)

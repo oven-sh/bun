@@ -562,7 +562,7 @@ impl<'p, 's> Checker<'p, 's> {
             || self.stack[..=start].iter().any(|&q| match q {
                 // `checkAliasSymbol`
                 Query::AliasTarget(alias) => is_in_time(alias.file),
-                _ => q.syntax().is_none_or(|(visited, _)| is_in_time(visited)),
+                _ => q.syntax().is_none_or(is_in_time),
             })
     }
 

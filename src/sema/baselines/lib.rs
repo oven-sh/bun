@@ -1801,8 +1801,6 @@ fn run_one(
             progress: None,
             only: None,
             order: 1,
-            digests: false,
-            task_clock: None,
             plan_options: bun_sema_driver::PlanOptions::default(),
             retains_everything: false,
             script_kinds: &[],

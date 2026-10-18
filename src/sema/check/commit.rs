@@ -154,7 +154,7 @@ impl<'s> Commits<'s> {
     }
 
     /// For a task that begins. `files`: how many the program has.
-    pub(super) fn view(&self, files: usize, policy: CommitPolicy, jitter: Jitter) -> View<'s> {
+    pub(super) fn view(&self, files: usize, jitter: Jitter) -> View<'s> {
         View {
             numbers: self.numbers,
             of_files: vec![Cell::new(0); files].into_boxed_slice(),
@@ -164,8 +164,6 @@ impl<'s> Commits<'s> {
             compared_with_pinned: Cell::new(0),
             oldest_pin: Cell::new(u32::MAX),
             own: RefCell::default(),
-            policy,
-            last_commit: Cell::new(Instant::now()),
             ignores_stamps: jitter.ignores_stamps,
             times_unsettled: Cell::new(0),
         }
@@ -219,19 +217,9 @@ impl<'s> Commits<'s> {
     }
 }
 
-/// When a task commits besides at its end: at the first moment of rest after one of the first two has come true. All of it
-/// changes the time that a check takes, never its result.
-#[derive(Copy, Clone, Default)]
-pub struct CommitPolicy {
-    /// It has logged this many keys since its last commit. 0: never for that reason.
-    pub entries: usize,
-    /// Its last commit is this many microseconds ago. 0: never for that reason.
-    pub microseconds: u64,
-    /// No entry is written at once (`Task::may_write_at_once`).
-    pub holds_everything_back: bool,
-    /// An entry that loses at a commit is compared with the one that stays: see `super::self_check`.
-    pub compares_lost: bool,
-}
+/// A task commits at its first idle moment after it has logged this many keys since its last commit. The number changes how
+/// long a check takes, never its result.
+const KEYS_PER_COMMIT: usize = 1024;
 
 const NO_FILE: u32 = u32::MAX;
 
@@ -253,8 +241,6 @@ pub(crate) struct View<'s> {
     oldest_pin: Cell<u32>,
     /// The numbers of the commits of the task, ascending.
     own: RefCell<Vec<u32>>,
-    policy: CommitPolicy,
-    last_commit: Cell<Instant>,
     /// `Jitter::ignores_stamps`
     ignores_stamps: bool,
     /// How many times `state` has found a commit storing.
@@ -321,10 +307,6 @@ impl View<'_> {
         self.numbers.with_a_ring.load(Ordering::Acquire) > self.at_rest.get()
     }
 
-    pub(super) fn compares_lost(&self) -> bool {
-        self.policy.compares_lost
-    }
-
     fn is_own(&self, commit: u32) -> bool {
         self.own.borrow().binary_search(&commit).is_ok()
     }
@@ -337,19 +319,6 @@ impl View<'_> {
             NO_FILE => u32::MAX,
             file => self.snapshot_of(FileId(file)),
         });
-        self.last_commit.set(Instant::now());
-    }
-
-    /// `logged`: how many keys the task has logged.
-    fn is_commit_due(&self, logged: usize) -> bool {
-        let CommitPolicy {
-            entries,
-            microseconds,
-            ..
-        } = self.policy;
-        entries != 0 && logged >= entries
-            || microseconds != 0
-                && self.last_commit.get().elapsed() >= Duration::from_micros(microseconds)
     }
 
     /// A greater number than last time if a commit may have added to the tables in between.
@@ -578,12 +547,12 @@ pub enum AfterFile {
 impl<'s> Checker<'_, 's> {
     /// Right after `begin_task`: the task commits while it runs, and sees the commits of the others.
     /// `is_alone`: no other task runs, as in the last round.
-    pub fn see_commits(&mut self, policy: CommitPolicy, is_alone: bool) {
+    pub fn see_commits(&mut self, is_alone: bool) {
         let files = self.p.files.modules.len();
-        let view = (self.p.commits).view(files, policy, self.task.own.jitter());
+        let view = (self.p.commits).view(files, self.task.own.jitter());
         // Alone it writes nothing at once: nobody is there to read it, and at a limit it stores, and replaces, what tsgo
         // does.
-        let at_once = match is_alone || policy.holds_everything_back {
+        let at_once = match is_alone {
             true => 0,
             false => self.p.commits.at_once,
         };
@@ -616,7 +585,7 @@ impl<'s> Checker<'_, 's> {
     fn rest(&mut self) {
         self.lose_what_has_missed_a_ring();
         let logged = self.task.buffer().logged();
-        let is_due = (self.task.view()).is_some_and(|view| view.is_commit_due(logged));
+        let is_due = self.task.view().is_some() && logged >= KEYS_PER_COMMIT;
         // A commit here would store the members of a ring that are in other files, and withhold those in this one.
         if is_due && !self.task.is_lost() && !self.task.has_closed_a_ring() {
             let (is_between_files, is_read) = (false, true);
@@ -687,7 +656,7 @@ impl<'s> Checker<'_, 's> {
     pub fn commit_after_file(&mut self, is_last: bool, is_read: bool) -> AfterFile {
         self.lose_what_has_missed_a_ring();
         let logged = self.task.buffer().logged();
-        let is_due = (self.task.view()).is_some_and(|view| view.is_commit_due(logged))
+        let is_due = self.task.view().is_some() && logged >= KEYS_PER_COMMIT
             || self.task.has_closed_a_ring();
         if !is_last && !is_due && !self.task.is_lost() {
             return AfterFile::Waits;

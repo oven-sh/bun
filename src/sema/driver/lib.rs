@@ -17,14 +17,11 @@ use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::atom::RecentAtoms;
-use bun_sema::check::commit::{AfterFile, CommitPolicy};
+use bun_sema::check::commit::AfterFile;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
-use bun_sema::check::self_check::DifferingEntries;
-use bun_sema::check::task::Published;
 use bun_sema::check::{
-    FOREIGN_EVALUATION_KINDS, INFERENCE_WALK_COUNTS, MEMBER_COUNTS, Program, Requested,
-    compute_ecma_line_starts,
+    INFERENCE_WALK_COUNTS, MEMBER_COUNTS, Program, Requested, compute_ecma_line_starts,
 };
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
@@ -43,7 +40,6 @@ use bun_sema::resolve::{
     output_declaration_file_name, run_with_current_helpers, to_path, to_path_in, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
-use bun_sema::types::LinkCounts;
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sema::verify::verify_project_references;
@@ -436,20 +432,16 @@ impl Region<'_> {
     }
 }
 
-/// The constants of a `Plan`. They are options while they are still being tuned: the standalone
-/// command line sets them.
+/// A checker is replaced after it has checked `1 / MIN_TASKS` of the total cost, because its private tables grow with every
+/// file. A file that costs more than that is heavy and starts before the others.
+const MIN_TASKS: usize = 128;
+/// A thread takes a run of consecutive files from the queue at a time. The run's cost is the remaining cost divided by the
+/// number of threads and by this.
+const RUNS_PER_THREAD: usize = 4;
+
+/// How a request is run.
 #[derive(Clone, Copy)]
 pub struct PlanOptions {
-    /// .. or until they reach the source size of the step divided by this, if that is less: a step
-    /// with many files has about this many tasks at least. Not a function of the thread count.
-    pub min_tasks: usize,
-    /// What a type node adds to the cost estimate of a file, in which an identifier of an expression counts 1.
-    pub type_node_cost: usize,
-    /// With `has_no_steps`: a thread takes a run of consecutive files from the queue at a time, of the cost of what is left
-    /// divided by the number of threads and by this. 0: one file.
-    pub runs_per_thread: usize,
-    /// With `has_no_steps`: when a task commits besides at its end.
-    pub commit_policy: CommitPolicy,
     /// For tests of `shares_at_once` and `has_no_steps`.
     pub jitter: Jitter,
     /// How many projects of a `tsc -b` run are loaded or checked at the same time, at most, if each reads the sources of
@@ -511,13 +503,6 @@ pub struct PlanOptions {
 impl Default for PlanOptions {
     fn default() -> PlanOptions {
         PlanOptions {
-            min_tasks: 128,
-            type_node_cost: 1,
-            runs_per_thread: 4,
-            commit_policy: CommitPolicy {
-                entries: 1024,
-                ..CommitPolicy::default()
-            },
             jitter: Jitter::default(),
             projects_at_once: 4,
             after_file_is_for_checked_files: false,
@@ -914,11 +899,6 @@ pub struct Request<'a> {
     /// number: by index * `order` (mod 2^32), a fixed permutation. The output does not depend on
     /// it. For tests of that property.
     pub order: u32,
-    /// `Published::digest` is computed at every barrier. For tests: it is a function of the program.
-    pub digests: bool,
-    /// What the tasks cost is measured with this in place of the time. For tuning the plan: with
-    /// one thread, the instructions of the process are those of the task.
-    pub task_clock: Option<&'a (dyn Fn() -> u64 + Sync)>,
     pub plan_options: PlanOptions,
     /// Nothing is freed after it is checked: for a caller that goes on to query the program. It
     /// uses several times the memory.
@@ -978,42 +958,25 @@ pub struct Diagnostic {
     pub project: u32,
 }
 
-/// A step of a `Plan`, as it ran.
+/// One pass over the queue of files, as it ran. For `--timing`.
 #[derive(Clone)]
-pub struct StepReport {
+pub struct RoundReport {
     pub tasks: usize,
-    /// Of all its tasks.
     pub files: usize,
-    /// Wall time from the start of the first task to the end of the last, and in each of the two
-    /// parts of the barrier after it.
-    pub in_tasks: Duration,
-    pub in_link: Duration,
-    pub in_publish: Duration,
-    /// `PlanOptions::has_no_steps`, summed over the tasks: how long they have waited for the mutex of the commits, have had
-    /// it, and have waited for claims of variances.
+    /// Wall time from the start of the first task to the end of the last.
+    pub elapsed: Duration,
+    /// Summed over the tasks: time spent waiting for the commit mutex, holding it, and waiting for claims of variances.
     pub waits: [Duration; 3],
-    /// .. the tasks that were lost: the file that each was at, and why.
+    /// The discarded tasks: the file each was checking, and why.
     pub lost: Vec<(Vec<u8>, &'static str)>,
-    /// How long threads had no task because the step was not over, summed over the threads.
+    /// Time that threads spent without a task before the round ended, summed over the threads.
     pub idle: Duration,
-    /// The five tasks that took longest: wall time, the number of files, the path of the first file.
-    /// With `Request::task_clock`, all of them, and what that clock measured, as nanoseconds.
+    /// The five slowest tasks: wall time, number of files, path of the first file.
     pub slowest_tasks: Vec<(Duration, usize, Vec<u8>)>,
-    /// `PlanOptions::split_files`: how many of the tasks checked a range ahead, how many of those were not published, and how many
-    /// met each obstacle of `Checker::check_statements_ahead`, by bit.
-    pub ranges: usize,
-    pub ranges_dropped: usize,
-    pub ranges_by_obstacle: [usize; 3],
-    /// Entries of the tasks' buffers: all that were passed to the barrier, those that were
-    /// published, those that lost to a task with a lower index.
-    pub entries: Published,
-    /// Types, signatures, mappers and component lists that the tasks have created.
-    pub records: LinkCounts,
-    /// `Checker::generic_relation_entries_not_published`, summed over the tasks.
-    pub generic_relation_entries_not_published: u64,
-    /// `Finished::foreign_evaluations`, summed over the tasks: by kind of query, in the order of `FOREIGN_EVALUATION_KINDS`. What a
-    /// task computed about a source file of another component, because nothing had published it.
-    pub foreign_evaluations: [u64; FOREIGN_EVALUATION_KINDS.len()],
+    /// Keys that the tasks logged for their commits.
+    pub logged: u64,
+    /// Entries that those commits stored. The other keys were bound, or another task stored them first.
+    pub stored: u64,
 }
 
 /// `taskResult.builder`: how much of a `Report` one task of a build has printed.
@@ -1119,11 +1082,8 @@ pub struct Report {
     /// Those that were to be checked in a program with an error in its syntax, its options or its
     /// global types. As in `tsc`, nothing else is reported for such a program.
     pub files_not_checked: usize,
-    /// The steps that ran, in order. See `Plan`.
-    pub steps: Vec<StepReport>,
-    /// `PlanOptions::has_no_steps`: what `bun_sema::check::self_check` has found. How many entries, by table, and a line
-    /// about each of the first few.
-    pub entries_that_differ: (Vec<(&'static str, u64)>, Vec<String>),
+    /// The rounds that ran, in order.
+    pub rounds: Vec<RoundReport>,
     /// How many projects are reported, if `references` are followed. Otherwise 0.
     pub projects_checked: usize,
     /// The configuration file has `references` and no files of its own, and `--build` was not
@@ -1174,9 +1134,7 @@ impl Report {
         self.files_parsed_for_all += other.files_parsed_for_all;
         self.files_checked += other.files_checked;
         self.files_not_checked += other.files_not_checked;
-        self.steps.extend(other.steps);
-        (self.entries_that_differ.0).extend(other.entries_that_differ.0);
-        (self.entries_that_differ.1).extend(other.entries_that_differ.1);
+        self.rounds.extend(other.rounds);
         self.check_time += other.check_time;
         for (phase, more) in self.load_phases.iter_mut().zip(other.load_phases) {
             *phase += more;
@@ -4264,7 +4222,7 @@ fn check_named_files(
     // instructions of the check.
     let cost_of = |file: FileId| {
         let (identifiers, type_nodes) = program.files.sizes[file.idx()];
-        identifiers as usize + type_nodes as usize * request.plan_options.type_node_cost + 1
+        identifiers as usize + type_nodes as usize + 1
     };
     let costs: Vec<usize> = to_check.iter().map(|&file| cost_of(file)).collect();
     let size_of = |index: usize| costs[index];
@@ -4272,7 +4230,7 @@ fn check_named_files(
         Some(place) if place.is_for_one_thread => 1,
         _ => threads,
     };
-    let steps: Guarded<Vec<StepReport>> = Guarded::new(Vec::new());
+    let rounds: Guarded<Vec<RoundReport>> = Guarded::new(Vec::new());
     // For every task since the last barrier: wall time, the number of files, the index of the first file.
     let task_times: Guarded<Vec<(Duration, usize, usize)>> = Guarded::new(Vec::new());
     // The files of the tasks that were lost.
@@ -4310,13 +4268,7 @@ fn check_named_files(
         stored: u64,
         waits: [Duration; 3],
         lost: Vec<(usize, &'static str)>,
-        generic_relation_entries_not_published: u64,
-        foreign_evaluations: [u64; FOREIGN_EVALUATION_KINDS.len()],
     }
-    // `bun_sema::check::self_check`, of all tasks.
-    let differing: Guarded<DifferingEntries> = Guarded::new(DifferingEntries::default());
-    // `Report::entries_that_differ`
-    let entries_that_differ: Guarded<(Vec<(&'static str, u64)>, Vec<String>)> = Guarded::default();
     // Every thread takes files from one queue until none is left. `files`: in program order.
     // `is_last_round`: one thread checks them all in that order, in one task, which is believed.
     //
@@ -4325,10 +4277,9 @@ fn check_named_files(
     let run_tasks = |round: usize, files: &[usize], expected: Requested, is_last_round: bool| {
         let cost: usize = files.iter().map(|&file| size_of(file)).sum();
         // A checker is replaced by a new one after this much: what it holds for itself grows with every file.
-        let task_cost = match request.plan_options.min_tasks {
-            _ if is_last_round => usize::MAX,
-            0 => usize::MAX,
-            tasks => (cost / tasks).max(1),
+        let task_cost = match is_last_round {
+            true => usize::MAX,
+            false => (cost / MIN_TASKS).max(1),
         };
         let workers = if is_last_round { 1 } else { threads };
         // The heavy files first, the largest first, so that no thread begins one when the others are nearly done. Then
@@ -4357,10 +4308,9 @@ fn check_named_files(
                 *cost_left = cost_left.saturating_sub(size_of(queue[*heavy_taken - 1]));
                 return *heavy_taken - 1..*heavy_taken;
             }
-            let share = match request.plan_options.runs_per_thread {
-                _ if is_last_round => usize::MAX,
-                0 => 0,
-                runs => *cost_left / (workers * runs),
+            let share = match is_last_round {
+                true => usize::MAX,
+                false => *cost_left / (workers * RUNS_PER_THREAD),
             };
             let (mut to, mut cost_of_run) = (from, 0);
             while to < queue.len() && (to == from || cost_of_run < share) {
@@ -4406,7 +4356,7 @@ fn check_named_files(
         // One task, which begins with the file `first` and goes on with what `next` returns. Returns the file that the
         // next task of the thread begins with.
         let run_task = |first: usize, next: &mut dyn FnMut() -> Option<usize>| -> Option<usize> {
-            let (began, cost_before) = (Instant::now(), request.task_clock.map(|clock| clock()));
+            let began = Instant::now();
             let mut checker = new_checker(expected);
             // The index of a task is that of its first file, which no other task of the round has.
             let round = match visits.lock()[first].rechecks {
@@ -4414,7 +4364,7 @@ fn check_named_files(
                 _ => round,
             };
             checker.begin_task(round as u32, first as u32);
-            checker.see_commits(request.plan_options.commit_policy, is_last_round);
+            checker.see_commits(is_last_round);
             // Of the files that are checked and that no commit has followed.
             let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
             let mut waiting: Vec<usize> = Vec::new();
@@ -4521,24 +4471,13 @@ fn check_named_files(
                     *sum += more;
                 }
                 (sums.lost).extend(ended.lost_because_of.map(|why| (index, why)));
-                sums.generic_relation_entries_not_published +=
-                    checker.generic_relation_entries_not_published();
-                let evaluations = sums.foreign_evaluations.iter_mut();
-                for (sum, &more) in evaluations.zip(&ended.foreign_evaluations) {
-                    *sum += u64::from(more);
-                }
             }
-            differing.lock().add(ended.differing);
             // It holds references into the HIR of files.
             drop(checker);
             free_trees(trees_to_free);
             let elapsed = began.elapsed();
             busy.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
-            let cost = match (request.task_clock, cost_before) {
-                (Some(clock), Some(before)) => Duration::from_nanos(clock() - before),
-                _ => elapsed,
-            };
-            task_times.lock().push((cost, done, first));
+            task_times.lock().push((elapsed, done, first));
             upcoming
         };
         let first_files_worker = AtomicUsize::new(usize::MAX);
@@ -4590,45 +4529,31 @@ fn check_named_files(
             }
             _ => host.parallel(workers, &|_| work()),
         }
-        let in_tasks = started.elapsed();
+        let elapsed = started.elapsed();
         let sums = std::mem::take(&mut *sums.lock());
         let mut slowest = std::mem::take(&mut *task_times.lock());
         slowest.shared_sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
-        if request.task_clock.is_none() {
-            slowest.truncate(5);
-        }
+        slowest.truncate(5);
         let path_of = |file: usize| {
             program.files.modules[to_check[file].idx()]
                 .file_name()
                 .to_vec()
         };
-        steps.lock().push(StepReport {
+        rounds.lock().push(RoundReport {
             slowest_tasks: (slowest.into_iter())
                 .map(|(elapsed, files, file)| (elapsed, files, path_of(file)))
                 .collect(),
             tasks: sums.tasks,
-            ranges: 0,
-            ranges_dropped: 0,
-            ranges_by_obstacle: [0; 3],
             files: files.len(),
-            in_tasks,
-            in_link: Duration::ZERO,
-            in_publish: Duration::ZERO,
+            elapsed,
             waits: sums.waits,
             lost: (sums.lost.into_iter())
                 .map(|(file, why)| (path_of(file), why))
                 .collect(),
-            idle: (in_tasks * threads as u32)
+            idle: (elapsed * threads as u32)
                 .saturating_sub(Duration::from_nanos(busy.into_inner())),
-            entries: Published {
-                buffered: sums.logged,
-                published: sums.stored,
-                lost: sums.logged - sums.stored,
-                ..Published::default()
-            },
-            records: LinkCounts::default(),
-            generic_relation_entries_not_published: sums.generic_relation_entries_not_published,
-            foreign_evaluations: sums.foreign_evaluations,
+            logged: sums.logged,
+            stored: sums.stored,
         });
     };
     let run_without_steps = |expected: Requested| {
@@ -4638,17 +4563,6 @@ fn check_named_files(
         if !again.is_empty() {
             again.shared_sort_unstable();
             run_tasks(1, &again, expected, true);
-        }
-        let differing = std::mem::take(&mut *differing.lock());
-        if !differing.by_table.is_empty() {
-            // To print a type is to ask about it. What that stores and reports is dropped with the task.
-            let mut printer = new_checker(expected);
-            let lines = differing.first.iter();
-            let lines = lines.map(|entry| printer.describe_entry_that_differs(entry));
-            let lines: Vec<String> = lines.collect();
-            let names = bun_sema::check::task::table_names().into_iter();
-            let by_table = names.zip(differing.by_table).filter(|it| it.1 != 0);
-            *entries_that_differ.lock() = (by_table.collect(), lines);
         }
     };
     // `NewDiagnosticForNode` without a node: the range is empty, not undefined.
@@ -4674,7 +4588,7 @@ fn check_named_files(
         if !type_checked {
             let tasks = match threads == 1 || host.is_of_one_thread() {
                 true => 1,
-                false => request.plan_options.min_tasks.max(1),
+                false => MIN_TASKS,
             };
             let tasks = only_emitted.chunks(only_emitted.len().div_ceil(tasks).max(1));
             let tasks: Vec<&[FileId]> = tasks.collect();
@@ -4795,8 +4709,7 @@ fn check_named_files(
     report.deepest_stack = deepest_stack.into_inner();
     report.inference_walks = *inference_walks.lock();
     report.members = *members.lock();
-    report.steps = std::mem::take(&mut *steps.lock());
-    report.entries_that_differ = std::mem::take(&mut *entries_that_differ.lock());
+    report.rounds = std::mem::take(&mut *rounds.lock());
     report.incomplete = std::mem::take(&mut *incomplete.lock());
     report.incomplete.shared_sort();
     report.incomplete.dedup();

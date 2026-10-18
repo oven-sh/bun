@@ -10,7 +10,6 @@
 //! The third type parameter of a table determines who writes an entry and when it becomes visible
 //! to whom: `Frozen`, `Buffered`, `FileLocal`. See `Policy`.
 
-use crate::check::self_check::{Mention, Mentions, is_same_value, note_differing};
 use crate::check::task::{Stored, Task};
 use crate::local::{
     Buffer, HashedInTask, LOCAL, ListInTask, MaybeLocal, Slot, SlotNumber, is_local_number,
@@ -1176,20 +1175,7 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
     #[inline]
     fn put_value_at_once(&self, task: &Task, key: I, value: V) -> V {
         let raw = value.pack();
-        let held = self.put_at_once(task, key.number(), raw);
-        // Not with what the task itself holds back under the key.
-        if held != raw && self.seen(task, key.number()) == held {
-            self.compare(task, key, V::unpack(held), value);
-        }
-        V::unpack(held)
-    }
-
-    /// `key` has `stored`, and `task` has computed `computed`.
-    #[cold]
-    fn compare(&self, task: &Task, key: I, stored: V, computed: V) {
-        if !is_same_value(&stored, &computed) {
-            note_differing(task, self.slot, Mentions::of(&key), &stored, &computed);
-        }
+        V::unpack(self.put_at_once(task, key.number(), raw))
     }
 
     /// An entry that was written at once is published, so it is unchanged. Whoever stores an entry that is to be replaced
@@ -1358,14 +1344,7 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
         }
         // A value that loses stays, and nothing refers to it.
         let kept = Handle(self.kept.push(value));
-        let held = self.handles.insert(task, key, kept, stored);
-        if is_at_once && held != kept && held.local_number().is_none() {
-            let (first, mine) = (self.kept.get(held.0), self.kept.get(kept.0));
-            if !is_same_value(first, mine) {
-                note_differing(task, self.handles.slot, Mentions::of(&key), first, mine);
-            }
-        }
-        held
+        self.handles.insert(task, key, kept, stored)
     }
 
     #[inline]
@@ -1430,11 +1409,7 @@ where
         if is_first {
             return Ok(value);
         }
-        let first = self.published.get_by_now(spread, key).copied();
-        if let Some(first) = first.filter(|first| !is_same_value(first, &value)) {
-            note_differing(task, self.slot.number(), Mentions::of(key), &first, &value);
-        }
-        first.ok_or(true)
+        (self.published.get_by_now(spread, key).copied()).ok_or(true)
     }
 
     /// `spread`: the hash of `key`.
@@ -1573,8 +1548,6 @@ pub(crate) trait Dense: Sync {
     fn shared_key(&self, key: u64, value: &impl Follow, own: &OwnStore) -> Option<u32>;
     /// In the commit `number`: stores `raw` under `key` unless there is an entry. Returns whether it has.
     fn store_in_commit(&self, key: u32, raw: u32, number: u32) -> bool;
-    /// `key`, which is from a `Log`, for the self-check.
-    fn mention(key: u64) -> Vec<Mention>;
 }
 
 impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
@@ -1631,10 +1604,6 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
         }
         is_first
     }
-
-    fn mention(key: u64) -> Vec<Mention> {
-        vec![Mention::Node(FileId((key >> 32) as u32), key as u32)]
-    }
 }
 
 impl<I: Id + Follow, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
@@ -1674,10 +1643,6 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
         let cell = self.cells.cell(key);
         cell.load(Ordering::Relaxed) == 0 && cell.put_if_empty(raw) == raw
     }
-
-    fn mention(key: u64) -> Vec<Mention> {
-        Mentions::of(&I::from_number(key as u32))
-    }
 }
 
 /// `Publish::store_logged` of a table with one cell per key.
@@ -1695,20 +1660,12 @@ fn store_logged_cell<D: Dense<Value: Follow>>(
     let Some(shared_key) = table.shared_key(key, &computed, &task.own) else {
         return false;
     };
-    let is_first = table.store_in_commit(shared_key, raw, number);
-    if !is_first && task.compares_lost_entries() {
-        let stored = D::Value::unpack(table.load(shared_key));
-        if !is_same_value(&stored, &computed) {
-            let (slot, key) = (table.table_slot(), D::mention(key));
-            note_differing(task, slot, key, &stored, &computed);
-        }
-    }
-    is_first
+    table.store_in_commit(shared_key, raw, number)
 }
 
 /// .. of an indirect table. A value whose handle has `LOCAL` is bound: see `keep`.
-fn store_logged_handle<D: Dense<Value = Handle>, T: Follow, A: Alloc>(
-    (handles, kept): (&D, &AppendVec<T, A>),
+fn store_logged_handle<D: Dense<Value = Handle>>(
+    handles: &D,
     task: &Task,
     key: u64,
     number: u32,
@@ -1717,19 +1674,7 @@ fn store_logged_handle<D: Dense<Value = Handle>, T: Follow, A: Alloc>(
     if raw == 0 || Handle::unpack(raw).local_number().is_some() {
         return false;
     }
-    let is_first = store_logged_cell(handles, task, key, number);
-    let mine = Handle::unpack(raw);
-    if !is_first
-        && task.compares_lost_entries()
-        && let Some(shared_key) = handles.shared_key(key, &mine, &task.own)
-    {
-        let first = Handle::unpack(handles.load(shared_key));
-        let (first, mine) = (kept.get(first.0), kept.get(mine.0));
-        if !is_same_value(first, mine) {
-            note_differing(task, handles.table_slot(), D::mention(key), first, mine);
-        }
-    }
-    is_first
+    store_logged_cell(handles, task, key, number)
 }
 
 /// A table whose values fit in a cell. The entries passed to the barrier: `Vec<(u32, u32)>`, a key
@@ -1774,7 +1719,7 @@ impl<'s, K: NodeKey, T: Follow + Send + Sync + 's, W: Location, A: Alloc> Publis
     }
 
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool {
-        store_logged_handle((&self.handles, &self.kept), task, key, number)
+        store_logged_handle(&self.handles, task, key, number)
     }
 }
 
@@ -1786,7 +1731,7 @@ impl<'s, I: Id + Follow, T: Follow + Send + Sync + 's, W: Location, A: Alloc> Pu
     }
 
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool {
-        store_logged_handle((&self.handles, &self.kept), task, key, number)
+        store_logged_handle(&self.handles, task, key, number)
     }
 }
 
@@ -1816,15 +1761,7 @@ where
             return false;
         }
         let spread = spread_hash(key);
-        let is_first = self.published.add_if_absent(spread, key, *value);
-        if !is_first
-            && task.compares_lost_entries()
-            && let Some(first) = self.published.get_by_now(spread, key)
-            && !is_same_value(first, value)
-        {
-            note_differing(task, self.slot.number(), Mentions::of(key), first, value);
-        }
-        is_first
+        self.published.add_if_absent(spread, key, *value)
     }
 }
 

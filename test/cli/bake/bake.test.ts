@@ -725,7 +725,12 @@ test.concurrent.skipIf(isWindows)(
       },
     });
     const waitFor = async (pattern: RegExp) => {
-      while (!pattern.test(text)) await changed.promise;
+      while (!pattern.test(text)) {
+        const exited = await Promise.race([changed.promise.then(() => false), proc.exited.then(() => true)]);
+        if (exited && !pattern.test(text)) {
+          throw new Error(`Exited with code ${proc.exitCode} before ${pattern}:\n${text}`);
+        }
+      }
       return text.match(pattern)!;
     };
 
@@ -783,6 +788,29 @@ test.concurrent.skipIf(isWindows)(
       `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
     );
     await output.waitFor(/SIGUSR2 before restart/);
+  },
+);
+
+// Windows has no SIGUSR2.
+test.concurrent.skipIf(isWindows)(
+  "bun --watch-kill-signal ... bake sends that signal before it starts again for bake.config.ts",
+  async () => {
+    using dir = tempDir("bake-command-kill-signal-config", {
+      "bake.config.ts": `export default { plugins: [] };`,
+      "app/server.ts": `
+      process.on("SIGUSR2", () => console.log("SIGUSR2 before restart"));
+      process.on("SIGTERM", () => console.log("SIGTERM before restart"));
+      export default { fetch: () => new Response("ok") };
+    `,
+    });
+
+    await using proc = spawnBake(String(dir), ["--watch-kill-signal", "SIGUSR2", "bake", "--port=0"]);
+    const output = collectOutput(proc);
+    await output.waitFor(/url: /);
+
+    await Bun.write(join(String(dir), "bake.config.ts"), `export default { plugins: [] }; // changed`);
+    await output.waitFor(/SIGUSR2 before restart/);
+    expect(output.text).not.toContain("SIGTERM before restart");
   },
 );
 

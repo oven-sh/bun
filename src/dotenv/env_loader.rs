@@ -322,6 +322,7 @@ impl Loader {
         result
     }
 
+    /// The returned URL borrows the map entry, which `Map::put` frees.
     pub fn get_http_proxy_for(&self, url: &URL<'_>) -> Option<URL<'_>> {
         // `http://DOMAIN\user:pass@proxy:8080` is a domain login, as curl reads it.
         let proxy = URL::parse_single_reader(self.proxy_env_for_scheme(url.is_http())?);
@@ -550,6 +551,19 @@ impl Loader {
             custom_files_loaded: self.custom_files_loaded.clone()?,
             quiet: false,
             did_load_process: false,
+            reject_unauthorized: Cell::new(None),
+            aws_credentials: None,
+        })
+    }
+
+    /// Copies the map and the load state. The derived caches start empty.
+    pub fn clone(&self) -> Result<Loader, AllocError> {
+        Ok(Loader {
+            map: self.map.clone_with_allocator()?,
+            default_files_loaded: self.default_files_loaded,
+            custom_files_loaded: self.custom_files_loaded.clone()?,
+            quiet: self.quiet,
+            did_load_process: self.did_load_process,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         })
@@ -1369,6 +1383,7 @@ impl Map {
         }
     }
 
+    /// Frees the old value; JS hits this via `Bun__setEnvValue`, so don't hold borrows across JS.
     #[inline]
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
         #[cfg(all(windows, debug_assertions))]

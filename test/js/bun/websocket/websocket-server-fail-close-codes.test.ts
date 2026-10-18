@@ -2,7 +2,8 @@
 // with 1002 (protocol error), 1007 (invalid data) or 1009 (too big) and the
 // error message as the reason. The close handler gets 1006 with the same
 // message. A peer can't send 1006, so it always means the server aborted.
-import { describe, expect, test } from "bun:test";
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as cert, isASAN } from "harness";
 import path from "node:path";
 import { deflateRawSync } from "node:zlib";
@@ -13,7 +14,6 @@ import {
   OP,
   type Payload,
   RawClient,
-  type RequestOptions,
   showFullFrame,
 } from "../../web/websocket/raw-peer";
 
@@ -256,9 +256,16 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
   const MiB = 1024 * 1024;
   const CAP_MB = 4;
   const diagnostic = "Received message that does not fit in memory";
-  const deflate: RequestOptions = { headers: { "Sec-WebSocket-Extensions": "permessage-deflate" } };
+  const deflate = { "Sec-WebSocket-Extensions": "permessage-deflate" };
   // What a refused message inflates from. A run of one byte compresses to a few KiB.
   const deflated = (size: number) => deflateRawSync(Buffer.alloc(size, 7));
+  const tooBig = Buffer.alloc(CAP_MB * MiB + 2 * MiB);
+
+  type Mode = "ws" | "wss" | "ws-package";
+  let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
+  let lines: AsyncGenerator<any>;
+  let stderr: Promise<string>;
+  let ports: Record<Mode, number>;
 
   async function* jsonLines(stream: ReadableStream<Uint8Array>) {
     let pending = "";
@@ -270,12 +277,25 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
     }
   }
 
-  async function startServer() {
-    const proc = Bun.spawn({
+  // The next line the fixture prints: one per close handler, and per 'error' event of `ws`.
+  async function nextEvent() {
+    const { value, done } = await lines.next();
+    if (done) throw new Error(`the server exited:\n${await stderr}`);
+    return value;
+  }
+
+  const connect = (mode: Mode, headers?: Record<string, string>) =>
+    RawClient.upgrade(ports[mode], { headers, secure: mode === "wss" });
+
+  // One process serves every row: a refused message must leave it serving. It is a
+  // debug build under ASAN on some lanes, which takes seconds to start on a busy machine.
+  beforeAll(async () => {
+    proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "websocket-server-oom-fixture.ts")],
       env: {
         ...bunEnv,
         Malloc: "1",
+        WS_OOM_TLS: JSON.stringify(cert),
         // detect_leaks=0: natives owned only by a JSC cell are invisible to
         // LeakSanitizer's reachability scan, and `Malloc=1` adds WebKit's own
         // never-freed startup allocations.
@@ -289,17 +309,19 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
           .join(":"),
       },
       stdout: "pipe",
+      // ASAN prints a warning for every refused allocation. Drained, and shown if the server dies.
       stderr: "pipe",
     });
-    const events = jsonLines(proc.stdout);
-    const { port } = (await events.next()).value;
-    return { proc, events, port };
-  }
+    stderr = proc.stderr.text();
+    lines = jsonLines(proc.stdout);
+    ports = await nextEvent();
+  }, 30_000);
+  afterAll(() => proc?.kill());
 
-  const refusals: [name: string, options: RequestOptions | undefined, send: (client: RawClient) => void][] = [
+  const refusals: [name: string, headers: Record<string, string> | undefined, send: (client: RawClient) => void][] = [
     // The fragment buffer: the up-front reserve for the length the header declares is
     // refused, then the buffer doubles with the bytes that arrive until a growth is too.
-    ["a message larger than the cap", undefined, client => client.binary(Buffer.alloc(CAP_MB * MiB + 2 * MiB))],
+    ["a message larger than the cap", undefined, client => client.binary(tooBig)],
     [
       "a fragmented message larger than the cap",
       undefined,
@@ -312,7 +334,7 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
     [
       "a compressed message that inflates past the cap",
       deflate,
-      client => client.binary(deflated(CAP_MB * MiB + 2 * MiB), { rsv1: true }),
+      client => client.binary(deflated(tooBig.length), { rsv1: true }),
     ],
     // The copy for the message handler: one non-ASCII character makes the string 16-bit,
     // so its buffer is twice the size of the one the bytes already fit in.
@@ -323,22 +345,63 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
     ],
   ];
 
-  test.each(refusals)("%s fails that connection with 1011", async (_name, options, send) => {
-    const { proc, events, port } = await startServer();
-    await using _ = proc;
-    using client = await RawClient.upgrade(port, options);
+  // The server still serves, with the shared inflate buffer still usable.
+  async function expectStillServing(scheme: "ws" | "wss") {
+    using client = await connect(scheme, deflate);
+    client.binary(Buffer.alloc(2 * MiB));
+    client.binary(deflated(2 * MiB), { rsv1: true });
+    client.close(1000);
+    expect(await client.remainingFrames()).toEqual([`text "got ${2 * MiB}"`, `text "got ${2 * MiB}"`, "close 1000"]);
+    expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
+  }
 
-    send(client);
-    expect(await client.remainingFrames()).toEqual([`close 1011 ${JSON.stringify(diagnostic)}`]);
-    expect((await events.next()).value).toEqual({ close: 1006, reason: diagnostic });
+  describe.each(["ws", "wss"] as const)("%s", scheme => {
+    test.each(refusals)("%s fails that connection with 1011", async (_name, headers, send) => {
+      using client = await connect(scheme, headers);
+      send(client);
+      expect(await client.remainingFrames()).toEqual([`close 1011 ${JSON.stringify(diagnostic)}`]);
+      expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+      await expectStillServing(scheme);
+    });
+  });
 
-    // The server still serves, with the shared inflate buffer still usable.
-    using next = await RawClient.upgrade(port, deflate);
-    next.binary(Buffer.alloc(2 * MiB));
-    next.binary(deflated(2 * MiB), { rsv1: true });
-    expect(await next.nextFrames(2)).toEqual([`text "got ${2 * MiB}"`, `text "got ${2 * MiB}"`]);
+  // A Close frame would have to wait behind the 3 MiB, in a buffer that has to grow for it.
+  test.skipIf(!fault.available())("with unsent data, the connection closes without a Close frame", async () => {
+    using client = await connect("ws");
+    client.text("stall");
+    client.binary(tooBig);
+    expect(await client.remainingFrames()).toEqual([]);
+    expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+    await expectStillServing("ws");
+  });
 
-    next.text("stop");
-    expect(await proc.exited).toBe(0);
+  // The `ws` package's server sockets use the same parser. There the failure is an 'error' event.
+  describe("the ws package", () => {
+    const error = { error: "RangeError", message: "Out of memory", code: "ERR_MEMORY_ALLOCATION_FAILED" };
+
+    async function expectStillServing() {
+      using client = await connect("ws-package");
+      client.text("hi");
+      client.close(1000);
+      expect(await client.remainingFrames()).toEqual(['text "got 2"', "close 1000"]);
+      expect(await nextEvent()).toEqual({ close: 1000 });
+    }
+
+    test("emits 'error' and sends 1011", async () => {
+      using client = await connect("ws-package");
+      client.binary(tooBig);
+      expect(await client.remainingFrames()).toEqual(["close 1011"]);
+      expect([await nextEvent(), await nextEvent()]).toEqual([error, { close: 1006 }]);
+      await expectStillServing();
+    });
+
+    test.skipIf(!fault.available())("emits 'error' with unsent data too", async () => {
+      using client = await connect("ws-package");
+      client.text("stall");
+      client.binary(tooBig);
+      expect(await client.remainingFrames()).toEqual([]);
+      expect([await nextEvent(), await nextEvent()]).toEqual([error, { close: 1006 }]);
+      await expectStillServing();
+    });
   });
 });

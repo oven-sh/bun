@@ -72,23 +72,10 @@ static void free_global_string(void* str, void* ptr, unsigned len)
     EncodedSlice__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
 }
 
-static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
+// `bytes` is valid UTF-8. Null if the allocation fails or the result is longer than a String can be.
+static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> bytes)
 {
-    // fromUTF8ReplacingInvalidSequences CRASH()es when it cannot allocate, and past a
-    // ~2^30-byte input (it sizes an intermediate Vector<char16_t> by byte count). Only
-    // small inputs take it: for a large one the caller's data decides the size, so the
-    // allocation has to be able to fail. Invalid input still needs it for the
-    // replacement characters, which simdutf does not produce.
-    constexpr size_t maxInfallibleLength = 64 * 1024;
-    if (bytes.size() < maxInfallibleLength) [[likely]]
-        return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
-
     const char* data = reinterpret_cast<const char*>(bytes.data());
-    if (!simdutf::validate_utf8(data, bytes.size())) [[unlikely]] {
-        if (WTF::isValidCapacityForVector<char16_t>(bytes.size()))
-            return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
-        return {};
-    }
     size_t utf16Length = simdutf::utf16_length_from_utf8(data, bytes.size());
     if (utf16Length > WTF::String::MaxLength) [[unlikely]]
         return {};
@@ -107,6 +94,18 @@ static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
         return {};
     RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(data, bytes.size(), out.data()) == utf16Length);
     return WTF::String(WTF::move(impl));
+}
+
+static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
+{
+    // fromUTF8ReplacingInvalidSequences CRASH()es past a ~2^30-byte input
+    // (it sizes an intermediate Vector<char16_t> by byte count).
+    if (WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[likely]]
+        return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
+
+    if (!simdutf::validate_utf8(reinterpret_cast<const char*>(bytes.data()), bytes.size())) [[unlikely]]
+        return {};
+    return tryConvertValidUTF8ToString(bytes);
 }
 
 // Switching to AtomString doesn't yield a perf benefit because we're recreating it each time.

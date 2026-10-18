@@ -266,7 +266,7 @@ struct InflationStream {
                 break;
             }
 
-            /* break rather than return: a dedicated stream still has to be reset below */
+            /* break rather than return: the shared stream still has to be reset below */
             if (!zlibContext->dynamicInflationBuffer.tryAppend(zlibContext->inflationBuffer, LARGE_BUFFER_SIZE - inflationStream.avail_out)) {
                 outOfMemory = true;
                 break;

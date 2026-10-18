@@ -122,11 +122,24 @@ private:
         return true;
     }
 
-    /* A buffer for bytes this connection has already sent could not grow. Frees what is buffered of the
-     * message and fails only this connection. Returns true, which is handleFragment()'s "stop parsing". */
+    /* Frees what is buffered of the message and fails this connection. Returns true, like handleFragment() on breakage. */
     __attribute__((noinline)) static bool failOutOfMemory(void *s) {
         ((WebSocketData *) us_socket_ext((us_socket_t *) s))->fragmentBuffer.release();
         ((WebSocket<SSL, isServer, USERDATA> *) s)->failOutOfMemory();
+        return true;
+    }
+
+    /* Whether the message handler closed the connection or began its shutdown. A shutdown reads nothing more,
+     * so the fragment buffer goes back at once: the handler may have failed the connection for lack of memory. */
+    static bool stoppedByHandler(void *s) {
+        if (us_socket_is_closed((us_socket_t *) s)) {
+            return true;
+        }
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) s);
+        if (!webSocketData->isShuttingDown) {
+            return false;
+        }
+        webSocketData->fragmentBuffer.release();
         return true;
     }
 
@@ -159,14 +172,13 @@ private:
                 /* Emit message event & break if we are closed or shut down when returning */
                 if (webSocketContextData->messageHandler) {
                     webSocketContextData->messageHandler((WebSocket<SSL, isServer, USERDATA> *) s, std::string_view(data, length), (OpCode) opCode);
-                    if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
+                    if (stoppedByHandler(s)) {
                         return true;
                     }
                 }
             } else {
-                /* Ask for the whole frame up front first time, but at most 16 MiB. The length comes from the
-                 * frame header, which the peer controls, so this is only a hint: if it is refused, the
-                 * buffer grows with the bytes that arrive. */
+                /* Ask for the whole frame up front first time, but at most 16 MiB. The peer controls that length,
+                 * so it is only a hint: if it is refused, the buffer grows with the bytes that arrive. */
                 if (!webSocketData->fragmentBuffer.length()) {
                     (void) webSocketData->fragmentBuffer.tryReserve(std::min<size_t>(length + remainingBytes, 16 * 1024 * 1024));
                 }
@@ -212,18 +224,12 @@ private:
                     /* Emit message and check for shutdown or close */
                     if (webSocketContextData->messageHandler) {
                         webSocketContextData->messageHandler((WebSocket<SSL, isServer, USERDATA> *) s, std::string_view(data, length), (OpCode) opCode);
-                        if (us_socket_is_closed((us_socket_t *) s)) {
-                            return true;
-                        }
-                        if (webSocketData->isShuttingDown) {
-                            /* Nothing more is read from this connection. The handler may have failed it for
-                             * lack of memory (failOutOfMemory), so give the message's memory back now. */
-                            webSocketData->fragmentBuffer.release();
+                        if (stoppedByHandler(s)) {
                             return true;
                         }
                     }
 
-                    /* If we closed, this will be taken care of elsewhere */
+                    /* If we shutdown or closed, this will be taken care of elsewhere */
                     webSocketData->fragmentBuffer.clear();
                 }
             }

@@ -742,24 +742,26 @@ impl ServerWebSocket {
         let data = match data {
             Ok(data) => data,
             Err(e) => {
-                // The payload could not be copied for the handler: out of memory. A
-                // connection cannot skip a message it received, so fail it with 1011.
+                // The copy for the handler failed, and a connection cannot skip a message it received.
                 let err_value = global_object.take_error(e);
                 if err_value.is_termination_exception() {
                     return Err(e);
                 }
-                ws.fail_out_of_memory();
-                if on_error.is_empty_or_undefined_or_null() {
-                    // The close code and its reason are the report. An uncaught
-                    // exception would end the process over one connection's message.
-                    return Ok(());
+                // Without an `error` handler the 1011 close is the report: an uncaught exception would end the process.
+                let reported = if on_error.is_empty_or_undefined_or_null() {
+                    Ok(())
+                } else {
+                    self.handler().run_error_callback(
+                        on_error,
+                        global_object,
+                        self.js_value().unwrap_or(JSValue::UNDEFINED),
+                        err_value,
+                    )
+                };
+                if !self.is_closed() {
+                    ws.fail_out_of_memory();
                 }
-                return self.handler().run_error_callback(
-                    on_error,
-                    global_object,
-                    self.js_value().unwrap_or(JSValue::UNDEFINED),
-                    err_value,
-                );
+                return reported;
             }
         };
         let arguments = [self.js_value().unwrap_or(JSValue::UNDEFINED), data];
@@ -844,7 +846,12 @@ impl ServerWebSocket {
                 ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global_this, data)
             }
             BinaryType::Blob => {
-                let blob = Blob::new(Blob::init(data.to_vec(), global_this));
+                let mut bytes = Vec::new();
+                if bytes.try_reserve_exact(data.len()).is_err() {
+                    return Err(bun_jsc::JsError::OutOfMemory);
+                }
+                bytes.extend_from_slice(data);
+                let blob = Blob::new(Blob::init(bytes, global_this));
                 // SAFETY: `blob` is the live allocation `Blob::new` just made. `BlobExt::to_js`
                 // reports the payload size to the GC, which the by-value `JsClass::to_js` skips.
                 Ok(unsafe { BlobExt::to_js(&*blob, global_this) })
@@ -1577,9 +1584,7 @@ impl WebSocketHandler for WsPackageSocket {
                 let buffer = match ArrayBuffer::create_buffer(global, message) {
                     Ok(buffer) => buffer,
                     Err(e) => {
-                        // Same as `ServerWebSocket::on_message`: the copy for the handler
-                        // failed, so the connection fails. `ws.ts` turns the close into an
-                        // 'error' event on the WebSocket, which is the report.
+                        // As in `ServerWebSocket::on_message`. `ws.ts` turns the close into the socket's 'error' event.
                         if global.take_error(e).is_termination_exception() {
                             return Err(e);
                         }

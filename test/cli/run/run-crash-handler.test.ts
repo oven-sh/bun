@@ -147,7 +147,7 @@ test.if(isLinux && !isASAN)("a refused operator new reports out of memory", asyn
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("Bun ran out of memory");
+  expect(stderr).toContain("Bun has run out of memory");
   expect(proc.signalCode).toBe("SIGABRT");
   expect(exitCode).not.toBe(0);
 });

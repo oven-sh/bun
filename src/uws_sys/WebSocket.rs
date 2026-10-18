@@ -92,8 +92,7 @@ impl AnyWebSocket {
         c::uws_ws_close(ssl, ws)
     }
 
-    /// Fails the connection with 1011 (RFC 6455 7.1.7): a message it sent could not be
-    /// given to its handler. Frees what is buffered of that message.
+    /// Fails the connection with 1011: a message it sent could not be copied for its handler.
     pub fn fail_out_of_memory(self) {
         let (ssl, ws) = self.split();
         c::uws_ws_fail_out_of_memory(ssl, ws)

@@ -207,18 +207,16 @@ pub(crate) mod js_bindings {
         bun_core::out_of_memory();
     }
 
-    /// Asks the allocator for a size it cannot grant, through the function the C++
-    /// `operator new` forwards to where mimalloc overrides it. Returns true if it came
-    /// back, which means the throwing `operator new` returned NULL to its caller.
+    /// `mi_new` is the C++ `operator new` where mimalloc overrides it. A size it cannot grant must not come back.
     #[bun_jsc::host_fn]
     fn js_operator_new(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         unsafe extern "C" {
-            // No memory-safety precondition: any size is accepted, and the result is
-            // only tested for null, so `safe fn` discharges the proof here.
+            // safe: takes any size, and the result is not used.
             safe fn mi_new(size: usize) -> *mut core::ffi::c_void;
         }
-        Ok(JSValue::js_boolean(!mi_new(usize::MAX / 2).is_null()))
+        let _ = mi_new(usize::MAX / 2);
+        Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]

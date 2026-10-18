@@ -9,9 +9,8 @@
 
 namespace uWS {
 
-/* Contiguous buffer for bytes a peer sends, so the peer decides how big it gets. Every growth can be
- * refused: tryReserve() and tryAppend() then return false with the contents untouched, and the caller
- * fails that one connection. There is no growth that ends the process instead. */
+/* Contiguous buffer for bytes a peer sends. The peer decides its size, so every growth can be refused:
+ * tryReserve() and tryAppend() then return false with the contents untouched. */
 struct ReceiveBuffer {
     ReceiveBuffer() = default;
     ReceiveBuffer(const ReceiveBuffer &) = delete;
@@ -44,8 +43,7 @@ struct ReceiveBuffer {
 
     [[nodiscard]] bool tryAppend(const char *src, size_t n) {
         if (n > cap - len) {
-            /* Doubles, so a message that arrives read by read is copied a constant number of times.
-             * cap * 2 wrapping is harmless: len + n then wins the max(). */
+            /* Doubles, so a message is copied a constant number of times. If cap * 2 wraps, len + n wins the max(). */
             if (n > SIZE_MAX - len || !tryReserve(std::max(len + n, cap * 2))) return false;
         }
         if (n) std::memcpy(buf + len, src, n);

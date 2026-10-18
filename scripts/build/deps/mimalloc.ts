@@ -119,11 +119,8 @@ export const mimalloc: Dependency = {
 
     if (override) {
       cflags.push("-fno-builtin-malloc");
-      // Where mimalloc also provides `operator new` (alloc-override.c). Bun has no
-      // exceptions and no std::new_handler, so a refused throwing `new` would return
-      // NULL, which the standard forbids and callers don't check. Bare token (the
-      // patch declares it as a function name), so not a `defines` entry, which would
-      // quote it.
+      // mimalloc is `operator new` here too. See patches/mimalloc/new-oom-hook.patch.
+      // Bare token (a function name), so not a `defines` entry, which would quote it.
       cflags.push("-DMI_NEW_OOM=Bun__outOfMemory");
     }
 

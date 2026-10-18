@@ -326,6 +326,22 @@ private:
         }
     }
 
+    /* The close handler gets 1006, or -failure.kind in a wsPackage context. */
+    void emitFailure(const WebSocketFailure &failure, unsigned int detail) {
+        if (!getContextData()->wsPackage) {
+            emitClose(1006, failure.diagnostic);
+            return;
+        }
+
+        char text[16];
+        size_t length = 0;
+        if (failure.kind == WebSocketFailureKind::InvalidOpcode || failure.kind == WebSocketFailureKind::InvalidControlPayloadLength
+            || failure.kind == WebSocketFailureKind::InvalidCloseCode) {
+            length = (size_t) (std::to_chars(text, text + sizeof(text), detail).ptr - text);
+        }
+        emitClose(-(int) failure.kind, {text, length});
+    }
+
 public:
     /* Send websocket close frame, send FIN once everything before it is written, emit close event.
      * Will not append a close reason if code is 0 or 1005. */
@@ -347,35 +363,32 @@ public:
     /* RFC 6455 7.1.7, fail the connection after a protocol error. The peer gets failure.closeCode.
      * The close handler gets 1006, or -failure.kind in a wsPackage context. */
     void failConnection(const WebSocketFailure &failure, unsigned int detail) {
-        if (!getContextData()->wsPackage) {
-            if (sendClose(failure.closeCode, failure.diagnostic)) {
-                emitClose(1006, failure.diagnostic);
-            }
-            return;
-        }
-
-        if (sendClose(failure.closeCode, {})) {
-            char text[16];
-            size_t length = 0;
-            if (failure.kind == WebSocketFailureKind::InvalidOpcode || failure.kind == WebSocketFailureKind::InvalidControlPayloadLength
-                || failure.kind == WebSocketFailureKind::InvalidCloseCode) {
-                length = (size_t) (std::to_chars(text, text + sizeof(text), detail).ptr - text);
-            }
-            emitClose(-(int) failure.kind, {text, length});
+        if (sendClose(failure.closeCode, getContextData()->wsPackage ? std::string_view() : failure.diagnostic)) {
+            emitFailure(failure, detail);
         }
     }
 
-    /* Fails the connection because a message it received could not be buffered, or could not be copied
-     * for its handler. The peer gets 1011, unless this socket has unsent data: the Close frame would
-     * wait behind it in a buffer that may have to double first, and under the same memory pressure
-     * that refusal ends the process. The connection then closes without a Close frame, as a timeout does. */
+    /* Fails the connection: a message it sent could not be buffered, or copied for its handler.
+     * Nothing here may need memory for this connection, or the refusal of that ends the process. */
     void failOutOfMemory() {
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
+        if (webSocketData->isShuttingDown) {
+            return;
+        }
+
+        /* Its queued publishes are dropped: sendCloseFrame() would write them first. */
+        getContextData()->topicTree->freeSubscriber(webSocketData->subscriber);
+        webSocketData->subscriber = nullptr;
+
         if (!getBufferedAmount()) {
             failConnection(FAIL_OUT_OF_MEMORY, 0);
             return;
         }
-        /* The reason length doubles as the close code. */
-        us_socket_close((us_socket_t *) this, (int) FAIL_OUT_OF_MEMORY.diagnostic.length(), (void *) FAIL_OUT_OF_MEMORY.diagnostic.data());
+
+        /* A Close frame would have to grow the buffer of unsent data. Report the failure and drop the connection. */
+        webSocketData->isShuttingDown = true;
+        emitFailure(FAIL_OUT_OF_MEMORY, 0);
+        us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
     }
 
     /* Corks the response if possible. Leaves already corked socket be. */

@@ -207,7 +207,9 @@ impl RuleOverlaps {
     ];
 
     /// `rules`: those that run, each with its severity.
-    pub fn among<'r>(rules: impl Iterator<Item = (&'r crate::rule::Meta, crate::context::Severity)>) -> RuleOverlaps {
+    pub fn among<'r>(
+        rules: impl Iterator<Item = (&'r crate::rule::Meta, crate::context::Severity)>,
+    ) -> RuleOverlaps {
         use crate::context::Severity;
         use crate::rule::Plugin;
         let mut severities = [Severity::Off; 12];
@@ -215,15 +217,22 @@ impl RuleOverlaps {
             let at = match (meta.plugin, meta.name) {
                 (Plugin::Eslint, "no-extend-native") => Some(10),
                 (Plugin::Eslint, "no-global-assign") => Some(11),
-                (Plugin::Bun | Plugin::TypeScript, name) => RuleOverlaps::NAMED.iter().position(|it| *it == (meta.plugin, name)),
+                (Plugin::Bun | Plugin::TypeScript, name) => RuleOverlaps::NAMED
+                    .iter()
+                    .position(|it| *it == (meta.plugin, name)),
                 _ => None,
             };
             if let Some(at) = at {
                 severities[at] = severities[at].max(severity);
             }
         }
-        let is_left = |pair: &&(usize, usize, RuleOverlaps)| severities[pair.0] != Severity::Off && severities[pair.0] >= severities[pair.1];
-        RuleOverlaps::PAIRS.iter().filter(is_left).fold(RuleOverlaps::empty(), |on, pair| on | pair.2)
+        let is_left = |pair: &&(usize, usize, RuleOverlaps)| {
+            severities[pair.0] != Severity::Off && severities[pair.0] >= severities[pair.1]
+        };
+        RuleOverlaps::PAIRS
+            .iter()
+            .filter(is_left)
+            .fold(RuleOverlaps::empty(), |on, pair| on | pair.2)
     }
 
     /// Whether the rule leaves reports to another.

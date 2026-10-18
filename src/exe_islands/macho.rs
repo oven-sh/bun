@@ -124,7 +124,11 @@ pub(crate) fn is_in_text(file: &[u8], addresses: &Range<u64>) -> Result<bool> {
 }
 
 fn starts_in_image(fixups: &[u8]) -> Result<(usize, usize)> {
-    let (starts, imports, symbols) = (u32_at(fixups, 4)? as usize, u32_at(fixups, 8)? as usize, u32_at(fixups, 12)? as usize);
+    let (starts, imports, symbols) = (
+        u32_at(fixups, 4)? as usize,
+        u32_at(fixups, 8)? as usize,
+        u32_at(fixups, 12)? as usize,
+    );
     let count = u32_at(fixups, starts)? as usize;
     if starts + 4 + count * 4 > imports || imports > symbols || symbols > fixups.len() {
         return Err(Error::InvalidExecutable);
@@ -141,13 +145,19 @@ fn starts_in_segment(fixups: &[u8], segment: usize) -> Result<Option<&[u8]>> {
     if offset == 0 {
         return Ok(None);
     }
-    let info = slice(fixups, starts + offset, u32_at(fixups, starts + offset)? as usize)?;
+    let info = slice(
+        fixups,
+        starts + offset,
+        u32_at(fixups, starts + offset)? as usize,
+    )?;
     slice(info, STARTS_IN_SEGMENT, usize::from(u16_at(info, 20)?) * 2)?;
     Ok(Some(info))
 }
 
 fn page_starts(info: &[u8]) -> Result<Vec<u16>> {
-    (0..usize::from(u16_at(info, 20)?)).map(|page| u16_at(info, STARTS_IN_SEGMENT + page * 2)).collect()
+    (0..usize::from(u16_at(info, 20)?))
+        .map(|page| u16_at(info, STARTS_IN_SEGMENT + page * 2))
+        .collect()
 }
 
 fn can_lose_pages(fixups: &[u8], segment: usize, page: u64) -> Result<bool> {
@@ -189,8 +199,12 @@ fn fixups_of_pieces(fixups: &[u8], pieces: &[Vec<Range<u64>>]) -> Result<Vec<u8>
             if page_size == 0 || !from.is_multiple_of(page_size) {
                 return Err(Error::InvalidExecutable);
             }
-            let pages = ((from / page_size) as usize).min(all.len())..(to.div_ceil(page_size) as usize).min(all.len());
-            let used = all[pages.clone()].iter().rposition(|start| *start != START_NONE).map_or(0, |last| last + 1);
+            let pages = ((from / page_size) as usize).min(all.len())
+                ..(to.div_ceil(page_size) as usize).min(all.len());
+            let used = all[pages.clone()]
+                .iter()
+                .rposition(|start| *start != START_NONE)
+                .map_or(0, |last| last + 1);
             if used == 0 {
                 offsets.push(0);
                 continue;
@@ -209,7 +223,9 @@ fn fixups_of_pieces(fixups: &[u8], pieces: &[Vec<Range<u64>>]) -> Result<Vec<u8>
         }
     }
     let imports = u32_at(fixups, 8)? as usize;
-    let grown = (first + pool.len()).saturating_sub(imports - starts).next_multiple_of(8);
+    let grown = (first + pool.len())
+        .saturating_sub(imports - starts)
+        .next_multiple_of(8);
     let mut new = slice(fixups, 0, starts)?.to_vec();
     for at in [8, 12] {
         let moved = narrow(u64::from(u32_at(&new, at)?) + grown as u64)?;
@@ -234,21 +250,32 @@ struct Piece {
 
 /// What stays of the segment whose command is at `segment`.
 fn pieces_of(file: &[u8], segment: usize, gaps: &[Range<u64>]) -> Result<Vec<Piece>> {
-    let whole = u64_at(file, segment + 24)?..u64_at(file, segment + 24)? + u64_at(file, segment + 48)?;
+    let whole =
+        u64_at(file, segment + 24)?..u64_at(file, segment + 24)? + u64_at(file, segment + 48)?;
     let mut list = Vec::new();
     let mut start = whole.start;
-    let inside = gaps.iter().filter(|gap| whole.start <= gap.start && gap.end <= whole.end);
-    for (end, next) in inside.map(|gap| (gap.start, gap.end)).chain([(whole.end, whole.end)]) {
+    let inside = gaps
+        .iter()
+        .filter(|gap| whole.start <= gap.start && gap.end <= whole.end);
+    for (end, next) in inside
+        .map(|gap| (gap.start, gap.end))
+        .chain([(whole.end, whole.end)])
+    {
         if start < end || whole.is_empty() {
             let mut sections = Vec::new();
-            for header in (0..u32_at(file, segment + 64)? as usize).map(|s| segment + SEGMENT + s * SECTION) {
+            for header in
+                (0..u32_at(file, segment + 64)? as usize).map(|s| segment + SEGMENT + s * SECTION)
+            {
                 let address = u64_at(file, header + 32)?;
                 let part = address.max(start)..(address + u64_at(file, header + 40)?).min(end);
                 if part.start < part.end {
                     sections.push((header, part));
                 }
             }
-            list.push(Piece { addresses: start..end, sections });
+            list.push(Piece {
+                addresses: start..end,
+                sections,
+            });
         }
         start = next;
     }
@@ -256,7 +283,11 @@ fn pieces_of(file: &[u8], segment: usize, gaps: &[Range<u64>]) -> Result<Vec<Pie
 }
 
 /// `file` without the whole pages of `dead`, which is sorted address ranges.
-pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Limits) -> Result<Vec<u8>> {
+pub(crate) fn without_pages(
+    file: &[u8],
+    dead: &[Range<u64>],
+    limits: crate::Limits,
+) -> Result<Vec<u8>> {
     let page: u64 = if is_arm64(file)? { 0x4000 } else { 0x1000 };
     let commands = commands(file)?;
     let end_of_commands = 32 + u32_at(file, 20)? as usize;
@@ -295,13 +326,22 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Lim
     if let Some(index) = find(b"__DATA_CONST") {
         let at = segments[index];
         let start = u64_at(file, at + 24)?;
-        if u64_at(file, at + 32)? == u64_at(file, at + 48)? && start.is_multiple_of(page) && can_lose_pages(old_fixups, index, page)? {
+        if u64_at(file, at + 32)? == u64_at(file, at + 48)?
+            && start.is_multiple_of(page)
+            && can_lose_pages(old_fixups, index, page)?
+        {
             constants_can_go = start + page..start + u64_at(file, at + 48)?;
         }
     }
     let mut gaps: Vec<Range<u64>> = Vec::new();
-    for gap in dead.iter().filter_map(|range| whole_pages(range, page, limits.smallest_hole)) {
-        if [&text_can_go, &constants_can_go].iter().any(|range| range.start <= gap.start && gap.end <= range.end) {
+    for gap in dead
+        .iter()
+        .filter_map(|range| whole_pages(range, page, limits.smallest_hole))
+    {
+        if [&text_can_go, &constants_can_go]
+            .iter()
+            .any(|range| range.start <= gap.start && gap.end <= range.end)
+        {
             gaps.push(gap);
         }
     }
@@ -314,11 +354,25 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Lim
         16
     };
     let room = minus(first_content, (end_of_commands + for_a_signature) as u64)? as usize;
-    let pieces = |gaps: &[Range<u64>]| segments.iter().map(|&at| pieces_of(file, at, gaps)).collect::<Result<Vec<Vec<Piece>>>>();
-    let size_of = |pieces: &[Vec<Piece>]| pieces.iter().flatten().map(|piece| SEGMENT + piece.sections.len() * SECTION).sum::<usize>();
+    let pieces = |gaps: &[Range<u64>]| {
+        segments
+            .iter()
+            .map(|&at| pieces_of(file, at, gaps))
+            .collect::<Result<Vec<Vec<Piece>>>>()
+    };
+    let size_of = |pieces: &[Vec<Piece>]| {
+        pieces
+            .iter()
+            .flatten()
+            .map(|piece| SEGMENT + piece.sections.len() * SECTION)
+            .sum::<usize>()
+    };
     let size_before = size_of(&pieces(&[])?);
-    let only_shortens = |gap: &Range<u64>| gap.end == text_can_go.end || gap.end == constants_can_go.end;
-    sort_slice_by_key(&mut gaps, |g| (!only_shortens(g), core::cmp::Reverse(g.end - g.start)));
+    let only_shortens =
+        |gap: &Range<u64>| gap.end == text_can_go.end || gap.end == constants_can_go.end;
+    sort_slice_by_key(&mut gaps, |g| {
+        (!only_shortens(g), core::cmp::Reverse(g.end - g.start))
+    });
     let shortened = gaps.iter().filter(|gap| only_shortens(gap)).count();
     gaps.truncate(limits.most_holes.saturating_add(shortened));
     loop {
@@ -352,14 +406,24 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Lim
     let mut from = 0;
     let end = linkedit_offset as u64..linkedit_offset as u64;
     for hole in holes.iter().chain(core::iter::once(&end)) {
-        let length = (hole.start as usize).checked_sub(from).ok_or(Error::InvalidExecutable)?;
+        let length = (hole.start as usize)
+            .checked_sub(from)
+            .ok_or(Error::InvalidExecutable)?;
         out.extend_from_slice(slice(file, from, length)?);
         from = hole.end as usize;
     }
 
     // ---- `__LINKEDIT`: the chained fixups have an entry per segment, the signature goes
-    let addresses_of = |pieces: &Vec<Piece>| pieces.iter().map(|piece| piece.addresses.clone()).collect::<Vec<Range<u64>>>();
-    let new_fixups = fixups_of_pieces(old_fixups, &kept.iter().map(addresses_of).collect::<Vec<_>>())?;
+    let addresses_of = |pieces: &Vec<Piece>| {
+        pieces
+            .iter()
+            .map(|piece| piece.addresses.clone())
+            .collect::<Vec<Range<u64>>>()
+    };
+    let new_fixups = fixups_of_pieces(
+        old_fixups,
+        &kept.iter().map(addresses_of).collect::<Vec<_>>(),
+    )?;
     let grown = new_fixups.len() - fixups_size;
     let content_end = match command(LC_CODE_SIGNATURE) {
         Some(c) => u32_at(file, c + 8)? as usize,
@@ -384,7 +448,11 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Lim
     )?);
     out.resize(out.len().next_multiple_of(16), 0);
     let moved = |offset: u64| -> Result<u64> {
-        let dropped: u64 = holes.iter().filter(|hole| hole.end <= offset).map(|hole| hole.end - hole.start).sum();
+        let dropped: u64 = holes
+            .iter()
+            .filter(|hole| hole.end <= offset)
+            .map(|hole| hole.end - hole.start)
+            .sum();
         match offset {
             0 => Ok(0),
             o if o >= fixups_end as u64 => minus(o + grown as u64, dropped),
@@ -398,22 +466,47 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Lim
     let mut parts: Vec<Range<u64>> = Vec::new();
     for &(kind, at, size) in &commands {
         let mut bytes = slice(file, at, size)?.to_vec();
-        let is_cut = |pieces: &&Vec<Piece>| pieces.len() != 1 || u64_at(file, at + 48).is_ok_and(|size| pieces[0].addresses.end - pieces[0].addresses.start != size);
-        if let Some(pieces) = segments.iter().position(|&segment| segment == at).map(|index| &kept[index]).filter(is_cut) {
-            let (start, offset, flags) = (u64_at(file, at + 24)?, u64_at(file, at + 40)?, u32_at(file, at + 68)?);
-            let largest = (0..pieces.len()).max_by_key(|&index| pieces[index].addresses.end - pieces[index].addresses.start);
+        let is_cut = |pieces: &&Vec<Piece>| {
+            pieces.len() != 1
+                || u64_at(file, at + 48)
+                    .is_ok_and(|size| pieces[0].addresses.end - pieces[0].addresses.start != size)
+        };
+        if let Some(pieces) = segments
+            .iter()
+            .position(|&segment| segment == at)
+            .map(|index| &kept[index])
+            .filter(is_cut)
+        {
+            let (start, offset, flags) = (
+                u64_at(file, at + 24)?,
+                u64_at(file, at + 40)?,
+                u32_at(file, at + 68)?,
+            );
+            let largest = (0..pieces.len())
+                .max_by_key(|&index| pieces[index].addresses.end - pieces[index].addresses.start);
             let keeps_its_name = largest.filter(|_| flags & SG_READ_ONLY != 0).unwrap_or(0);
             for (index, piece) in pieces.iter().enumerate() {
-                let Range { start: piece_start, end: piece_end } = piece.addresses;
+                let Range {
+                    start: piece_start,
+                    end: piece_end,
+                } = piece.addresses;
                 let mut segment = slice(file, at, SEGMENT)?.to_vec();
                 if index != keeps_its_name {
                     let mut label = name(slice(file, at + 8, 16)?).to_vec();
                     label.extend_from_slice(format!(".{index}").as_bytes());
                     segment[8..24].fill(0);
-                    segment.get_mut(8..8 + label.len()).filter(|_| label.len() <= 16).ok_or(Error::InvalidExecutable)?.copy_from_slice(&label);
+                    segment
+                        .get_mut(8..8 + label.len())
+                        .filter(|_| label.len() <= 16)
+                        .ok_or(Error::InvalidExecutable)?
+                        .copy_from_slice(&label);
                     put_u32(&mut segment, 68, flags & !SG_READ_ONLY)?;
                 }
-                put_u32(&mut segment, 4, (SEGMENT + piece.sections.len() * SECTION) as u32)?;
+                put_u32(
+                    &mut segment,
+                    4,
+                    (SEGMENT + piece.sections.len() * SECTION) as u32,
+                )?;
                 put_u64(&mut segment, 24, piece_start)?;
                 put_u64(&mut segment, 32, piece_end - piece_start)?;
                 put_u64(&mut segment, 40, moved(offset + (piece_start - start))?)?;
@@ -423,7 +516,11 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Lim
                     let mut section = slice(file, *section, SECTION)?.to_vec();
                     put_u64(&mut section, 32, part.start)?;
                     put_u64(&mut section, 40, part.end - part.start)?;
-                    put_u32(&mut section, 48, narrow(moved(offset + (part.start - start))?)?)?;
+                    put_u32(
+                        &mut section,
+                        48,
+                        narrow(moved(offset + (part.start - start))?)?,
+                    )?;
                     segment.extend_from_slice(&section);
                     parts.push(part.clone());
                 }
@@ -552,7 +649,15 @@ mod tests {
         (0..count)
             .map(|segment| {
                 starts_in_segment(blob, segment).unwrap().map(|info| {
-                    assert_eq!((info.len() % 8, u16_at(info, 4), u16_at(info, 6), u32_at(info, 16)), (0, Ok(0x4000), Ok(2), Ok(0)));
+                    assert_eq!(
+                        (
+                            info.len() % 8,
+                            u16_at(info, 4),
+                            u16_at(info, 6),
+                            u32_at(info, 16)
+                        ),
+                        (0, Ok(0x4000), Ok(2), Ok(0))
+                    );
                     (u64_at(info, 8).unwrap(), page_starts(info).unwrap())
                 })
             })
@@ -568,7 +673,13 @@ mod tests {
     }
 
     fn linked() -> Vec<u8> {
-        fixups(&[None, None, Some(constants()), Some(starts(0x4000, 0x34000, &[0x18])), None])
+        fixups(&[
+            None,
+            None,
+            Some(constants()),
+            Some(starts(0x4000, 0x34000, &[0x18])),
+            None,
+        ])
     }
 
     fn pages(range: Range<u64>) -> Range<u64> {
@@ -576,7 +687,10 @@ mod tests {
     }
 
     fn of_at_least(smallest_hole: u64) -> crate::Limits {
-        crate::Limits { smallest_hole, most_holes: usize::MAX }
+        crate::Limits {
+            smallest_hole,
+            most_holes: usize::MAX,
+        }
     }
 
     fn whole(addresses: Range<u64>) -> Vec<Range<u64>> {
@@ -584,7 +698,13 @@ mod tests {
     }
 
     fn with_constants(pieces: &[Range<u64>]) -> Vec<Vec<Range<u64>>> {
-        vec![whole(0..0), whole(IMAGE..CONSTANTS), pieces.to_vec(), whole(IMAGE + 0x34000..IMAGE + 0x38000), whole(IMAGE + 0x38000..IMAGE + 0x3c000)]
+        vec![
+            whole(0..0),
+            whole(IMAGE..CONSTANTS),
+            pieces.to_vec(),
+            whole(IMAGE + 0x34000..IMAGE + 0x38000),
+            whole(IMAGE + 0x38000..IMAGE + 0x3c000),
+        ]
     }
 
     #[test]
@@ -596,31 +716,80 @@ mod tests {
     #[test]
     fn pieces_of_a_segment_without_fixups_have_none() {
         let mut pieces = with_constants(&[pages(0..9)]);
-        pieces[1] = vec![IMAGE..IMAGE + 0x4000, IMAGE + 0x8000..IMAGE + 0xc000, IMAGE + 0xc000..CONSTANTS];
+        pieces[1] = vec![
+            IMAGE..IMAGE + 0x4000,
+            IMAGE + 0x8000..IMAGE + 0xc000,
+            IMAGE + 0xc000..CONSTANTS,
+        ];
         let new = fixups_of_pieces(&linked(), &pieces).unwrap();
         let whole = read(&linked());
-        assert_eq!(read(&new), [None, None, None, None, whole[2].clone(), whole[3].clone(), None]);
+        assert_eq!(
+            read(&new),
+            [
+                None,
+                None,
+                None,
+                None,
+                whole[2].clone(),
+                whole[3].clone(),
+                None
+            ]
+        );
         assert_eq!((new.len() - linked().len()) % 8, 0);
     }
 
     #[test]
     fn each_piece_has_the_starts_of_its_own_pages() {
-        let new = fixups_of_pieces(&linked(), &with_constants(&[pages(0..2), pages(3..4), pages(6..9)])).unwrap();
+        let new = fixups_of_pieces(
+            &linked(),
+            &with_constants(&[pages(0..2), pages(3..4), pages(6..9)]),
+        )
+        .unwrap();
         let data = read(&linked())[3].clone();
-        assert_eq!(read(&new), [None, None, Some((0x10000, vec![0x10])), Some((0x1c000, vec![0x30])), Some((0x28000, vec![0x8])), data, None]);
+        assert_eq!(
+            read(&new),
+            [
+                None,
+                None,
+                Some((0x10000, vec![0x10])),
+                Some((0x1c000, vec![0x30])),
+                Some((0x28000, vec![0x8])),
+                data,
+                None
+            ]
+        );
         assert_eq!((new.len() - linked().len()) % 8, 0);
     }
 
     #[test]
     fn a_piece_without_fixups_has_no_starts() {
-        let new = fixups_of_pieces(&linked(), &with_constants(&[pages(0..1), pages(4..5), pages(5..6), pages(7..9)])).unwrap();
-        assert_eq!(read(&new)[2..6], [Some((0x10000, vec![0x10])), None, Some((0x24000, vec![0x40])), None]);
+        let new = fixups_of_pieces(
+            &linked(),
+            &with_constants(&[pages(0..1), pages(4..5), pages(5..6), pages(7..9)]),
+        )
+        .unwrap();
+        assert_eq!(
+            read(&new)[2..6],
+            [
+                Some((0x10000, vec![0x10])),
+                None,
+                Some((0x24000, vec![0x40])),
+                None
+            ]
+        );
     }
 
     #[test]
     fn starts_in_the_middle_of_a_piece_stay_where_they_were() {
-        let new = fixups_of_pieces(&linked(), &with_constants(&[pages(0..1), pages(1..6)])).unwrap();
-        assert_eq!(read(&new)[2..4], [Some((0x10000, vec![0x10])), Some((0x14000, vec![NONE, 0x20, 0x30, NONE, 0x40]))]);
+        let new =
+            fixups_of_pieces(&linked(), &with_constants(&[pages(0..1), pages(1..6)])).unwrap();
+        assert_eq!(
+            read(&new)[2..4],
+            [
+                Some((0x10000, vec![0x10])),
+                Some((0x14000, vec![NONE, 0x20, 0x30, NONE, 0x40]))
+            ]
+        );
     }
 
     #[test]
@@ -631,19 +800,35 @@ mod tests {
         pieces[3] = whole(0..0);
         let new = fixups_of_pieces(&old, &pieces).unwrap();
         assert_eq!(new.len(), old.len());
-        assert_eq!(read(&new)[2..4], [Some((0x10000, vec![0])), Some((0x10000 + 399 * PAGE, vec![399]))]);
+        assert_eq!(
+            read(&new)[2..4],
+            [
+                Some((0x10000, vec![0])),
+                Some((0x10000 + 399 * PAGE, vec![399]))
+            ]
+        );
     }
 
     #[test]
     fn smaller_pages_in_the_fixups_than_in_memory() {
-        let old = fixups(&[None, None, Some(starts(0x1000, 0x10000, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])), None, None]);
+        let old = fixups(&[
+            None,
+            None,
+            Some(starts(0x1000, 0x10000, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])),
+            None,
+            None,
+        ]);
         assert_eq!(can_lose_pages(&old, 2, 0x4000), Ok(true));
         let (_, count) = starts_in_image(&old).unwrap();
         let mut pieces = with_constants(&[pages(0..1), pages(2..3)]);
         pieces[3] = whole(0..0);
         let new = fixups_of_pieces(&old, &pieces).unwrap();
         assert_eq!(starts_in_image(&new).unwrap().1, count + 1);
-        let of = |segment: usize| starts_in_segment(&new, segment).unwrap().map(|info| (u64_at(info, 8).unwrap(), page_starts(info).unwrap()));
+        let of = |segment: usize| {
+            starts_in_segment(&new, segment)
+                .unwrap()
+                .map(|info| (u64_at(info, 8).unwrap(), page_starts(info).unwrap()))
+        };
         assert_eq!(of(2), Some((0x10000, vec![1, 2, 3, 4])));
         assert_eq!(of(3), Some((0x18000, vec![9, 10])));
     }
@@ -655,15 +840,31 @@ mod tests {
         assert_eq!(can_lose_pages(&linked(), 2, 0x1000), Ok(false));
         assert_eq!(can_lose_pages(&linked(), 5, PAGE), Err(REFUSED));
         let with = |info: Vec<u8>| fixups(&[None, None, Some(info), None, None]);
-        assert_eq!(can_lose_pages(&with(starts(0x4000, 0x10000, &[0x10, START_MULTI | 2])), 2, PAGE), Ok(false));
-        assert_eq!(can_lose_pages(&with(starts(0, 0x10000, &[0x10])), 2, PAGE), Ok(false));
+        assert_eq!(
+            can_lose_pages(
+                &with(starts(0x4000, 0x10000, &[0x10, START_MULTI | 2])),
+                2,
+                PAGE
+            ),
+            Ok(false)
+        );
+        assert_eq!(
+            can_lose_pages(&with(starts(0, 0x10000, &[0x10])), 2, PAGE),
+            Ok(false)
+        );
     }
 
     #[test]
     fn fixups_that_cannot_be_read_are_refused() {
         let pieces = with_constants(&[pages(0..2), pages(3..9)]);
         assert_eq!(fixups_of_pieces(&linked(), &pieces[..4]), Err(REFUSED));
-        assert_eq!(fixups_of_pieces(&linked(), &with_constants(&[pages(0..2), CONSTANTS + 0xc100..CONSTANTS + 0x24000])), Err(REFUSED));
+        assert_eq!(
+            fixups_of_pieces(
+                &linked(),
+                &with_constants(&[pages(0..2), CONSTANTS + 0xc100..CONSTANTS + 0x24000])
+            ),
+            Err(REFUSED)
+        );
         assert_eq!(fixups_of_pieces(&linked()[..40], &pieces), Err(REFUSED));
         let mut long = linked();
         let info = 32 + u32_at(&long, 32 + 4 + 2 * 4).unwrap() as usize;
@@ -676,7 +877,15 @@ mod tests {
         assert_eq!(fixups_of_pieces(&backwards, &pieces), Err(REFUSED));
     }
 
-    fn segment(label: &[u8], address: u64, size: u64, offset: u64, file_size: u64, flags: u32, sections: &[(&[u8], u64, u64, u32, u32)]) -> Vec<u8> {
+    fn segment(
+        label: &[u8],
+        address: u64,
+        size: u64,
+        offset: u64,
+        file_size: u64,
+        flags: u32,
+        sections: &[(&[u8], u64, u64, u32, u32)],
+    ) -> Vec<u8> {
         let mut command = vec![0; SEGMENT + sections.len() * SECTION];
         put_u32(&mut command, 0, LC_SEGMENT_64).unwrap();
         put_u32(&mut command, 4, (SEGMENT + sections.len() * SECTION) as u32).unwrap();
@@ -706,7 +915,15 @@ mod tests {
         let names = symbols + 4 * 16;
         let commands = [
             segment(b"__PAGEZERO", 0, IMAGE, 0, 0, 0, &[]),
-            segment(b"__TEXT", IMAGE, 0x10000, 0, 0x10000, 0, &[(b"__text", IMAGE + 0x2000, 0xe000, 0x2000, 0)]),
+            segment(
+                b"__TEXT",
+                IMAGE,
+                0x10000,
+                0,
+                0x10000,
+                0,
+                &[(b"__text", IMAGE + 0x2000, 0xe000, 0x2000, 0)],
+            ),
             segment(
                 b"__DATA_CONST",
                 CONSTANTS,
@@ -714,7 +931,10 @@ mod tests {
                 0x10000,
                 0x24000,
                 0x10,
-                &[(b"__got", CONSTANTS, 0x10, 0x10000, 6), (b"__const", CONSTANTS + 0x10, 0x23ff0, 0x10010, 0)],
+                &[
+                    (b"__got", CONSTANTS, 0x10, 0x10000, 6),
+                    (b"__const", CONSTANTS + 0x10, 0x23ff0, 0x10010, 0),
+                ],
             ),
             segment(
                 b"__DATA",
@@ -723,20 +943,61 @@ mod tests {
                 0x34000,
                 0x4000,
                 0,
-                &[(b"__data", IMAGE + 0x34000, 0x100, 0x34000, 0), (b"__bss", IMAGE + 0x38000, 0x100, 0, S_ZEROFILL)],
+                &[
+                    (b"__data", IMAGE + 0x34000, 0x100, 0x34000, 0),
+                    (b"__bss", IMAGE + 0x38000, 0x100, 0, S_ZEROFILL),
+                ],
             ),
-            segment(b"__LINKEDIT", IMAGE + 0x3c000, 0x4000, LINKEDIT as u64, (names + 16 - LINKEDIT) as u64, 0, &[]),
-            [LC_DYLD_CHAINED_FIXUPS, 16, LINKEDIT as u32, blob.len() as u32].iter().flat_map(|field| field.to_le_bytes()).collect(),
-            [LC_SYMTAB, 24, symbols as u32, 4, names as u32, 16].iter().flat_map(|field| field.to_le_bytes()).collect(),
+            segment(
+                b"__LINKEDIT",
+                IMAGE + 0x3c000,
+                0x4000,
+                LINKEDIT as u64,
+                (names + 16 - LINKEDIT) as u64,
+                0,
+                &[],
+            ),
+            [
+                LC_DYLD_CHAINED_FIXUPS,
+                16,
+                LINKEDIT as u32,
+                blob.len() as u32,
+            ]
+            .iter()
+            .flat_map(|field| field.to_le_bytes())
+            .collect(),
+            [LC_SYMTAB, 24, symbols as u32, 4, names as u32, 16]
+                .iter()
+                .flat_map(|field| field.to_le_bytes())
+                .collect(),
         ];
-        let mut file: Vec<u8> = (0..LINKEDIT).map(|at| 0x40 + (at / PAGE as usize) as u8).collect();
+        let mut file: Vec<u8> = (0..LINKEDIT)
+            .map(|at| 0x40 + (at / PAGE as usize) as u8)
+            .collect();
         file[..0x2000].fill(0);
-        for (field, value) in [MH_MAGIC_64, CPU_TYPE_ARM64, 0, 2, commands.len() as u32, commands.concat().len() as u32, 0, 0].into_iter().enumerate() {
+        for (field, value) in [
+            MH_MAGIC_64,
+            CPU_TYPE_ARM64,
+            0,
+            2,
+            commands.len() as u32,
+            commands.concat().len() as u32,
+            0,
+            0,
+        ]
+        .into_iter()
+        .enumerate()
+        {
             put_u32(&mut file, field * 4, value).unwrap();
         }
         file[32..32 + commands.concat().len()].copy_from_slice(&commands.concat());
         file.extend_from_slice(&blob);
-        for (section, address) in [(1, IMAGE + 0xc100), (3, CONSTANTS + 0x20), (3, CONSTANTS + 0x20100), (4, IMAGE + 0x34010)] {
+        for (section, address) in [
+            (1, IMAGE + 0xc100),
+            (3, CONSTANTS + 0x20),
+            (3, CONSTANTS + 0x20100),
+            (4, IMAGE + 0x34010),
+        ] {
             file.extend_from_slice(&[0, 0, 0, 0, N_SECT, section, 0, 0]);
             file.extend_from_slice(&u64::to_le_bytes(address));
         }
@@ -744,15 +1005,42 @@ mod tests {
         file
     }
 
-    type Read = (Vec<u8>, u64, u64, u64, u64, u32, Vec<(Vec<u8>, u64, u64, u32)>);
+    type Read = (
+        Vec<u8>,
+        u64,
+        u64,
+        u64,
+        u64,
+        u32,
+        Vec<(Vec<u8>, u64, u64, u32)>,
+    );
 
     fn segments_of(file: &[u8]) -> Vec<Read> {
-        let list = commands(file).unwrap().into_iter().filter(|c| c.0 == LC_SEGMENT_64);
+        let list = commands(file)
+            .unwrap()
+            .into_iter()
+            .filter(|c| c.0 == LC_SEGMENT_64);
         list.map(|(_, at, _)| {
             let field = |index: usize| u64_at(file, at + 24 + index * 8).unwrap();
-            let sections = (0..u32_at(file, at + 64).unwrap() as usize).map(|s| at + SEGMENT + s * SECTION);
-            let sections = sections.map(|s| (name(&file[s..s + 16]).to_vec(), u64_at(file, s + 32).unwrap(), u64_at(file, s + 40).unwrap(), u32_at(file, s + 48).unwrap()));
-            (name(&file[at + 8..at + 24]).to_vec(), field(0), field(1), field(2), field(3), u32_at(file, at + 68).unwrap(), sections.collect())
+            let sections =
+                (0..u32_at(file, at + 64).unwrap() as usize).map(|s| at + SEGMENT + s * SECTION);
+            let sections = sections.map(|s| {
+                (
+                    name(&file[s..s + 16]).to_vec(),
+                    u64_at(file, s + 32).unwrap(),
+                    u64_at(file, s + 40).unwrap(),
+                    u32_at(file, s + 48).unwrap(),
+                )
+            });
+            (
+                name(&file[at + 8..at + 24]).to_vec(),
+                field(0),
+                field(1),
+                field(2),
+                field(3),
+                u32_at(file, at + 68).unwrap(),
+                sections.collect(),
+            )
         })
         .collect()
     }
@@ -760,74 +1048,207 @@ mod tests {
     #[test]
     fn both_segments_lose_whole_pages() {
         let file = executable();
-        let dead = [IMAGE + 0x4000..IMAGE + 0xc000, CONSTANTS + 0x3000..CONSTANTS + 0xd000, CONSTANTS + 0x10000..CONSTANTS + 0x14000, CONSTANTS + 0x18100..CONSTANTS + 0x1bf00];
+        let dead = [
+            IMAGE + 0x4000..IMAGE + 0xc000,
+            CONSTANTS + 0x3000..CONSTANTS + 0xd000,
+            CONSTANTS + 0x10000..CONSTANTS + 0x14000,
+            CONSTANTS + 0x18100..CONSTANTS + 0x1bf00,
+        ];
         let out = without_pages(&file, &dead, of_at_least(PAGE)).unwrap();
         let found = segments_of(&out);
         let labels: Vec<&[u8]> = found.iter().map(|segment| &segment.0[..]).collect();
-        assert_eq!(labels, [&b"__PAGEZERO"[..], b"__TEXT", b"__TEXT.1", b"__DATA_CONST.0", b"__DATA_CONST.1", b"__DATA_CONST", b"__DATA", b"__LINKEDIT"]);
-        let places: Vec<(u64, u64, u64, u64, u32)> = found.iter().map(|s| (s.1 - IMAGE.min(s.1), s.2, s.3, s.4, s.5)).collect();
-        assert_eq!(places[1..7], [
-            (0, 0x4000, 0, 0x4000, 0),
-            (0xc000, 0x4000, 0x4000, 0x4000, 0),
-            (0x10000, 0x4000, 0x8000, 0x4000, 0),
-            (0x1c000, 0x4000, 0xc000, 0x4000, 0),
-            (0x24000, 0x10000, 0x10000, 0x10000, 0x10),
-            (0x34000, 0x8000, 0x20000, 0x4000, 0),
-        ]);
+        assert_eq!(
+            labels,
+            [
+                &b"__PAGEZERO"[..],
+                b"__TEXT",
+                b"__TEXT.1",
+                b"__DATA_CONST.0",
+                b"__DATA_CONST.1",
+                b"__DATA_CONST",
+                b"__DATA",
+                b"__LINKEDIT"
+            ]
+        );
+        let places: Vec<(u64, u64, u64, u64, u32)> = found
+            .iter()
+            .map(|s| (s.1 - IMAGE.min(s.1), s.2, s.3, s.4, s.5))
+            .collect();
+        assert_eq!(
+            places[1..7],
+            [
+                (0, 0x4000, 0, 0x4000, 0),
+                (0xc000, 0x4000, 0x4000, 0x4000, 0),
+                (0x10000, 0x4000, 0x8000, 0x4000, 0),
+                (0x1c000, 0x4000, 0xc000, 0x4000, 0),
+                (0x24000, 0x10000, 0x10000, 0x10000, 0x10),
+                (0x34000, 0x8000, 0x20000, 0x4000, 0),
+            ]
+        );
         assert_eq!(found[7].3, 0x24000);
-        assert_eq!(found[3].6, [(b"__got".to_vec(), CONSTANTS, 0x10, 0x8000), (b"__const".to_vec(), CONSTANTS + 0x10, 0x3ff0, 0x8010)]);
-        assert_eq!(found[4].6, [(b"__const".to_vec(), CONSTANTS + 0xc000, 0x4000, 0xc000)]);
-        assert_eq!(found[5].6, [(b"__const".to_vec(), CONSTANTS + 0x14000, 0x10000, 0x10000)]);
-        assert_eq!(found[6].6, [(b"__data".to_vec(), IMAGE + 0x34000, 0x100, 0x20000), (b"__bss".to_vec(), IMAGE + 0x38000, 0x100, 0)]);
+        assert_eq!(
+            found[3].6,
+            [
+                (b"__got".to_vec(), CONSTANTS, 0x10, 0x8000),
+                (b"__const".to_vec(), CONSTANTS + 0x10, 0x3ff0, 0x8010)
+            ]
+        );
+        assert_eq!(
+            found[4].6,
+            [(b"__const".to_vec(), CONSTANTS + 0xc000, 0x4000, 0xc000)]
+        );
+        assert_eq!(
+            found[5].6,
+            [(b"__const".to_vec(), CONSTANTS + 0x14000, 0x10000, 0x10000)]
+        );
+        assert_eq!(
+            found[6].6,
+            [
+                (b"__data".to_vec(), IMAGE + 0x34000, 0x100, 0x20000),
+                (b"__bss".to_vec(), IMAGE + 0x38000, 0x100, 0)
+            ]
+        );
         let first_bytes: Vec<u8> = (1..9).map(|page| out[page * PAGE as usize]).collect();
-        assert_eq!(first_bytes, [0x43, 0x44, 0x47, 0x49, 0x4a, 0x4b, 0x4c, 0x4d]);
+        assert_eq!(
+            first_bytes,
+            [0x43, 0x44, 0x47, 0x49, 0x4a, 0x4b, 0x4c, 0x4d]
+        );
         let list = commands(&out).unwrap();
-        let fixups = list.iter().find(|c| c.0 == LC_DYLD_CHAINED_FIXUPS).unwrap().1;
-        let blob = &out[u32_at(&out, fixups + 8).unwrap() as usize..][..u32_at(&out, fixups + 12).unwrap() as usize];
+        let fixups = list
+            .iter()
+            .find(|c| c.0 == LC_DYLD_CHAINED_FIXUPS)
+            .unwrap()
+            .1;
+        let blob = &out[u32_at(&out, fixups + 8).unwrap() as usize..]
+            [..u32_at(&out, fixups + 12).unwrap() as usize];
         assert_eq!(u32_at(&out, fixups + 8), Ok(0x24000));
-        assert_eq!(read(blob), [None, None, None, Some((0x10000, vec![0x10])), Some((0x1c000, vec![0x30])), Some((0x24000, vec![0x40, 0x8])), Some((0x34000, vec![0x18])), None]);
+        assert_eq!(
+            read(blob),
+            [
+                None,
+                None,
+                None,
+                Some((0x10000, vec![0x10])),
+                Some((0x1c000, vec![0x30])),
+                Some((0x24000, vec![0x40, 0x8])),
+                Some((0x34000, vec![0x18])),
+                None
+            ]
+        );
         let symbols = list.iter().find(|c| c.0 == LC_SYMTAB).unwrap().1;
         let symbols = u32_at(&out, symbols + 8).unwrap() as usize;
         assert_eq!(symbols, 0x24000 + blob.len());
-        assert_eq!([0, 1, 2, 3].map(|index| out[symbols + index * 16 + 5]), [2, 4, 6, 7]);
+        assert_eq!(
+            [0, 1, 2, 3].map(|index| out[symbols + index * 16 + 5]),
+            [2, 4, 6, 7]
+        );
     }
 
     #[test]
     fn a_gap_that_reaches_the_end_of_the_constants_shortens_them() {
-        let out = without_pages(&executable(), &whole(CONSTANTS + 0x14000..CONSTANTS + 0x24000), of_at_least(PAGE)).unwrap();
+        let out = without_pages(
+            &executable(),
+            &whole(CONSTANTS + 0x14000..CONSTANTS + 0x24000),
+            of_at_least(PAGE),
+        )
+        .unwrap();
         let found = segments_of(&out);
         let labels: Vec<&[u8]> = found.iter().map(|segment| &segment.0[..]).collect();
-        assert_eq!(labels, [&b"__PAGEZERO"[..], b"__TEXT", b"__DATA_CONST", b"__DATA", b"__LINKEDIT"]);
-        assert_eq!((found[2].1, found[2].2, found[2].3, found[2].4, found[2].5), (CONSTANTS, 0x14000, 0x10000, 0x14000, 0x10));
-        assert_eq!(found[2].6, [(b"__got".to_vec(), CONSTANTS, 0x10, 0x10000), (b"__const".to_vec(), CONSTANTS + 0x10, 0x13ff0, 0x10010)]);
-        assert_eq!((found[3].1, found[3].3, found[4].3), (IMAGE + 0x34000, 0x24000, 0x28000));
-        assert_eq!(out.len(), (executable().len() - 0x10000).next_multiple_of(16));
+        assert_eq!(
+            labels,
+            [
+                &b"__PAGEZERO"[..],
+                b"__TEXT",
+                b"__DATA_CONST",
+                b"__DATA",
+                b"__LINKEDIT"
+            ]
+        );
+        assert_eq!(
+            (found[2].1, found[2].2, found[2].3, found[2].4, found[2].5),
+            (CONSTANTS, 0x14000, 0x10000, 0x14000, 0x10)
+        );
+        assert_eq!(
+            found[2].6,
+            [
+                (b"__got".to_vec(), CONSTANTS, 0x10, 0x10000),
+                (b"__const".to_vec(), CONSTANTS + 0x10, 0x13ff0, 0x10010)
+            ]
+        );
+        assert_eq!(
+            (found[3].1, found[3].3, found[4].3),
+            (IMAGE + 0x34000, 0x24000, 0x28000)
+        );
+        assert_eq!(
+            out.len(),
+            (executable().len() - 0x10000).next_multiple_of(16)
+        );
         let list = commands(&out).unwrap();
-        let fixups = list.iter().find(|c| c.0 == LC_DYLD_CHAINED_FIXUPS).unwrap().1;
-        let blob = &out[u32_at(&out, fixups + 8).unwrap() as usize..][..u32_at(&out, fixups + 12).unwrap() as usize];
+        let fixups = list
+            .iter()
+            .find(|c| c.0 == LC_DYLD_CHAINED_FIXUPS)
+            .unwrap()
+            .1;
+        let blob = &out[u32_at(&out, fixups + 8).unwrap() as usize..]
+            [..u32_at(&out, fixups + 12).unwrap() as usize];
         let before = read(&linked());
         let after = read(blob);
-        assert_eq!(after[2].as_ref().map(|starts| starts.0), before[2].as_ref().map(|starts| starts.0));
+        assert_eq!(
+            after[2].as_ref().map(|starts| starts.0),
+            before[2].as_ref().map(|starts| starts.0)
+        );
         assert!(after[2].as_ref().unwrap().1.len() <= 5);
-        assert_eq!(after[2].as_ref().unwrap().1[..], before[2].as_ref().unwrap().1[..after[2].as_ref().unwrap().1.len()]);
+        assert_eq!(
+            after[2].as_ref().unwrap().1[..],
+            before[2].as_ref().unwrap().1[..after[2].as_ref().unwrap().1.len()]
+        );
         assert_eq!(after[3], before[3]);
     }
 
     #[test]
     fn a_segment_that_is_only_shortened_counts_as_no_hole() {
-        let dead = [IMAGE + 0x4000..IMAGE + 0xc000, CONSTANTS + 0x20000..CONSTANTS + 0x24000];
-        let out = without_pages(&executable(), &dead, crate::Limits { smallest_hole: PAGE, most_holes: 1 }).unwrap();
+        let dead = [
+            IMAGE + 0x4000..IMAGE + 0xc000,
+            CONSTANTS + 0x20000..CONSTANTS + 0x24000,
+        ];
+        let out = without_pages(
+            &executable(),
+            &dead,
+            crate::Limits {
+                smallest_hole: PAGE,
+                most_holes: 1,
+            },
+        )
+        .unwrap();
         let found = segments_of(&out);
         let labels: Vec<&[u8]> = found.iter().map(|segment| &segment.0[..]).collect();
-        assert_eq!(labels, [&b"__PAGEZERO"[..], b"__TEXT", b"__TEXT.1", b"__DATA_CONST", b"__DATA", b"__LINKEDIT"]);
+        assert_eq!(
+            labels,
+            [
+                &b"__PAGEZERO"[..],
+                b"__TEXT",
+                b"__TEXT.1",
+                b"__DATA_CONST",
+                b"__DATA",
+                b"__LINKEDIT"
+            ]
+        );
         assert_eq!((found[3].2, found[3].5), (0x20000, 0x10));
     }
 
     #[test]
     fn the_first_page_of_the_constants_stays() {
-        let out = without_pages(&executable(), &whole(CONSTANTS..CONSTANTS + 0x8000), of_at_least(PAGE)).unwrap();
+        let out = without_pages(
+            &executable(),
+            &whole(CONSTANTS..CONSTANTS + 0x8000),
+            of_at_least(PAGE),
+        )
+        .unwrap();
         let found = segments_of(&out);
-        assert_eq!((found[2].1, found[2].2, found[3].1), (CONSTANTS, 0x24000, IMAGE + 0x34000));
+        assert_eq!(
+            (found[2].1, found[2].2, found[3].1),
+            (CONSTANTS, 0x24000, IMAGE + 0x34000)
+        );
         assert_eq!(out, executable());
     }
 
@@ -835,10 +1256,32 @@ mod tests {
     fn constants_whose_fixups_cannot_be_cut_stay_whole() {
         let mut file = executable();
         let info = LINKEDIT + 32 + u32_at(&file, LINKEDIT + 32 + 4 + 2 * 4).unwrap() as usize;
-        file[info + STARTS_IN_SEGMENT + 2..info + STARTS_IN_SEGMENT + 4].copy_from_slice(&(START_MULTI | 1).to_le_bytes());
-        let out = without_pages(&file, &[IMAGE + 0x4000..IMAGE + 0xc000, CONSTANTS + 0x4000..CONSTANTS + 0xc000], of_at_least(PAGE)).unwrap();
-        let labels: Vec<Vec<u8>> = segments_of(&out).into_iter().map(|segment| segment.0).collect();
-        assert_eq!(labels, [&b"__PAGEZERO"[..], b"__TEXT", b"__TEXT.1", b"__DATA_CONST", b"__DATA", b"__LINKEDIT"]);
+        file[info + STARTS_IN_SEGMENT + 2..info + STARTS_IN_SEGMENT + 4]
+            .copy_from_slice(&(START_MULTI | 1).to_le_bytes());
+        let out = without_pages(
+            &file,
+            &[
+                IMAGE + 0x4000..IMAGE + 0xc000,
+                CONSTANTS + 0x4000..CONSTANTS + 0xc000,
+            ],
+            of_at_least(PAGE),
+        )
+        .unwrap();
+        let labels: Vec<Vec<u8>> = segments_of(&out)
+            .into_iter()
+            .map(|segment| segment.0)
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                &b"__PAGEZERO"[..],
+                b"__TEXT",
+                b"__TEXT.1",
+                b"__DATA_CONST",
+                b"__DATA",
+                b"__LINKEDIT"
+            ]
+        );
     }
 
     #[test]
@@ -848,56 +1291,196 @@ mod tests {
         let text = commands(&file).unwrap()[1].1;
         let room = (SEGMENT + SECTION) as u32;
         put_u32(&mut file, text + SEGMENT + 48, end_of_commands + 16 + room).unwrap();
-        put_u64(&mut file, text + SEGMENT + 32, IMAGE + u64::from(end_of_commands + 16 + room)).unwrap();
-        put_u64(&mut file, text + SEGMENT + 40, 0x10000 - u64::from(end_of_commands + 16 + room)).unwrap();
-        let out = without_pages(&file, &[IMAGE + 0x4000..IMAGE + 0x8000, CONSTANTS + 0x4000..CONSTANTS + 0xc000], of_at_least(PAGE)).unwrap();
-        let labels: Vec<Vec<u8>> = segments_of(&out).into_iter().map(|segment| segment.0).collect();
-        assert_eq!(labels, [&b"__PAGEZERO"[..], b"__TEXT", b"__DATA_CONST.0", b"__DATA_CONST", b"__DATA", b"__LINKEDIT"]);
+        put_u64(
+            &mut file,
+            text + SEGMENT + 32,
+            IMAGE + u64::from(end_of_commands + 16 + room),
+        )
+        .unwrap();
+        put_u64(
+            &mut file,
+            text + SEGMENT + 40,
+            0x10000 - u64::from(end_of_commands + 16 + room),
+        )
+        .unwrap();
+        let out = without_pages(
+            &file,
+            &[
+                IMAGE + 0x4000..IMAGE + 0x8000,
+                CONSTANTS + 0x4000..CONSTANTS + 0xc000,
+            ],
+            of_at_least(PAGE),
+        )
+        .unwrap();
+        let labels: Vec<Vec<u8>> = segments_of(&out)
+            .into_iter()
+            .map(|segment| segment.0)
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                &b"__PAGEZERO"[..],
+                b"__TEXT",
+                b"__DATA_CONST.0",
+                b"__DATA_CONST",
+                b"__DATA",
+                b"__LINKEDIT"
+            ]
+        );
     }
 
     #[test]
     fn a_hole_that_is_too_small_stays_in_the_file() {
-        let dead = [IMAGE + 0x4000..IMAGE + 0x8000, CONSTANTS + 0x4000..CONSTANTS + 0xc000];
-        let labels = |smallest: u64| segments_of(&without_pages(&executable(), &dead, of_at_least(smallest)).unwrap()).into_iter().map(|segment| segment.0).collect::<Vec<Vec<u8>>>();
-        assert_eq!(labels(0x4000), [&b"__PAGEZERO"[..], b"__TEXT", b"__TEXT.1", b"__DATA_CONST.0", b"__DATA_CONST", b"__DATA", b"__LINKEDIT"]);
-        assert_eq!(labels(0x8000), [&b"__PAGEZERO"[..], b"__TEXT", b"__DATA_CONST.0", b"__DATA_CONST", b"__DATA", b"__LINKEDIT"]);
-        assert_eq!(without_pages(&executable(), &dead, of_at_least(0x8001)).unwrap(), executable());
+        let dead = [
+            IMAGE + 0x4000..IMAGE + 0x8000,
+            CONSTANTS + 0x4000..CONSTANTS + 0xc000,
+        ];
+        let labels = |smallest: u64| {
+            segments_of(&without_pages(&executable(), &dead, of_at_least(smallest)).unwrap())
+                .into_iter()
+                .map(|segment| segment.0)
+                .collect::<Vec<Vec<u8>>>()
+        };
+        assert_eq!(
+            labels(0x4000),
+            [
+                &b"__PAGEZERO"[..],
+                b"__TEXT",
+                b"__TEXT.1",
+                b"__DATA_CONST.0",
+                b"__DATA_CONST",
+                b"__DATA",
+                b"__LINKEDIT"
+            ]
+        );
+        assert_eq!(
+            labels(0x8000),
+            [
+                &b"__PAGEZERO"[..],
+                b"__TEXT",
+                b"__DATA_CONST.0",
+                b"__DATA_CONST",
+                b"__DATA",
+                b"__LINKEDIT"
+            ]
+        );
+        assert_eq!(
+            without_pages(&executable(), &dead, of_at_least(0x8001)).unwrap(),
+            executable()
+        );
     }
 
     #[test]
     fn no_more_holes_than_are_asked_for_in_both_segments_together() {
-        let dead = [IMAGE + 0x4000..IMAGE + 0x8000, CONSTANTS + 0x4000..CONSTANTS + 0xc000, CONSTANTS + 0x10000..CONSTANTS + 0x1c000];
-        let labels = |most_holes: usize| segments_of(&without_pages(&executable(), &dead, crate::Limits { smallest_hole: PAGE, most_holes }).unwrap()).into_iter().map(|segment| segment.0).collect::<Vec<Vec<u8>>>();
+        let dead = [
+            IMAGE + 0x4000..IMAGE + 0x8000,
+            CONSTANTS + 0x4000..CONSTANTS + 0xc000,
+            CONSTANTS + 0x10000..CONSTANTS + 0x1c000,
+        ];
+        let labels = |most_holes: usize| {
+            segments_of(
+                &without_pages(
+                    &executable(),
+                    &dead,
+                    crate::Limits {
+                        smallest_hole: PAGE,
+                        most_holes,
+                    },
+                )
+                .unwrap(),
+            )
+            .into_iter()
+            .map(|segment| segment.0)
+            .collect::<Vec<Vec<u8>>>()
+        };
         assert_eq!(labels(3).len(), 8);
-        assert_eq!(labels(2), [&b"__PAGEZERO"[..], b"__TEXT", b"__DATA_CONST.0", b"__DATA_CONST.1", b"__DATA_CONST", b"__DATA", b"__LINKEDIT"]);
-        assert_eq!(labels(1), [&b"__PAGEZERO"[..], b"__TEXT", b"__DATA_CONST", b"__DATA_CONST.1", b"__DATA", b"__LINKEDIT"]);
+        assert_eq!(
+            labels(2),
+            [
+                &b"__PAGEZERO"[..],
+                b"__TEXT",
+                b"__DATA_CONST.0",
+                b"__DATA_CONST.1",
+                b"__DATA_CONST",
+                b"__DATA",
+                b"__LINKEDIT"
+            ]
+        );
+        assert_eq!(
+            labels(1),
+            [
+                &b"__PAGEZERO"[..],
+                b"__TEXT",
+                b"__DATA_CONST",
+                b"__DATA_CONST.1",
+                b"__DATA",
+                b"__LINKEDIT"
+            ]
+        );
         assert_eq!(labels(0).len(), 5);
     }
 
     #[test]
     fn where_there_are_fixups() {
         let file = executable();
-        assert_eq!(is_in_text(&file, &(IMAGE + 0x4000..IMAGE + 0x8000)), Ok(true));
-        assert_eq!(is_in_text(&file, &(IMAGE + 0xc000..CONSTANTS + 1)), Ok(false));
-        assert_eq!(is_in_text(&file, &(CONSTANTS + 0x4000..CONSTANTS + 0x8000)), Ok(false));
-        let found: Vec<(&[u8], usize)> = sections(&file).unwrap().iter().map(|section| (section.name, section.offset)).collect();
-        assert_eq!(found, [(&b"__text"[..], 0x2000), (b"__got", 0x10000), (b"__const", 0x10010), (b"__data", 0x34000)]);
+        assert_eq!(
+            is_in_text(&file, &(IMAGE + 0x4000..IMAGE + 0x8000)),
+            Ok(true)
+        );
+        assert_eq!(
+            is_in_text(&file, &(IMAGE + 0xc000..CONSTANTS + 1)),
+            Ok(false)
+        );
+        assert_eq!(
+            is_in_text(&file, &(CONSTANTS + 0x4000..CONSTANTS + 0x8000)),
+            Ok(false)
+        );
+        let found: Vec<(&[u8], usize)> = sections(&file)
+            .unwrap()
+            .iter()
+            .map(|section| (section.name, section.offset))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (&b"__text"[..], 0x2000),
+                (b"__got", 0x10000),
+                (b"__const", 0x10010),
+                (b"__data", 0x34000)
+            ]
+        );
     }
     #[test]
     fn what_holds_fixups_is_not_filled_with_traps() {
-        let island = |addresses: Range<u64>| crate::Island { addresses, needed_by: vec![0] };
+        let island = |addresses: Range<u64>| crate::Island {
+            addresses,
+            needed_by: vec![0],
+        };
         let table = crate::Table {
             stub: IMAGE + 0x2000,
             features: vec![b"a"],
             conditions: Vec::new(),
-            islands: vec![island(IMAGE + 0x4000..IMAGE + 0xc000), island(CONSTANTS + 0x3000..CONSTANTS + 0xd000)],
+            islands: vec![
+                island(IMAGE + 0x4000..IMAGE + 0xc000),
+                island(CONSTANTS + 0x3000..CONSTANTS + 0xd000),
+            ],
             doors: Vec::new(),
             packages: Vec::new(),
         };
         let mut file = executable();
         let dead = crate::shut(&mut file, crate::Container::MachO, true, &table, &[true]).unwrap();
-        assert_eq!(dead, [IMAGE + 0x4000..IMAGE + 0xc000, CONSTANTS + 0x3000..CONSTANTS + 0xd000]);
-        assert!(file[0x4000..0xc000].chunks(4).all(|word| word == [0x20, 0x00, 0x20, 0xd4]));
+        assert_eq!(
+            dead,
+            [
+                IMAGE + 0x4000..IMAGE + 0xc000,
+                CONSTANTS + 0x3000..CONSTANTS + 0xd000
+            ]
+        );
+        assert!(
+            file[0x4000..0xc000]
+                .chunks(4)
+                .all(|word| word == [0x20, 0x00, 0x20, 0xd4])
+        );
         assert_eq!(file[..0x4000], executable()[..0x4000]);
         assert_eq!(file[0xc000..], executable()[0xc000..]);
     }

@@ -2,7 +2,7 @@
  * Copyright (C) 2025 Sosuke Suzuki <aosukeke@gmail.com>.
  *
  * Redistribution and use in source and binary forms, with or without
-* modification, are permitted provided that the following conditions
+ * modification, are permitted provided that the following conditions
  * are met:
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
@@ -24,158 +24,188 @@
  */
 
 // https://tc39.es/proposal-explicit-resource-management/#sec-asyncdisposablestack.prototype.adopt
-export function adopt(value, onAsyncDispose)
-{
-    'use strict';
+export function adopt(value, onAsyncDispose) {
+  "use strict";
 
-    if (!$isAsyncDisposableStack(this))
-        throw new TypeError("AsyncDisposableStack.prototype.adopt requires that |this| be a AsyncDisposableStack object");
+  if (!$isAsyncDisposableStack(this))
+    throw new TypeError("AsyncDisposableStack.prototype.adopt requires that |this| be a AsyncDisposableStack object");
 
-    if ($getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldState) === $AsyncDisposableStackStateDisposed)
-        throw new $ReferenceError("AsyncDisposableStack.prototype.adopt requires that |this| be a pending AsyncDisposableStack object");
+  if (
+    $getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldState) === $AsyncDisposableStackStateDisposed
+  )
+    throw new $ReferenceError(
+      "AsyncDisposableStack.prototype.adopt requires that |this| be a pending AsyncDisposableStack object",
+    );
 
-    if (!$isCallable(onAsyncDispose))
-        throw new TypeError("AsyncDisposableStack.prototype.adopt requires that onAsyncDispose argument be a callable");
+  if (!$isCallable(onAsyncDispose))
+    throw new TypeError("AsyncDisposableStack.prototype.adopt requires that onAsyncDispose argument be a callable");
 
-    var closure = () => onAsyncDispose.$call(undefined, value);
-    $addDisposableResource($getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldCapability), undefined, /* isAsync */ true, closure);
+  var closure = () => onAsyncDispose.$call(undefined, value);
+  $addDisposableResource(
+    $getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldCapability),
+    undefined,
+    /* isAsync */ true,
+    closure,
+  );
 
-    return value;
+  return value;
 }
 
 // https://tc39.es/proposal-explicit-resource-management/#sec-asyncdisposablestack.prototype.defer
 $overriddenName = "defer";
-export function deferMethod(onAsyncDispose)
-{
-    'use strict';
+export function deferMethod(onAsyncDispose) {
+  "use strict";
 
-    if (!$isAsyncDisposableStack(this))
-        throw new TypeError("AsyncDisposableStack.prototype.defer requires that |this| be a AsyncDisposableStack object");
+  if (!$isAsyncDisposableStack(this))
+    throw new TypeError("AsyncDisposableStack.prototype.defer requires that |this| be a AsyncDisposableStack object");
 
-    if ($getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldState) === $AsyncDisposableStackStateDisposed)
-        throw new $ReferenceError("AsyncDisposableStack.prototype.defer requires that |this| be a pending AsyncDisposableStack object");
+  if (
+    $getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldState) === $AsyncDisposableStackStateDisposed
+  )
+    throw new $ReferenceError(
+      "AsyncDisposableStack.prototype.defer requires that |this| be a pending AsyncDisposableStack object",
+    );
 
-    if (!$isCallable(onAsyncDispose))
-        throw new TypeError("AsyncDisposableStack.prototype.defer requires that onAsyncDispose argument be a callable");
+  if (!$isCallable(onAsyncDispose))
+    throw new TypeError("AsyncDisposableStack.prototype.defer requires that onAsyncDispose argument be a callable");
 
-    $addDisposableResource($getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldCapability), undefined, /* isAsync */ true, onAsyncDispose);
+  $addDisposableResource(
+    $getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldCapability),
+    undefined,
+    /* isAsync */ true,
+    onAsyncDispose,
+  );
 
-    return undefined;
+  return undefined;
 }
 
 // https://tc39.es/proposal-explicit-resource-management/#sec-asyncdisposablestack.prototype.disposeAsync
-export function disposeAsync()
-{
-    'use strict';
+export function disposeAsync() {
+  "use strict";
 
-    var promise = $newPromise();
+  var promise = $newPromise();
 
-    if (!$isAsyncDisposableStack(this)) {
-        $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, $makeTypeError("AsyncDisposableStack.prototype.disposeAsync requires that |this| be a AsyncDisposableStack object"));
-        return promise;
-    }
-
-    if ($getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldState) === $AsyncDisposableStackStateDisposed) {
-        $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
-        return promise;
-    }
-
-    $putAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldState, $AsyncDisposableStackStateDisposed);
-
-    var stack = $getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldCapability);
-    $assert($isArray(stack));
-
-    var i = stack.length;
-    var thrown = false;
-    var suppressed;
-    var needsAwait = false;
-    var hasAwaited = false;
-
-    var handleError = (result) => {
-        if (thrown)
-            suppressed = new $SuppressedError(result, suppressed);
-        else {
-            thrown = true;
-            suppressed = result;
-        }
-        loop();
-    };
-
-    var finish = () => {
-        if (thrown)
-            $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, suppressed);
-        else
-            $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
-    };
-
-    var loop = () => {
-        while (i) {
-            var resource = stack[--i];
-            if (resource.method === undefined) {
-                needsAwait = true;
-                continue;
-            }
-            var result;
-            try {
-                result = resource.method.$call(resource.value);
-            } catch (error) {
-                if (thrown)
-                    suppressed = new $SuppressedError(error, suppressed);
-                else {
-                    thrown = true;
-                    suppressed = error;
-                }
-                continue;
-            }
-            hasAwaited = true;
-            $promiseResolve($Promise, result).$then(loop, handleError);
-            return;
-        }
-        if (needsAwait && !hasAwaited)
-            $promiseResolve($Promise, undefined).$then(finish, finish);
-        else
-            finish();
-    };
-
-    loop();
-
-    $putAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldCapability, []);
-
+  if (!$isAsyncDisposableStack(this)) {
+    $rejectPromiseWithFirstResolvingFunctionCallCheck(
+      promise,
+      $makeTypeError(
+        "AsyncDisposableStack.prototype.disposeAsync requires that |this| be a AsyncDisposableStack object",
+      ),
+    );
     return promise;
+  }
+
+  if (
+    $getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldState) === $AsyncDisposableStackStateDisposed
+  ) {
+    $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+    return promise;
+  }
+
+  $putAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldState, $AsyncDisposableStackStateDisposed);
+
+  var stack = $getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldCapability);
+  $assert($isArray(stack));
+
+  var i = stack.length;
+  var thrown = false;
+  var suppressed;
+  var needsAwait = false;
+  var hasAwaited = false;
+
+  var handleError = result => {
+    if (thrown) suppressed = new $SuppressedError(result, suppressed);
+    else {
+      thrown = true;
+      suppressed = result;
+    }
+    loop();
+  };
+
+  var finish = () => {
+    if (thrown) $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, suppressed);
+    else $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+  };
+
+  var loop = () => {
+    while (i) {
+      var resource = stack[--i];
+      if (resource.method === undefined) {
+        needsAwait = true;
+        continue;
+      }
+      var result;
+      try {
+        result = resource.method.$call(resource.value);
+      } catch (error) {
+        if (thrown) suppressed = new $SuppressedError(error, suppressed);
+        else {
+          thrown = true;
+          suppressed = error;
+        }
+        continue;
+      }
+      hasAwaited = true;
+      $promiseResolve($Promise, result).$then(loop, handleError);
+      return;
+    }
+    if (needsAwait && !hasAwaited) $promiseResolve($Promise, undefined).$then(finish, finish);
+    else finish();
+  };
+
+  loop();
+
+  $putAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldCapability, []);
+
+  return promise;
 }
 
 // https://tc39.es/proposal-explicit-resource-management/#sec-asyncdisposablestack.prototype.move
-export function move()
-{
-    'use strict';
+export function move() {
+  "use strict";
 
-    if (!$isAsyncDisposableStack(this))
-        throw new TypeError("AsyncDisposableStack.prototype.move requires that |this| be a AsyncDisposableStack object");
+  if (!$isAsyncDisposableStack(this))
+    throw new TypeError("AsyncDisposableStack.prototype.move requires that |this| be a AsyncDisposableStack object");
 
-    if ($getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldState) === $AsyncDisposableStackStateDisposed)
-        throw new $ReferenceError("AsyncDisposableStack.prototype.move requires that |this| be a pending AsyncDisposableStack object");
+  if (
+    $getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldState) === $AsyncDisposableStackStateDisposed
+  )
+    throw new $ReferenceError(
+      "AsyncDisposableStack.prototype.move requires that |this| be a pending AsyncDisposableStack object",
+    );
 
-    var newAsyncDisposableStack = new $AsyncDisposableStack();
-    $putAsyncDisposableStackInternalField(newAsyncDisposableStack, $asyncDisposableStackFieldCapability, $getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldCapability));
+  var newAsyncDisposableStack = new $AsyncDisposableStack();
+  $putAsyncDisposableStackInternalField(
+    newAsyncDisposableStack,
+    $asyncDisposableStackFieldCapability,
+    $getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldCapability),
+  );
 
-    $putAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldCapability, []);
-    $putAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldState, $AsyncDisposableStackStateDisposed);
+  $putAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldCapability, []);
+  $putAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldState, $AsyncDisposableStackStateDisposed);
 
-    return newAsyncDisposableStack;
+  return newAsyncDisposableStack;
 }
 
 // https://tc39.es/proposal-explicit-resource-management/#sec-asyncdisposablestack.prototype.use
-export function use(value)
-{
-    'use strict';
+export function use(value) {
+  "use strict";
 
-    if (!$isAsyncDisposableStack(this))
-        throw new TypeError("AsyncDisposableStack.prototype.use requires that |this| be a AsyncDisposableStack object");
+  if (!$isAsyncDisposableStack(this))
+    throw new TypeError("AsyncDisposableStack.prototype.use requires that |this| be a AsyncDisposableStack object");
 
-    if ($getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldState) === $AsyncDisposableStackStateDisposed)
-        throw new $ReferenceError("AsyncDisposableStack.prototype.use requires that |this| be a pending AsyncDisposableStack object");
+  if (
+    $getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldState) === $AsyncDisposableStackStateDisposed
+  )
+    throw new $ReferenceError(
+      "AsyncDisposableStack.prototype.use requires that |this| be a pending AsyncDisposableStack object",
+    );
 
-    $addDisposableResource($getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldCapability), value, /* isAsync */ true);
+  $addDisposableResource(
+    $getAsyncDisposableStackInternalField(this, $asyncDisposableStackFieldCapability),
+    value,
+    /* isAsync */ true,
+  );
 
-    return value;
+  return value;
 }

@@ -296,7 +296,8 @@ pub(crate) fn standard_error_sink(global: &JSGlobalObject, frame: &CallFrame) ->
             input_path: PathOrFileDescriptor::Fd(Fd::stderr()),
             ..Default::default()
         });
-        if let sys::Result::Err(err) = sink.start(&start, global.bun_vm().context_of_caller(frame)) {
+        if let sys::Result::Err(err) = sink.start(&start, global.bun_vm().context_of_caller(frame))
+        {
             return Err(bun_jsc::SysErrorJsc::throw(&err, global));
         }
         sink
@@ -305,7 +306,10 @@ pub(crate) fn standard_error_sink(global: &JSGlobalObject, frame: &CallFrame) ->
     let js = unsafe { (*sink.as_ptr()).to_js(global) };
     let is_socket = frame.argument(0).to_boolean();
     if cfg!(not(windows)) || !is_socket {
-        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(core::ptr::from_ref(global).cast_mut(), js);
+        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
+            core::ptr::from_ref(global).cast_mut(),
+            js,
+        );
     }
     Ok(js)
 }

@@ -54,7 +54,11 @@ export function writePlan(path: string, plan: Plan, doors: string): void {
     ...(plan.tableBytes === undefined ? [] : ["table " + plan.tableBytes]),
     ...plan.doors.map(name => "door " + name),
     ...(plan.first ?? []).map(name => "first " + name),
-    ...plan.islands.flatMap(island => ["island " + island.features, ...island.names, ...(island.behindWhatStays ?? []).map(name => "behind " + name)]),
+    ...plan.islands.flatMap(island => [
+      "island " + island.features,
+      ...island.names,
+      ...(island.behindWhatStays ?? []).map(name => "behind " + name),
+    ]),
   ];
   writeFileSync(path, lines.join("\n") + "\n", "latin1");
 }
@@ -74,13 +78,17 @@ export function rangesThatCanGo(graph: Layout, analysis: Needs, isMovable: (outp
     run = [];
   };
   for (let node = 0; node < graph.address.length; node++) {
-    const features = isMovable(graph.output[node]!) && !analysis.core.has(node) ? analysis.neededBy.get(node) : undefined;
+    const features =
+      isMovable(graph.output[node]!) && !analysis.core.has(node) ? analysis.neededBy.get(node) : undefined;
     if (features === undefined) {
       close();
       continue;
     }
     const start = graph.address[node]!;
-    const isNextToTheLast = node > 0 && graph.output[node - 1] === graph.output[node] && start - (graph.address[node - 1]! + graph.size[node - 1]!) < graph.alignment[node]!;
+    const isNextToTheLast =
+      node > 0 &&
+      graph.output[node - 1] === graph.output[node] &&
+      start - (graph.address[node - 1]! + graph.size[node - 1]!) < graph.alignment[node]!;
     if (!isNextToTheLast) close();
     const last = run.at(-1);
     if (last?.features === features) last.end = start + graph.size[node]!;
@@ -116,7 +124,8 @@ export function wholePages(ranges: Range[]): number {
   const holes: number[] = [];
   let start = -1;
   let end = -1;
-  const close = () => void holes.push(Math.max(0, Math.floor(end / pageSize) * pageSize - Math.ceil(start / pageSize) * pageSize));
+  const close = () =>
+    void holes.push(Math.max(0, Math.floor(end / pageSize) * pageSize - Math.ceil(start / pageSize) * pageSize));
   for (const range of ranges) {
     if (range.start === end) end = range.end;
     else {
@@ -134,7 +143,16 @@ export function wholePages(ranges: Range[]): number {
 export const roomFor = (tableBytes: number) => Math.ceil((tableBytes * 17) / 16 / 1024) * 1024;
 const tableHeader = "bun-islands 2\n";
 
-export const placeKinds = { add32: 0, add64: 1, branch26: 2, page21: 3, low12: 4, adr: 5, pointer36: 6, nop: 7 } as const;
+export const placeKinds = {
+  add32: 0,
+  add64: 1,
+  branch26: 2,
+  page21: 3,
+  low12: 4,
+  adr: 5,
+  pointer36: 6,
+  nop: 7,
+} as const;
 
 const isPlaceKind = (kind: number) => Object.values<number>(placeKinds).includes(kind);
 
@@ -223,14 +241,26 @@ export function encodeTable(table: Table, room = Infinity): Buffer {
   const kinds = distinct(table.conditions.map(condition => condition.kind));
   const facts = distinct(table.conditions.map(spell));
   const packages = table.packages ?? [];
-  const shared = table.doors.map((door, index) => ({ index, features: door.feature })).filter(door => door.features.includes(","));
-  const sets = distinct([...table.islands, ...packages.flatMap(dataPackage => dataPackage.runs), ...shared].map(({ features }) => features));
+  const shared = table.doors
+    .map((door, index) => ({ index, features: door.feature }))
+    .filter(door => door.features.includes(","));
+  const sets = distinct(
+    [...table.islands, ...packages.flatMap(dataPackage => dataPackage.runs), ...shared].map(({ features }) => features),
+  );
   for (const feature of [...table.conditions, ...table.doors].flatMap(({ feature }) => feature.split(","))) {
     if (!table.features.includes(feature)) throw new Error(`the table does not list ${feature}`);
   }
-  const isInDeclaredOrder = (set: string) => set.split(",").every((feature, index, all) => index === 0 || table.features.indexOf(all[index - 1]!) < table.features.indexOf(feature));
-  if (!shared.every(door => isInDeclaredOrder(door.features))) throw new Error("the features of a door are not in the order in which they are declared");
-  if (inTableOrder(table.features, table.doors).some((door, index) => door !== table.doors[index])) throw new Error("the doors are not in the order of the table");
+  const isInDeclaredOrder = (set: string) =>
+    set
+      .split(",")
+      .every(
+        (feature, index, all) =>
+          index === 0 || table.features.indexOf(all[index - 1]!) < table.features.indexOf(feature),
+      );
+  if (!shared.every(door => isInDeclaredOrder(door.features)))
+    throw new Error("the features of a door are not in the order in which they are declared");
+  if (inTableOrder(table.features, table.doors).some((door, index) => door !== table.doors[index]))
+    throw new Error("the doors are not in the order of the table");
 
   number(table.stub);
   number(table.smallestDoor.exit);
@@ -264,7 +294,9 @@ export function encodeTable(table: Table, room = Infinity): Buffer {
       ascending(doors.map(door => door.address));
     }
   }
-  const thin = table.doors.map((door, index) => ({ index, places: door.places ?? [] })).filter(door => door.places.length > 0);
+  const thin = table.doors
+    .map((door, index) => ({ index, places: door.places ?? [] }))
+    .filter(door => door.places.length > 0);
   const unit = thin.every(door => door.places.every(place => place.address % 4 === 0)) ? 4 : 1;
   let next = 0;
   let lastFirst = 0;
@@ -383,18 +415,21 @@ export function decodeTable(bytes: Uint8Array): Table {
     lastFirst = door.places[0]!.address;
     next = index + 1;
   });
-  const packages = at === bytes.length ? [] : list(() => {
-    const start = number();
-    const end = sum(start, number());
-    let next = 0;
-    const runs = list(() => {
-      const first = sum(next, number());
-      const count = sum(number(), 1);
-      next = sum(first, count);
-      return { first, count, features: oneOf(sets) };
-    });
-    return { start, end, runs };
-  });
+  const packages =
+    at === bytes.length
+      ? []
+      : list(() => {
+          const start = number();
+          const end = sum(start, number());
+          let next = 0;
+          const runs = list(() => {
+            const first = sum(next, number());
+            const count = sum(number(), 1);
+            next = sum(first, count);
+            return { first, count, features: oneOf(sets) };
+          });
+          return { start, end, runs };
+        });
   let nextShared = 0;
   if (at < bytes.length) {
     list(() => {
@@ -402,7 +437,8 @@ export function decodeTable(bytes: Uint8Array): Table {
       const door = doors[index] ?? malformed();
       const set = oneOf(sets);
       const members = set.split(",").map(feature => features.indexOf(feature));
-      if (!set.startsWith(door.feature + ",") || members.some((member, at) => at > 0 && members[at - 1]! >= member)) malformed();
+      if (!set.startsWith(door.feature + ",") || members.some((member, at) => at > 0 && members[at - 1]! >= member))
+        malformed();
       door.feature = set;
       nextShared = index + 1;
     });
@@ -425,7 +461,11 @@ export function itemsOf(dataPackage: Buffer): Item[] {
   const malformed = (): never => {
     throw new Error("ICU's data package is malformed");
   };
-  const isCommonData = dataPackage.length >= 32 && dataPackage.readUInt16BE(2) === 0xda27 && dataPackage[8] === 0 && dataPackage.toString("latin1", 12, 17) === "CmnD\x01";
+  const isCommonData =
+    dataPackage.length >= 32 &&
+    dataPackage.readUInt16BE(2) === 0xda27 &&
+    dataPackage[8] === 0 &&
+    dataPackage.toString("latin1", 12, 17) === "CmnD\x01";
   if (!isCommonData) malformed();
   const contents = dataPackage.subarray(dataPackage.readUInt16LE(0));
   const count = contents.length >= 4 ? contents.readUInt32LE(0) : malformed();
@@ -496,15 +536,17 @@ const avalanche64 = (hash: bigint) => {
   hash = (hash * prime64c) & mask;
   return hash ^ (hash >> 32n);
 };
-const mix16 = (bytes: Buffer, at: number, secretAt: number) => foldedProduct(read64(bytes, at) ^ read64(secret, secretAt), read64(bytes, at + 8) ^ read64(secret, secretAt + 8));
+const mix16 = (bytes: Buffer, at: number, secretAt: number) =>
+  foldedProduct(read64(bytes, at) ^ read64(secret, secretAt), read64(bytes, at + 8) ^ read64(secret, secretAt + 8));
 
 export function xxh3(bytes: Buffer): bigint {
   const length = bytes.length;
   const size = BigInt(length);
   if (length === 0) return avalanche64(read64(secret, 56) ^ read64(secret, 64));
   if (length <= 3) {
-    const combined = (BigInt(bytes[0]!) << 16n) | (BigInt(bytes[length >> 1]!) << 24n) | BigInt(bytes[length - 1]!) | (size << 8n);
-    return avalanche64((read32(secret, 0) ^ read32(secret, 4)) ^ combined);
+    const combined =
+      (BigInt(bytes[0]!) << 16n) | (BigInt(bytes[length >> 1]!) << 24n) | BigInt(bytes[length - 1]!) | (size << 8n);
+    return avalanche64(read32(secret, 0) ^ read32(secret, 4) ^ combined);
   }
   if (length <= 8) {
     const keyed = (read32(bytes, length - 4) + (read32(bytes, 0) << 32n)) ^ (read64(secret, 8) ^ read64(secret, 16));
@@ -558,6 +600,10 @@ export function xxh3(bytes: Buffer): bigint {
   for (let stripe = 0; stripe < stripes; stripe++) accumulate(blocks * block + stripe * 64, stripe * 8);
   accumulate(length - 64, secret.length - 64 - 7);
   let sum = (size * prime64a) & mask;
-  for (let pair = 0; pair < 4; pair++) sum += foldedProduct(lanes[2 * pair]! ^ read64(secret, 11 + 16 * pair), lanes[2 * pair + 1]! ^ read64(secret, 11 + 16 * pair + 8));
+  for (let pair = 0; pair < 4; pair++)
+    sum += foldedProduct(
+      lanes[2 * pair]! ^ read64(secret, 11 + 16 * pair),
+      lanes[2 * pair + 1]! ^ read64(secret, 11 + 16 * pair + 8),
+    );
   return avalanche(sum & mask);
 }

@@ -35,7 +35,11 @@ impl Recordable for bool {
         RecordedAnswer::Flag(self)
     }
     fn from_recorded(recorded: RecordedAnswer) -> Option<bool> {
-        if let RecordedAnswer::Flag(flag) = recorded { Some(flag) } else { None }
+        if let RecordedAnswer::Flag(flag) = recorded {
+            Some(flag)
+        } else {
+            None
+        }
     }
 }
 
@@ -44,7 +48,11 @@ impl Recordable for u16 {
         RecordedAnswer::Kinds(self)
     }
     fn from_recorded(recorded: RecordedAnswer) -> Option<u16> {
-        if let RecordedAnswer::Kinds(kinds) = recorded { Some(kinds) } else { None }
+        if let RecordedAnswer::Kinds(kinds) = recorded {
+            Some(kinds)
+        } else {
+            None
+        }
     }
 }
 
@@ -53,7 +61,11 @@ impl Recordable for Option<TypeId> {
         RecordedAnswer::Type(self)
     }
     fn from_recorded(recorded: RecordedAnswer) -> Option<Option<TypeId>> {
-        if let RecordedAnswer::Type(ty) = recorded { Some(ty) } else { None }
+        if let RecordedAnswer::Type(ty) = recorded {
+            Some(ty)
+        } else {
+            None
+        }
     }
 }
 
@@ -62,7 +74,11 @@ impl Recordable for (TypeId, bool) {
         RecordedAnswer::TypeAndFlag(self.0, self.1)
     }
     fn from_recorded(recorded: RecordedAnswer) -> Option<(TypeId, bool)> {
-        if let RecordedAnswer::TypeAndFlag(ty, flag) = recorded { Some((ty, flag)) } else { None }
+        if let RecordedAnswer::TypeAndFlag(ty, flag) = recorded {
+            Some((ty, flag))
+        } else {
+            None
+        }
     }
 }
 
@@ -71,7 +87,14 @@ impl Recordable for Storage {
         RecordedAnswer::TypeAndFlag(self.ty, self.starts_undefined)
     }
     fn from_recorded(recorded: RecordedAnswer) -> Option<Storage> {
-        if let RecordedAnswer::TypeAndFlag(ty, starts_undefined) = recorded { Some(Storage { ty, starts_undefined }) } else { None }
+        if let RecordedAnswer::TypeAndFlag(ty, starts_undefined) = recorded {
+            Some(Storage {
+                ty,
+                starts_undefined,
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -80,7 +103,11 @@ impl Recordable for Option<(i64, i64)> {
         RecordedAnswer::Integers(self)
     }
     fn from_recorded(recorded: RecordedAnswer) -> Option<Option<(i64, i64)>> {
-        if let RecordedAnswer::Integers(integers) = recorded { Some(integers) } else { None }
+        if let RecordedAnswer::Integers(integers) = recorded {
+            Some(integers)
+        } else {
+            None
+        }
     }
 }
 
@@ -91,17 +118,29 @@ pub(crate) struct TaskCache {
 
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn task_cache(&mut self) -> &mut TaskCache {
-        if !self.c.translator.as_ref().is_some_and(|retained| retained.is::<TaskCache>()) {
+        if !self
+            .c
+            .translator
+            .as_ref()
+            .is_some_and(|retained| retained.is::<TaskCache>())
+        {
             self.c.translator = Some(Box::<TaskCache>::default());
         }
-        self.c.translator.as_mut().and_then(|retained| retained.downcast_mut()).expect("it was put there above")
+        self.c
+            .translator
+            .as_mut()
+            .and_then(|retained| retained.downcast_mut())
+            .expect("it was put there above")
     }
 
     fn shares_across_tasks(&self) -> bool {
         self.file != NO_FILE && !self.c.is_warming_up()
     }
 
-    pub(super) fn query<T: Recordable>(&mut self, question: impl FnOnce(&mut Checker<'p, 's>) -> T) -> T {
+    pub(super) fn query<T: Recordable>(
+        &mut self,
+        question: impl FnOnce(&mut Checker<'p, 's>) -> T,
+    ) -> T {
         let told = match &mut self.tape {
             Tape::ReadShared(recorded, at) => Some((recorded.get(*at).copied(), at)),
             Tape::ReadLocal(recorded, at) => Some((recorded.get(*at).copied(), at)),
@@ -120,9 +159,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         answer
     }
 
-    pub(super) fn declare_imported_function(&mut self, file: FileId, func: FnId, class: Option<(FileId, ClassId)>) -> FuncId {
-        let (shared, shares, knows_uses) = (self.shared, self.shares_across_tasks(), self.c.has_merged_function_uses());
-        let tape = match shared.function_facts.get_ref(&(file, func, knows_uses)).filter(|_| shares) {
+    pub(super) fn declare_imported_function(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        class: Option<(FileId, ClassId)>,
+    ) -> FuncId {
+        let (shared, shares, knows_uses) = (
+            self.shared,
+            self.shares_across_tasks(),
+            self.c.has_merged_function_uses(),
+        );
+        let tape = match shared
+            .function_facts
+            .get_ref(&(file, func, knows_uses))
+            .filter(|_| shares)
+        {
             Some(recorded) => Tape::ReadShared(recorded, 0),
             None => match self.task_cache().function_facts.get(&(file, func)) {
                 Some(recorded) => Tape::ReadLocal(Rc::clone(recorded), 0),
@@ -133,13 +185,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let id = self.redeclare_function(file, func, class);
         if let Tape::Written(recorded) = std::mem::replace(&mut self.tape, around) {
             let references_only_published_types = recorded.iter().all(|recorded| match *recorded {
-                RecordedAnswer::Type(Some(ty)) | RecordedAnswer::TypeAndFlag(ty, _) => !ty.is_local(),
+                RecordedAnswer::Type(Some(ty)) | RecordedAnswer::TypeAndFlag(ty, _) => {
+                    !ty.is_local()
+                }
                 _ => true,
             });
             if references_only_published_types && shares && !self.c.has_order_dependent_results() {
-                shared.function_facts.insert_ref((file, func, knows_uses), recorded.into_boxed_slice());
+                shared
+                    .function_facts
+                    .insert_ref((file, func, knows_uses), recorded.into_boxed_slice());
             } else {
-                self.task_cache().function_facts.insert((file, func), recorded.into());
+                self.task_cache()
+                    .function_facts
+                    .insert((file, func), recorded.into());
             }
         }
         id

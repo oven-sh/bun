@@ -90,7 +90,8 @@ interface BundledBuiltin {
 
 function builtinSourceMetadata(source: string): (number | boolean)[] {
   const isAsyncFunction = source.startsWith("(async function (");
-  if (!isAsyncFunction && !source.startsWith("(function (")) throw new Error(`a built-in function begins with ${source.slice(0, 20)}`);
+  if (!isAsyncFunction && !source.startsWith("(function ("))
+    throw new Error(`a built-in function begins with ${source.slice(0, 20)}`);
   const parametersStart = "function (".length + (isAsyncFunction ? "async ".length : 0);
   let commas = 0;
   let insideCurlyBrackets = false;

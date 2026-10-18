@@ -28,12 +28,19 @@ for (const name of names) {
     async () => {
       using dir = tempDir("aot-patterns-of-another-icu", {});
       const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-      const built = await run([bunExe(), "build", "--compile", "--aot", join(programs, name + ".ts"), "--outfile", executable], String(dir), bunEnv);
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", join(programs, name + ".ts"), "--outfile", executable],
+        String(dir),
+        bunEnv,
+      );
       expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
       const plain = await run([bunExe(), "run", join(programs, name + ".ts")], String(dir), bunEnv);
       expect(plain.exitCode).toBe(0);
       for (const [way, value] of Object.entries(ways)) {
-        const ran = await run([executable], String(dir), { ...bunEnv, BUN_JSC_formatPatternsOfAnotherICUForTesting: value });
+        const ran = await run([executable], String(dir), {
+          ...bunEnv,
+          BUN_JSC_formatPatternsOfAnotherICUForTesting: value,
+        });
         expect({ way, ...ran }).toEqual({ way, ...plain });
       }
     },

@@ -98,7 +98,10 @@ fn without_relocations_in(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>> {
     let start = offset_of(file, u32_at(file, directory)?.into())?;
     let mut block = start;
     while block < start + size {
-        let (page, block_size) = (u64::from(u32_at(file, block)?), u32_at(file, block + 4)? as usize);
+        let (page, block_size) = (
+            u64::from(u32_at(file, block)?),
+            u32_at(file, block + 4)? as usize,
+        );
         if block_size < 8 {
             return Err(Error::InvalidExecutable);
         }
@@ -115,7 +118,11 @@ fn without_relocations_in(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>> {
 }
 
 /// `file` without the whole pages of `dead`, which is sorted address ranges.
-pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Limits) -> Result<Vec<u8>> {
+pub(crate) fn without_pages(
+    file: &[u8],
+    dead: &[Range<u64>],
+    limits: crate::Limits,
+) -> Result<Vec<u8>> {
     let file = &without_relocations_in(file, dead)?[..];
     let (pe, sections) = headers(file)?;
     let optional = pe + 24;
@@ -141,7 +148,10 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Lim
     };
 
     let mut gaps: Vec<Range<u64>> = Vec::new();
-    for gap in dead.iter().filter_map(|range| whole_pages(range, page, limits.smallest_hole)) {
+    for gap in dead
+        .iter()
+        .filter_map(|range| whole_pages(range, page, limits.smallest_hole))
+    {
         let holds =
             |s: &&Section| gap.start >= s.address && gap.end <= s.address + s.raw_size.min(s.size);
         if (sections.iter().find(holds)).is_some_and(|s| s.flags & IMAGE_SCN_MEM_WRITE == 0) {

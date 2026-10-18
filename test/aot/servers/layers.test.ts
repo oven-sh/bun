@@ -1,13 +1,15 @@
 import { expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
 import { writeFileSync } from "fs";
+import { isWindows, tempDir } from "harness";
 import { join } from "path";
 
 const python = Bun.which("python3");
 const pythonHasFcntlAndResource = !isWindows;
 
 function report(lines: [number, string, string][]) {
-  return lines.map(([samples, dso, symbol]) => `${String(samples).padStart(8)}  ${dso.padEnd(18)}[.] ${symbol}\n`).join("");
+  return lines
+    .map(([samples, dso, symbol]) => `${String(samples).padStart(8)}  ${dso.padEnd(18)}[.] ${symbol}\n`)
+    .join("");
 }
 
 test.skipIf(!python)("measure/layers.py charges every sample to the layer that owns the code", () => {
@@ -86,7 +88,14 @@ test.skipIf(!python)("measure/layers.py charges every sample to the layer that o
 });
 
 function python3(dir: string, code: string) {
-  const run = Bun.spawnSync([python!, "-c", `import json, sys\nsys.path.insert(0, ${JSON.stringify(join(import.meta.dir, "measure"))})\nimport layers\n${code}`], { cwd: dir });
+  const run = Bun.spawnSync(
+    [
+      python!,
+      "-c",
+      `import json, sys\nsys.path.insert(0, ${JSON.stringify(join(import.meta.dir, "measure"))})\nimport layers\n${code}`,
+    ],
+    { cwd: dir },
+  );
   expect(run.stderr.toString()).toBe("");
   return JSON.parse(run.stdout.toString());
 }
@@ -97,8 +106,15 @@ test.skipIf(!python)("measure/layers.py names the stub that a sampled address fa
     "image.map": "F\t0\t0\tmain\nT\t0\tCall\nT\t256\tGetByName3\nT\t512\tGetByName4KeepingTwo\n",
   });
   const addresses = [0x1010, 0x2000, 0x20ff, 0x2100, 0x2200, 0x5101, 0x52ff, 0x5300];
-  expect(python3(String(dir), `print(json.dumps(layers.count_stubs(${JSON.stringify(addresses)}, "perf.map", "image.map")))`)).toEqual({ Call: 2, GetByNameN: 4 });
-  expect(python3(String(dir), `print(json.dumps(layers.count_stubs([], "no-such.map", "no-such.map").most_common(3)))`)).toEqual([]);
+  expect(
+    python3(
+      String(dir),
+      `print(json.dumps(layers.count_stubs(${JSON.stringify(addresses)}, "perf.map", "image.map")))`,
+    ),
+  ).toEqual({ Call: 2, GetByNameN: 4 });
+  expect(
+    python3(String(dir), `print(json.dumps(layers.count_stubs([], "no-such.map", "no-such.map").most_common(3)))`),
+  ).toEqual([]);
 });
 
 test.skipIf(!python)("measure/layers.py charges a sample to the nearest compiled function up the stack", () => {
@@ -116,7 +132,10 @@ test.skipIf(!python)("measure/layers.py charges a sample to the nearest compiled
       "",
     ].join("\n"),
   });
-  const counts = python3(String(dir), `print(json.dumps(sorted([list(key) + [count] for key, count in layers.read_call_chains(open("script.txt")).items()])))`);
+  const counts = python3(
+    String(dir),
+    `print(json.dumps(sorted([list(key) + [count] for key, count in layers.read_call_chains(open("script.txt")).items()])))`,
+  );
   expect(counts).toEqual([
     ["engine", "application", 1],
     ["native", "nobody", 1],
@@ -124,36 +143,65 @@ test.skipIf(!python)("measure/layers.py charges a sample to the nearest compiled
   ]);
 });
 
-
-test.skipIf(!python)("measure/compare.py prints no number for a row that was read while other work ran on its cores", () => {
-  const start = (rate: number) => ({ requests_per_second: rate, cycles: 1000, instructions: 2000, cpu_us: 1 });
-  const row = (route: string, column: string, rate: number, isVoid: boolean) =>
-    JSON.stringify({
-      server: "bun", route, column, void: isVoid, starts: { "1": start(rate) }, requests_per_second: rate, cycles: 1000, instructions: 2000, cpu_us: 1,
-      ready_rss_mb: 1, peak_rss_mb: 1, private_mb: 1, first_response_ms: 1, p50_us: 1, p99_us: 1, stable: true, settled: true,
+test.skipIf(!python)(
+  "measure/compare.py prints no number for a row that was read while other work ran on its cores",
+  () => {
+    const start = (rate: number) => ({ requests_per_second: rate, cycles: 1000, instructions: 2000, cpu_us: 1 });
+    const row = (route: string, column: string, rate: number, isVoid: boolean) =>
+      JSON.stringify({
+        server: "bun",
+        route,
+        column,
+        void: isVoid,
+        starts: { "1": start(rate) },
+        requests_per_second: rate,
+        cycles: 1000,
+        instructions: 2000,
+        cpu_us: 1,
+        ready_rss_mb: 1,
+        peak_rss_mb: 1,
+        private_mb: 1,
+        first_response_ms: 1,
+        p50_us: 1,
+        p99_us: 1,
+        stable: true,
+        settled: true,
+      });
+    using dir = tempDir("aot-servers-void", {
+      "rows.jsonl":
+        [
+          row("text", "aot", 200, false),
+          row("text", "released", 100, false),
+          row("json", "aot", 7777, true),
+          row("json", "released", 100, false),
+        ].join("\n") + "\n",
     });
-  using dir = tempDir("aot-servers-void", {
-    "rows.jsonl": [row("text", "aot", 200, false), row("text", "released", 100, false), row("json", "aot", 7777, true), row("json", "released", 100, false)].join("\n") + "\n",
-  });
-  const run = Bun.spawnSync([python!, join(import.meta.dir, "measure", "compare.py"), "rows.jsonl", "aot", "released"], { cwd: String(dir) });
-  expect(run.stderr.toString()).toBe("");
-  const printed = run.stdout.toString();
-  expect(printed).toContain("Void, because other work ran on their cores: bun json aot.");
-  expect(printed).toContain("+100.0%");
-  expect(printed).not.toContain("7777");
-});
+    const run = Bun.spawnSync(
+      [python!, join(import.meta.dir, "measure", "compare.py"), "rows.jsonl", "aot", "released"],
+      { cwd: String(dir) },
+    );
+    expect(run.stderr.toString()).toBe("");
+    const printed = run.stdout.toString();
+    expect(printed).toContain("Void, because other work ran on their cores: bun json aot.");
+    expect(printed).toContain("+100.0%");
+    expect(printed).not.toContain("7777");
+  },
+);
 
-test.skipIf(!python || !pythonHasFcntlAndResource)("measure/measure.py runs every column from a copy whose path has the same length", () => {
-  using dir = tempDir("aot-servers-copies", {});
-  const paths = python3(
-    String(dir),
-    [
-      "import argparse, measure",
-      'columns = [{"name": "a"}, {"name": "a-much-longer-name"}]',
-      'options = argparse.Namespace(work=".", columns=columns)',
-      'print(json.dumps([measure.Server(options, {"server": 4}, {}, "bun", {"name": "text"}, column).copy for column in columns]))',
-    ].join("\n"),
-  );
-  expect(paths[0]).not.toBe(paths[1]);
-  expect(paths[0].length).toBe(paths[1].length);
-});
+test.skipIf(!python || !pythonHasFcntlAndResource)(
+  "measure/measure.py runs every column from a copy whose path has the same length",
+  () => {
+    using dir = tempDir("aot-servers-copies", {});
+    const paths = python3(
+      String(dir),
+      [
+        "import argparse, measure",
+        'columns = [{"name": "a"}, {"name": "a-much-longer-name"}]',
+        'options = argparse.Namespace(work=".", columns=columns)',
+        'print(json.dumps([measure.Server(options, {"server": 4}, {}, "bun", {"name": "text"}, column).copy for column in columns]))',
+      ].join("\n"),
+    );
+    expect(paths[0]).not.toBe(paths[1]);
+    expect(paths[0].length).toBe(paths[1].length);
+  },
+);

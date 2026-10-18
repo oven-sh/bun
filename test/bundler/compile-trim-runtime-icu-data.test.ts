@@ -144,7 +144,10 @@ const hasIslands = !probed.stderr.toString().includes("nothing can be left out o
 describe.skipIf(!hasIslands || !!unsupported)("--compile --aot --compile-trim-runtime and ICU's data", () => {
   async function build(folder: string, entry: string, outfile: string, leftOut: string | undefined) {
     const trim = leftOut === undefined ? [] : ["--compile-trim-runtime"];
-    const built = await run([bunExe(), "build", "--compile", "--aot", ...trim, entry, "--outfile", outfile], folder, { ...bunEnv, BUN_TRIM_RUNTIME_WITHOUT: leftOut });
+    const built = await run([bunExe(), "build", "--compile", "--aot", ...trim, entry, "--outfile", outfile], folder, {
+      ...bunEnv,
+      BUN_TRIM_RUNTIME_WITHOUT: leftOut,
+    });
     expect(built.stderr).not.toContain("error:");
     expect(built.exitCode).toBe(0);
     return statSync(join(folder, outfile + (isWindows ? ".exe" : ""))).size;
@@ -178,14 +181,21 @@ describe.skipIf(!hasIslands || !!unsupported)("--compile --aot --compile-trim-ru
     expect(kept - leftOut).toBeGreaterThan(8_000_000);
   });
 
-  test.skipIf(!isLinux && !isWindows)("a program that does not name Intl has no rules and dictionaries for breaking text", async () => {
-    using dir = tempDir("compile-trim-runtime-icu-data", files);
-    const folder = String(dir);
-    const named = await build(folder, "names-Intl.ts", "named", "");
-    const notNamed = await build(folder, "hello.ts", "not-named", "");
-    expect(named - notNamed).toBeGreaterThan(2_500_000);
-    expect(await run([join(folder, "not-named")], folder)).toMatchObject({ stdout: "hello world\n", stderr: "", exitCode: 0 });
-  });
+  test.skipIf(!isLinux && !isWindows)(
+    "a program that does not name Intl has no rules and dictionaries for breaking text",
+    async () => {
+      using dir = tempDir("compile-trim-runtime-icu-data", files);
+      const folder = String(dir);
+      const named = await build(folder, "names-Intl.ts", "named", "");
+      const notNamed = await build(folder, "hello.ts", "not-named", "");
+      expect(named - notNamed).toBeGreaterThan(2_500_000);
+      expect(await run([join(folder, "not-named")], folder)).toMatchObject({
+        stdout: "hello world\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   test("dates, URLs, normalization and case do not need it", async () => {
     await runsAsWhole("names-none.ts", without());
@@ -220,7 +230,8 @@ describe.skipIf(!hasIslands || !!unsupported)("--compile --aot --compile-trim-ru
     display_names: "without Intl.DisplayNames",
     intl: "without Intl.ListFormat, Locale, PluralRules, RelativeTimeFormat, getCanonicalLocales and supportedValuesOf",
     collation: "without Intl.Collator and localeCompare",
-    date_formatting: "without Intl.DateTimeFormat and toLocaleString, toLocaleDateString and toLocaleTimeString of a Date or a Temporal object",
+    date_formatting:
+      "without Intl.DateTimeFormat and toLocaleString, toLocaleDateString and toLocaleTimeString of a Date or a Temporal object",
     number_formatting: "without Intl.NumberFormat, Intl.DurationFormat and toLocaleString of a Number or a BigInt",
   };
   for (const [feature, says] of Object.entries(leftOutSays)) {
@@ -234,15 +245,18 @@ describe.skipIf(!hasIslands || !!unsupported)("--compile --aot --compile-trim-ru
     });
   }
 
-  test.skipIf(!isLinux && !isWindows)("units: an executable without them throws a TypeError where a unit is asked for", async () => {
-    using dir = tempDir("compile-trim-runtime-icu-data", files);
-    const folder = String(dir);
-    await build(folder, "uses-units.ts", "left-out", "units");
-    expect(await run([join(folder, "left-out")], folder)).toEqual({
-      stdout: `unit TypeError: Failed to initialize NumberFormat\nplain "3,5"\n`,
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
-  });
+  test.skipIf(!isLinux && !isWindows)(
+    "units: an executable without them throws a TypeError where a unit is asked for",
+    async () => {
+      using dir = tempDir("compile-trim-runtime-icu-data", files);
+      const folder = String(dir);
+      await build(folder, "uses-units.ts", "left-out", "units");
+      expect(await run([join(folder, "left-out")], folder)).toEqual({
+        stdout: `unit TypeError: Failed to initialize NumberFormat\nplain "3,5"\n`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
 });

@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const often = Array.from({ length: 2600 }, (_, i) => `often${i}`);
 const seldom = Array.from({ length: 1200 }, (_, i) => `seldom${String(i).padStart(4, "0")}`);

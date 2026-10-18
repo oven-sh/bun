@@ -50,8 +50,15 @@ test.skipIf(!!unsupported)(
     using dir = tempDir("aot-symbols-shared-by-http-modules", files);
     const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
     const mapPath = join(String(dir), "main.map");
-    const built = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable], String(dir), { ...bunEnv, BUN_JSC_aotMapFilePath: mapPath });
-    expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
+    const built = await run(
+      [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable],
+      String(dir),
+      { ...bunEnv, BUN_JSC_aotMapFilePath: mapPath },
+    );
+    expect({
+      stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+      exitCode: built.exitCode,
+    }).toEqual({ stderr: [], exitCode: 0 });
     const plain = await run([bunExe(), "run", "main.cjs"], String(dir), bunEnv);
     const compiled = await run([executable], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
@@ -63,7 +70,10 @@ test.skipIf(!!unsupported)(
     ]) {
       const bodies = operationsOf(map, name, module);
       expect({ name, bodies: bodies.length > 0 }).toEqual({ name, bodies: true });
-      expect({ name, byKey: bodies.flat().filter(operation => operation === "GetByVal" || operation === "PutByVal") }).toEqual({ name, byKey: [] });
+      expect({
+        name,
+        byKey: bodies.flat().filter(operation => operation === "GetByVal" || operation === "PutByVal"),
+      }).toEqual({ name, byKey: [] });
     }
   },
   240_000,

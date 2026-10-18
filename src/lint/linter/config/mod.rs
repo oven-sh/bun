@@ -1776,12 +1776,15 @@ impl Config {
                 if let Some(entry) = registry.get(Plugin::Bun, name.as_bytes())
                     && !config.rules.iter().any(|it| std::ptr::eq(it.entry, entry))
                 {
-                    config.rules.push(ConfiguredRule::new(entry, Severity::Warn, Arc::from([])));
+                    config
+                        .rules
+                        .push(ConfiguredRule::new(entry, Severity::Warn, Arc::from([])));
                 }
             }
         }
-        config.language.active_rule_overlaps =
-            crate::language::RuleOverlaps::among(config.rules.iter().map(|it| (it.entry.meta, it.severity)));
+        config.language.active_rule_overlaps = crate::language::RuleOverlaps::among(
+            config.rules.iter().map(|it| (it.entry.meta, it.severity)),
+        );
         // oxlint looks up the severity of a tsgolint report by the rule's bare name, and finds ESLint's rule first if it's on.
         if self.prefers_typescript_rules {
             let is_on = |it: &ConfiguredRule, plugin: Plugin| {

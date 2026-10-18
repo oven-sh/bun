@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 // A `.js` file that has neither `import` | `export` nor `require` | `module` | `exports` is CommonJS to `require` if its package
 // says "type": "commonjs", or if it begins with "use strict" and its package does not say "type": "module". A CommonJS module
@@ -54,14 +54,20 @@ async function spawned(cmd: string[], cwd: string, env: Record<string, string | 
   return { stdout, stderr, exitCode };
 }
 
-test.concurrent.each(["twice.cjs", "after-the-cache-is-read.cjs", "import-first.mjs"])("bun run --aot loads a file that threw as often as bun run does: %s", async entry => {
-  using dir = tempDir("unmarked-script-throws", files);
-  const plain = await spawned([bunExe(), "run", entry], String(dir));
-  expect(plain.exitCode).toBe(0);
-  const aot = await spawned([bunExe(), "run", "--debug-aot", entry], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-  expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
-  expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-});
+test.concurrent.each(["twice.cjs", "after-the-cache-is-read.cjs", "import-first.mjs"])(
+  "bun run --aot loads a file that threw as often as bun run does: %s",
+  async entry => {
+    using dir = tempDir("unmarked-script-throws", files);
+    const plain = await spawned([bunExe(), "run", entry], String(dir));
+    expect(plain.exitCode).toBe(0);
+    const aot = await spawned([bunExe(), "run", "--debug-aot", entry], String(dir), {
+      ...bunEnv,
+      BUN_JSC_crashIfInterpreterIsUsed: "1",
+    });
+    expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
+    expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+  },
+);
 
 test("an unmarked .js file that says use strict is loaded again, one in a module package is not", async () => {
   using dir = tempDir("unmarked-script-throws", files);

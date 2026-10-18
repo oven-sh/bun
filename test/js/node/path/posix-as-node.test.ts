@@ -7,7 +7,12 @@ function validateString(value: unknown, name: string): asserts value is string {
 function isPosixPathSeparator(code: number): boolean {
   return code === 47;
 }
-function normalizeString(path: string, allowAboveRoot: boolean, separator: string, isPathSeparator: (code: number) => boolean): string {
+function normalizeString(
+  path: string,
+  allowAboveRoot: boolean,
+  separator: string,
+  isPathSeparator: (code: number) => boolean,
+): string {
   let res = "";
   let lastSegmentLength = 0;
   let lastSlash = -1;
@@ -20,7 +25,12 @@ function normalizeString(path: string, allowAboveRoot: boolean, separator: strin
     if (isPathSeparator(code)) {
       if (lastSlash === i - 1 || dots === 1) {
       } else if (dots === 2) {
-        if (res.length < 2 || lastSegmentLength !== 2 || res.charCodeAt(res.length - 1) !== 46 || res.charCodeAt(res.length - 2) !== 46) {
+        if (
+          res.length < 2 ||
+          lastSegmentLength !== 2 ||
+          res.charCodeAt(res.length - 1) !== 46 ||
+          res.charCodeAt(res.length - 2) !== 46
+        ) {
           if (res.length > 2) {
             const lastSlashIndex = res.lastIndexOf(separator);
             if (lastSlashIndex === -1) {
@@ -242,7 +252,13 @@ function reference(cwd: () => string): Record<string, (...args: any[]) => unknow
           preDotState = -1;
         }
       }
-      if (startDot === -1 || end === -1 || preDotState === 0 || (preDotState === 1 && startDot === end - 1 && startDot === startPart + 1)) return "";
+      if (
+        startDot === -1 ||
+        end === -1 ||
+        preDotState === 0 ||
+        (preDotState === 1 && startDot === end - 1 && startDot === startPart + 1)
+      )
+        return "";
       return path.slice(startDot, end);
     },
     parse(path: unknown): { root: string; dir: string; base: string; ext: string; name: string } {
@@ -285,7 +301,11 @@ function reference(cwd: () => string): Record<string, (...args: any[]) => unknow
       }
       if (end !== -1) {
         const begin = startPart === 0 && isAbsolute ? 1 : startPart;
-        if (startDot === -1 || preDotState === 0 || (preDotState === 1 && startDot === end - 1 && startDot === startPart + 1)) {
+        if (
+          startDot === -1 ||
+          preDotState === 0 ||
+          (preDotState === 1 && startDot === end - 1 && startDot === startPart + 1)
+        ) {
           ret.base = ret.name = path.slice(begin, end);
         } else {
           ret.name = path.slice(begin, startDot);
@@ -307,8 +327,62 @@ function posixCwd() {
   return cwd.slice(cwd.indexOf("/"));
 }
 const node = reference(posixCwd);
-const pieces = ["a", "bc", "def", ".", "..", "", "/", "//", "./", "../", "a/b", "/a", "b/", "...", ".a", "a.", "..a", "a..", " ", "é", "日本", "\u{1F600}", "a/./b", "a/../b", "../..", "/..", "/.", "x.y.z", "node_modules", "\ud800", "\udc00x", "\\", "C:", "%2e", ".ts", "index.ts", "\u0000", "\ud7ff", "\uffff"];
-const names = ["name", "project", "src", "index.ts", "node_modules", "x.y.z", ".git", "a", "lib.d.ts", "..x", "x..", "...", ".x."];
+const pieces = [
+  "a",
+  "bc",
+  "def",
+  ".",
+  "..",
+  "",
+  "/",
+  "//",
+  "./",
+  "../",
+  "a/b",
+  "/a",
+  "b/",
+  "...",
+  ".a",
+  "a.",
+  "..a",
+  "a..",
+  " ",
+  "é",
+  "日本",
+  "\u{1F600}",
+  "a/./b",
+  "a/../b",
+  "../..",
+  "/..",
+  "/.",
+  "x.y.z",
+  "node_modules",
+  "\ud800",
+  "\udc00x",
+  "\\",
+  "C:",
+  "%2e",
+  ".ts",
+  "index.ts",
+  "\u0000",
+  "\ud7ff",
+  "\uffff",
+];
+const names = [
+  "name",
+  "project",
+  "src",
+  "index.ts",
+  "node_modules",
+  "x.y.z",
+  ".git",
+  "a",
+  "lib.d.ts",
+  "..x",
+  "x..",
+  "...",
+  ".x.",
+];
 let seed = 12345;
 const next = (n: number) => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) >>> 8) % n;
 function untidy(): string {
@@ -337,11 +411,13 @@ function outcome(f: Function, args: unknown[]): string {
 function same(name: string, args: string[]) {
   const expected = outcome(node[name]!, args);
   const actual = outcome((posix as any)[name], args);
-  if (expected !== actual && differences.length < 20) differences.push(`${name}(${JSON.stringify(args)}): ${actual}, Node: ${expected}`);
+  if (expected !== actual && differences.length < 20)
+    differences.push(`${name}(${JSON.stringify(args)}): ${actual}, Node: ${expected}`);
 }
 const ofOnePath = ["parse", "normalize", "isAbsolute", "dirname", "basename", "extname", "resolve", "join"];
 const alphabet = ["a", ".", "/"];
-const all = (length: number): string[] => (length === 0 ? [""] : all(length - 1).flatMap(rest => alphabet.map(unit => unit + rest)));
+const all = (length: number): string[] =>
+  length === 0 ? [""] : all(length - 1).flatMap(rest => alphabet.map(unit => unit + rest));
 
 test("path.posix answers as Node's lib/path.js does on generated paths", () => {
   differences.length = 0;
@@ -441,16 +517,32 @@ test("path.posix answers as Node's lib/path.js does on long paths that are not A
   const sameBriefly = (name: string, args: string[]) => {
     const expected = node[name]!(...args);
     const actual = (posix as any)[name](...args);
-    if (expected !== actual && differences.length < 20) differences.push(`${name}(${args.map(brief).join(" | ")}): ${brief(actual)}, Node: ${brief(expected)}`);
+    if (expected !== actual && differences.length < 20)
+      differences.push(`${name}(${args.map(brief).join(" | ")}): ${brief(actual)}, Node: ${brief(expected)}`);
   };
   for (const units of [5_000, 70_000, 1_000_000]) {
-    const segments = units > 100_000 ? ["é", "日本", ".", "", "x", "\ud800", "ü.ts"] : ["é", "日本", "..", ".", "", "x", "\ud800", "ü.ts"];
+    const segments =
+      units > 100_000
+        ? ["é", "日本", ".", "", "x", "\ud800", "ü.ts"]
+        : ["é", "日本", "..", ".", "", "x", "\ud800", "ü.ts"];
     let many = "";
     for (let i = 0; many.length < units; i++) many += segments[(i * 7 + (i >> 3)) % segments.length] + "/";
     let climbing = "";
     for (let i = 0; climbing.length < units; i++) climbing += i % 3 === 2 ? "../" : "日/";
     const one = "日".repeat(units);
-    const paths = units > 100_000 ? [many, one, "/" + one + "/../" + one] : [many, climbing, one, "/" + many, "/" + climbing, "/" + one, one + "/../" + one, "é/".repeat(units >> 1) + "../".repeat(units >> 2)];
+    const paths =
+      units > 100_000
+        ? [many, one, "/" + one + "/../" + one]
+        : [
+            many,
+            climbing,
+            one,
+            "/" + many,
+            "/" + climbing,
+            "/" + one,
+            one + "/../" + one,
+            "é/".repeat(units >> 1) + "../".repeat(units >> 2),
+          ];
     for (const path of paths) {
       sameBriefly("normalize", [path]);
       sameBriefly("join", [path, "ü"]);

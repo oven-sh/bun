@@ -96,11 +96,20 @@ mod tests {
 
     #[test]
     fn whole_pages_of_a_range() {
-        assert_eq!(whole_pages(&(0x1001..0x4fff), 0x1000, 0), Some(0x2000..0x4000));
-        assert_eq!(whole_pages(&(0x1000..0x2000), 0x1000, 0), Some(0x1000..0x2000));
+        assert_eq!(
+            whole_pages(&(0x1001..0x4fff), 0x1000, 0),
+            Some(0x2000..0x4000)
+        );
+        assert_eq!(
+            whole_pages(&(0x1000..0x2000), 0x1000, 0),
+            Some(0x1000..0x2000)
+        );
         assert_eq!(whole_pages(&(0x1001..0x2fff), 0x1000, 0), None);
         assert_eq!(whole_pages(&(0x1001..0x1002), 0x1000, 0), None);
-        assert_eq!(whole_pages(&(0x1001..0x4fff), 0x1000, 0x2000), Some(0x2000..0x4000));
+        assert_eq!(
+            whole_pages(&(0x1001..0x4fff), 0x1000, 0x2000),
+            Some(0x2000..0x4000)
+        );
         assert_eq!(whole_pages(&(0x1001..0x4fff), 0x1000, 0x2001), None);
         assert_eq!(whole_pages(&(u64::MAX - 1..u64::MAX), 0x1000, 0), None);
     }

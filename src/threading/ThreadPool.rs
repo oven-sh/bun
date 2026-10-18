@@ -435,7 +435,9 @@ unsafe impl core::marker::Sync for DeferredStart {}
 impl DeferredStart {
     pub fn start(&self, most_at_a_time: usize) {
         let mut held = self.0.lock();
-        let Some((pool, waiting)) = held.as_mut() else { return };
+        let Some((pool, waiting)) = held.as_mut() else {
+            return;
+        };
         let mut started = Batch::default();
         while started.len < most_at_a_time
             && let Some(task) = waiting.pop()
@@ -632,7 +634,13 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByPtr(run_fn), values, Some(deferred), on_calling_thread);
+        self.each_impl(
+            ctx,
+            ByPtr(run_fn),
+            values,
+            Some(deferred),
+            on_calling_thread,
+        );
     }
 
     fn each_impl<Ctx, V, F>(
@@ -811,7 +819,8 @@ impl ThreadPool {
     }
 }
 
-pub const POOL_THREAD_STACK_SIZE: u32 = if cfg!(bun_asan) { 8 } else { 1 } * DEFAULT_THREAD_STACK_SIZE;
+pub const POOL_THREAD_STACK_SIZE: u32 =
+    if cfg!(bun_asan) { 8 } else { 1 } * DEFAULT_THREAD_STACK_SIZE;
 
 pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     // 4mb

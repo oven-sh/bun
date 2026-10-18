@@ -31,7 +31,13 @@ console.log(delete console[Symbol.asyncIterator], Symbol.asyncIterator in consol
 `,
   });
   async function run(file: string) {
-    await using proc = Bun.spawn({ cmd: [bunExe(), file], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), file],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout: stdout.split("\n"), stderr, exitCode };
   }
@@ -54,5 +60,9 @@ console.log(delete console[Symbol.asyncIterator], Symbol.asyncIterator in consol
     stderr: "",
     exitCode: 0,
   });
-  expect(await run("untouched.js")).toEqual({ stdout: ["replaced before the first read: x", "true false", ""], stderr: "", exitCode: 0 });
+  expect(await run("untouched.js")).toEqual({
+    stdout: ["replaced before the first read: x", "true false", ""],
+    stderr: "",
+    exitCode: 0,
+  });
 });

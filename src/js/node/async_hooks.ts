@@ -66,11 +66,7 @@ function assertValidFrame(frame: unknown): boolean {
   for (var f = frame, n = 0; f !== undefined; f = (f as Frame).prev, n++) {
     // A Bun.ModuleGraph's context is a frame whose storage is the graph: made in
     // ModuleGraph.cpp (null prototype), or a copy of one made here.
-    $assert(
-      $isObject(f),
-      "AsyncContextData must be a Frame chain or undefined, got",
-      f,
-    );
+    $assert($isObject(f), "AsyncContextData must be a Frame chain or undefined, got", f);
     $assert(
       $isObject((f as Frame).storage),
       "Frame.storage must be an AsyncLocalStorage, a ModuleGraph, or (leaving a graph's context) the global object",

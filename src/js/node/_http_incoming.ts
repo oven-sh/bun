@@ -8,7 +8,13 @@ const Readable = require("internal/streams/readable");
 const finished = require("internal/streams/end-of-stream");
 const { advanceFlags, addFlags, flagsOf, internals } = require("internal/streams/state");
 const { kAutoDestroyed } = require("internal/shared");
-const { nextTick: originalNextTick, enqueueTick1, queueTick1, queueTick2, queueTick3 } = require("internal/process/next_tick_queue");
+const {
+  nextTick: originalNextTick,
+  enqueueTick1,
+  queueTick1,
+  queueTick2,
+  queueTick3,
+} = require("internal/process/next_tick_queue");
 
 const {
   abortedSymbol,
@@ -781,10 +787,7 @@ function isUnheard(req, name) {
 }
 
 function endsUnwatched(req) {
-  if (
-    !req[noBodySymbol] ||
-    req.resume !== resume
-  ) {
+  if (!req[noBodySymbol] || req.resume !== resume) {
     return false;
   }
   const state = req._readableState;

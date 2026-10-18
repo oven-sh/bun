@@ -1174,14 +1174,35 @@ pub(crate) mod command {
 
     #[cold]
     fn refuse_options_that_load_code(ctx: &ContextData, options: &[&bun_core::ZStr]) {
-        const LOAD_CODE: [&[u8]; 8] = [b"--preload", b"-r", b"--require", b"--import", b"--eval", b"-e", b"--print", b"-p"];
+        const LOAD_CODE: [&[u8]; 8] = [
+            b"--preload",
+            b"-r",
+            b"--require",
+            b"--import",
+            b"--eval",
+            b"-e",
+            b"--print",
+            b"-p",
+        ];
         let eval = &ctx.runtime_options.eval;
         if ctx.preloads.is_empty() && eval.script.is_empty() && !eval.eval_and_print {
             return;
         }
-        let mut names = options.iter().skip(1).map(|option| strings::split(option.as_bytes(), b"=").next().unwrap_or_default());
-        let otherwise: &[u8] = if bun_core::env_var::BUN_INSPECT_PRELOAD.get().is_some() { b"BUN_INSPECT_PRELOAD" } else { b"\"preload\" in bunfig.toml" };
-        super::run_command::RunCommand::refuse_to_load_code(names.find(|name| LOAD_CODE.contains(name)).unwrap_or(otherwise));
+        let mut names = options.iter().skip(1).map(|option| {
+            strings::split(option.as_bytes(), b"=")
+                .next()
+                .unwrap_or_default()
+        });
+        let otherwise: &[u8] = if bun_core::env_var::BUN_INSPECT_PRELOAD.get().is_some() {
+            b"BUN_INSPECT_PRELOAD"
+        } else {
+            b"\"preload\" in bunfig.toml"
+        };
+        super::run_command::RunCommand::refuse_to_load_code(
+            names
+                .find(|name| LOAD_CODE.contains(name))
+                .unwrap_or(otherwise),
+        );
     }
 
     /// `bun build --compile` standalone-executable boot. Never taken for a
@@ -1240,7 +1261,9 @@ pub(crate) mod command {
 
                 // Handle actual options to parse.
                 let result = init(Tag::AutoCommand, log)?;
-                if graph.runtime_options.runs_static_code_only || !crate::jsc_hooks::Bun__loadsModulesAtRunTime() {
+                if graph.runtime_options.runs_static_code_only
+                    || !crate::jsc_hooks::Bun__loadsModulesAtRunTime()
+                {
                     refuse_options_that_load_code(result, bun::argv().as_slice());
                 }
 

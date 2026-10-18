@@ -68,4 +68,7 @@ const engine: Record<string, string> = {
   "an array method of a subclass": `class List extends Array {} console.log(List.from([1, 2]).map(n => n * 2) instanceof List, new List(1, 2, 3).filter(n => n > 1).length);`,
 };
 
-describePrograms("the engine's own JavaScript is in the executable", Object.fromEntries(Object.entries(engine).map(([title, source]) => [title, { source }])));
+describePrograms(
+  "the engine's own JavaScript is in the executable",
+  Object.fromEntries(Object.entries(engine).map(([title, source]) => [title, { source }])),
+);

@@ -95,8 +95,8 @@ mod level {
 }
 
 pub use level::{
-    code_generation_from_strings, code_generation_from_strings_by_flags, disallow_code_generation_from_strings,
-    disallow_code_generation_in_trimmed_executable,
+    code_generation_from_strings, code_generation_from_strings_by_flags,
+    disallow_code_generation_from_strings, disallow_code_generation_in_trimmed_executable,
 };
 
 pub fn is_code_generation_disallowed_by_trimming() -> bool {

@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { describe, test } from "./supported";
 
 // The keys of `import * as ns from "./data.json"`. A module namespace lists its names sorted. `bun run` exports every key of the
 // object; the bundler only those that are identifiers. Ahead-of-time compiled programs must agree with the mode they stand beside:
@@ -71,7 +71,11 @@ console.log(Object.keys(held).join(), held.a, held.own);
 };
 
 describe.concurrent.each(Object.keys(programs))("%s", entry => {
-  const tree = { ...files, [entry]: programs[entry], "tsconfig.json": `{ "compilerOptions": { "resolveJsonModule": true, "module": "preserve", "moduleResolution": "bundler" } }` };
+  const tree = {
+    ...files,
+    [entry]: programs[entry],
+    "tsconfig.json": `{ "compilerOptions": { "resolveJsonModule": true, "module": "preserve", "moduleResolution": "bundler" } }`,
+  };
 
   test("bun run --aot prints what bun run prints", async () => {
     using dir = tempDir("json-namespace-keys", tree);
@@ -83,7 +87,8 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
   test("bun build --compile --aot prints what bun build --compile prints", async () => {
     using dir = tempDir("json-namespace-keys", tree);
     // The bundle loses the names that `export * from` takes from a JSON file. `bun run` has them.
-    const plain = entry === "re-exported.mjs" ? await run([], String(dir), entry) : await compiled([], String(dir), entry);
+    const plain =
+      entry === "re-exported.mjs" ? await run([], String(dir), entry) : await compiled([], String(dir), entry);
     const aot = await compiled(["--aot"], String(dir), entry);
     expect(plain.exitCode).toBe(0);
     expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });

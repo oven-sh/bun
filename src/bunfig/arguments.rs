@@ -426,14 +426,7 @@ pub fn load_config_above_for_tool(
                 report_bunfig_load_failure_as(cmd, ctx.log, err, Some(&shown));
             }
             // SAFETY: as above.
-            let log = unsafe { &mut *ctx.log };
-            for it in log.msgs.drain(said..) {
-                match it.kind {
-                    bun_ast::Kind::Err => log.errors -= 1,
-                    bun_ast::Kind::Warn => log.warnings -= 1,
-                    _ => {}
-                }
-            }
+            unsafe { &mut *ctx.log }.truncate(said);
             return None;
         }
         if above == Above::Unwanted {

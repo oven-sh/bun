@@ -1601,6 +1601,19 @@ impl Log {
         (self.warnings + self.errors) > 0
     }
 
+    /// Takes back every message after the first `len`, with its count in `errors` or `warnings`.
+    #[cold]
+    #[inline(never)]
+    pub fn truncate(&mut self, len: usize) {
+        for msg in self.msgs.drain(len.min(self.msgs.len())..) {
+            match msg.kind {
+                Kind::Err => self.errors -= 1,
+                Kind::Warn => self.warnings -= 1,
+                _ => {}
+            }
+        }
+    }
+
     pub fn init() -> Log {
         let level = DEFAULT_LOG_LEVEL.load();
         Log {

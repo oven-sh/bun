@@ -393,7 +393,8 @@ fn write_updated_row<W: Write>(
     Ok(())
 }
 
-/// The one-section summary only walks `update_owners`' rows; other importers consume entries too.
+/// The one-section summary only walks the dependencies of `update_owners`, but other workspaces use
+/// catalog entries too.
 fn print_catalog_entry_updates<W: Write>(
     this: &Printer,
     manager: &mut PackageManager,

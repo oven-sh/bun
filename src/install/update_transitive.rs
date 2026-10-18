@@ -793,7 +793,8 @@ fn warn_patch_key_without_version(
     );
 }
 
-/// After the clean: one warning per `patchedDependencies` key that names no installed package.
+/// Runs after the lockfile is cleaned. Prints one warning per `patchedDependencies` key that
+/// doesn't match an installed package.
 pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
     if manager.lockfile.patched_dependencies.count() == 0
         || manager.options.log_level == LogLevel::Silent

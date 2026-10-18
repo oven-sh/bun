@@ -350,7 +350,7 @@ struct State<'a> {
     event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     max_label_len: usize,
-    /// POSIX shell the scripts run under; `None` on Windows (see `ScriptArgv`).
+    /// The POSIX shell that the scripts run under. `None` on Windows (see `ScriptArgv`).
     shell_bin: Option<&'static ZStr>,
     aborted: bool,
     no_exit_on_error: bool,

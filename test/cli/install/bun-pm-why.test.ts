@@ -715,7 +715,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
       expect(exitCode).toBe(0);
     });
 
-    it("a peer dependent is listed under the one copy the hoisted tree gives it", async () => {
+    it("a peer dependent is listed under each copy that the hoisted tree gives it", async () => {
       const { stdout, exitCode } = await why(withLinker(peerInTwoContexts, "hoisted"), "no-deps");
       expect(stdout).toMatchInlineSnapshot(`
         "no-deps@2.0.0
@@ -726,8 +726,12 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
                 └─ app (requires 1.0.0)
 
         no-deps@1.0.0
-          └─ provides-peer-deps-1-0-0@1.0.0 (requires 1.0.0)
-             └─ app (requires 1.0.0)
+          ├─ provides-peer-deps-1-0-0@1.0.0 (requires 1.0.0)
+          │  └─ app (requires 1.0.0)
+          └─ peer peer-deps@1.0.0 (requires *)
+             ├─ app (requires 1.0.0)
+             └─ provides-peer-deps-1-0-0@1.0.0 (requires 1.0.0)
+                └─ app (requires 1.0.0)
 
         "
       `);

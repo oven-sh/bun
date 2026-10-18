@@ -1953,7 +1953,7 @@ snapshots:
       `);
     });
 
-    test("a peer range dedupes onto the hoisted version like a fresh install", async () => {
+    test("a package stays next to the peer that its parent provides, like in a fresh install", async () => {
       const { packageDir } = await verdaccio.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: join(import.meta.dir, "pnpm/v9-peer-range-dedupe"),
@@ -1965,7 +1965,7 @@ snapshots:
       expect(exitCode).toBe(0);
 
       const bunLock = await bunLockOf(packageDir);
-      expect(bunLock).toContain(`"peer-deps": ["peer-deps@1.0.0"`);
+      expect(bunLock).toContain(`"provides-peer-deps-1-0-0/peer-deps": ["peer-deps@1.0.0"`);
       expect(bunLock).toContain(`{ "peerDependencies": { "no-deps": "*" } }`);
       expect(bunLock).toContain(`"provides-peer-deps-1-0-0/no-deps": ["no-deps@1.0.0"`);
       expect(bunLock).not.toContain(`"peer-deps/no-deps"`);
@@ -1977,8 +1977,8 @@ snapshots:
       expect(nodeModulesPackages(packageDir)).toMatchInlineSnapshot(`
         "node_modules/no-deps/no-deps@1.0.1
         node_modules/one-dep/one-dep@1.0.0
-        node_modules/peer-deps/peer-deps@1.0.0
         node_modules/provides-peer-deps-1-0-0/node_modules/no-deps/no-deps@1.0.0
+        node_modules/provides-peer-deps-1-0-0/node_modules/peer-deps/peer-deps@1.0.0
         node_modules/provides-peer-deps-1-0-0/provides-peer-deps-1-0-0@1.0.0"
       `);
     });

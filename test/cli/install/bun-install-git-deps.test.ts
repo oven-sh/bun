@@ -1158,8 +1158,7 @@ function writeWorkspace(root: string, dependencies: Record<string, string>) {
 // and keeps one of them with it: the first that its depth-first, name-ordered
 // walk reaches. In the tests below that is, for the git package `b` of the
 // workspace member `m`, the peer dependency `b: "*"` of `a`, which is walked
-// first. It is not a git dependency, and bun.lock resolves a required one to
-// the registry's `b` (`a/b`). Once the repository was cloned, the install took
+// first. It is not a git dependency. Once the repository was cloned, the install took
 // the checkout to start from that dependency: it started none and never exited.
 for (const peer of ["required", "optional"] as const) {
   test.concurrent(
@@ -1169,7 +1168,6 @@ for (const peer of ["required", "optional"] as const) {
       const root = String(dir);
       const bare = await makeSharedRepo(root, [{ name: "b", branch: "main" }], "b.git");
       const repoUrl = `git+${pathToFileURL(bare)}`;
-      // A required peer is also resolved on its own, from the registry.
       await using registry = await serveRegistry(
         peer === "required"
           ? { a: { peerDependencies: { b: "*" } }, b: {} }
@@ -1181,7 +1179,6 @@ for (const peer of ["required", "optional"] as const) {
         a: "a@1.0.0",
         b: `b@${repoUrl}#${branchCommits(bare).main}`,
         m: "m@workspace:packages/m",
-        ...(peer === "required" && { "a/b": "b@1.0.0" }),
       };
       // What `m` resolves, and the `b` that `a` resolves: the git one.
       const installed = async () => ({
@@ -1240,7 +1237,6 @@ test.concurrent("checks out every package of a repository when a peer dependency
     a: "a@1.0.0",
     ...Object.fromEntries(names.map(name => [name, `${name}@${repoUrl}#${commits[name]}`])),
     m: "m@workspace:packages/m",
-    "a/b": "b@1.0.0",
   };
   const installed = async () => ({
     ...(await installedVersions(member, ["a", ...names])),
@@ -1295,7 +1291,6 @@ test.concurrent(
       const { stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), env);
       expect(stderr).toContain("Saved lockfile");
       expect(await installedVersions(member, ["a", ...names])).toEqual({ a: "a-from-registry", b: "b", c: "c" });
-      expect((await lockedResolutions(project))["a/b"]).toBe("b@1.0.0");
       expect(exitCode).toBe(0);
     }
 

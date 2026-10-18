@@ -190,7 +190,8 @@ pub(crate) fn required_without(
 // Out-of-range ids (invalid_package_id) are treated as already seen.
 /// Returns the dependency of `owner` that provides `name_hash` to the packages below it. Any regular
 /// dependency does. So does a peer dependency of the root or of a workspace, resolved or not,
-/// because it's installed like one of the project's regular dependencies.
+/// because it's installed like one of the project's regular dependencies. An `npm:` alias of a
+/// package with a different name doesn't provide. See `enqueue::alias_of_every_dependent`.
 pub(crate) fn peer_provider(
     lockfile: &Lockfile,
     resolutions: &[PackageID],
@@ -199,6 +200,7 @@ pub(crate) fn peer_provider(
 ) -> Option<DependencyID> {
     let deps = lockfile.buffers.dependencies.as_slice();
     let packages = lockfile.packages.items_resolution();
+    let names = lockfile.packages.items_name_hash();
     let is_project = matches!(
         packages[owner as usize].tag,
         ResolutionTag::Root | ResolutionTag::Workspace
@@ -211,7 +213,7 @@ pub(crate) fn peer_provider(
                 && if dep.behavior.is_peer() {
                     is_project && !dep.behavior.is_optional_peer()
                 } else {
-                    (resolutions[id] as usize) < packages.len()
+                    names.get(resolutions[id] as usize) == Some(&name_hash)
                 }
         })
         .min_by_key(|&id| deps[id].behavior.is_peer())

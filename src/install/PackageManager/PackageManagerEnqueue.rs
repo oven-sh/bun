@@ -3985,6 +3985,10 @@ fn installed_peer_target(
     if let Some(id) = lockfile.package_satisfying(name_hash, version, |_| true) {
         return Some(id);
     }
+    // An override chose this peer's version, so no other version stands in for it.
+    if lockfile.is_overridden_dependency(row) {
+        return None;
+    }
     let provided = peer_provided_from_above(lockfile, name_hash, row)?;
     (!would_revive_leftover(lockfile, row, provided)).then_some(provided)
 }
@@ -4006,12 +4010,12 @@ fn installed_version_in_ranges(
     })
 }
 
-/// Returns the package that `row`'s owner, or the nearest package above it, depends on under this
-/// name. As in pnpm, that package provides the peer even if its version is out of range. For example,
-/// every library under a workspace that depends on `react@17` uses `react@17`.
+/// Returns the package that `row`'s owner, or the nearest package above it, loads under this name. As
+/// in pnpm, the peer uses that package even if its version is out of range:
+/// - Every library under a workspace that depends on `react@17` uses `react@17`.
+/// - A library uses the same copy as the UI kit that depends on it, if both have the peer dependency.
 ///
-/// Returns `None` if the owner is also used somewhere that has no provider. It needs a version in
-/// range there.
+/// Returns `None` if nothing above the owner has a dependency or a peer dependency on this name.
 fn peer_provided_from_above(
     lockfile: &Lockfile::Lockfile,
     name_hash: PackageNameHash,
@@ -4020,21 +4024,25 @@ fn peer_provided_from_above(
     let deps = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let lists = lockfile.packages.items_dependencies();
+    let names = lockfile.packages.items_name_hash();
     let owner = lockfile.get_parent_pkg_of_dependency(row)?;
-    // A project's own peer dependency doesn't provide for itself.
-    let own = lists[owner as usize];
-    if let Some(own) = (own.begin() as usize..own.end() as usize).find(|&id| {
-        deps[id].name_hash == name_hash
-            && !deps[id].behavior.is_peer()
-            && (resolutions[id] as usize) < lists.len()
-    }) {
-        return Some(resolutions[own]);
+    let named = |package: usize, is_peer: bool| {
+        (lists[package].begin() as usize..lists[package].end() as usize)
+            .filter(|&id| {
+                deps[id].name_hash == name_hash
+                    && deps[id].behavior.is_peer() == is_peer
+                    && !deps[id].behavior.is_optional_peer()
+            })
+            .map(|id| resolutions[id])
+            .find(|&id| names.get(id as usize) == Some(&name_hash))
+    };
+    if let Some(own) = named(owner as usize, false) {
+        return Some(own);
     }
-    if reachable::packages_without_peer_provider(lockfile, resolutions, name_hash)
-        .is_set(owner as usize)
-    {
-        return None;
-    }
+    // If the owner is used somewhere that has no provider, it can't rely on the providers it has
+    // elsewhere. It still follows a package above it that has the same peer dependency.
+    let has_provider = !reachable::packages_without_peer_provider(lockfile, resolutions, name_hash)
+        .is_set(owner as usize);
 
     let mut seen = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
     let mut level = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
@@ -4045,16 +4053,17 @@ fn peer_provided_from_above(
         let mut any_above = false;
         for (parent, list) in lists.iter().enumerate() {
             if seen.is_set(parent)
-                || !(list.begin() as usize..list.end() as usize)
-                    .any(|id| level.is_set_allow_out_of_bound(resolutions[id] as usize, false))
+                || !(list.begin() as usize..list.end() as usize).any(|id| {
+                    !deps[id].behavior.is_peer()
+                        && level.is_set_allow_out_of_bound(resolutions[id] as usize, false)
+                })
             {
                 continue;
             }
-            if let Some(provider) =
-                reachable::peer_provider(lockfile, resolutions, parent as PackageID, name_hash)
-            {
-                let provided = resolutions[provider as usize];
-                return ((provided as usize) < lists.len()).then_some(provided);
+            let provided = (has_provider.then(|| named(parent, false)).flatten())
+                .or_else(|| named(parent, true));
+            if provided.is_some() {
+                return provided;
             }
             seen.set(parent);
             above.set(parent);

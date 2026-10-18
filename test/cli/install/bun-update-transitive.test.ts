@@ -4051,21 +4051,20 @@ test.concurrent(
   },
 );
 
-// Without a lockfile the no-deps the first peer row installs is all the second one can bind to; that still dedupes onto it
-// and warns. Which row goes first follows the order the two manifests arrive in, so only the single copy is pinned down.
-test.concurrent("on a fresh install two peer entries nothing provides still share one no-deps", async () => {
-  const { packageDir: dir } = await registry.createTestDir({
-    bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
-    files: { "package.json": stringify(pkgJson({ "peer-deps-fixed": "1.0.0", "strict-peer-dep": "1.0.0" })) },
-  });
-  const stderr = await install(dir, "--verbose", ...linkerArgs({}));
-  const [version] = await lockedVersions(dir, "no-deps");
-  expect(["1.1.0", "2.0.0"]).toContain(version);
-  expect(stderr).toContain(`warn: incorrect peer dependency "no-deps@${version}"`);
-  expect(await lockedVersions(dir, "no-deps")).toStrictEqual([version]);
-  expect(await installedVersion(dir, "no-deps")).toBe(version);
-  await frozen(dir);
-});
+// peer-deps-fixed has a peer dependency on no-deps@^1.0.0, and strict-peer-dep on no-deps@^2.0.0.
+test.concurrent(
+  "on a fresh install, two unrelated packages with disjoint peer ranges each get their own version",
+  async () => {
+    const { packageDir: dir } = await registry.createTestDir({
+      bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
+      files: { "package.json": stringify(pkgJson({ "peer-deps-fixed": "1.0.0", "strict-peer-dep": "1.0.0" })) },
+    });
+    const stderr = await install(dir, "--verbose", ...linkerArgs({}));
+    expect(stderr).not.toContain("warn: incorrect peer dependency");
+    expect((await lockedVersions(dir, "no-deps")).sort()).toStrictEqual(["1.1.0", "2.0.0"]);
+    await frozen(dir);
+  },
+);
 
 // pkg1 has a stale entry in every group; pkg2 only in dependencies; the root has none.
 const PKG1_GROUPS = (noDeps: string, types: string, aDep: string) => ({

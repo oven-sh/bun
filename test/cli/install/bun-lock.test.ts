@@ -918,7 +918,7 @@ describe.each(["hoisted", "isolated"])("a peer that a file: dependency provides,
     expect(await downloaded()).toEqual([]);
     expect(await file(join(packageDir, "bun.lock")).text()).not.toContain('"no-deps@1.1.0"');
 
-    // A provider that this install leaves out does not count.
+    // The peer still uses the folder when this install omits the group that lists it.
     await Promise.all([
       write(packageJson, JSON.stringify(manifest("devDependencies"))),
       rm(join(packageDir, "bun.lock")),
@@ -933,7 +933,11 @@ describe.each(["hoisted", "isolated"])("a peer that a file: dependency provides,
     });
     const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(err).not.toContain("error:");
-    expect(await downloaded()).not.toEqual([]);
+    expect(await downloaded()).toEqual([]);
+    let dir = realpathSync(join(packageDir, "node_modules", "peer-deps-fixed"));
+    while (dir !== dirname(dir) && !existsSync(join(dir, "node_modules", "no-deps", "package.json")))
+      dir = dirname(dir);
+    expect((await file(join(dir, "node_modules", "no-deps", "package.json")).json()).version).toBe("1.0.5");
     expect(exitCode).toBe(0);
   });
 });
@@ -4376,7 +4380,7 @@ it.each<OrderedShape>([
     z: { "z": "z@1.0.0" },
   },
   {
-    // No version suits both. The first in the order of the packages that declare them decides, not the first to arrive.
+    // No version satisfies both, and neither package is above the other, so each one gets a version in its own range.
     shape: "a peers z@^1.0.0 next to b peers z@^2.0.0",
     manifests: {
       a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
@@ -4388,11 +4392,11 @@ it.each<OrderedShape>([
       "a's manifest last": [{ manifest: "a", until: "/b" }],
       "b's manifest last": [{ manifest: "b", until: "/a-1.0.0.tgz" }],
     },
-    z: { "z": "z@1.1.0" },
+    z: { "z": "z@1.1.0", "b/z": "z@2.0.0" },
   },
   {
-    // m is itself installed as a peer, so whether its range is known when z is picked depends on which manifest
-    // arrives first. It does not count.
+    // m is itself installed as a peer, so its range may not be known yet when z is first picked. Once it is, all three
+    // packages settle on the one version that satisfies them all.
     shape: "a peers m@1.0.0 and z@>=1.0.0, b peers z@>=1.0.5, m peers z@~1.0.0",
     manifests: {
       a: { "1.0.0": { peerDependencies: { m: "1.0.0", z: ">=1.0.0" } } },
@@ -4405,7 +4409,7 @@ it.each<OrderedShape>([
       "m's manifest last": [{ manifest: "m", until: "/z" }],
       "z's manifest last": [{ manifest: "z", until: "/m-1.0.0.tgz" }],
     },
-    z: { "z": "z@2.0.0" },
+    z: { "z": "z@1.0.5" },
   },
   {
     shape: "a peers z@^1.0.0 next to b peers z@>=1.0.0",
@@ -4440,7 +4444,7 @@ it.each<OrderedShape>([
     z: { "z": "z@1.1.0" },
   },
   {
-    // Nothing satisfies a's peer. It is bound to the highest z there is, which includes the one w asks for.
+    // a isn't below w, so w's z doesn't provide a's peer. No installed version satisfies it, so it gets its own.
     shape: "workspace w peers z@latest, a peers z@1.0.0, o -> z@1.0.5",
     manifests: {
       a: { "1.0.0": { peerDependencies: { z: "1.0.0" } } },
@@ -4455,10 +4459,10 @@ it.each<OrderedShape>([
       "a's manifest last": [{ manifest: "a", until: "/z" }],
       "o's manifest last": [{ manifest: "o", until: "/a-1.0.0.tgz" }],
     },
-    z: { "z": "z@2.0.0", "o/z": "z@1.0.5" },
+    z: { "z": "z@2.0.0", "a/z": "z@1.0.0", "o/z": "z@1.0.5" },
   },
   {
-    // kit and its dependency r should share one z. o's z@1.0.5 satisfies kit's range, so both use it.
+    // No version satisfies both kit and its dependency r, so r follows kit. o's z@1.0.5 satisfies kit's range.
     shape: "kit peers z@~1.0.0 and -> r, r peers z@^2.0.0, o -> z@1.0.5",
     manifests: {
       kit: { "1.0.0": { dependencies: { r: "1.0.0" }, peerDependencies: { z: "~1.0.0" } } },
@@ -4487,10 +4491,10 @@ it.each<OrderedShape>([
       "r's manifest last": [{ manifest: "r", until: "/z" }],
       "o's manifest last": [{ manifest: "o", until: "/p" }],
     },
-    z: { "z": "z@1.0.5", "p/z": "z@2.0.0", "r/z": "z@2.0.0" },
+    z: { "z": "z@1.0.5", "p/z": "z@2.0.0" },
   },
   {
-    // s and its dependency b share one z. A second z for p would be hoisted to the top, where b would load it.
+    // p gets a z in its range. b stays next to s, so it keeps loading the same z as s.
     shape: "s -> z@^1.0.0 and b, b peers z@>=1.0.0, p peers z@^2.0.0",
     manifests: {
       b: { "1.0.0": { peerDependencies: { z: ">=1.0.0" } } },
@@ -4503,7 +4507,7 @@ it.each<OrderedShape>([
       "s's manifest last": [{ manifest: "s", until: "/p-1.0.0.tgz" }],
       "p's manifest last": [{ manifest: "p", until: "/s" }],
     },
-    z: { "z": "z@1.1.0" },
+    z: { "z": "z@2.0.0", "s/z": "z@1.1.0" },
   },
   {
     // t depends on r and has the same peer range. o's z doesn't satisfy either of them.
@@ -5242,7 +5246,7 @@ describe.each(["hoisted", "isolated"] as const)(
         },
         shape: [
           '"no-deps": ["no-deps@1.1.0"',
-          '"peer-deps-lvl2": ["peer-deps-lvl2@1.0.0"',
+          '"peer-deps-lvl0/peer-deps-lvl2": ["peer-deps-lvl2@1.0.0"',
           '"peer-deps-lvl0/no-deps": ["no-deps@1.0.0"',
           '"provides-peer-deps-2-0-0/no-deps": ["no-deps@2.0.0"',
         ],

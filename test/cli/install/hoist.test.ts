@@ -1001,13 +1001,13 @@ describe.concurrent("peer dependencies decide how far a package hoists", () => {
     });
   });
 
-  test("hoists when the version at the root satisfies the peer range", async () => {
+  test("stays next to its parent's copy of the peer even if the root's version is also in range", async () => {
     // has-peer has peerDependencies: { peer-no-deps: ^1.0.0 }
     // diff-peer-1 depends on { has-peer: 1.0.0, peer-no-deps: 1.0.0 }
     // diff-peer-2 depends on { has-peer: 1.0.0, peer-no-deps: 1.0.1 }
     //
-    // The peer edge resolves to 1.0.1, but the 1.0.0 that wins the root slot satisfies ^1.0.0 too,
-    // so both dependents share the has-peer at the root. Only peer-no-deps@1.0.1 nests.
+    // peer-no-deps@1.0.0 gets the root slot and also satisfies ^1.0.0. diff-peer-2 still gets its own has-peer, so that
+    // has-peer and diff-peer-2 load the same peer-no-deps@1.0.1.
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
@@ -1026,7 +1026,10 @@ describe.concurrent("peer dependencies decide how far a package hoists", () => {
       expect(await version(nodeModules, "has-peer")).toBe("1.0.0");
       expect(await version(nodeModules, "peer-no-deps")).toBe("1.0.0");
       expect(await exists(join(nodeModules, "diff-peer-1", "node_modules"))).toBe(false);
-      expect(await readdirSorted(join(nodeModules, "diff-peer-2", "node_modules"))).toEqual(["peer-no-deps"]);
+      expect(await readdirSorted(join(nodeModules, "diff-peer-2", "node_modules"))).toEqual([
+        "has-peer",
+        "peer-no-deps",
+      ]);
       expect(await version(nodeModules, "diff-peer-2", "node_modules", "peer-no-deps")).toBe("1.0.1");
     });
   });

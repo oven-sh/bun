@@ -376,6 +376,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
             // `1 <= depth_buf_len <= depth`.
             let id = unsafe { depth_buf[depth_buf_len].assume_init() };
             let mut name = trees[id as usize].folder_name(dependencies, buf);
+            let mut is_workspace_path = false;
             // The tree of an unlinked workspace package is a child of the root tree, so this is the
             // first component. The path starts at the package's own folder, or `./` in bun.lock.
             if trees[id as usize].is_unlinked_member(trees, hoisted_dependencies, dependencies) {
@@ -388,9 +389,11 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
                         member.version.workspace().slice(buf),
                     );
                     path_written = 0;
+                    // A workspace can be outside the project, e.g. `../shared`.
+                    is_workspace_path = true;
                 }
             }
-            if !crate::dependency::is_safe_install_folder_name(name) {
+            if !is_workspace_path && !crate::dependency::is_safe_install_folder_name(name) {
                 Output::err_generic(
                     "Lockfile is malformed (dependency name \"{}\" is not a valid folder name)",
                     (bun_core::fmt::for_terminal(bstr::BStr::new(name)),),
@@ -628,11 +631,13 @@ impl PeerProbes {
             }
 
             // The package loads whatever its owner loads under this name: the owner's regular
-            // dependency, or else the owner's own peer.
+            // dependency, or else the owner's own peer. As in `reachable::peer_provider`, an alias
+            // of a package with a different name doesn't count.
+            let names = lockfile.packages.items_name_hash();
             let owner_copy = (owner_deps.begin()..owner_deps.end())
                 .filter(|&dep_id| {
                     deps[dep_id as usize].name_hash == peer.name_hash
-                        && resolutions[dep_id as usize] != invalid_package_id
+                        && names.get(resolutions[dep_id as usize] as usize) == Some(&peer.name_hash)
                 })
                 .min_by_key(|&dep_id| deps[dep_id as usize].behavior.is_peer())
                 .map(|dep_id| resolutions[dep_id as usize]);

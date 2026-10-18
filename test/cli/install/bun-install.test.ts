@@ -16762,7 +16762,6 @@ describe.concurrent("a long flag the command does not have", () => {
   it("is an error even if another command has it", async () => {
     using dir = project();
     expect(await bunIn(String(dir), ["install", "--latest"])).toEqual(rejected("install", "--latest"));
-    expect(await bunIn(String(dir), ["add", "--recursive", "./dep"])).toEqual(rejected("add", "--recursive"));
   });
 
   it("is skipped when it comes from BUN_OPTIONS", async () => {

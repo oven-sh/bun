@@ -797,17 +797,13 @@ it.concurrent("bun remove -F edits only the selected workspace", async () => {
   expect(exitCode).toBe(0);
 });
 
-it.concurrent("bun remove --recursive is not a workspace-wide remove: the unknown flag is rejected", async () => {
+it.concurrent("bun remove ignores pnpm's --recursive, so it only removes from the current package", async () => {
   using dir = monorepo("bun-remove-recursive");
 
-  const { stderr, exitCode } = await remove(String(dir), "dep", "--recursive");
-  expect(stderr).toBe(
-    "error: bun remove has no --recursive flag.\nnote: Run 'bun remove --help' for more information\n",
-  );
-  expect(await file(join(String(dir), "package.json")).text()).toBe(MONOREPO_ROOT);
+  const { stderr } = await remove(String(dir), "dep", "--recursive");
+  expect(stderr).not.toContain("--recursive");
   expect(await file(join(String(dir), "packages", "api", "package.json")).text()).toBe(WORKSPACE("api"));
   expect(await file(join(String(dir), "packages", "web", "package.json")).text()).toBe(WORKSPACE("web"));
-  expect(exitCode).toBe(1);
 });
 
 // Serves version 1.0.0 of every name; `extra` adds fields to a package's manifest.

@@ -463,12 +463,7 @@ impl Checker<'_, '_> {
         may_be_in_place: bool,
     ) {
         let hir = self.hir(file);
-        let ExprKind::Dot {
-            obj,
-            name,
-            ..
-        } = hir[e].kind
-        else {
+        let ExprKind::Dot { obj, name, .. } = hir[e].kind else {
             return;
         };
         let (node, right) = (hir.node(e), hir.name(hir.node(e)));
@@ -525,7 +520,13 @@ impl Checker<'_, '_> {
         } else {
             return;
         };
-        self.report_use_before_declaration(file, (hir.name_pos(e), 0), code, hir.name_pos(e), declaration);
+        self.report_use_before_declaration(
+            file,
+            (hir.name_pos(e), 0),
+            code,
+            hir.name_pos(e),
+            declaration,
+        );
     }
 
     /// `isPropertyDeclaredInAncestorClass` for the property `name` that `declaration` declares.

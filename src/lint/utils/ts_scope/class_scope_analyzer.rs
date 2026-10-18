@@ -758,10 +758,7 @@ pub fn analyze_class_member_usage<'a>(
     };
     let tag_of = |e: hir::ExprId| file.hir.exprs.get(e.idx()).map(|it| it.kind.tag());
     for e in file.exprs_of_kind(ExprTag::Dot) {
-        let Some(hir::ExprKind::Dot {
-            obj, name, ..
-        }) = e.try_raw().map(|it| it.kind)
-        else {
+        let Some(hir::ExprKind::Dot { obj, name, .. }) = e.try_raw().map(|it| it.kind) else {
             continue;
         };
         let name_pos = file.hir.name_pos(e.id());

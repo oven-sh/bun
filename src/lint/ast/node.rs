@@ -831,7 +831,9 @@ impl Parents {
             }
             let (ty, type_args) = match e.kind {
                 K::As { ty, .. } | K::Satisfies { ty, .. } => (ty, hir::IdList::EMPTY),
-                K::Instantiation { type_args, .. } => (hir::TypeNodeId::NONE, hir.list_at(type_args)),
+                K::Instantiation { type_args, .. } => {
+                    (hir::TypeNodeId::NONE, hir.list_at(type_args))
+                }
                 K::Call(c) | K::New(c) | K::TaggedTemplate(c) => (
                     hir::TypeNodeId::NONE,
                     hir.calls

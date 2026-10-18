@@ -4159,11 +4159,7 @@ impl<'p, 's> Checker<'p, 's> {
         let sig = match hir[data.callee].kind {
             // `checkPropertyAccessExpression` of a member of the reference being narrowed: the type
             // of the object is already available here, and querying it would re-enter.
-            ExprKind::Dot {
-                obj,
-                name,
-                ..
-            } if self.matches(reference, obj) => {
+            ExprKind::Dot { obj, name, .. } if self.matches(reference, obj) => {
                 // `links.effectsSignature`: only the first evaluation takes the type of this walk.
                 let known = self.p.effects_signatures.get(&self.task, &(file, call));
                 match known {
@@ -7714,11 +7710,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::This => self.explicit_this_type(file, e),
             // `checkSuperExpression`
             ExprKind::Super => Some(self.type_of_expr(file, e)),
-            ExprKind::Dot {
-                obj,
-                name,
-                ..
-            } => {
+            ExprKind::Dot { obj, name, .. } => {
                 let obj = self.explicit_type(file, obj, diagnostic.as_deref_mut())?;
                 let name = if is_private_name_at(hir, hir.name_pos(e)) {
                     self.private_name_in_symbol_of_type(obj, name)?

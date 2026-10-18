@@ -1670,7 +1670,8 @@ impl Walk<'_, '_> {
                     yes_and_no: yes_and_no2,
                 },
             ) => {
-                let ((yes, no), (yes2, no2)) = (yes_and_no.of(self.a.ids), yes_and_no2.of(self.b.ids));
+                let ((yes, no), (yes2, no2)) =
+                    (yes_and_no.of(self.a.ids), yes_and_no2.of(self.b.ids));
                 self.expr(test, test2)?;
                 self.expr(yes, yes2)?;
                 self.nested(no, no2)

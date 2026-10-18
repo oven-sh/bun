@@ -2149,7 +2149,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_argument_nodes(&self, node: InstantiationExpression) -> (FileId, IdList<TypeNodeId>) {
         match node {
             InstantiationExpression::Expr(file, e) => match self.hir(file)[e].kind {
-                ExprKind::Instantiation { type_args, .. } => (file, self.hir(file).list_at(type_args)),
+                ExprKind::Instantiation { type_args, .. } => {
+                    (file, self.hir(file).list_at(type_args))
+                }
                 _ => (file, IdList::default()),
             },
             InstantiationExpression::TypeNode(file, node) => match self.hir(file)[node].kind {

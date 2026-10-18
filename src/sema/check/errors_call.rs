@@ -1140,9 +1140,10 @@ impl Checker<'_, '_> {
             (CallLike::Call(c), ExprKind::Call(_)) => {
                 let callee = hir[c].callee;
                 match hir[callee].kind {
-                    ExprKind::Dot { .. } if !is_parenthesized(hir, callee) => {
-                        (hir.name_pos(callee), self.end_of_name_at(file, hir.name_pos(callee)))
-                    }
+                    ExprKind::Dot { .. } if !is_parenthesized(hir, callee) => (
+                        hir.name_pos(callee),
+                        self.end_of_name_at(file, hir.name_pos(callee)),
+                    ),
                     _ => (
                         self.error_start_of(file, callee),
                         self.error_end_of(file, callee),

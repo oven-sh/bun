@@ -265,11 +265,10 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
     }
     // `GetElementOrPropertyAccessName`
     let (obj, name) = match hir[target].kind {
-        ExprKind::Dot {
+        ExprKind::Dot { obj, name, .. } => (
             obj,
-            name,
-            ..
-        } => (obj, (!is_private_name_at(hir, hir.name_pos(target))).then_some(name)),
+            (!is_private_name_at(hir, hir.name_pos(target))).then_some(name),
+        ),
         ExprKind::Index { obj, index, .. } => match hir[index].kind {
             ExprKind::Number(_) => (obj, Some(Atom::NONE)),
             _ => (

@@ -1611,11 +1611,11 @@ impl<'f, 's> Binder<'f, 's> {
             }
             let (obj, name) = match self.f[e].kind {
                 ExprKind::Ident(name) => break self.lookup_name(name, scope)?,
-                ExprKind::Dot {
-                    obj,
-                    name,
-                    ..
-                } if !is_private_name_at(self.f, self.f.name_pos(e)) => (obj, name),
+                ExprKind::Dot { obj, name, .. }
+                    if !is_private_name_at(self.f, self.f.name_pos(e)) =>
+                {
+                    (obj, name)
+                }
                 ExprKind::Index { obj, index, .. }
                     if self.f.is_js && is_string_or_numeric_literal_like(self.f, index) =>
                 {
@@ -1773,11 +1773,11 @@ impl<'f, 's> Binder<'f, 's> {
                         continue;
                     }
                     match self.f[target].kind {
-                        ExprKind::Dot {
-                            obj,
-                            name,
-                            ..
-                        } if !is_private_name_at(self.f, self.f.name_pos(target)) => (obj, name, ExprId::NONE),
+                        ExprKind::Dot { obj, name, .. }
+                            if !is_private_name_at(self.f, self.f.name_pos(target)) =>
+                        {
+                            (obj, name, ExprId::NONE)
+                        }
                         ExprKind::Index { obj, index, .. } => {
                             (obj, self.literal_name(index), index)
                         }

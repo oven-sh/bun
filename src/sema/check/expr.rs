@@ -1020,10 +1020,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_of_property_access(&mut self, file: FileId, e: ExprId) -> (TypeId, bool) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let ExprKind::Dot {
-            obj,
-            name,
-            chain,
-            ..
+            obj, name, chain, ..
         } = hir[e].kind
         else {
             return (TypeId::UNRESOLVED, false);

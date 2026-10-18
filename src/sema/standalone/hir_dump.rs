@@ -609,10 +609,7 @@ impl Dump<'_, '_> {
                 self.class(d, "class", class);
             }
             ExprKind::Dot {
-                obj,
-                name,
-                chain,
-                ..
+                obj, name, chain, ..
             } => {
                 let name_pos = self.file.name_pos(id);
                 put!(

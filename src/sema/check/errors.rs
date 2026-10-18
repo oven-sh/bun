@@ -2913,12 +2913,7 @@ impl Checker<'_, '_> {
         right_type: TypeId,
     ) -> Option<u32> {
         let hir = self.hir(file);
-        let ExprKind::Dot {
-            obj,
-            name,
-            ..
-        } = hir[left].kind
-        else {
+        let ExprKind::Dot { obj, name, .. } = hir[left].kind else {
             return None;
         };
         if !self.p.files.options.exact_optional_property_types

@@ -2105,7 +2105,10 @@ fn what_a_task_finds_out_about_a_record_of_a_file_that_it_visits_stays_in_the_ta
     let (shape, _) = (tables.shapes).insert_ref(&task, made_of_it, Box::new([NUMBER]), outer);
     assert!(shape.local_number().is_some());
     assert_eq!(tables.by_id.get(&task, &of_file), Some(NUMBER));
-    assert_eq!(tables.by_key.get(&task, &(made_of_it, NUMBER)), Some(NUMBER));
+    assert_eq!(
+        tables.by_key.get(&task, &(made_of_it, NUMBER)),
+        Some(NUMBER)
+    );
     assert_eq!(tables.shapes.handle(&task, &made_of_it), Some(shape));
     assert_eq!(tables.by_id.get(&other, &of_file), None);
     assert_eq!(tables.by_key.get(&other, &(made_of_it, NUMBER)), None);
@@ -2115,12 +2118,19 @@ fn what_a_task_finds_out_about_a_record_of_a_file_that_it_visits_stays_in_the_ta
     assert!(!task.has_held_back_since(outer));
     // What mentions no file of the task is for all.
     let of_no_file = tables.keyof(&task, STRING);
-    tables.by_id.insert(&task, of_no_file, NUMBER, from_now(&task));
+    tables
+        .by_id
+        .insert(&task, of_no_file, NUMBER, from_now(&task));
     assert_eq!(tables.by_id.get(&other, &of_no_file), Some(NUMBER));
     // A task that does not visit the file shares what it finds out.
     assert_eq!(tables.this_of(&other, A), of_file);
-    tables.by_id.insert(&other, of_file, NUMBER, from_now(&other));
-    assert_eq!(tables.by_id.get(&begin_publishing(2), &of_file), Some(NUMBER));
+    tables
+        .by_id
+        .insert(&other, of_file, NUMBER, from_now(&other));
+    assert_eq!(
+        tables.by_id.get(&begin_publishing(2), &of_file),
+        Some(NUMBER)
+    );
 }
 
 #[test]

@@ -359,6 +359,11 @@ pub struct DebugOptions {
     /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
     /// reload (node delivers this signal to its watched child; default SIGTERM).
     pub watch_kill_signal: bun_core::SignalCode,
+    /// `--watch-kill-signal` and `--no-clear-screen` as given. `cli::apply_watch_mode_flags`
+    /// applies them once the watch mode is final, which `bun bake --watch` decides after the
+    /// arguments of `bun` are parsed.
+    pub watch_kill_signal_arg: Option<Box<[u8]>>,
+    pub no_clear_screen: bool,
     pub global_cache: GlobalCache,
     pub offline_mode_setting: Option<OfflineMode>,
     pub run_in_bun: bool,
@@ -383,6 +388,8 @@ impl Default for DebugOptions {
             silent: false,
             hot_reload: HotReload::None,
             watch_kill_signal: bun_core::SignalCode::DEFAULT,
+            watch_kill_signal_arg: None,
+            no_clear_screen: false,
             global_cache: GlobalCache::auto,
             offline_mode_setting: None,
             run_in_bun: false,

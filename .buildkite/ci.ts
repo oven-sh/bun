@@ -934,7 +934,7 @@ function getAotParallelism(platform: Platform, aot: AotTests): number {
     milliseconds += Number(durations?.[lane] ?? durations?.["default"]) || 0;
   }
   const shards = Math.ceil(milliseconds / (aot === "all" ? 1 : 4) / (12 * 60_000)) || (aot === "all" ? 20 : 3);
-  return Math.min(shards, os === "darwin" ? 4 : 40);
+  return Math.min(shards, os === "darwin" ? 8 : 40);
 }
 
 function getTestBunStep(platform: Platform, options: PipelineOptions, testOptions: TestOptions = {}): CommandStep {

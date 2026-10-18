@@ -2,17 +2,18 @@
 // `[lint.rules]`, with `--rule`, and in comments, under any of its names. An unknown rule name is an error.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
 
-async function lint(files: Record<string, string>, args: string[] = []) {
+/** Runs `bun lint ...args` in a temp directory containing `files`, or in its subdirectory `cwd`. */
+async function lint(files: Record<string, string>, args: string[] = [], cwd = ".") {
   using dir = tempDir("bun-lint-native", files);
   await using proc = spawn({
     cmd: [bunExe(), "lint", ...args],
     env: bunEnv,
-    cwd: String(dir),
+    cwd: join(String(dir), cwd),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -74,11 +75,12 @@ const spellings: Record<string, string[]> = {
 const setting = (id: string, severity: string): Setting =>
   id.endsWith("enforce-node-protocol-usage") ? [severity, "always"] : severity;
 
-type Listed = { scope: string; value: string; type_aware: boolean };
+type Listed = { scope: string; value: string; type_aware: boolean; modes: string[] };
 
 async function listed() {
   const { stdout } = await lint({}, ["--rules", "-f", "json"]);
-  const rules = JSON.parse(stdout) as Listed[];
+  // Rules for languages other than JavaScript only exist with an ESLint config.
+  const rules = (JSON.parse(stdout) as Listed[]).filter(it => it.modes.includes("native"));
   expect(rules.length).toBeGreaterThan(1000);
   expect([...new Set(rules.map(it => it.scope))].filter(it => !(it in spellings))).toEqual([]);
   return rules;
@@ -989,10 +991,11 @@ export default B => <B list={[]} />;
     "bunfig.toml": `[lint.categories]\n${lines}\n`,
   });
 
-  test("enable rules from every plugin", async () => {
+  test("enable rules from several plugins", async () => {
+    const react = { "package.json": JSON.stringify({ dependencies: { react: "^19.0.0" } }) };
     const [plain, perf] = await Promise.all([
-      lint(files, ["-f", "json"]),
-      lint({ ...files, ...categories(`perf = "error"`) }, ["-f", "json"]),
+      lint({ ...files, ...react }, ["-f", "json"]),
+      lint({ ...files, ...react, ...categories(`perf = "error"`) }, ["-f", "json"]),
     ]);
     expect(problems(plain.stdout)).toEqual([]);
     expect(problems(perf.stdout)).toEqual([
@@ -1017,6 +1020,429 @@ export default B => <B list={[]} />;
     const { rules } = JSON.parse(stdout);
     expect(rules["no-dupe-class-members"]).toEqual([0]);
     expect(rules["@typescript-eslint/no-dupe-class-members"]).toEqual([2]);
+  });
+});
+
+// Each file breaks one `correctness` or `perf` rule per plugin.
+const frameworkFiles = {
+  "page.jsx": `export const Page = () => <img src="/a.png" style={{}} />;\n`,
+  "sum.test.js": `test("adds", () => {\n  expect(1 + 1);\n});\n`,
+  "util.js": `export const thenable = { then() {} };\n`,
+};
+const correctnessAndPerf = `[lint.categories]\ncorrectness = "error"\nperf = "error"\n`;
+/** A package.json that lists `names` in `devDependencies`. */
+const dependsOn = (...names: string[]) =>
+  JSON.stringify({ name: "app", devDependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])) });
+/** What each framework's plugins report in `frameworkFiles`. unicorn is a general-purpose plugin, so it always reports. */
+const reportedBy = {
+  general: ["util.js:1 unicorn/no-thenable"],
+  react: ["page.jsx:1 jsx-a11y/alt-text", "page.jsx:1 react-perf/jsx-no-new-object-as-prop"],
+  next: ["page.jsx:1 @next/next/no-img-element"],
+  jest: ["sum.test.js:2 jest/valid-expect"],
+  vitest: ["sum.test.js:2 vitest/valid-expect"],
+};
+const sorted = (...lists: string[][]) => lists.flat().sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+
+describe.concurrent("[lint.categories] and framework plugins", () => {
+  const { general, react, next, jest, vitest } = reportedBy;
+  const project = { ...frameworkFiles, "bunfig.toml": correctnessAndPerf };
+
+  test.each([
+    [[], []],
+    [["lodash"], []],
+    [["react"], react],
+    [["next"], next],
+    [
+      ["next", "react"],
+      [...next, ...react],
+    ],
+    [["jest"], jest],
+    [["vitest"], vitest],
+    [
+      ["jest", "next", "react", "vitest"],
+      [...jest, ...next, ...react, ...vitest],
+    ],
+  ])("with %j in package.json, only those frameworks' rules are enabled", async (names, expected) => {
+    const { stdout } = await lint({ ...project, "package.json": dependsOn(...names) }, ["-f", "json"]);
+    expect(problems(stdout)).toEqual(sorted(general, expected));
+  });
+
+  test("without a package.json, no framework's rules are enabled", async () => {
+    const { stdout } = await lint(project, ["-f", "json"]);
+    expect(problems(stdout)).toEqual(general);
+  });
+
+  test("-D works like the key", async () => {
+    const files = { ...frameworkFiles, "package.json": dependsOn("vitest") };
+    const { stdout } = await lint(files, ["-D", "correctness", "-D", "perf", "-f", "json"]);
+    expect(problems(stdout)).toEqual(sorted(general, vitest));
+  });
+
+  test("a rule named in [lint.rules] runs whether or not the project uses its framework", async () => {
+    const rules = `[lint.rules]\n"@next/next/no-img-element" = "warn"\n"jest/valid-expect" = "error"\n`;
+    const [alone, withCategories] = await Promise.all([
+      lint({ ...frameworkFiles, "package.json": dependsOn(), "bunfig.toml": rules }, ["-f", "json"]),
+      lint({ ...project, "package.json": dependsOn(), "bunfig.toml": correctnessAndPerf + rules }, ["-f", "json"]),
+    ]);
+    expect(problems(alone.stdout)).toEqual(sorted(next, jest));
+    expect(problems(withCategories.stdout)).toEqual(sorted(general, next, jest));
+  });
+
+  test("in a monorepo, the closest package.json decides, and a package without a test runner inherits one", async () => {
+    const inside = (directory: string) =>
+      Object.fromEntries(Object.entries(frameworkFiles).map(([name, text]) => [`${directory}/${name}`, text]));
+    const files = {
+      "bunfig.toml": correctnessAndPerf,
+      "package.json": dependsOn("next", "vitest"),
+      "apps/web/package.json": dependsOn("next", "react"),
+      ...inside("apps/web"),
+      "packages/lib/package.json": dependsOn("lodash"),
+      ...inside("packages/lib"),
+      "packages/legacy/package.json": dependsOn("jest"),
+      ...inside("packages/legacy"),
+    };
+    const found = async (args: string[]) => {
+      const results: { filePath: string; messages: { ruleId: string }[] }[] = JSON.parse(
+        (await lint(files, [...args, "-f", "json"])).stdout,
+      );
+      const byDirectory: Record<string, string[]> = {};
+      for (const { filePath, messages } of results) {
+        const directory = filePath.replaceAll("\\", "/").split("/").slice(-3, -1).join("/");
+        (byDirectory[directory] ??= []).push(...messages.map(it => it.ruleId));
+      }
+      for (const rules of Object.values(byDirectory)) rules.sort();
+      return byDirectory;
+    };
+    const rules = (...lists: string[][]) =>
+      lists
+        .flat()
+        .map(it => it.split(" ")[1])
+        .sort();
+    const expected = {
+      "apps/web": rules(general, next, react, vitest),
+      "packages/lib": rules(general, vitest),
+      // It has its own test runner. With vitest's rules too, each problem would be reported twice.
+      "packages/legacy": rules(general, jest),
+    };
+    const names = Object.keys(files).filter(it => /\.jsx?$/.test(it));
+    // Searching directories and naming files take different code paths.
+    expect(await found([])).toEqual(expected);
+    expect(await found(names)).toEqual(expected);
+  });
+
+  describe("a package.json outside the repository", () => {
+    const inside = (directory: string) =>
+      Object.fromEntries(Object.entries(frameworkFiles).map(([name, text]) => [`${directory}/${name}`, text]));
+    const repository = { "project/.git/HEAD": "ref: refs/heads/main\n" };
+    /** Lints from inside `project`, three ways. Detection walks up from a file, and the directory walk goes down from `..`. */
+    const runs = async (files: Record<string, string>) => {
+      const names = Object.keys(files).filter(it => /\.jsx?$/.test(it));
+      const results = await Promise.all([
+        lint(files, ["-f", "json"], "project"),
+        lint(files, [...names.map(it => it.replace("project/", "")), "-f", "json"], "project"),
+        lint(files, ["..", "-f", "json"], "project"),
+      ]);
+      for (const { stderr, exitCode } of results) {
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(1);
+      }
+      return results.map(it => problems(it.stdout));
+    };
+
+    test("doesn't give its test runner to a package in the repository", async () => {
+      const files = {
+        "bunfig.toml": correctnessAndPerf,
+        "package.json": dependsOn("jest"),
+        "project/bunfig.toml": correctnessAndPerf,
+        "project/package.json": dependsOn("lodash"),
+        ...inside("project"),
+        "project/nested/package.json": dependsOn("lodash"),
+        ...inside("project/nested"),
+      };
+      const inherited = sorted(general, general, jest, jest);
+      expect(await runs(files)).toEqual([inherited, inherited, inherited]);
+      const bounded = sorted(general, general);
+      expect(await runs({ ...files, ...repository })).toEqual([bounded, bounded, bounded]);
+      // The working directory makes no difference.
+      const fromAbove = await lint({ ...files, ...repository }, ["project", "-f", "json"]);
+      expect(problems(fromAbove.stdout)).toEqual(bounded);
+    });
+
+    test("still decides about React and Next.js for a repository that has none at its root", async () => {
+      const files = {
+        "bunfig.toml": correctnessAndPerf,
+        "package.json": dependsOn("jest", "next", "react"),
+        "project/bunfig.toml": correctnessAndPerf,
+        // No package.json up to the root of the repository, so the closest one is outside.
+        ...inside("project/scripts"),
+        // Its own package.json decides about the frameworks, and would inherit a test runner.
+        "project/backend/package.json": dependsOn("lodash"),
+        ...inside("project/backend"),
+      };
+      const outside = sorted(general, general, jest, jest, next, react);
+      expect(await runs(files)).toEqual([outside, outside, outside]);
+      // Only the test runner stops at the root of the repository.
+      const bounded = sorted(general, general, next, react);
+      expect(await runs({ ...files, ...repository })).toEqual([bounded, bounded, bounded]);
+    });
+  });
+
+  test("a submodule without a package.json is part of the React project around it", async () => {
+    const files = {
+      ".git/HEAD": "ref: refs/heads/main\n",
+      "package.json": dependsOn("react"),
+      "packages/ui/.git": "gitdir: ../../.git/modules/ui\n",
+      "packages/ui/app.jsx": `export function App({ on }) {\n  if (on) useState(0);\n  return null;\n}\n`,
+    };
+    const results = await Promise.all([
+      lint(files, ["-f", "json"]),
+      lint(files, ["packages/ui/app.jsx", "-f", "json"]),
+      lint(files, ["-f", "json"], "packages/ui"),
+      lint(files, ["app.jsx", "-f", "json"], "packages/ui"),
+    ]);
+    for (const { stdout } of results) expect(problems(stdout)).toContain("app.jsx:2 react-hooks/rules-of-hooks");
+  });
+
+  test("--print-config detects frameworks from the file's path", async () => {
+    const files = {
+      "bunfig.toml": correctnessAndPerf,
+      "package.json": dependsOn(),
+      "web/package.json": dependsOn("next"),
+    };
+    const isOn = async (file: string) =>
+      JSON.parse((await lint(files, ["--print-config", file])).stdout).rules["@next/next/no-img-element"];
+    expect(await Promise.all([isOn("web/page.jsx"), isOn("page.jsx")])).toEqual([[2], undefined]);
+  });
+});
+
+describe.concurrent(`"plugin/*" = "off" turns off every rule of a plugin`, () => {
+  const { general, react, next, jest, vitest } = reportedBy;
+  const everything = { ...frameworkFiles, "package.json": dependsOn("jest", "next", "react", "vitest") };
+  const found = async (bunfig: string, args: string[] = [], files: Record<string, string> = everything) =>
+    problems((await lint({ ...files, "bunfig.toml": bunfig }, [...args, "-f", "json"])).stdout);
+
+  test("off wins over a category", async () => {
+    const rules = `[lint.rules]\n"nextjs/*" = "off"\n"jest/*" = "off"\n`;
+    expect(await found(correctnessAndPerf + rules)).toEqual(sorted(general, react, vitest));
+  });
+
+  test.each(["nextjs", "@next/next"])("%s/* works, like every other spelling of the plugin's name", async name => {
+    expect(await found(`${correctnessAndPerf}[lint.rules]\n"${name}/*" = "off"\n`)).toEqual(
+      sorted(general, react, jest, vitest),
+    );
+  });
+
+  test("it turns a general-purpose plugin off too", async () => {
+    expect(await found(`${correctnessAndPerf}[lint.rules]\n"unicorn/*" = "off"\n`)).toEqual(
+      sorted(react, next, jest, vitest),
+    );
+  });
+
+  test("react/* and react-hooks/* are separate plugins", async () => {
+    const hooks = `export function App({ on }) {\n  if (on) useState(0);\n  return <div children="a" />;\n}\n`;
+    const files = { "app.jsx": hooks, "package.json": dependsOn("react") };
+    const [ofHooks, ofReact] = ["app.jsx:2 react-hooks/rules-of-hooks", "app.jsx:3 react/no-children-prop"];
+    const correctness = `[lint.categories]\ncorrectness = "error"\n`;
+    const ofBoth = async (bunfig: string) => (await found(bunfig, [], files)).filter(it => it.includes(" react"));
+    const off = (name: string) => ofBoth(`${correctness}[lint.rules]\n"${name}/*" = "off"\n`);
+    expect(await Promise.all([ofBoth(correctness), off("react"), off("react-hooks"), off("react_hooks")])).toEqual([
+      [ofHooks, ofReact],
+      [ofHooks],
+      [ofReact],
+      [ofReact],
+    ]);
+  });
+
+  test("react/* leaves react/jsx-uses-react on, which only keeps no-unused-vars quiet about React", async () => {
+    const files = {
+      "app.jsx": `import React from "react";\nexport const App = () => <div />;\n`,
+      "package.json": dependsOn("react"),
+    };
+    const off = `[lint.rules]\n"react/*" = "off"\n`;
+    expect(await found(off, [], files)).toEqual([]);
+    expect(await found(`${off}"react/jsx-uses-react" = "off"\n`, [], files)).toEqual(["app.jsx:1 no-unused-vars"]);
+  });
+
+  describe("a rule that has an ESLint and a typescript-eslint version", () => {
+    const unused = "const unused = 1;\nexport {};\n";
+    const files = { "a.js": unused, "b.ts": unused };
+    const [inJavaScript, inTypeScript] = ["a.js:1 no-unused-vars", "b.ts:1 @typescript-eslint/no-unused-vars"];
+
+    test.each([
+      // The defaults report it in both languages.
+      ["", [inJavaScript, inTypeScript]],
+      [`"@typescript-eslint/*" = "off"`, [inJavaScript]],
+      [`"typescript/*" = "off"`, [inJavaScript]],
+      [`"eslint/*" = "off"`, [inTypeScript]],
+      [`"eslint/*" = "off"\n"@typescript-eslint/*" = "off"`, []],
+      // Naming the rule still sets both, and overrides the wildcards.
+      [`"eslint/*" = "off"\n"@typescript-eslint/*" = "off"\n"no-unused-vars" = "error"`, [inJavaScript, inTypeScript]],
+    ])("%j only turns it off in that plugin's language", async (lines, expected) => {
+      const all = await found(`[lint]\ntypeAware = false\n[lint.rules]\n${lines}\n`, [], files);
+      expect(all.filter(it => it.endsWith("no-unused-vars"))).toEqual(expected);
+    });
+  });
+
+  test("a single rule overrides the wildcard, whichever is written first", async () => {
+    const single = `"jsx-a11y/alt-text" = "error"`;
+    const wildcard = `"jsx-a11y/*" = "off"`;
+    const expected = ["page.jsx:1 jsx-a11y/alt-text"];
+    expect(await found(`[lint.rules]\n${single}\n${wildcard}\n`)).toEqual(expected);
+    expect(await found(`[lint.rules]\n${wildcard}\n${single}\n`)).toEqual(expected);
+  });
+
+  test("--rule overrides [lint.rules], for wildcards and single rules alike", async () => {
+    const altText = ["page.jsx:1 jsx-a11y/alt-text"];
+    const single = (severity: string) => `[lint.rules]\n"jsx-a11y/alt-text" = "${severity}"\n`;
+    const wildcard = `[lint.rules]\n"jsx-a11y/*" = "off"\n`;
+    const both = `${wildcard}"jsx-a11y/alt-text" = "error"\n`;
+    expect(
+      await Promise.all([
+        // A wildcard flag beats a single rule in the file, with or without a wildcard in the file.
+        found(single("error"), ["--rule", "jsx-a11y/*: off"]),
+        found(both, ["--rule", "jsx-a11y/*: off"]),
+        // A single-rule flag beats a wildcard in the file.
+        found(wildcard, ["--rule", "jsx-a11y/alt-text: error"]),
+        // Between two flags, the single rule wins in either order.
+        found(single("off"), ["--rule", "jsx-a11y/*: off", "--rule", "jsx-a11y/alt-text: error"]),
+        found(single("off"), ["--rule", "jsx-a11y/alt-text: error", "--rule", "jsx-a11y/*: off"]),
+        // A wildcard flag for one plugin leaves the file's rules for other plugins alone.
+        found(single("error"), ["--rule", "unicorn/*: off"]),
+        // -A and -D are flags like --rule.
+        found(single("off"), ["-D", "jsx-a11y/alt-text", "--rule", "jsx-a11y/*: off"]),
+        found(single("off"), ["--rule", "jsx-a11y/alt-text: error", "-A", "jsx-a11y/*"]),
+        found(single("error"), ["-A", "jsx-a11y/*"]),
+      ]),
+    ).toEqual([[], [], altText, altText, altText, altText, altText, altText, []]);
+  });
+
+  test("a flag also wins for files outside the directory of bunfig.toml", async () => {
+    const files = {
+      "app/bunfig.toml": `[lint.rules]\n"unicorn/no-null" = "warn"\n`,
+      "app/a.js": "export const a = null;\n",
+      "shared/x.js": "export const x = null;\n",
+    };
+    const run = async (args: string[]) => problems((await lint(files, ["..", ...args, "-f", "json"], "app")).stdout);
+    expect(await run([])).toEqual(["a.js:1 unicorn/no-null", "x.js:1 unicorn/no-null"]);
+    expect(await run(["--rule", "unicorn/*: off"])).toEqual([]);
+    expect(await run(["-A", "unicorn/*"])).toEqual([]);
+  });
+
+  test("--rule, -A and [[lint.overrides]] accept it", async () => {
+    const withoutNext = sorted(general, react, jest, vitest);
+    const override = `[[lint.overrides]]\nfiles = ["*.jsx"]\nrules = { "nextjs/*" = "off" }\n`;
+    expect(await found(correctnessAndPerf, ["--rule", "nextjs/*: off"])).toEqual(withoutNext);
+    expect(await found(correctnessAndPerf, ["-A", "nextjs/*"])).toEqual(withoutNext);
+    expect(await found(correctnessAndPerf, ["--rule", "nextjs/*: [off]"])).toEqual(withoutNext);
+    expect(await found(`${correctnessAndPerf}[lint.rules]\n"nextjs/*" = ["off"]\n`)).toEqual(withoutNext);
+    expect(await found(correctnessAndPerf + override)).toEqual(withoutNext);
+  });
+
+  test("it covers the rules of a JavaScript plugin", async () => {
+    const plugin = `const rule = { create: context => ({ Program: node => context.report({ node, message: "found" }) }) };
+export default { meta: { name: "demo" }, rules: { one: rule, two: rule } };\n`;
+    const files = { "a.js": "export {};\n", "demo.js": plugin };
+    const load = `[lint]\nplugins = ["./demo.js"]\nignorePatterns = ["demo.js"]\n[lint.rules]\n`;
+    const named = `${load}"demo/one" = "error"\n"demo/two" = "error"\n`;
+    expect(await found(named, [], files)).toEqual(["a.js:1 demo/one", "a.js:1 demo/two"]);
+    expect(await found(named, ["--rule", "demo/*: off"], files)).toEqual([]);
+    expect(await found(`${load}"demo/*" = "off"\n"demo/two" = "error"\n`, [], files)).toEqual(["a.js:1 demo/two"]);
+  });
+
+  test.each([
+    [`"nextj/*" = "off"`, `Unknown plugin "nextj"\n  Did you mean "nextjs/*"?`],
+    [`"jsx-ally/*" = "off"`, `Unknown plugin "jsx-ally"\n  Did you mean "jsx-a11y/*"?`],
+    [`"m/*" = "off"`, `Unknown plugin "m"\n  Did you mean "n/*"?`],
+    [
+      `"perfectionist/*" = "off"`,
+      `Unknown rule "perfectionist/*"\n  To use a rule from an ESLint plugin, add the plugin`,
+    ],
+    [`"/*" = "off"`, `Unknown rule "/*"`],
+    [`"nextjs/*" = "always"`, `"nextjs/*" can only be "off"\n`],
+    [`"nextjs/*" = "warn"`, `"nextjs/*" can only be "off"\n  To turn rules on, name them or use [lint.categories]`],
+    [`"nextjs/*" = ["error", {}]`, `"nextjs/*" can only be "off"\n`],
+  ])("%s is rejected", async (line, message) => {
+    const { stdout, stderr, exitCode } = await lint({ ...everything, "bunfig.toml": `[lint.rules]\n${line}\n` });
+    expect(stderr).toContain(message);
+    expect(stderr).toContain("at bunfig.toml:2:");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(2);
+  });
+
+  test.each([[["--rule", "nextjs/*: error"]], [["-W", "nextjs/*"]], [["-D", "nextjs/*"]]])(
+    "%j is rejected",
+    async args => {
+      const { stdout, stderr, exitCode } = await lint(everything, args);
+      expect(stderr).toContain(`"nextjs/*" can only be "off"\n  To turn rules on, name them or use [lint.categories]`);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(2);
+    },
+  );
+
+  // Only native mode expands wildcards. With another config for the working directory they would silently do nothing.
+  describe.each([
+    [
+      "eslint.config.js",
+      `export default [{ rules: { "no-debugger": "error" } }];\n`,
+      "eslint.config.js, an ESLint config.",
+    ],
+    [
+      ".eslintrc.json",
+      `{ "root": true, "rules": { "no-debugger": "error" } }\n`,
+      ".eslintrc.json, an ESLint 8 config.",
+    ],
+    [".oxlintrc.json", `{ "rules": { "no-debugger": "error" } }\n`, ".oxlintrc.json, an oxlint config."],
+    // No config file, but the dependency makes the run use oxlint's defaults.
+    ["package.json", `{ "devDependencies": { "oxlint": "1.0.0" } }\n`, "oxlint's defaults."],
+  ])("next to %s", (name, config, uses) => {
+    const files = { "a.js": "export {};\n", [name]: config };
+    const message = `error: "unicorn/*" only works with Bun's own lint config\n  This run uses ${uses}\n`;
+
+    test.each([
+      [`[lint.rules]\n"unicorn/*" = "off"\n`, "2:1"],
+      [`[[lint.overrides]]\nfiles = ["*.js"]\nrules = { "unicorn/*" = "off" }\n`, "3:11"],
+    ])("%j is rejected", async (bunfig, at) => {
+      const { stdout, stderr, exitCode } = await lint({ ...files, "bunfig.toml": bunfig });
+      expect(stderr).toContain(`${message}    at bunfig.toml:${at}\n`);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(2);
+    });
+
+    test.each([[["--rule", "unicorn/*: off"]], [["-A", "unicorn/*"]]])("%j is rejected", async args => {
+      const { stdout, stderr, exitCode } = await lint(files, args);
+      expect(stderr).toBe(message);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(2);
+    });
+  });
+
+  test("--no-config-lookup is rejected too, and the error doesn't mention a file", async () => {
+    const { stderr, exitCode } = await lint({ "a.js": "export {};\n" }, [
+      "--no-config-lookup",
+      "--rule",
+      "unicorn/*: off",
+    ]);
+    expect(stderr).toBe(
+      `error: "unicorn/*" only works with Bun's own lint config\n  This run uses ESLint's defaults.\n`,
+    );
+    expect(exitCode).toBe(2);
+  });
+
+  test.each([
+    ["packages/legacy/.eslintrc.json", `{ "root": true, "rules": { "no-debugger": "error" } }\n`],
+    ["packages/legacy/.oxlintrc.json", `{ "rules": { "no-debugger": "error" } }\n`],
+    ["packages/legacy/eslint.config.js", `export default [{ rules: { "no-debugger": "error" } }];\n`],
+  ])("a nested %s doesn't fail the run, and the wildcard applies to the rest of the project", async (name, config) => {
+    // ES5, which is what ESLint 8 parses by default.
+    const code = "debugger;\nvar thenable = { then: function () {} };\n";
+    const files = { "a.js": code, "packages/legacy/b.js": code, [name]: config };
+    const bunfig = `[lint.categories]\ncorrectness = "error"\n[lint.rules]\n"unicorn/*" = "off"\n`;
+    const { stdout, stderr, exitCode } = await lint({ ...files, "bunfig.toml": bunfig }, ["-f", "json"]);
+    expect(stderr).not.toContain("error:");
+    const found = problems(stdout).filter(it => /no-debugger|unicorn/.test(it));
+    expect(found.filter(it => it.startsWith("a.js"))).toEqual(["a.js:1 no-debugger"]);
+    expect(found).toContain("b.js:1 no-debugger");
+    expect(exitCode).toBe(1);
   });
 });
 

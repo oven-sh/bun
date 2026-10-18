@@ -333,6 +333,8 @@ struct us_socket_t {
   unsigned char ssl_raw_tap : 1;
   /* Sealed ciphertext of this socket waits for the kernel (openssl.c us_ssl_spill_t). */
   unsigned char ssl_spilled : 1;
+  /* Some of that ciphertext was thrown away before the kernel took it. */
+  unsigned char ssl_spill_dropped : 1;
   /* A graceful TLS shutdown arrived while ciphertext was still
    * spilled (see ssl_emit); the shutdown re-runs once the
    * spill drains so those records are not cut off by our FIN/close_notify. */

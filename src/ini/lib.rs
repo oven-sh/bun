@@ -109,6 +109,7 @@ bun_core::comptime_string_map! {
 
 pub use draft::{
     NpmrcDiagnostics, Parser, RegistryKey, load_npmrc, load_npmrc_config, npm_config_bool,
+    npmrc_bool,
 };
 
 mod draft {
@@ -1041,7 +1042,7 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     /// npm's Boolean coercion (`@npmcli/config` parse-field, then nopt `validateBoolean`).
-    fn npmrc_bool(expr: &Expr) -> Option<bool> {
+    pub fn npmrc_bool(expr: &Expr) -> Option<bool> {
         match &expr.data {
             ExprData::EBoolean(b) => Some(b.value),
             ExprData::ENull(_) => Some(false),
@@ -1075,16 +1076,18 @@ mod draft {
     }
 
     /// Reads every `.npmrc` into `install`; `bunfig` only tells the diagnostics which registries exist.
-    pub fn load_npmrc_config(
+    /// Returns the path of the first `.npmrc` that exists but could not be read.
+    pub fn load_npmrc_config<'a>(
         install: &mut BunInstall,
         bunfig: &BunInstall,
         env: &DotEnvLoader,
         diagnostics: NpmrcDiagnostics,
-        npmrc_paths: &[&ZStr],
-    ) {
+        npmrc_paths: &[&'a ZStr],
+    ) -> Option<&'a ZStr> {
         let mut log = Log::init();
         let mut configs: Vec<ConfigItem> = Vec::new();
         let mut sources: Vec<Source> = Vec::new();
+        let mut unreadable = None;
 
         for &npmrc_path in npmrc_paths {
             match bun_ast::source_from_file(
@@ -1093,15 +1096,21 @@ mod draft {
             ) {
                 Ok(source) => sources.push(source),
                 Err(err) => {
-                    if diagnostics == NpmrcDiagnostics::Print
+                    // A directory named `.npmrc` gets the warning too, but it is not reported to
+                    // the caller as unreadable.
+                    let is_file = err.is_unreadable_file(npmrc_path.as_bytes());
+                    if (is_file || err.is_directory())
+                        && diagnostics == NpmrcDiagnostics::Print
                         && log.level.at_least(bun_ast::Level::Warn)
-                        && err.is_unreadable_file(npmrc_path.as_bytes())
                     {
                         bun_core::warn!(
-                            "{}\nThe registry and auth settings in <b>{}<r> are not applied.",
+                            "{}\nignoring registry and auth settings in <b>{}<r>",
                             err,
                             bstr::BStr::new(npmrc_path.as_bytes()),
                         );
+                    }
+                    if is_file {
+                        unreadable.get_or_insert(npmrc_path);
                     }
                     continue;
                 }
@@ -1121,6 +1130,7 @@ mod draft {
 
         resolve_url_auth(install, bunfig, &configs, &sources, &mut log);
         report_log(&mut log, diagnostics);
+        unreadable
     }
 
     /// Prints and clears `log`, under a header that names the file of its first error.
@@ -1337,7 +1347,7 @@ mod draft {
                     || *item.registry_url == registry.key[..registry.key.len() - 1]
             }) {
                 log.add_error_opts(
-                    b"empty _auth value: this line supplies no credentials",
+                    b"ignoring empty _auth value",
                     bun_ast::AddErrorOptions {
                         source: Some(&sources[item.source_idx as usize]),
                         loc: item.loc,
@@ -1381,6 +1391,8 @@ mod draft {
         // deinitialized at the end of the scope.
         // We need to dupe all strings
         let out = &parser.out;
+        // Relative paths in a `.npmrc` are resolved against the directory that contains it.
+        let dir = bun_core::dirname(source.path.text).unwrap_or_default();
 
         if let Some(query) = out.as_property(b"registry") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
@@ -1392,7 +1404,7 @@ mod draft {
 
         if let Some(query) = out.as_property(b"cache") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
-                install.cache_directory = Some(Box::<[u8]>::from(str_));
+                install.cache_directory = Some(BunInstall::resolve_path(dir, str_));
             } else if let Some(b) = query.expr.as_bool() {
                 install.disable_cache = Some(!b);
             }
@@ -1430,7 +1442,7 @@ mod draft {
 
         if let Some(query) = cafile {
             if let Some(cafile) = query.expr.as_string_cloned(bump)? {
-                install.cafile = Some(Box::<[u8]>::from(cafile));
+                install.cafile = Some(BunInstall::resolve_path(dir, cafile));
             }
         }
 
@@ -1560,10 +1572,7 @@ mod draft {
                     log.add_warning_fmt_no_excerpt(
                         source,
                         keyexpr.loc,
-                        format_args!(
-                            "{} is not a known .npmrc option; ignoring this line",
-                            bstr::BStr::new(word),
-                        ),
+                        format_args!("ignoring unknown .npmrc option {}", bstr::BStr::new(word),),
                     );
                 }
                 continue;

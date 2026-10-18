@@ -418,6 +418,10 @@ describe.concurrent("bun pm pkg", () => {
           'd="str \\u00e9\\n"',
           'e={"k":[1,{"m":null}],"":""}',
           "f= [ true ,\tfalse ]\n",
+          "g=0.5",
+          "h= 100\n",
+          "i=0e1",
+          'j=[0,-0.5 , 1e3,{"a":10,"b": [ 100 ]}]',
           "--json",
         ],
         dir,
@@ -432,6 +436,10 @@ describe.concurrent("bun pm pkg", () => {
         d: "str \u00e9\n",
         e: { k: [1, { m: null }], "": "" },
         f: [true, false],
+        g: 0.5,
+        h: 100,
+        i: 0,
+        j: [0, -0.5, 1000, { a: 10, b: [100] }],
       });
       expect(code).toBe(0);
     });
@@ -452,6 +460,21 @@ describe.concurrent("bun pm pkg", () => {
       ["//c 1", "JSON does not support comments"],
       ["1 2", "Unexpected 2"],
       ["[1] {}", "Unexpected {"],
+      // JavaScript literals that are not JSON
+      ["010", "Syntax Error"],
+      ["-010", "Syntax Error"],
+      ["0x10", "Syntax Error"],
+      ["0b11", "Syntax Error"],
+      ["1_000", "Syntax Error"],
+      [".5", "Syntax Error"],
+      ["5.", "Syntax Error"],
+      ["'text'", "Syntax Error"],
+      ["[010]", "Syntax Error"],
+      ['{"a": 010}', "Syntax Error"],
+      ['{"a":[1,{"b":0x10}]}', "Syntax Error"],
+      ['[1, "a", .5]', "Syntax Error"],
+      ["['text']", "Syntax Error"],
+      ["{'a':1}", "Syntax Error"],
     ])("should reject the invalid JSON value %s with --json flag", async (value, message) => {
       using dir = makeTestDir();
       const before = await readRaw(dir);
@@ -463,6 +486,22 @@ describe.concurrent("bun pm pkg", () => {
       );
       expect(await readRaw(dir)).toBe(before);
       expect(code).toBe(1);
+    });
+
+    it("should write every character of a key or a string as valid JSON", async () => {
+      const all = Array.from({ length: 0x10000 }, (_, i) => String.fromCharCode(i)).join("") + "\u{1f600}";
+      const original = { name: "n", version: "1.0.0", description: "a\u001b[1mb\v", [all]: all };
+      using dir = tempDir("pm-pkg-escapes", { "package.json": JSON.stringify(original, null, 2) });
+
+      const { error, code } = await runPmPkg(["set", "x=1"], String(dir));
+      expect(error).toBe("");
+      const raw = await readRaw(String(dir));
+      expect(raw).toContain('"description": "a\\u001B[1mb\\u000B"');
+      expect(JSON.parse(raw)).toEqual({ ...original, x: "1" });
+      expect(code).toBe(0);
+
+      const { output } = await runPmPkg(["get", "description"], String(dir));
+      expect(output).toBe('"a\\u001B[1mb\\u000B"\n');
     });
 
     it("should treat values as strings without --json flag", async () => {

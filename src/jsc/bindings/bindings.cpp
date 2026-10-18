@@ -34,6 +34,7 @@
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/ArrayBufferView.h"
 #include "JavaScriptCore/ArrayStorage.h"
+#include "JavaScriptCore/SourceProviderCache.h"
 #include "JavaScriptCore/SparseArrayValueMap.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
@@ -2623,27 +2624,6 @@ void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
     arg0->deref();
 }
 
-WebCore::FetchHeaders* WebCore__FetchHeaders__createValueNotJS(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const EncodedSlice* arg3, uint32_t count)
-{
-    auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
-    Vector<KeyValuePair<String, String>> pairs;
-    pairs.reserveCapacity(count);
-    EncodedSlice buf = *arg3;
-    for (uint32_t i = 0; i < count; i++) {
-        WTF::String name = Zig::toStringCopy(buf, arg1[i]);
-        WTF::String value = Zig::toStringCopy(buf, arg2[i]);
-        pairs.unsafeAppendWithoutCapacityCheck(KeyValuePair<String, String>(name, value));
-    }
-
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(WTF::move(pairs))));
-    if (throwScope.exception()) {
-        headers->deref();
-        return nullptr;
-    }
-    return headers;
-}
-
 void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const EncodedSlice* arg1, EncodedSlice* arg2, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
@@ -2829,7 +2809,7 @@ static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, J
         // bun_sys::Error tags are static literals; "write" and "close" are common strings.
         JSC::JSValue syscall;
         auto staticSyscall = err.syscall.tag == BunStringTag::StaticEncodedSlice && !Zig::isTaggedUTF16Ptr(err.syscall.impl.encoded.ptr)
-            ? std::span<const Latin1Character> { Zig::untag(err.syscall.impl.encoded.ptr), err.syscall.impl.encoded.len }
+            ? std::span<const Latin1Character> { byteCast<Latin1Character>(Zig::untag(err.syscall.impl.encoded.ptr)), err.syscall.impl.encoded.len }
             : std::span<const Latin1Character> {};
         if (equalSpans(staticSyscall, "write"_span8))
             syscall = Bun::commonStrings(vm).writeString();
@@ -3763,7 +3743,7 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGl
         auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, Zig::untagVoid(str.ptr), free_global_string));
         return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::move(ref)));
     } else {
-        auto ref = String(ExternalStringImpl::create({ Zig::untag(str.ptr), str.len }, Zig::untagVoid(str.ptr), free_global_string));
+        auto ref = String(ExternalStringImpl::create({ byteCast<Latin1Character>(Zig::untag(str.ptr)), str.len }, Zig::untagVoid(str.ptr), free_global_string));
         return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::move(ref)));
     }
 }
@@ -4518,7 +4498,7 @@ JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObjec
     }
 
     // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
-    const auto propertyString = String(StringImpl::createWithoutCopying({ arg1, arg2 }));
+    const auto propertyString = String(StringImpl::createWithoutCopying({ byteCast<Latin1Character>(arg1), arg2 }));
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
     const auto property = JSC::PropertyName(identifier);
 
@@ -4544,7 +4524,7 @@ JSC::EncodedJSValue JSC__JSValue__getPropertyValue(JSC::EncodedJSValue encodedVa
     }
 
     // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
-    const auto propertyString = String(StringImpl::createWithoutCopying({ propertyName, propertyNameLength }));
+    const auto propertyString = String(StringImpl::createWithoutCopying({ byteCast<Latin1Character>(propertyName), propertyNameLength }));
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
     const auto property = JSC::PropertyName(identifier);
 
@@ -4884,7 +4864,7 @@ BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
 bool JSC__JSValue__getClassInfoName(JSValue value, const uint8_t** outPtr, size_t* outLen)
 {
     if (auto info = value.classInfoOrNull()) {
-        *outPtr = info->className.span8().data();
+        *outPtr = byteCast<uint8_t>(info->className.span8().data());
         *outLen = info->className.span8().size();
         return true;
     }
@@ -4997,8 +4977,10 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 
     vm->finalizeSynchronousJSExecution();
 
+    // A full collection only drops the caches that nothing has used since the one before it.
+    vm->sourceProviderCacheMap.clear();
+
     if (sync) {
-        vm->clearSourceProviderCaches();
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
@@ -5984,34 +5966,6 @@ CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC::EncodedJSValue timeValue)
     return number;
 }
 
-extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnByValue(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue propertyValue)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSObject* object = JSValue::decode(value).getObject();
-    JSC::JSValue property = JSValue::decode(propertyValue);
-    uint32_t index;
-
-    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
-    if (property.getUInt32(index)) {
-        bool hasSlot = object->getOwnPropertySlotByIndex(object, globalObject, index, slot);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!hasSlot)
-            return {};
-
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(slot.getValue(globalObject, index)));
-    } else {
-        auto propertyName = property.toPropertyKey(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!object->getOwnNonIndexPropertySlot(vm, object->structure(), propertyName, slot))
-            return {};
-
-        RETURN_IF_EXCEPTION(scope, {});
-
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(slot.getValue(globalObject, propertyName)));
-    }
-}
-
 extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__parseDate(JSC::JSGlobalObject* globalObject, const BunString* str)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -6440,15 +6394,6 @@ extern "C" EncodedJSValue JSFunction__createFromZig(
         intrinsic,
         constructorOrNull ? constructorOrNull : JSC::callHostFunctionAsConstructor,
         nullptr));
-}
-
-extern "C" EncodedJSValue JSArray__constructArray(
-    JSC::JSGlobalObject* global,
-    const JSValue* values,
-    size_t values_len)
-{
-    return JSValue::encode(
-        JSC::constructArray(global, (ArrayAllocationProfile*)nullptr, values, values_len));
 }
 
 extern "C" EncodedJSValue JSArray__constructEmptyArray(

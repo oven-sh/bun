@@ -24,7 +24,7 @@ src/server.ts
 Formatted 2 files, 2 unchanged [3.47ms]
 ```
 
-`bun fmt` rewrites the files in the current directory that need it and prints their names. It skips `node_modules`, anything in your `.gitignore`, minified files (`*.min.js`, `*.min.css`) and lock files such as `package-lock.json`.
+`bun fmt` rewrites the files in the current directory that need it and prints their names. It skips `node_modules`, anything in your `.gitignore` or `.git/info/exclude`, minified files (`*.min.js`, `*.min.css`) and lock files such as `package-lock.json`.
 
 To format specific files, pass paths or globs.
 
@@ -167,7 +167,7 @@ sortTailwindcss = true
 <a className="m-2 flex p-4" /> // [!code ++]
 ```
 
-Classes are sorted in Tailwind's recommended order, in `class` and `className` and in calls to `clsx`, `cn`, `cva`, `twMerge`, and [a few more](/runtime/bunfig#format-sorttailwindcss). The order comes from the `tailwindcss` package in your project, so version 3 or 4 has to be installed.
+Classes are sorted in Tailwind's recommended order, in `class` and `className` and in calls to `clsx`, `cn`, `cva`, `twMerge`, and [a few more](/runtime/bunfig#format-sorttailwindcss). They are sorted with your project's `tailwindcss`, version 3 or 4, and are left as they are if it isn't installed.
 
 If your `.prettierrc` lists `prettier-plugin-tailwindcss`, sorting is already on, with that plugin's options and defaults.
 
@@ -187,6 +187,8 @@ sortPackageJson = true
 ```
 
 Keys go in the conventional order: `name`, `version`, `description`, and so on.
+
+If your `.prettierrc` lists `prettier-plugin-packagejson`, sorting is already on and uses that plugin's order.
 
 ```json title="Before"
 {
@@ -302,6 +304,8 @@ Already have a `.prettierrc` or an `.oxfmtrc.json`? `bun fmt` reads it and print
 ```
 
 If `package.json` has a `fmt` script, `bun fmt` runs that script. Inside the script, `bun fmt` is the formatter.
+
+Writing a tool that calls Bun in projects you don't control? Pass `--no-script`: `bun fmt --no-script` is always the formatter.
 
 Astro isn't built in. If your `.prettierrc` lists its plugin, Bun sends those files to your installed Prettier. To see which files those are, and which packages you can uninstall:
 

@@ -48,6 +48,7 @@ impl<'a> StagedEntry<'a> {
         let cache = Dir::borrow(&cache_dir);
         let mut retry = RenameRetry::new();
         let mut attempts = 0;
+        let mut emptying_err: Option<sys::Error> = None;
         loop {
             // `rename` replaces only an empty directory: never a published folder.
             let Err(err) = retry.rename(self.parent, self.name, cache_dir, to) else {
@@ -58,10 +59,13 @@ impl<'a> StagedEntry<'a> {
             // Nothing below can remove a published folder, even one that appears meanwhile.
             match cache.open_at_with(to.as_bytes(), O::RDONLY | O::CLOEXEC | O::NOFOLLOW) {
                 Ok(published) if is_complete(&published) => return Ok(Some(published)),
-                _ if attempts == MAX_ATTEMPTS => return Err(err),
+                // Prefer the error from emptying the folder: it says why the rename kept failing.
+                _ if attempts == MAX_ATTEMPTS => {
+                    return Err(emptying_err.map_or(err, RenameError::from));
+                }
                 // Emptied through its own handle; `rmdir` only removes an empty folder.
                 Ok(incomplete) => {
-                    delete_children(&incomplete);
+                    emptying_err = incomplete.delete_children().err();
                     incomplete.close();
                     let _ = sys::rmdirat(cache_dir, to);
                 }
@@ -79,14 +83,6 @@ impl Drop for StagedEntry<'_> {
         if !self.renamed {
             let _ = Dir::borrow(&self.parent).delete_tree(self.name.as_bytes());
         }
-    }
-}
-
-/// Deletes what `dir` holds. Nothing is looked up through the name of `dir`.
-fn delete_children(dir: &Dir) {
-    let mut entries = sys::iterate_dir(dir.fd());
-    while let Ok(Some(entry)) = entries.next() {
-        let _ = dir.delete_tree(entry.name.slice_u8());
     }
 }
 

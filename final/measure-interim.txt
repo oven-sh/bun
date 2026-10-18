@@ -1,0 +1,20 @@
+The release builds of `main` and of this head are running. The sizes and the instruction counts come with them. This PR stays a draft until they are here.
+
+What is known for this head:
+
+| | `main` | this PR |
+|---|---|---|
+| `size_of` `H2FrameParser` (it holds the `Connection`) | 1496 | 1520 |
+| `size_of` `Connection` | 448 | 472 |
+| `size_of` legacy `Stream` | 104 | 104 |
+
+Per refused stream (gdb breakpoint hit counts on debug builds, first flight at limit 10, measured at an earlier head with the same refusal path):
+
+| Per refused stream | before | this PR |
+|---|---|---|
+| `Box<Stream>` | 1 | 0 |
+| engine stream map inserts | 1 | 0 |
+| JS calls | 3 | 0 |
+| header blocks made into JS objects | 1 | 0 |
+
+Per admitted stream nothing changes: 1 `Box<Stream>`, 1 map insert, the same JS calls. Host functions +0, codegen entries +0.

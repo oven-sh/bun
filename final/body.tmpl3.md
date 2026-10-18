@@ -5,14 +5,14 @@
 
 ### Fix
 - `Connection::handle_headers` refuses the stream before it makes a stream entry: RST_STREAM(REFUSED_STREAM), charged to `maxSessionInvalidFrames`, like node.
-- `H2FrameParser` counts the open peer streams in a `Cell<u32>`, and the JS count is deleted. A slot is free when its stream closes, as before.
-- Verified: `test/js/node/http2/node-http2-max-concurrent-streams.test.ts` (22 tests fail before). Its last test runs the file on Node.js.
+- `H2FrameParser` counts the open peer streams in a `Cell<u32>`. The JS count is deleted.
+- Verified: `test/js/node/http2/node-http2-max-concurrent-streams.test.ts` (22 tests fail before). Its last test runs the file on Node.js. Also all of `test/js/node/http2/` and node's `test-http2-*` tests.
 - Self-reviewed: SELF_REVIEW_LINE
 
 ### Background
 - The engine (`connection.rs`) parses inbound frames. `H2FrameParser` embeds it and writes responses.
-- A refused stream has no engine entry. `refused_ids` gives a later frame on its id no second answer, as on 1.4.3 and node.
-- Considered: hold the slot of an ended stream until the read ends, like node. Removed: it cannot follow node's writes (Notes).
+- A refused stream has no engine entry. `refused_ids` keeps later frames on its id without a second answer (Notes).
+- Considered and removed: holding the slot of an ended stream until the read ends. It cannot follow node's writes (Notes).
 - Two questions for a maintainer are in Notes: the budget move, and a limit that the client ACKed.
 
 ### Downsides

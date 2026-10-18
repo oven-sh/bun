@@ -311,9 +311,6 @@ fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
 /// flag (`RunCommand::create_fake_temporary_node_executable` lives there).
 pub(crate) use bun_install::PRETEND_TO_BE_NODE;
 
-/// This is set `true` during `Command.which()` if argv0 is "bunx"
-static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
 bun_core::declare_scope!(CLI, hidden);
 
 pub(crate) type LoaderColonList =
@@ -626,31 +623,42 @@ pub(crate) mod command {
 
     // ──────────────────────────────────────────────────────────────────────────
     // Canonical home: src/runtime/cli/mod.rs, inside `pub mod command { ... }`
-    // (crate path `bun_runtime::cli::command::{is_bun_x, is_node, which}`).
+    // (crate path `bun_runtime::cli::command::{Argv0, which}`).
     //
-    // The `is_node` branch of `which()` must clear
+    // The `Argv0::Node` branch of `which()` must clear
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags.
     // ──────────────────
-    fn is_bun_x(argv0: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx");
-        }
-        #[cfg(not(windows))]
-        {
-            strings::ends_with(argv0, b"bunx")
-        }
+    /// What the name that a process was started under makes it.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Argv0 {
+        Bun,
+        Bunx,
+        Node,
+        /// The link that `bun install` puts on the `PATH` of lifecycle scripts.
+        NodeGyp,
     }
 
-    fn is_node(argv0: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return strings::ends_with(argv0, b"node.exe") || strings::ends_with(argv0, b"node");
+    impl Argv0 {
+        /// The three other names end in four bytes that `bun` does not, so a process started as
+        /// `bun` compares nothing else.
+        #[inline]
+        fn classify(argv0: &[u8]) -> Argv0 {
+            #[cfg(windows)]
+            let argv0 = argv0.strip_suffix(b".exe").unwrap_or(argv0);
+            match argv0.last_chunk::<4>() {
+                Some(b"bunx") => Argv0::Bunx,
+                Some(b"node") => Argv0::Node,
+                Some(b"-gyp") if Self::is_node_gyp(argv0) => Argv0::NodeGyp,
+                _ => Argv0::Bun,
+            }
         }
-        #[cfg(not(windows))]
-        {
-            strings::ends_with(argv0, b"node")
+
+        /// The whole file name, unlike the other two: `electron-node-gyp` is not bun.
+        fn is_node_gyp(argv0: &[u8]) -> bool {
+            argv0
+                .strip_suffix(b"node-gyp")
+                .is_some_and(|dir| dir.last().is_none_or(|&c| c == b'/' || c == bun_paths::SEP))
         }
     }
 
@@ -713,18 +721,19 @@ pub(crate) mod command {
     /// in) in the front-loaded startup window, rather than letting fat-LTO
     /// inline-and-scatter it through cold code.
     #[inline(never)]
-    fn which() -> Tag {
+    fn which(argv0: Argv0) -> Tag {
         let argv = bun::argv();
         let mut iter = argv.iter();
-        let Some(argv0) = iter.next() else {
+        if iter.next().is_none() {
             return Tag::HelpCommand;
-        };
+        }
 
-        if is_bun_x(argv0) {
+        if matches!(argv0, Argv0::Bunx | Argv0::NodeGyp) {
             if let Some(next) = argv.get(1) {
                 let next_bytes = next.as_bytes();
                 // To install a package, `bunx` runs its own executable again as `bunx add`, with
-                // the directory it installs into as the working directory.
+                // the directory it installs into as the working directory. On Windows that
+                // executable is the `node-gyp.exe` link when bun was started through it.
                 if next_bytes == b"add" {
                     use bun_install::package_manager_real::run_tasks::is_bunx_tree;
                     let mut cwd = bun_paths::path_buffer_pool::get();
@@ -740,12 +749,10 @@ pub(crate) mod command {
                     return Tag::ExecCommand;
                 }
             }
-            // SAFETY: single-threaded startup
-            IS_BUNX_EXE.store(true, core::sync::atomic::Ordering::Relaxed);
             return Tag::BunxCommand;
         }
 
-        if is_node(argv0) {
+        if argv0 == Argv0::Node {
             // Node-mode must not warn on flags Bun doesn't know.
             bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG
                 .store(false, core::sync::atomic::Ordering::Relaxed);
@@ -1036,11 +1043,11 @@ pub(crate) mod command {
         // clap tables out of the `--version` / `bun <file>` working set.
         //
         // Correctness guards:
-        //  * argv0 must be a plain `bun` invocation — a `node` / `bunx` shim
-        //    must still fall through to `which()` so `node --version` reports
-        //    Node's version, `bunx --version` is parsed by bunx, etc. Only
-        //    the *predicates* are read here; `which()` performs the matching
-        //    `PRETEND_TO_BE_NODE` / `IS_BUNX_EXE` side effects.
+        //  * argv0 must be a plain `bun` invocation — a `node` / `bunx` /
+        //    `node-gyp` shim must still fall through to `which()` so
+        //    `node --version` reports Node's version, `bunx --version` is
+        //    parsed by bunx, etc. Only the class is read here; `which()`
+        //    performs the matching `PRETEND_TO_BE_NODE` side effect.
         //  * the standalone-graph probe above already ran, so a compiled
         //    executable's `--version` / `-e ''` is still passed through to
         //    user code (it returned via `boot_standalone`).
@@ -1049,10 +1056,10 @@ pub(crate) mod command {
         //    `<bin>` (the bug the old argv-scan shim had — see the
         //    NOTE below). The empty-eval check is likewise exact-shape, falling
         //    through to `HelpCommand.exec`.
+        let argv0 = Argv0::classify(bun::argv().get(0).map_or(b"", bun_core::ZStr::as_bytes));
         {
             let argv = bun::argv();
-            let argv0 = argv.get(0).map(bun_core::ZStr::as_bytes).unwrap_or(b"");
-            if !is_node(argv0) && !is_bun_x(argv0) {
+            if argv0 == Argv0::Bun {
                 if argv.len() == 2 {
                     match argv.get(1).map(bun_core::ZStr::as_bytes) {
                         Some(b"-v" | b"--version") => print_version_and_exit(),
@@ -1099,7 +1106,7 @@ pub(crate) mod command {
             }
         }
 
-        let tag = which();
+        let tag = which(argv0);
 
         // NOTE: an earlier shim used to scan all of `argv` here for
         // `--version`/`--help`/`--revision` and short-circuit, because
@@ -1134,7 +1141,7 @@ pub(crate) mod command {
             Tag::DedupeCommand => exec_dedupe(log),
             Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
-            Tag::BunxCommand => exec_bunx(log),
+            Tag::BunxCommand => exec_bunx(log, argv0),
             Tag::ReplCommand => exec_repl(log),
             Tag::RemoveCommand => exec_remove(log),
             Tag::LinkCommand => exec_link(log),
@@ -1363,15 +1370,20 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_bunx(log: &mut bun_ast::Log, argv0: Argv0) -> CmdResult {
+        use super::bunx_command::BunxCommand;
+
         let ctx = init(Tag::BunxCommand, log)?;
-        let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) {
-            0
-        } else {
-            1
-        };
         let argv = argv_zslice();
-        super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..])
+        match argv0 {
+            // What `BUN_OPTIONS` put after the name is for bun, not for node-gyp.
+            Argv0::NodeGyp => {
+                BunxCommand::exec_as_node_gyp(ctx, &argv[1 + bun_core::bun_options_argc()..])
+            }
+            Argv0::Bunx => BunxCommand::exec(ctx, &argv),
+            // `bun x`
+            Argv0::Bun | Argv0::Node => BunxCommand::exec(ctx, &argv[1..]),
+        }
     }
 
     #[cold]

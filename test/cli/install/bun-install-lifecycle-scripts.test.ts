@@ -7,6 +7,7 @@ import {
   existsSync,
   constants as fsConstants,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -27,10 +28,12 @@ import {
   normalizeBunSnapshot,
   readdirSorted,
   runBunInstall,
+  setTreeWritable,
   tempDir,
+  unprivilegedSpawnOptions,
 } from "harness";
 import { constants as osConstants, type as osType, tmpdir } from "os";
-import { join, sep } from "path";
+import { basename, delimiter, join, sep } from "path";
 import { TestRegistry } from "registry";
 import { pathToFileURL } from "url";
 
@@ -516,7 +519,9 @@ snapshots:
   });
 });
 
-test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a randomized name", async () => {
+// `/tmp` is everybody's. The `node-gyp` that a lifecycle script finds last on PATH is a link to bun
+// in a directory that only this user can write.
+test.concurrent("node-gyp on a lifecycle script's PATH is a link to bun in a directory of the user's own", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
 
@@ -548,12 +553,29 @@ test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a r
   expect(exitCode).toBe(0);
 
   const pathVar = await file(join(packageDir, "path.txt")).text();
-  const match = pathVar.match(/\.([0-9a-f]{1,16})-[0-9A-F]{1,16}\.node-gyp/);
-  expect(match).not.toBeNull();
-  const derived = BigInt("0x" + match![1]) ^ 12345n;
-  const nowNs = BigInt(Date.now()) * 1_000_000n;
-  const distance = derived > nowNs ? derived - nowNs : nowNs - derived;
-  expect(distance > 21_600_000_000_000n).toBe(true);
+  const dir = pathVar.split(delimiter).findLast(entry => basename(entry).startsWith("bun-node-gyp"))!;
+  expect(dir).toBeDefined();
+  if (isWindows) {
+    expect(existsSync(join(dir, "node-gyp.exe"))).toBe(true);
+  } else {
+    const stat = lstatSync(dir);
+    expect({
+      name: basename(dir),
+      // $TMPDIR and the cache of this install are in its project.
+      isOutsideProject: !dir.startsWith(packageDir),
+      isDirectory: stat.isDirectory(),
+      mode: stat.mode & 0o777,
+      uid: stat.uid,
+      nodeGyp: realpathSync(join(dir, "node-gyp")),
+    }).toEqual({
+      name: expect.stringMatching(new RegExp(`^bun-node-gyp-${process.getuid!()}(-|$)`)),
+      isOutsideProject: true,
+      isDirectory: true,
+      mode: 0o700,
+      uid: process.getuid!(),
+      nodeGyp: realpathSync(bunExe()),
+    });
+  }
 });
 
 // Reproducing issue #38079 needs $TMPDIR and the install cache on different
@@ -570,7 +592,7 @@ const canForceExdevTmpdir =
   })();
 
 test.concurrent.skipIf(!canForceExdevTmpdir)(
-  "node-gyp shim is reachable when the tempdir falls back to cache/.tmp",
+  "node-gyp is reachable when $TMPDIR is on another filesystem than the cache",
   async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
@@ -601,8 +623,8 @@ test.concurrent.skipIf(!canForceExdevTmpdir)(
           TMPDIR: shmTmp,
           BUN_TMPDIR: shmTmp,
           TEMP: shmTmp,
-          // keep `node-gyp` resolvable only via the shim dir bun appends to
-          // PATH; the shim execs $npm_config_node_gyp so the test stays offline
+          // keep `node-gyp` resolvable only via the directory bun appends to
+          // PATH; it runs $npm_config_node_gyp so the test stays offline
           PATH: "/usr/bin:/bin",
           npm_config_node_gyp: fakeNodeGyp,
         },
@@ -619,6 +641,110 @@ test.concurrent.skipIf(!canForceExdevTmpdir)(
     }
   },
 );
+
+// An install cache that the user can read and cannot write: a cache volume or an image layer that
+// another user filled, or a read-only mount. Every package is in it, so nothing has to be written
+// to it, and the lifecycle scripts have to run.
+// Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+describe.skipIf(isWindows)("install cache that cannot be written", () => {
+  // `node-gyp` is only on PATH through the directory that `bun install` adds, and that one runs
+  // $npm_config_node_gyp: each script leaves its arguments in the directory it ran in.
+  const nodeGypRan = "node-gyp-ran.txt";
+  async function setup(linker: "hoisted" | "isolated", manifest: object) {
+    const ctx = await setupScriptPackages(linker, { native: { scripts: { install: "node-gyp rebuild" } } });
+    const fakeNodeGyp = join(ctx.packageDir, "fake-node-gyp");
+    await Promise.all([
+      writeFile(ctx.packageJson, JSON.stringify({ name: "root", ...manifest })),
+      writeFile(fakeNodeGyp, `#!/bin/sh\necho "$@" > ${nodeGypRan}\n`, { mode: 0o755 }),
+    ]);
+    Object.assign(ctx.env, { PATH: "/usr/bin:/bin", npm_config_node_gyp: fakeNodeGyp });
+    const cache = ctx.env.BUN_INSTALL_CACHE_DIR;
+    return {
+      ...ctx,
+      cache,
+      ran: (...dir: string[]) => file(join(ctx.packageDir, ...dir, nodeGypRan)).text(),
+      async withoutCacheAccess(...args: string[]) {
+        using unprivileged = unprivilegedSpawnOptions(ctx.packageDir);
+        setTreeWritable(cache, false);
+        try {
+          await using proc = spawn({
+            cmd: [bunExe(), ...args],
+            cwd: ctx.packageDir,
+            env: ctx.env,
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+            ...unprivileged,
+          });
+          const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { out, err, exitCode };
+        } finally {
+          setTreeWritable(cache, true);
+        }
+      },
+    };
+  }
+
+  describe.each(["hoisted", "isolated"] as const)("%s", linker => {
+    test.serial.each([
+      { state: "no <cache>/.tmp", dotTmp: false },
+      { state: "a <cache>/.tmp from an earlier install", dotTmp: true },
+    ])("a trusted dependency's script and the root's script run ($state)", async ({ dotTmp }) => {
+      using ctx = await setup(linker, {
+        dependencies: { native: "1.0.0" },
+        trustedDependencies: ["native"],
+        scripts: { postinstall: "node-gyp configure" },
+      });
+
+      const warm = await ctx.bun("install");
+      expect(warm.err).not.toContain("error:");
+      expect(warm.exitCode).toBe(0);
+      expect(await ctx.ran("node_modules", "native")).toBe("rebuild\n");
+      await Promise.all([rm(ctx.installed(), { recursive: true, force: true }), rm(join(ctx.packageDir, nodeGypRan))]);
+      if (dotTmp) mkdirSync(join(ctx.cache, ".tmp"), { recursive: true });
+
+      const { err, exitCode } = await ctx.withoutCacheAccess("install", "--frozen-lockfile");
+      expect(err).not.toContain("error:");
+      expect({
+        dependency: await ctx.ran("node_modules", "native"),
+        root: await ctx.ran(),
+        exitCode,
+      }).toEqual({ dependency: "rebuild\n", root: "configure\n", exitCode: 0 });
+    });
+  });
+
+  test.serial("a project without dependencies runs its script", async () => {
+    using ctx = await setup("hoisted", { scripts: { postinstall: "node-gyp configure" } });
+    mkdirSync(ctx.cache);
+
+    const { err, exitCode } = await ctx.withoutCacheAccess("install");
+    expect(err).not.toContain("error:");
+    expect({ root: await ctx.ran(), exitCode }).toEqual({ root: "configure\n", exitCode: 0 });
+  });
+
+  // The other commands that run lifecycle scripts.
+  test.serial("bun pm trust and bun remove run the scripts", async () => {
+    using ctx = await setup("hoisted", {
+      dependencies: { native: "1.0.0" },
+      scripts: { postinstall: "node-gyp configure" },
+    });
+    const warm = await ctx.bun("install");
+    expect(warm.err).not.toContain("error:");
+    expect(warm.exitCode).toBe(0);
+    await rm(join(ctx.packageDir, nodeGypRan));
+
+    const trust = await ctx.withoutCacheAccess("pm", "trust", "native");
+    expect(trust.err).not.toContain("error:");
+    expect({ dependency: await ctx.ran("node_modules", "native"), exitCode: trust.exitCode }).toEqual({
+      dependency: "rebuild\n",
+      exitCode: 0,
+    });
+
+    const remove = await ctx.withoutCacheAccess("remove", "native");
+    expect(remove.err).not.toContain("error:");
+    expect({ root: await ctx.ran(), exitCode: remove.exitCode }).toEqual({ root: "configure\n", exitCode: 0 });
+  });
+});
 
 // The environment `bun install` built is all a lifecycle script gets. On
 // Windows (and on POSIX without a shell) the script runs through `bun exec`,
@@ -3201,55 +3327,110 @@ test.concurrent("prints a failed script's output without changing non-UTF-8 byte
   expect(exitCode).toBe(1);
 });
 
-// `bun x node-gyp` avoids running Bun's own node-gyp shim again by removing the PATH entry that equals
-// BUN_WHICH_IGNORE_CWD.
-test.concurrent.skipIf(!isLinux)(
-  "BUN_WHICH_IGNORE_CWD matches a PATH entry when TMPDIR isn't valid UTF-8",
-  async () => {
-    using dir = tempDir("lifecycle-tmpdir-bytes", {
-      "package.json": JSON.stringify({
-        name: "app",
-        dependencies: { dep: "file:./dep" },
-        trustedDependencies: ["dep"],
-      }),
-      "dep/package.json": JSON.stringify({
-        name: "dep",
-        version: "1.0.0",
-        scripts: { postinstall: `${bunExe()} check.js` },
-      }),
-      // Read as latin1 to keep every byte. `process.env` and a shell `case` on musl both mangle invalid UTF-8.
-      "dep/check.js": `const fs = require("fs");
-      const env = fs.readFileSync("/proc/self/environ", "latin1").split("\\0");
-      const get = name => env.find(entry => entry.startsWith(name + "=")).slice(name.length + 1);
-      fs.writeFileSync(process.env.RESULT, get("PATH").split(":").includes(get("BUN_WHICH_IGNORE_CWD")) ? "found" : "missing");`,
-    });
-    // A JavaScript string can't hold a lone 0xE9 byte, so TMPDIR is set by a shell script written as raw bytes.
-    await writeFile(
-      join(dir, "install.sh"),
-      Buffer.concat([
-        Buffer.from(`TMPDIR='${dir}/caf`),
-        Buffer.from([0xe9]),
-        Buffer.from(`'; export TMPDIR; mkdir -p "$TMPDIR"; exec '${bunExe()}' install\n`),
-      ]),
-    );
-    await using proc = spawn({
-      cmd: ["sh", "./install.sh"],
-      cwd: String(dir),
-      // Bun only uses TMPDIR if it's on the same filesystem as the cache.
-      env: {
-        ...baseEnv,
-        BUN_TMPDIR: undefined,
-        BUN_INSTALL_CACHE_DIR: join(dir, "cache"),
-        RESULT: join(dir, "result"),
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(readFileSync(join(dir, "result"), "utf8")).toBe("found");
-    expect(exitCode).toBe(0);
-  },
-);
+// The `node-gyp` that a lifecycle script finds is bun, which then has to run a node-gyp that is not
+// itself. Here that is the registry's, which records each run. PATH has a `node` and no `bun`.
+describe.skipIf(isWindows)("node-gyp in a lifecycle script, below another bun", () => {
+  const recordingNodeGyp: ScriptPackage = {
+    bin: { "node-gyp": "node-gyp.js" },
+    files: {
+      "node-gyp.js": `#!/usr/bin/env node\nrequire("fs").appendFileSync(process.env.NODE_GYP_RAN, process.argv.slice(2).join(" ") + "\\n");\n`,
+    },
+  };
+
+  test.concurrent.each([
+    { below: "nothing", postinstall: "node-gyp rebuild" },
+    // The script that `bun install` used to write ran `bun x node-gyp`, which found that script
+    // again under these two, without end.
+    { below: "a nested bun install", postinstall: `cd inner && ${bunExe()} install` },
+    { below: "a command that bun x runs", postinstall: `${bunExe()} x calls-node-gyp` },
+  ])("runs once below $below", async ({ postinstall }) => {
+    using ctx = await setupScriptPackages("hoisted", { "node-gyp": recordingNodeGyp });
+    const bin = join(ctx.packageDir, "bin");
+    const ran = join(ctx.packageDir, "node-gyp-ran.txt");
+    await mkdir(join(ctx.packageDir, "inner"));
+    await mkdir(bin);
+    await Promise.all([
+      writeFile(ctx.packageJson, JSON.stringify({ name: "root", scripts: { postinstall } })),
+      writeFile(
+        join(ctx.packageDir, "inner", "package.json"),
+        JSON.stringify({ name: "inner", scripts: { postinstall: "node-gyp rebuild" } }),
+      ),
+      writeFile(join(bin, "calls-node-gyp"), "#!/bin/sh\nnode-gyp rebuild\n", { mode: 0o755 }),
+      symlink(bunExe(), join(bin, "node")),
+    ]);
+    // bunx installs node-gyp outside of the project, where its bunfig.toml does not apply.
+    Object.assign(ctx.env, { PATH: `${bin}:/usr/bin:/bin`, BUN_CONFIG_REGISTRY: ctx.registry, NODE_GYP_RAN: ran });
+
+    const { err, exitCode } = await ctx.bun("install");
+    expect(err).not.toContain("error:");
+    expect({ ran: await file(ran).text(), exitCode }).toEqual({ ran: "rebuild\n", exitCode: 0 });
+  });
+});
+
+// Like npm's own node-gyp launcher, the `node-gyp` of a lifecycle script runs the file that
+// $npm_config_node_gyp names, with the arguments that the script gave it.
+test.concurrent("node-gyp in a lifecycle script runs $npm_config_node_gyp", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  const nodeGyp = join(packageDir, "my-node-gyp.js");
+  const emptyDir = join(packageDir, "empty");
+  await mkdir(emptyDir);
+  await Promise.all([
+    writeFile(packageJson, JSON.stringify({ name: "foo", scripts: { preinstall: 'node-gyp "a b" c' } })),
+    writeFile(
+      nodeGyp,
+      `#!/usr/bin/env node\nrequire("fs").writeFileSync("args.json", JSON.stringify(process.argv.slice(2)));\n`,
+      { mode: 0o755 },
+    ),
+  ]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    // No node-gyp of the machine: PATH is an empty directory plus what `bun install` adds.
+    env: {
+      ...Object.fromEntries(Object.entries(env).filter(([key]) => key.toUpperCase() !== "PATH")),
+      PATH: emptyDir,
+      npm_config_node_gyp: nodeGyp,
+    },
+  });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect({ args: await file(join(packageDir, "args.json")).json(), exitCode }).toEqual({
+    args: ["a b", "c"],
+    exitCode: 0,
+  });
+});
+
+// A shell runs that file: it looks a bare name up on PATH, and it runs a file without `#!` itself.
+test.concurrent.skipIf(isWindows).each([
+  { form: "a file without #!", contents: `echo "$#:$1" > ran.txt\n`, name: (dir: string) => join(dir, "my-node-gyp") },
+  { form: "a name on PATH", contents: `#!/bin/sh\necho "$#:$1" > ran.txt\n`, name: () => "my-node-gyp" },
+])("node-gyp in a lifecycle script runs $npm_config_node_gyp: $form", async ({ contents, name }) => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  const bin = join(packageDir, "bin");
+  await mkdir(bin);
+  await Promise.all([
+    writeFile(packageJson, JSON.stringify({ name: "foo", scripts: { preinstall: 'node-gyp "a b" c' } })),
+    writeFile(join(bin, "my-node-gyp"), contents, { mode: 0o755 }),
+  ]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...env, PATH: `${bin}:/usr/bin:/bin`, npm_config_node_gyp: name(bin) },
+  });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect({ ran: await file(join(packageDir, "ran.txt")).text(), exitCode }).toEqual({ ran: "2:a b\n", exitCode: 0 });
+});
 
 // PR_SET_PDEATHSIG. The script holds the write end of `alive`, which ends when the script does, and
 // waits for a line in `gate`, which the test writes once bun is gone.
@@ -5225,10 +5406,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       };
     }
 
-    // Without a node-gyp dependency, the `node-gyp` that a lifecycle script finds is the script that
-    // `bun install` writes to its temp dir, which runs `bun x node-gyp` with the `bun` that
-    // `bun install` put next to its `node`. bunx installs the package outside of the project, where
-    // the project's bunfig.toml does not apply, so the registry has to come from the environment.
+    // Without a node-gyp dependency, the `node-gyp` that a lifecycle script finds is the link to
+    // bun that `bun install` puts last on PATH, which does what `bunx node-gyp` does. bunx installs
+    // the package outside of the project, where the project's bunfig.toml does not apply, so the
+    // registry has to come from the environment.
     // The registry's node-gyp@latest writes the directory it runs in to `build.node`.
     function envForBunx(env: Record<string, string>): Record<string, string> {
       return { ...env, BUN_CONFIG_REGISTRY: verdaccio.registryUrl() };
@@ -5250,14 +5431,13 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         }),
       );
       // A PATH that is not empty, but has no node, bun or node-gyp on it: `bun install` has to add
-      // its directories to it. ("ensureTempNodeGypScript works" starts from an empty PATH.)
+      // its directories to it. ("node-gyp is found with an empty PATH" starts from an empty PATH.)
       const emptyDir = join(packageDir, "empty");
       await mkdir(emptyDir);
 
       await using proc = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        // On Windows the shim is a .cmd file, and cmd.exe echoes its lines to stdout.
         stdout: "ignore",
         stdin: "ignore",
         stderr: "pipe",
@@ -6606,7 +6786,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await file(join(packageDir, "postinstall.txt")).text()).toBe(process.versions.bun);
     });
 
-    test("ensureTempNodeGypScript works", async () => {
+    test("node-gyp is found with an empty PATH", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
@@ -6625,7 +6805,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       await using proc = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        // On Windows the shim is a .cmd file, and cmd.exe echoes its lines to stdout.
         stdout: "ignore",
         stderr: "pipe",
         stdin: "ignore",

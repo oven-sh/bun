@@ -19,7 +19,7 @@ use crate::package_install::PackageInstall;
 use crate::package_manager;
 use crate::{DependencyID, PackageID, PackageManager, lockfile::Package, resolution::Resolution};
 
-// The directory handles on `PatchTask`/`ApplyPatch` are *borrowed views* of the
+// The directory handles on `ApplyPatch` are *borrowed views* of the
 // `PackageManager`-owned cache/temp directory descriptors. Store the raw `Fd`
 // so the task's drop never closes a descriptor it doesn't own. Use
 // `Dir::borrow(&fd)` where a `&Dir` is needed.
@@ -33,8 +33,6 @@ pub struct PatchTask {
     /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
     /// writes the event-loop wake flag.
     pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
-    /// Borrowed view of the manager's temp directory fd (see comment at top of file).
-    pub(crate) tempdir: Fd,
     pub(crate) project_dir: &'static [u8],
     pub(crate) callback: Callback,
     pub(crate) task: ThreadPoolTask,
@@ -94,6 +92,8 @@ pub struct ApplyPatch {
     pub(crate) patchfilepath: Box<[u8]>,
     pub(crate) pkgname: SemverString,
 
+    /// Borrowed view of the manager's temp directory fd (see comment at top of file).
+    pub(crate) tempdir: Fd,
     /// Borrowed view of the manager's cache directory fd (see comment at top of file).
     pub(crate) cache_dir: Fd,
     pub(crate) cache_dir_subpath: ZBox,
@@ -490,7 +490,7 @@ impl PatchTask {
                 Err(_no_space_left) => unreachable!(),
             };
 
-        let system_tmpdir = self.tempdir;
+        let system_tmpdir = patch.tempdir;
         let staging = StagedEntry::new(system_tmpdir, tempdir_name);
 
         let pkg_name = patch.pkgname;
@@ -715,9 +715,7 @@ impl PatchTask {
         // log formatting), so no trailing NUL is needed.
 
         let result = (manager.pending_patch_commit).patch_hash(name_and_version_hash);
-        let tempdir = manager.get_temporary_directory().handle.fd();
         Box::new(PatchTask {
-            tempdir,
             callback: Callback::CalcHash(CalcPatchHash {
                 state,
                 patchfile_path,
@@ -790,10 +788,10 @@ impl PatchTask {
 
         let tempdir = pkg_manager.get_temporary_directory().handle.fd();
         Box::new(PatchTask {
-            tempdir,
             callback: Callback::Apply(ApplyPatch {
                 pkg_id,
                 patch_hash,
+                tempdir,
                 cache_dir,
                 patchfilepath,
                 pkgname: pkg_name,

@@ -2214,7 +2214,9 @@ fn resolve_pending_tasks(
 ) -> crate::Result<()> {
     if root.dependencies.len > 0 {
         let _ = manager.get_cache_directory();
-        let _ = manager.get_temporary_directory();
+        // The pending tasks may stage nothing: a patch whose package the cache already holds.
+        // Whatever does stage an entry asks again, and reports why it cannot.
+        let _ = super::directories::try_get_temporary_directory(manager);
     }
 
     if log_level.show_progress() {

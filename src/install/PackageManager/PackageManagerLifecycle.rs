@@ -332,7 +332,7 @@ impl PackageManager {
             return Ok(());
         }
 
-        self.ensure_temp_node_gyp_script()?;
+        self.ensure_node_gyp_alias();
 
         // `list` is moved into `spawn_package_scripts` below; copy
         // `cwd` out so the PATH builder can borrow it independently.

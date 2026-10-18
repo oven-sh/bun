@@ -394,22 +394,21 @@ impl<'a> Installer<'a> {
         let PatchInfo::Patch(patch) = patch_info else {
             return Ok(());
         };
+        // Every peer variant shares one patched cache dir (named by the patch
+        // contents hash, not the peer set). Once it exists, reuse it: rebuilding
+        // it replaces the directory under earlier entries' running hardlink tasks.
+        // Checked before the task exists: the task asks for a directory to stage the rebuild in.
+        let cache_dir = self.manager_mut().get_cache_directory();
+        let patched = self.cached_folder_name(entry_id, Some(patch.contents_hash));
+        if !patched.is_empty() && sys::directory_exists_at(cache_dir, patched).unwrap_or(false) {
+            return Ok(());
+        }
         let mut patch_task = install::PatchTask::new_apply_patch_hash(
             self.manager_mut(),
             self.store.ids(entry_id).pkg_id,
             patch.contents_hash,
             patch.name_and_version_hash,
         );
-        // Every peer variant shares one patched cache dir (named by the patch
-        // contents hash, not the peer set). Once it exists, reuse it: rebuilding
-        // it replaces the directory under earlier entries' running hardlink tasks.
-        if let crate::patch_install::Callback::Apply(apply) = &patch_task.callback {
-            if sys::directory_exists_at(apply.cache_dir, apply.cache_dir_subpath.as_zstr())
-                .unwrap_or(false)
-            {
-                return Ok(());
-            }
-        }
         bun_core::handle_oom(patch_task.apply());
 
         if let crate::patch_install::Callback::Apply(apply) = &mut patch_task.callback {

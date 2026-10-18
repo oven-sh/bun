@@ -390,46 +390,200 @@ impl RunCommand {
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
-    /// `/tmp/bun-node-<uid>-<sha>` (or debug variant): `/tmp` is everybody's, this is one user's.
-    ///
+    /// Not `$TMPDIR`: every run of a user finds the links of the one before.
+    #[cfg(not(windows))]
+    const SHARED_TEMP_DIR: &'static str = if cfg!(target_os = "macos") {
+        "/private/tmp"
+    } else if cfg!(target_os = "android") {
+        "/data/local/tmp"
+    } else {
+        "/tmp"
+    };
+
     /// NOTE: the SHA alone does not uniquely identify a binary — two local
-    /// builds at the same commit share this dir. `create_fake_temporary_node_executable`
-    /// therefore re-points a stale link on EEXIST instead of trusting it.
+    /// builds at the same commit share a dir. The functions that link bun
+    /// into it therefore re-point a stale link instead of trusting it.
+    const ALIAS_DIR_SUFFIX: &'static str = if bun_core::env::IS_DEBUG {
+        "-debug"
+    } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
+        ""
+    } else {
+        const_format::concatcp!("-", bun_core::env::GIT_SHA_SHORT)
+    };
+
+    /// `/tmp/bun-node-<uid>-<sha>` (or debug variant): `/tmp` is everybody's, this is one user's.
     #[cfg(not(windows))]
     pub fn bun_node_dir() -> &'static ZStr {
-        const TMP: &str = if cfg!(target_os = "macos") {
-            "/private/tmp"
-        } else if cfg!(target_os = "android") {
-            "/data/local/tmp"
-        } else {
-            "/tmp"
-        };
-        const SUFFIX: &str = if bun_core::env::IS_DEBUG {
-            "-debug"
-        } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-            ""
-        } else {
-            const_format::concatcp!("-", bun_core::env::GIT_SHA_SHORT)
-        };
         static DIR: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
         DIR.get_or_init(|| {
-            bun_core::ZBox::from_bytes(format!("{TMP}/bun-node-{}{SUFFIX}", bun_sys::c::getuid()))
+            bun_core::ZBox::from_bytes(format!(
+                "{}/bun-node-{}{}",
+                Self::SHARED_TEMP_DIR,
+                bun_sys::c::getuid(),
+                Self::ALIAS_DIR_SUFFIX,
+            ))
         })
     }
 
-    /// Under `%TEMP%`, or beside bun.exe when that is another drive, which no hard link reaches.
+    /// Makes `dir` hold one link to `target` per name. `false`: `dir` must not go on `PATH`.
+    ///
+    /// Don't trust attacker-created entries in a shared temp dir (`dir` lives
+    /// under e.g. `/tmp`). Create it `0700`; if it already exists, refuse to
+    /// use it unless it's a directory we own with no group/other write bits.
+    #[cfg(not(windows))]
+    fn link_exe_into_private_dir(dir: &ZStr, names: &[&[u8]], target: &ZStr) -> bool {
+        let is_ours = |st: &bun_sys::Stat| {
+            bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::FileKind::Directory
+                && st.st_uid == bun_sys::c::getuid()
+                && (st.st_mode as bun_sys::Mode) & 0o022 == 0
+        };
+        match bun_sys::lstat(dir) {
+            Ok(st) if is_ours(&st) => {}
+            Err(e) if e.get_errno() == bun_sys::E::ENOENT => match bun_sys::mkdir(dir, 0o700) {
+                Ok(()) => {}
+                // A concurrent run made it first.
+                Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(dir) {
+                    Ok(st) if is_ours(&st) => {}
+                    _ => return false,
+                },
+                Err(_) => return false,
+            },
+            _ => return false,
+        }
+
+        let mut link_buf = bun_paths::path_buffer_pool::get();
+        let mut current = bun_paths::path_buffer_pool::get();
+        'names: for name in names {
+            let link_len = dir.len() + 1 + name.len();
+            if link_len >= link_buf.len() {
+                return false;
+            }
+            link_buf[..dir.len()].copy_from_slice(dir.as_bytes());
+            link_buf[dir.len()] = b'/';
+            link_buf[dir.len() + 1..link_len].copy_from_slice(name);
+            link_buf[link_len] = 0;
+            let link = ZStr::from_buf(&link_buf[..], link_len);
+
+            // The dir is keyed only on the uid and GIT_SHA_SHORT, so two
+            // different binaries built at the same commit (e.g. side-by-side
+            // local builds being benchmarked) collide here. Blindly reusing
+            // the existing link would make every child of the SECOND binary
+            // silently exec the FIRST. Verify the target before reusing;
+            // replace it once if stale.
+            for replaced in [false, true] {
+                match bun_sys::readlink(link, &mut current[..]) {
+                    // Never remove a matching link: concurrent runs' scripts exec it.
+                    Ok(len) if &current[..len] == target.as_bytes() => continue 'names,
+                    Err(e) if e.get_errno() == bun_sys::E::ENOENT => {}
+                    _ if replaced => continue 'names,
+                    _ => {
+                        let _ = bun_sys::unlink(link);
+                    }
+                }
+                match bun_sys::symlink(target, link) {
+                    Ok(()) => continue 'names,
+                    Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
+                    Err(_) => return false,
+                }
+            }
+        }
+        true
+    }
+
+    /// Hard-links bun.exe under each of `names` (`\\<link>.exe` and a NUL) in the alias directory
+    /// `dir_name`, and returns where `buf` holds that directory, after the NT object prefix.
+    /// `on_failure` gets the directory that cannot hold a link.
     #[cfg(windows)]
-    pub fn windows_node_shim_dir(buf: &mut [u16]) -> Option<usize> {
+    fn windows_link_exe_into_alias_dir(
+        buf: &mut [u16],
+        dir_name: &str,
+        names: &[&[u16]],
+        on_failure: impl FnOnce(&[u16]),
+    ) -> Option<core::ops::Range<usize>> {
         use bun_sys::windows as win;
 
-        const TEMP_DIR_NAME: &str = if bun_core::env::IS_DEBUG {
-            "bun-node-debug"
-        } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-            "bun-node"
-        } else {
-            const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT)
-        };
-        const BESIDE_EXE_DIR_NAME: &str = "bun-node";
+        let prefix: &[u16] = bun_core::strings::w!("\\??\\");
+        let longest_name = names.iter().map(|name| name.len()).max().unwrap_or(0);
+
+        // The front is reserved for the NT object prefix.
+        let dir_len = Self::windows_alias_dir(&mut buf[prefix.len()..], dir_name, longest_name)?;
+        buf[..prefix.len()].copy_from_slice(prefix);
+        let dir_slice_len = prefix.len() + dir_len;
+
+        let image_path = win::exe_path_w();
+        // Hard links have no target to read back; compare file identity instead.
+        let image_stat =
+            bun_sys::File::openat_os_path(bun_sys::Fd::cwd(), image_path, bun_sys::O::RDONLY, 0)
+                .and_then(|image| image.stat())
+                .ok();
+
+        for name in names {
+            buf[dir_slice_len..][..name.len()].copy_from_slice(name);
+            // `name` includes its NUL terminator; the link path ends before it.
+            let link_len = dir_slice_len + name.len() - 1;
+            let mut made_dir = false;
+            let mut replaced = false;
+            loop {
+                // `as_ptr()` stays inline: the buffer is mutated below (Stacked Borrows).
+                if win::CreateHardLinkW(buf.as_ptr(), image_path.as_ptr(), None) != 0 {
+                    break;
+                }
+                match win::Win32Error::get() {
+                    win::Win32Error::ALREADY_EXISTS => {
+                        // As in the POSIX branch: a rebuilt bun is another file.
+                        let keep = image_stat.as_ref().is_none_or(|image| {
+                            bun_sys::openat_windows(
+                                bun_sys::Fd::cwd(),
+                                &buf[..link_len],
+                                bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW,
+                                0,
+                            )
+                            .map(bun_sys::File::from_fd)
+                            .and_then(|link| link.stat())
+                            .is_ok_and(|link| {
+                                link.st_dev == image.st_dev && link.st_ino == image.st_ino
+                            })
+                        });
+                        if keep || replaced {
+                            break;
+                        }
+                        let _ =
+                            win::DeleteFileBun(&buf[..link_len], win::DeleteFileOptions::default());
+                        replaced = true;
+                    }
+                    _ if !made_dir => {
+                        buf[dir_slice_len] = 0;
+                        // SAFETY: `dir_slice_len` is in-bounds; the byte at
+                        // `dir_slice_len` was just set to NUL.
+                        let dir_w = bun_core::WStr::from_buf(&buf[..], dir_slice_len);
+                        let _ = bun_sys::mkdir_w(dir_w);
+                        buf[dir_slice_len] = b'\\' as u16;
+                        made_dir = true;
+                    }
+                    _ => {
+                        on_failure(&buf[prefix.len()..dir_slice_len]);
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(prefix.len()..dir_slice_len)
+    }
+
+    /// The directory of the `node.exe` and `bun.exe` links.
+    #[cfg(windows)]
+    pub fn windows_node_shim_dir(buf: &mut [u16]) -> Option<usize> {
+        Self::windows_alias_dir(buf, Self::WINDOWS_NODE_DIR_NAME, b"\\node.exe\0".len())
+    }
+
+    #[cfg(windows)]
+    const WINDOWS_NODE_DIR_NAME: &'static str = "bun-node";
+
+    /// `name` under `%TEMP%`, or beside bun.exe when that is another drive, which no hard link
+    /// reaches. `link_len` is the room to leave for `\<link>.exe` and a NUL.
+    #[cfg(windows)]
+    fn windows_alias_dir(buf: &mut [u16], name: &str, link_len: usize) -> Option<usize> {
+        use bun_sys::windows as win;
 
         // The case of a drive letter varies.
         fn drive(path: &[u16]) -> Option<u16> {
@@ -444,32 +598,35 @@ impl RunCommand {
         // trailing NUL) into `buf`.
         let temp_len = unsafe { win::GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) } as usize;
 
-        let (mut len, name) = if temp_len > 0
+        let (mut len, parts) = if temp_len > 0
             && temp_len < buf.len()
             && drive(&buf[..temp_len]).is_some_and(|temp| Some(temp) == drive(image_path))
         {
             // Ends with a separator.
-            (temp_len, TEMP_DIR_NAME)
+            (temp_len, [name, Self::ALIAS_DIR_SUFFIX])
         } else {
             let exe_dir = bun_paths::resolve_path::dirname_w(image_path);
             if exe_dir.is_empty() || exe_dir.len() >= buf.len() {
                 return None;
             }
             buf[..exe_dir.len()].copy_from_slice(exe_dir);
-            if exe_dir.ends_with(bun_core::w!("\\bun-node")) {
-                // Running as the `bun.exe` link (nested `bun run`): this is the directory.
-                (exe_dir.len(), "")
+            let is_in_alias_dir = exe_dir.len() > name.len()
+                && exe_dir[exe_dir.len() - name.len() - 1] == b'\\' as u16
+                && (exe_dir[exe_dir.len() - name.len()..].iter().copied())
+                    .eq(name.bytes().map(u16::from));
+            if is_in_alias_dir {
+                // Running as a link in it (nested `bun run`): this is the directory.
+                (exe_dir.len(), ["", ""])
             } else {
                 buf[exe_dir.len()] = b'\\' as u16;
-                (exe_dir.len() + 1, BESIDE_EXE_DIR_NAME)
+                (exe_dir.len() + 1, [name, ""])
             }
         };
 
-        // The callers append `\node.exe` and a NUL.
-        if len + name.len() + b"\\node.exe\0".len() > buf.len() {
+        if len + parts[0].len() + parts[1].len() + link_len > buf.len() {
             return None;
         }
-        for b in name.bytes() {
+        for b in parts.into_iter().flat_map(str::bytes) {
             buf[len] = b as u16;
             len += 1;
         }
@@ -606,53 +763,8 @@ impl RunCommand {
                 }
             };
 
-            let links = [&b"/node"[..], b"/bun"]
-                .map(|name| bun_core::ZBox::from_vec([dir.as_bytes(), name].concat()));
-
-            // Don't trust attacker-created entries in a shared temp dir
-            // (`BUN_NODE_DIR` lives under e.g. `/tmp`). Create it `0700`; if it
-            // already exists, refuse to use it unless it's a directory we own
-            // with no group/other write bits.
-            match bun_sys::mkdir(dir, 0o700) {
-                Ok(()) => {}
-                Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(dir) {
-                    Ok(st)
-                        if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
-                            == bun_sys::FileKind::Directory
-                            && st.st_uid == bun_sys::c::getuid()
-                            && (st.st_mode as bun_sys::Mode) & 0o022 == 0 => {}
-                    _ => return Ok(()),
-                },
-                Err(_) => return Ok(()),
-            }
-
-            for dest in &links {
-                let mut replaced = false;
-                loop {
-                    match bun_sys::symlink(argv0_z, dest) {
-                        Ok(()) => break,
-                        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-                            // The dir is keyed only on the uid and GIT_SHA_SHORT, so two
-                            // different binaries built at the same commit (e.g.
-                            // side-by-side local builds being benchmarked)
-                            // collide here. Blindly reusing the existing link
-                            // would make every `--bun` child of the SECOND
-                            // binary silently exec the FIRST. Verify the target
-                            // before reusing; replace it once if stale.
-                            // Never remove a matching link: concurrent runs' scripts exec it.
-                            let mut buf = bun_paths::path_buffer_pool::get();
-                            let matches = bun_sys::readlink(dest, &mut buf)
-                                .map(|n| &buf[..n] == argv0_z.as_bytes())
-                                .unwrap_or(false);
-                            if matches || replaced {
-                                break;
-                            }
-                            let _ = bun_sys::unlink(dest);
-                            replaced = true;
-                        }
-                        Err(_) => return Ok(()),
-                    }
-                }
+            if !Self::link_exe_into_private_dir(dir, &[b"node", b"bun"], argv0_z) {
+                return Ok(());
             }
 
             if !path.is_empty() && *path.last().unwrap() != bun_paths::DELIMITER {
@@ -670,96 +782,25 @@ impl RunCommand {
         #[cfg(windows)]
         {
             use bun_core::strings;
-            use bun_sys::windows as win;
 
             let mut target_path_buffer = bun_paths::w_path_buffer_pool::get();
-            let prefix: &[u16] = strings::w!("\\??\\");
-
-            // The front is reserved for the NT object prefix.
-            let Some(dir_len) =
-                Self::windows_node_shim_dir(&mut target_path_buffer[prefix.len()..])
-            else {
+            let Some(dir) = Self::windows_link_exe_into_alias_dir(
+                &mut target_path_buffer[..],
+                Self::WINDOWS_NODE_DIR_NAME,
+                &[strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")],
+                |dir| {
+                    bun_core::run_once! {{
+                        bun_core::warn!(
+                            "failed to create <b>node<r> alias in {}, scripts that run <b>node<r> will not find it",
+                            bun_core::fmt::fmt_os_path(dir, Default::default()),
+                        );
+                    }}
+                },
+            ) else {
                 // Non-fatal; fall through and leave
                 // PATH unmodified. (No `RUN` scope is declared in this crate.)
                 return Ok(());
             };
-            target_path_buffer[..prefix.len()].copy_from_slice(prefix);
-            let dir_slice_len = prefix.len() + dir_len;
-
-            let image_path = win::exe_path_w();
-            // Hard links have no target to read back; compare file identity instead.
-            let image_stat = bun_sys::File::openat_os_path(
-                bun_sys::Fd::cwd(),
-                image_path,
-                bun_sys::O::RDONLY,
-                0,
-            )
-            .and_then(|image| image.stat())
-            .ok();
-
-            for name in [strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")] {
-                target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
-                // `name` includes its NUL terminator; the link path ends before it.
-                let link_len = dir_slice_len + name.len() - 1;
-                let mut made_dir = false;
-                let mut replaced = false;
-                loop {
-                    // `as_ptr()` stays inline: the buffer is mutated below (Stacked Borrows).
-                    if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None)
-                        != 0
-                    {
-                        break;
-                    }
-                    match win::Win32Error::get() {
-                        win::Win32Error::ALREADY_EXISTS => {
-                            // As in the POSIX EEXIST branch: a rebuilt bun is another file.
-                            let keep = image_stat.as_ref().is_none_or(|image| {
-                                bun_sys::openat_windows(
-                                    bun_sys::Fd::cwd(),
-                                    &target_path_buffer[..link_len],
-                                    bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW,
-                                    0,
-                                )
-                                .map(bun_sys::File::from_fd)
-                                .and_then(|link| link.stat())
-                                .is_ok_and(|link| {
-                                    link.st_dev == image.st_dev && link.st_ino == image.st_ino
-                                })
-                            });
-                            if keep || replaced {
-                                break;
-                            }
-                            let _ = win::DeleteFileBun(
-                                &target_path_buffer[..link_len],
-                                win::DeleteFileOptions::default(),
-                            );
-                            replaced = true;
-                        }
-                        _ if !made_dir => {
-                            target_path_buffer[dir_slice_len] = 0;
-                            // SAFETY: `dir_slice_len` is in-bounds; the byte at
-                            // `dir_slice_len` was just set to NUL.
-                            let dir_w =
-                                bun_core::WStr::from_buf(&target_path_buffer[..], dir_slice_len);
-                            let _ = bun_sys::mkdir_w(dir_w);
-                            target_path_buffer[dir_slice_len] = b'\\' as u16;
-                            made_dir = true;
-                        }
-                        _ => {
-                            bun_core::run_once! {{
-                                bun_core::warn!(
-                                    "failed to create <b>node<r> alias in {}, scripts that run <b>node<r> will not find it",
-                                    bun_core::fmt::fmt_os_path(
-                                        &target_path_buffer[prefix.len()..dir_slice_len],
-                                        Default::default(),
-                                    ),
-                                );
-                            }}
-                            return Ok(());
-                        }
-                    }
-                }
-            }
 
             if !path.is_empty() && *path.last().unwrap() != bun_paths::DELIMITER {
                 path.push(bun_paths::DELIMITER);
@@ -768,10 +809,95 @@ impl RunCommand {
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
-            strings::to_utf8_append_to_list(path, &target_path_buffer[prefix.len()..dir_slice_len]);
+            strings::to_utf8_append_to_list(path, &target_path_buffer[dir]);
             path.push(bun_paths::DELIMITER);
             let _ = optional_bun_path;
             Ok(())
+        }
+    }
+
+    /// `path` with a directory appended whose `node-gyp` is a link to this executable. A lifecycle
+    /// script that calls node-gyp on a machine without one finds it there, and bun, started under
+    /// that name, runs the node-gyp of the project or fetches one (`BunxCommand::exec_as_node_gyp`).
+    ///
+    /// The link is not written per install and never into the install cache. `None` when no
+    /// directory can hold it: a script that calls node-gyp then reports that it is missing.
+    #[cold]
+    pub fn path_with_node_gyp_alias(path: &[u8]) -> Option<Vec<u8>> {
+        let with_delimiter = |dir_len: usize| {
+            let mut with_alias: Vec<u8> = Vec::with_capacity(path.len() + 1 + dir_len);
+            with_alias.extend_from_slice(path);
+            if path
+                .last()
+                .is_some_and(|&last| last != bun_paths::DELIMITER)
+            {
+                with_alias.push(bun_paths::DELIMITER);
+            }
+            with_alias
+        };
+
+        #[cfg(not(windows))]
+        {
+            use std::io::Write as _;
+
+            let target = bun_core::self_exe_path().ok()?;
+            let mut name_buf = [0u8; 64];
+            let name_capacity = name_buf.len();
+            let mut unwritten = &mut name_buf[..];
+            write!(
+                unwritten,
+                "/bun-node-gyp-{}{}",
+                bun_sys::c::getuid(),
+                Self::ALIAS_DIR_SUFFIX,
+            )
+            .ok()?;
+            let name_len = name_capacity - unwritten.len();
+            let name = &name_buf[..name_len];
+
+            let shared_temp_dir = Self::SHARED_TEMP_DIR.as_bytes();
+            // `$BUN_TMPDIR` or `$TMPDIR` when the shared temp directory cannot hold the link.
+            let own_temp_dir =
+                bun_core::strings::without_trailing_slash(bun_fs::RealFS::tmpdir_path());
+            let bases = [
+                Some(shared_temp_dir),
+                (own_temp_dir != shared_temp_dir).then_some(own_temp_dir),
+            ];
+            let mut dir_buf = bun_paths::path_buffer_pool::get();
+            for base in bases.into_iter().flatten() {
+                let dir_len = base.len() + name.len();
+                // A relative directory on `PATH` is another one in each script's directory.
+                if !bun_paths::is_absolute(base) || dir_len >= dir_buf.len() {
+                    continue;
+                }
+                dir_buf[..base.len()].copy_from_slice(base);
+                dir_buf[base.len()..dir_len].copy_from_slice(name);
+                dir_buf[dir_len] = 0;
+                let dir = ZStr::from_buf(&dir_buf[..], dir_len);
+                if Self::link_exe_into_private_dir(dir, &[b"node-gyp"], target) {
+                    let mut with_alias = with_delimiter(dir.len());
+                    with_alias.extend_from_slice(dir.as_bytes());
+                    return Some(with_alias);
+                }
+            }
+            None
+        }
+
+        #[cfg(windows)]
+        {
+            use bun_core::strings;
+
+            let mut target_path_buffer = bun_paths::w_path_buffer_pool::get();
+            let dir = Self::windows_link_exe_into_alias_dir(
+                &mut target_path_buffer[..],
+                "bun-node-gyp",
+                &[strings::w!("\\node-gyp.exe\0")],
+                |_| {},
+            )?;
+            let dir = &target_path_buffer[dir];
+            // A UTF-16 unit is at most three bytes of UTF-8.
+            let mut with_alias = with_delimiter(dir.len() * 3);
+            strings::to_utf8_append_to_list(&mut with_alias, dir);
+            Some(with_alias)
         }
     }
 }

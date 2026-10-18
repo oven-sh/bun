@@ -200,11 +200,10 @@ pub struct TemporaryDirectory {
     pub(crate) handle: Dir,
     #[cfg(windows)]
     pub(crate) path: ZBox,
-    pub(crate) name: &'static [u8],
 }
 
-// `TemporaryDirectory` is auto-`Send + Sync`: `Dir` wraps `Fd` (an integer),
-// `ZBox` wraps `Box<[u8]>`, and `&'static [u8]` is `Sync`. No `unsafe impl`.
+// `TemporaryDirectory` is auto-`Send + Sync`: `Dir` wraps `Fd` (an integer)
+// and `ZBox` wraps `Box<[u8]>`. No `unsafe impl`.
 const _: fn() = || {
     fn assert<T: Send + Sync>() {}
     assert::<TemporaryDirectory>();
@@ -356,20 +355,8 @@ fn get_temporary_directory_run(
         }
     };
 
-    // The node-gyp shim is written via `handle` and put on PATH via `name`.
-    let name: &'static [u8] = if tried_dot_tmp {
-        let joined = path::resolve_path::join::<path::platform::Auto>(&[
-            manager.cache_directory_path.as_bytes(),
-            b".tmp",
-        ]);
-        bun_core::handle_oom(FileSystem::instance().dirname_store().append(joined))
-    } else {
-        temp_dir_name
-    };
-
     Ok(TemporaryDirectory {
         handle: tempdir,
-        name,
         #[cfg(windows)]
         path: ZBox::from_bytes(temp_dir_path.as_bytes()),
     })

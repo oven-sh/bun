@@ -2047,6 +2047,9 @@ export function assertManifestsPopulated(absCachePath: string, registryUrl: stri
   const { npm_manifest_test_helpers } = require("bun:internal-for-testing");
   const { parseManifest } = npm_manifest_test_helpers;
 
+  // An install that needs no package does not create the cache directory.
+  if (!fs.existsSync(absCachePath)) return;
+
   for (const file of fs.readdirSync(absCachePath)) {
     if (!file.endsWith(".npm")) continue;
 
@@ -2184,6 +2187,15 @@ export async function readdirSorted(path: string): Promise<string[]> {
   const results = await readdir(path);
   results.sort();
   return results;
+}
+
+/** `chmod -R a-w dir`, or gives the owner the write bits back. Symlinks are skipped: chmod follows them. */
+export function setTreeWritable(dir: string, writable: boolean) {
+  fs.chmodSync(dir, writable ? 0o755 : 0o555);
+  for (const entry of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+    if (entry.isDirectory()) fs.chmodSync(join(entry.parentPath, entry.name), writable ? 0o755 : 0o555);
+    else if (entry.isFile()) fs.chmodSync(join(entry.parentPath, entry.name), writable ? 0o644 : 0o444);
+  }
 }
 
 /**

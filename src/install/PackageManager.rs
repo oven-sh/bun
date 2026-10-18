@@ -23,7 +23,7 @@ use bun_http as http;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
 use bun_paths::string_paths::without_trailing_slash_windows_path;
-use bun_paths::{DELIMITER, PathBuffer, SEP};
+use bun_paths::{PathBuffer, SEP};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
@@ -542,8 +542,6 @@ pub struct PackageManager {
     pub(crate) total_scripts: usize,
 
     pub(crate) root_lifecycle_scripts: Option<Package::scripts::List>,
-
-    pub(crate) node_gyp_tempdir_name: Box<[u8]>,
 
     pub lockfile: Box<Lockfile>, // OWNED
 
@@ -1295,16 +1293,19 @@ impl PackageManager {
         };
     }
 
-    pub(crate) fn ensure_temp_node_gyp_script(&mut self) -> Result<(), Error> {
-        // The body is
-        // already idempotent (early-returns when `node_gyp_tempdir_name` is
-        // non-empty), so a simple `AtomicBool` ran-flag suffices.
-        // NB: not `bun_core::run_once!` — body is fallible and the contract is
-        // "2nd call = Ok(()) regardless of 1st outcome" (D006).
-        if ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE.swap(true, Ordering::AcqRel) {
-            return Ok(());
+    /// A lifecycle script that calls `node-gyp` finds one on `PATH`, last: a link to bun.
+    pub(crate) fn ensure_node_gyp_alias(&mut self) {
+        if ENSURE_NODE_GYP_ALIAS_ONCE.swap(true, Ordering::AcqRel) {
+            return;
         }
-        ensure_temp_node_gyp_script_run(self)
+        let path = self.env().get(b"PATH").unwrap_or(b"");
+        if let Some(path) = RunCommand::path_with_node_gyp_alias(path) {
+            bun_core::handle_oom(self.env_mut().map.put(b"PATH", &path));
+        } else if PackageManager::verbose_install() {
+            bun_core::pretty_errorln!(
+                "<r><yellow>warn<r>: no temp directory can hold the node-gyp link, scripts that run node-gyp will not find it"
+            );
+        }
     }
 
     // Helper: deref env (set-once BackRef to process-singleton loader)
@@ -1421,139 +1422,7 @@ fn configure_env_for_scripts_run(
     Ok(this_transpiler)
 }
 
-static ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE: AtomicBool = AtomicBool::new(false);
-
-/// Scripts find the shim through PATH until the process ends.
-static NODE_GYP_TEMPDIR: std::sync::OnceLock<(Fd, Box<[u8]>)> = std::sync::OnceLock::new();
-
-extern "C" fn remove_node_gyp_tempdir() {
-    if let Some((tempdir, name)) = NODE_GYP_TEMPDIR.get() {
-        let _ = bun_sys::Dir::borrow(tempdir).delete_tree(name);
-    }
-}
-
-fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), Error> {
-    if !manager.node_gyp_tempdir_name.is_empty() {
-        return Ok(());
-    }
-
-    let tempdir = get_temporary_directory(manager);
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let node_gyp_tempdir_name =
-        fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, bun_core::fast_random())?;
-
-    // used later for adding to path for scripts
-    manager.node_gyp_tempdir_name = Box::<[u8]>::from(node_gyp_tempdir_name.as_ref());
-
-    let node_gyp_tempdir = match tempdir
-        .handle
-        .make_open_path(&manager.node_gyp_tempdir_name, Default::default())
-    {
-        Ok(d) => d,
-        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-            // it should not exist
-            bun_core::pretty_errorln!("<r><red>error<r>: node-gyp tempdir already exists");
-            Global::crash();
-        }
-        Err(e) => {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
-                bstr::BStr::new(e.name()),
-            );
-            Global::crash();
-        }
-    };
-    if NODE_GYP_TEMPDIR
-        .set((tempdir.handle.fd, manager.node_gyp_tempdir_name.clone()))
-        .is_ok()
-    {
-        Global::add_exit_callback(remove_node_gyp_tempdir);
-    }
-
-    #[cfg(windows)]
-    const FILE_NAME: &str = "node-gyp.cmd";
-    #[cfg(not(windows))]
-    const FILE_NAME: &str = "node-gyp";
-
-    #[cfg(windows)]
-    const MODE: u32 = 0; // windows does not have an executable bit
-    #[cfg(not(windows))]
-    const MODE: u32 = 0o755;
-
-    // `bun_sys::Dir` has no `create_file`; route through `File::openat` with
-    // create-file flags (`O_WRONLY|O_CREAT|O_TRUNC`).
-    let node_gyp_file = match bun_sys::File::openat(
-        node_gyp_tempdir.fd,
-        FILE_NAME.as_bytes(),
-        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
-        MODE,
-    ) {
-        Ok(f) => f,
-        Err(e) => {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
-                bstr::BStr::new(e.name()),
-            );
-            Global::crash();
-        }
-    };
-
-    #[cfg(windows)]
-    const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";
-    #[cfg(all(not(windows), not(target_os = "android")))]
-    const CONTENT: &str = concat!(
-        "#!/bin/sh\n",
-        "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
-        "  bun x --silent node-gyp $@\n",
-        "else\n",
-        "  \"$npm_config_node_gyp\" $@\n",
-        "fi\n"
-    );
-    #[cfg(target_os = "android")]
-    const CONTENT: &str = concat!(
-        "#!/system/bin/sh\n",
-        "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
-        "  bun x --silent node-gyp $@\n",
-        "else\n",
-        "  \"$npm_config_node_gyp\" $@\n",
-        "fi\n"
-    );
-
-    if let Err(e) = node_gyp_file.write_all(CONTENT.as_bytes()) {
-        bun_core::pretty_errorln!(
-            "<r><red>error<r>: <b><red>{}<r> writing to {} file",
-            bstr::BStr::new(e.name()),
-            FILE_NAME,
-        );
-        Global::crash();
-    }
-
-    // `bun x` removes the PATH entry that equals BUN_WHICH_IGNORE_CWD, so the two must be identical.
-    let parts: [&[u8]; 3] = [
-        strings::without_trailing_slash(tempdir.name),
-        &[SEP],
-        &manager.node_gyp_tempdir_name,
-    ];
-    let node_gyp_abs_dir = parts.concat();
-
-    // Add our node-gyp tempdir to the path
-    let existing_path = manager.env().get(b"PATH").unwrap_or(b"");
-    let mut path_var: Vec<u8> =
-        Vec::with_capacity(existing_path.len() + 1 + node_gyp_abs_dir.len());
-    path_var.extend_from_slice(existing_path);
-    if !existing_path.is_empty() && existing_path[existing_path.len() - 1] != DELIMITER {
-        path_var.push(DELIMITER);
-    }
-    path_var.extend_from_slice(&node_gyp_abs_dir);
-    manager.env_mut().map.put(b"PATH", &path_var)?;
-
-    manager
-        .env_mut()
-        .map
-        .put_alloc_key_and_value(b"BUN_WHICH_IGNORE_CWD", &node_gyp_abs_dir)?;
-
-    Ok(())
-}
+static ENSURE_NODE_GYP_ALIAS_ONCE: AtomicBool = AtomicBool::new(false);
 
 fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::InitOpts) -> ! {
     // `opts.abs_ca_file_name` is NUL-terminated by contract —
@@ -1741,7 +1610,6 @@ fn allocate_package_manager(
         wr!(finished_installing, AtomicBool::new(false));
         wr!(total_scripts, 0);
         wr!(root_lifecycle_scripts, None);
-        wr!(node_gyp_tempdir_name, Box::default());
         wr!(preinstall_state, Vec::new());
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);

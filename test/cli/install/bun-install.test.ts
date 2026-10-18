@@ -3027,7 +3027,8 @@ describe.concurrent("bun-install", () => {
       ]);
       expect(await exited2).toBe(0);
       expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
+      // The workspace is linked again and nothing is fetched, so the cache is not opened.
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual(["Bar"]);
       expect(ctx.package_dir).toHaveWorkspaceLink(["Bar", "bar"]);
       expect(await file(join(ctx.package_dir, "foo2.txt")).text()).toBe("foo2!");
       expect(await file(join(ctx.package_dir, "bar", "bar.txt")).text()).toBe("bar!");
@@ -3061,7 +3062,7 @@ describe.concurrent("bun-install", () => {
       ]);
       expect(await exited3).toBe(0);
       expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual(["Bar"]);
       expect(ctx.package_dir).toHaveWorkspaceLink(["Bar", "bar"]);
       expect(await file(join(ctx.package_dir, "bun.lockb")).arrayBuffer()).toEqual(bun_lockb);
       expect(await file(join(ctx.package_dir, "foo2.txt")).text()).toBe("foo2!");
@@ -3209,7 +3210,7 @@ describe.concurrent("bun-install", () => {
       ]);
       expect(await exited3).toBe(0);
       expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual(["Bar"]);
       expect(ctx.package_dir).toHaveWorkspaceLink(["Bar", "bar"]);
       expect(await file(join(ctx.package_dir, "bun.lockb")).arrayBuffer()).toEqual(bun_lockb);
       expect(await file(join(ctx.package_dir, "foo.txt")).text()).toBe("foo!");

@@ -648,7 +648,119 @@ impl BunxCommand {
         Global::exit(1);
     }
 
+    /// `bun install` puts a link to bun named `node-gyp` last on the `PATH` of lifecycle scripts
+    /// (`bun_install::RunCommand::path_with_node_gyp_alias`). Started through it, bun does what
+    /// npm's own node-gyp launcher does: it runs the node-gyp that `$npm_config_node_gyp` names,
+    /// and otherwise the node-gyp of the project, or the one that `bunx` fetches.
+    pub(crate) fn exec_as_node_gyp(
+        ctx: &mut ContextData,
+        args: &[&'static ZStr],
+    ) -> crate::Result<()> {
+        if bun_core::getenv_z(bun_core::zstr!("npm_config_node_gyp"))
+            .is_some_and(|file| !file.is_empty())
+        {
+            return Self::exec_npm_config_node_gyp(ctx, args);
+        }
+        let mut argv: Vec<&'static ZStr> = Vec::with_capacity(3 + args.len());
+        argv.extend([
+            bun_core::zstr!("bunx"),
+            bun_core::zstr!("--silent"),
+            bun_core::zstr!("node-gyp"),
+        ]);
+        argv.extend_from_slice(args);
+        Self::exec_inner(ctx, &argv, true)
+    }
+
+    fn exec_npm_config_node_gyp(
+        ctx: &mut ContextData,
+        args: &[&'static ZStr],
+    ) -> crate::Result<()> {
+        // The exit code is node-gyp's, with no message of bun's around it.
+        ctx.debug.silent = true;
+        // The environment of the script, as it is. `run_binary` keeps it until the process ends.
+        let env: &'static mut bun_dotenv::Loader = Box::leak(Box::new(bun_dotenv::Loader::init()));
+        env.load_process()?;
+        let path = env.get(b"PATH").unwrap_or(b"").to_vec();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf[..]) {
+            Ok(len) => &cwd_buf[..len],
+            Err(_) => b"",
+        };
+
+        let mut passthrough: Vec<Box<[u8]>> = Vec::with_capacity(3 + args.len());
+        #[cfg(not(windows))]
+        let executable = {
+            // The line of npm's launcher, run by a shell like before: it looks a bare name up on
+            // `PATH`, and runs a file that has no `#!` as a shell script.
+            passthrough.extend([
+                Box::<[u8]>::from(b"-c".as_slice()),
+                Box::from(b"\"$npm_config_node_gyp\" \"$@\"".as_slice()),
+                Box::from(b"node-gyp".as_slice()),
+            ]);
+            ZBox::from_bytes(
+                Run::find_shell(&path, cwd)
+                    .ok_or(crate::Error::MissingShell)?
+                    .as_bytes(),
+            )
+        };
+        #[cfg(windows)]
+        let executable = {
+            // `node "%npm_config_node_gyp%" %*`
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let Some(node) = bun_which::which(&mut buf, &path, cwd, b"node") else {
+                Output::err_generic(
+                    "npm_config_node_gyp is set, and <b>node<r> is not on PATH to run it",
+                    (),
+                );
+                Global::exit(1);
+            };
+            passthrough.push(Box::from(
+                bun_core::getenv_z(bun_core::zstr!("npm_config_node_gyp")).unwrap_or(b""),
+            ));
+            ZBox::from_bytes(node.as_bytes())
+        };
+        passthrough.extend(args.iter().map(|arg| Box::<[u8]>::from(arg.as_bytes())));
+
+        match Run::run_binary_without_bunx_path(
+            ctx,
+            executable.as_bytes(),
+            &executable,
+            b"",
+            env,
+            &passthrough,
+            None,
+        )? {}
+    }
+
+    /// The `node_modules/.bin` entries of `path`.
+    fn bin_dirs_in_path(path: &[u8]) -> Vec<u8> {
+        let bin = bun_paths::path_literal!("/node_modules/.bin").as_bytes();
+        let mut bin_dirs: Vec<u8> = Vec::with_capacity(path.len());
+        for entry in strings::tokenize(path, &[DELIMITER]) {
+            let dir = strings::without_trailing_slash(entry);
+            // On Windows, an entry may be written with either `\` or `/`.
+            if dir.ends_with(bin) || dir.ends_with(b"/node_modules/.bin") {
+                if !bin_dirs.is_empty() {
+                    bin_dirs.push(DELIMITER);
+                }
+                bin_dirs.extend_from_slice(entry);
+            }
+        }
+        bin_dirs
+    }
+
     pub(crate) fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> crate::Result<()> {
+        Self::exec_inner(ctx, argv, false)
+    }
+
+    /// `is_node_gyp_alias`: this process is the `node-gyp` that `PATH` has, so it looks for the
+    /// node-gyp of a package, in the `node_modules/.bin` entries only. The alias of another bun,
+    /// left on `PATH` by a nested install, would hand the command back and forth forever.
+    fn exec_inner(
+        ctx: &mut ContextData,
+        argv: &[&'static ZStr],
+        is_node_gyp_alias: bool,
+    ) -> crate::Result<()> {
         // Don't log stuff
         ctx.debug.silent = true;
 
@@ -824,10 +936,13 @@ impl BunxCommand {
         };
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
 
-        let path_for_bin_dirs: Vec<u8> = if ignore_cwd.is_empty() {
+        let path_for_bin_dirs: Vec<u8> = if is_node_gyp_alias {
+            Self::bin_dirs_in_path(&path)
+        } else if ignore_cwd.is_empty() {
             path.clone()
         } else {
-            // Without the cwd passed through BUN_WHICH_IGNORE_CWD: a temp node-gyp script must not find itself.
+            // Without the cwd passed through BUN_WHICH_IGNORE_CWD: the node-gyp script that the
+            // install of an older bun wrote there must not find itself.
             let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
             for (i, segment) in strings::tokenize(&path, &[DELIMITER]).enumerate() {
                 if !strings::eql_long(

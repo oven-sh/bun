@@ -9,7 +9,9 @@ import {
   isWindows,
   normalizeBunSnapshot as normalizeBunSnapshot_,
   runBunInstall,
+  setTreeWritable,
   tempDir,
+  unprivilegedSpawnOptions,
 } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
@@ -499,6 +501,45 @@ new file mode 100644
       expect(stderr.replace(installProgress, "")).toBe("");
       expect(await file(dir, "node_modules", "is-odd", "android", "build", "x", "results.bin").text()).toBe("hi\n");
       expect(exitCode).toBe(0);
+    },
+  );
+
+  // The cache holds the patched package already, so the install has nothing to write to it. A cache
+  // that the user can read and cannot write (another user filled it, or it is mounted read-only)
+  // used to end the install: `error: cannot write files to cache directory`.
+  // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+  test.serial.skipIf(isWindows).each(["hoisted", "isolated"] as const)(
+    "a patched package that the cache holds installs from a cache that cannot be written (%s linker)",
+    async linker => {
+      await using project = createProject("patch-unwritable-cache", {
+        "package.json": packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" }),
+        "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
+        "index.ts": indexTs,
+        patches: { "is-even@1.0.0.patch": isEvenPatch("patched") },
+      });
+      const { dir, env } = project;
+      await bunOk(dir, env, "install");
+      await rm(join(dir, "node_modules"), { recursive: true, force: true });
+
+      const cache = env.BUN_INSTALL_CACHE_DIR!;
+      using unprivileged = unprivilegedSpawnOptions(dir);
+      setTreeWritable(cache, false);
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--frozen-lockfile"],
+          cwd: dir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+          ...unprivileged,
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr.replace(installProgress, "")).toBe("");
+        expect(exitCode).toBe(0);
+      } finally {
+        setTreeWritable(cache, true);
+      }
+      expect(await bunOk(dir, env, "run", "index.ts")).toBe("patched\ndone\n");
     },
   );
 

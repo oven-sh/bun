@@ -1268,19 +1268,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
 
     // main.js reads its arguments with eval(), which the flag refuses, so these load the addon themselves.
-    async function runScriptWith(executable: string, flag: string) {
-      using dir = tempDir("napi-run-script-code-generation", {
-        "fixture.cjs": `
-          const { test_napi_run_script } = require(process.argv[2]);
-          let evaluated, ran;
-          try { evaluated = eval("1 + 1"); } catch (e) { evaluated = e.name; }
-          try { ran = test_napi_run_script(() => {}, "5 * (1 + 2)"); } catch (e) { ran = e.name + ": " + e.message; }
-          // A script acts before any of its code runs: its declarations, and an assignment of JSON, which is not compiled.
-          try { test_napi_run_script(() => {}, "var declared;"); } catch {}
-          try { test_napi_run_script(() => {}, 'assigned = {"a":1}'); } catch {}
-          console.log(JSON.stringify({ evaluated, ran, declared: "declared" in globalThis, assigned: "assigned" in globalThis }));
-        `,
-      });
+    async function runFixtureWith(executable: string, flag: string, fixture: string) {
+      using dir = tempDir("napi-run-script-code-generation", { "fixture.cjs": fixture });
       await using proc = spawn({
         cmd: [executable, flag, "fixture.cjs", join(__dirname, "napi-app/build/Debug/napitests.node")],
         env: bunEnv,
@@ -1291,6 +1280,21 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout: stdout.trim(), stderr, exitCode };
     }
+    const runScriptWith = (executable: string, flag: string) =>
+      runFixtureWith(
+        executable,
+        flag,
+        `
+          const { test_napi_run_script } = require(process.argv[2]);
+          let evaluated, ran;
+          try { evaluated = eval("1 + 1"); } catch (e) { evaluated = e.name; }
+          try { ran = test_napi_run_script(() => {}, "5 * (1 + 2)"); } catch (e) { ran = e.name + ": " + e.message; }
+          // A script acts before any of its code runs: its declarations, and an assignment of JSON, which is not compiled.
+          try { test_napi_run_script(() => {}, "var declared;"); } catch {}
+          try { test_napi_run_script(() => {}, 'assigned = {"a":1}'); } catch {}
+          console.log(JSON.stringify({ evaluated, ran, declared: "declared" in globalThis, assigned: "assigned" in globalThis }));
+        `,
+      );
     it("is not affected by --disallow-code-generation-from-strings, as in Node.js", async () => {
       const [node, bun] = await Promise.all([
         runScriptWith(await nodeExeMatchingAbi(), "--disallow-code-generation-from-strings"),
@@ -1311,6 +1315,31 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           declared: false,
           assigned: false,
         }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+    it("hands the EvalError of --disallow-code-generation-from-strings=strict to napi_get_and_clear_last_exception", async () => {
+      const { stdout, stderr, exitCode } = await runFixtureWith(
+        bunExe(),
+        "--disallow-code-generation-from-strings=strict",
+        `
+          const { test_napi_run_script_exception_value } = require(process.argv[2]);
+          const refusal = test_napi_run_script_exception_value(() => {}, "5 * (1 + 2)");
+          console.log(JSON.stringify({ isEvalError: refusal instanceof EvalError, string: String(refusal) }));
+        `,
+      );
+      // The addon prints through C stdio and the fixture through console.log, so the order of their lines is not fixed.
+      expect({ lines: stdout.split(/\r?\n/).sort(), stderr, exitCode }).toEqual({
+        lines: [
+          "message=Code generation from strings disallowed for this context",
+          "run status=9 pending=1",
+          "typeof status=0 type=6 is_error=1",
+          JSON.stringify({
+            isEvalError: true,
+            string: "EvalError: Code generation from strings disallowed for this context",
+          }),
+        ],
         stderr: "",
         exitCode: 0,
       });

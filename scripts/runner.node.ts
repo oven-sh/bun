@@ -398,9 +398,10 @@ if (options.quiet) {
 let allFiles: string[] = [];
 let newFiles: string[] = [];
 if (isBuildkite && isPullRequest()) {
-  // Only the pipeline step (.buildkite/ci.ts) asks GitHub for the PR file list,
-  // once per build, and stores it as build meta-data. A shard never asks: a
-  // build has about 160 of them, and they would spend the token's hourly quota.
+  // The pipeline step (.buildkite/ci.ts) works out the PR file list once per
+  // build and stores it as build meta-data. A shard only reads it. Its clone
+  // has no history to work the list out from, and it does not ask GitHub: every
+  // shard of every build would spend the hourly quota of the same token.
   const cachedAll = getBuildMetadata("pr-all-files");
   if (cachedAll) {
     const cachedNew = getBuildMetadata("pr-new-files");

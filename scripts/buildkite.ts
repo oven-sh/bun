@@ -436,21 +436,96 @@ interface GithubPullRequestFile {
   status: string;
 }
 
+interface PullRequestFiles {
+  allFiles: string[];
+  newFiles: string[];
+}
+
+/**
+ * How many files of a pull request are listed: the first ones in path order.
+ * The pipeline step stores the list as one value of the build's meta-data,
+ * which Buildkite limits to 100 KB.
+ */
+const maxPullRequestFiles = 500;
+
 /**
  * The files of the pull request this Buildkite build is for, and the ones
  * among them that it adds; none when the build is not for a pull request.
- * This asks GitHub, so only the pipeline step (.buildkite/ci.ts) calls it, once
- * per build. The build's other jobs read the list it stores in the meta-data.
+ * Only the pipeline step (.buildkite/ci.ts) calls this, once per build: its
+ * checkout has the history to tell. The build's other jobs read the list it
+ * stores in the meta-data.
  */
-export async function getPullRequestFiles(): Promise<{ allFiles: string[]; newFiles: string[] }> {
+export async function getPullRequestFiles(): Promise<PullRequestFiles> {
+  if (!isPullRequest()) {
+    return { allFiles: [], newFiles: [] };
+  }
+  let files = getPullRequestFilesFromGit();
+  if (!files) {
+    console.log("-> the checkout cannot tell (it is shallow, or it lacks the base branch), asking GitHub");
+    files = await getPullRequestFilesFromGithub();
+  }
+  const pullRequest = process.env.BUILDKITE_PULL_REQUEST;
+  console.log(`- PR ${pullRequest}, ${files.allFiles.length} files, ${files.newFiles.length} new files`);
+  return files;
+}
+
+/**
+ * What `git <args>` prints in the checkout, or undefined if it fails. output()
+ * keeps at most 1 MiB, and the diff of a pull request with ten thousand files
+ * is 700 KB.
+ */
+function git(...args: string[]): string | undefined {
+  const { error, status, stdout } = spawnSync("git", args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return error || status !== 0 ? undefined : stdout;
+}
+
+/**
+ * The list as the checkout has it: what differs between HEAD and the commit
+ * where it left the base branch. The step's clone is made for the job, so its
+ * base branch is current. Undefined when the checkout cannot tell: it is
+ * shallow, or it lacks the base branch.
+ */
+function getPullRequestFilesFromGit(): PullRequestFiles | undefined {
+  if (git("rev-parse", "--is-shallow-repository")?.trim() !== "false") {
+    return undefined;
+  }
+  const base = `origin/${getTargetBranch()}`;
+  const mergeBase = git("merge-base", `refs/remotes/${base}`, "HEAD")?.trim();
+  if (!mergeBase) {
+    return undefined;
+  }
+  // No rename detection: it reads file contents, which a clone made with
+  // --filter=blob:none has to download. A renamed file is a removed one and an added one.
+  const diff = git("diff", "--name-status", "--no-renames", "-z", mergeBase, "HEAD");
+  if (diff === undefined) {
+    return undefined;
+  }
+  console.log(`-> git: HEAD against ${mergeBase}, its merge base with ${base}`);
   const allFiles: string[] = [];
   const newFiles: string[] = [];
-  if (!isPullRequest()) {
-    return { allFiles, newFiles };
+  // A status, NUL, a path, NUL, and so on.
+  const fields = diff.split("\0");
+  for (let i = 0; i + 1 < fields.length && allFiles.length < maxPullRequestFiles; i += 2) {
+    const filename = fields[i + 1]!; // i + 1 < fields.length
+    allFiles.push(filename);
+    if (fields[i] === "A") {
+      newFiles.push(filename);
+    }
   }
+  return { allFiles, newFiles };
+}
+
+/** The list as GitHub has it, for a checkout that cannot tell. */
+async function getPullRequestFilesFromGithub(): Promise<PullRequestFiles> {
+  const allFiles: string[] = [];
+  const newFiles: string[] = [];
   const perPage = 50;
   const pullRequest = process.env.BUILDKITE_PULL_REQUEST;
-  for (let page = 1; page <= 10; page++) {
+  for (let page = 1; page <= maxPullRequestFiles / perPage; page++) {
     const response = await fetch(
       `https://api.github.com/repos/oven-sh/bun/pulls/${pullRequest}/files?per_page=${perPage}&page=${page}`,
       { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
@@ -470,7 +545,6 @@ export async function getPullRequestFiles(): Promise<{ allFiles: string[]; newFi
       break;
     }
   }
-  console.log(`- PR ${pullRequest}, ${allFiles.length} files, ${newFiles.length} new files`);
   return { allFiles, newFiles };
 }
 

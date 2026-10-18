@@ -1920,7 +1920,7 @@ async function main() {
     console.log("Generated options:", options);
   }
 
-  startGroup("Querying GitHub for files...");
+  startGroup("Listing the files of the pull request...");
   if (options && isBuildkite && !isMainBranch()) {
     let allFiles: string[] = [];
     let newFiles: string[] = [];
@@ -1934,10 +1934,9 @@ async function main() {
       return;
     }
     options.changedFiles = allFiles;
-    // Publish the file lists as build meta-data so each test shard can read
-    // them instead of re-querying GitHub. With ~150 shards per build, this
-    // is the difference between 1 API call and 150, and the per-shard calls
-    // were exhausting the token's hourly rate limit under load.
+    // Publish the file lists as build meta-data, where the test shards read
+    // them: a shard has no history to work them out from, and does not ask
+    // GitHub (scripts/runner.node.ts).
     if (allFiles.length > 0) {
       setBuildMetadata("pr-all-files", JSON.stringify(allFiles));
       setBuildMetadata("pr-new-files", JSON.stringify(newFiles));

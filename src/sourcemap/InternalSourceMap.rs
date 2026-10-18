@@ -63,10 +63,9 @@
 //! ```text
 //!     [ 0.. 8]  total_len:         u64   -- written by Chunk.Builder.generateChunk
 //!     [ 8..16]  mapping_count:     u64   -- written by Chunk.Builder.generateChunk
-//!     [16..24]  input_line_count:  u64   -- written by Chunk.Builder.generateChunk
-//!     [24..28]  sync_count:        u32
-//!     [28..32]  stream_offset:     u32   -- byte offset from blob start to stream
-//!     [32..  ]  SyncEntry[sync_count]    -- 24 bytes each
+//!     [16..20]  sync_count:        u32
+//!     [20..24]  stream_offset:     u32   -- byte offset from blob start to stream
+//!     [24..  ]  SyncEntry[sync_count]    -- 24 bytes each
 //!     [stream_offset..total_len-stream_tail_pad]  Window[sync_count]
 //!     [total_len-stream_tail_pad..total_len]      zero bytes (read-past pad)
 //! ```
@@ -106,7 +105,7 @@ use crate::{LineColumnOffset, Mapping, SourceMapState, append_mapping_to_buffer}
 /// A sync entry is emitted every `SYNC_INTERVAL` mappings.
 pub(crate) const SYNC_INTERVAL: usize = 64;
 
-pub const HEADER_SIZE: usize = 32;
+pub const HEADER_SIZE: usize = 24;
 
 /// `read_varint`'s 1-byte fast path reads `bytes[pos]` unconditionally; the
 /// exception cursors in `WindowReader` advance to one byte past their last
@@ -167,21 +166,15 @@ impl InternalSourceMap {
     }
 
     #[inline]
-    pub(crate) fn input_line_count(self) -> usize {
-        // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u64::from_ne_bytes(*self.data.add(16).cast::<[u8; 8]>()) as usize }
-    }
-
-    #[inline]
     pub(crate) fn sync_count(self) -> u32 {
         // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u32::from_ne_bytes(*self.data.add(24).cast::<[u8; 4]>()) }
+        unsafe { u32::from_ne_bytes(*self.data.add(16).cast::<[u8; 4]>()) }
     }
 
     #[inline]
     pub(crate) fn stream_offset(self) -> u32 {
         // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u32::from_ne_bytes(*self.data.add(28).cast::<[u8; 4]>()) }
+        unsafe { u32::from_ne_bytes(*self.data.add(20).cast::<[u8; 4]>()) }
     }
 
     pub(crate) fn sync_entry(self, index: usize) -> SyncEntry {
@@ -242,8 +235,8 @@ impl InternalSourceMap {
     ///
     /// Associated-fn alias so callers can write `InternalSourceMap::from_vlq(..)`.
     #[inline]
-    pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, FromVlqError> {
-        from_vlq(vlq, input_line_count_hint)
+    pub fn from_vlq(vlq: &[u8]) -> Result<Box<[u8]>, FromVlqError> {
+        from_vlq(vlq)
     }
 }
 
@@ -1006,9 +999,9 @@ impl Builder {
         self.pending_n = 0;
     }
 
-    /// Serialize into the single-allocation blob layout. The first 24 header
+    /// Serialize into the single-allocation blob layout. The first 16 header
     /// bytes are left for `Chunk.Builder.generateChunk` to fill in (length,
-    /// count, input line count) so this path flows through the existing
+    /// count) so this path flows through the existing
     /// `Chunk.buffer` plumbing unchanged.
     pub(crate) fn finalize(&mut self) -> &mut MutableString {
         if self.finalized.is_none() {
@@ -1019,22 +1012,22 @@ impl Builder {
             let total: usize = stream_offset as usize + self.win_stream.len() + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
-            // Every byte in [0..total) is written below: [0..24] zero-filled,
-            // [24..32] header u32s, [32..32+sync_bytes] sync table memcpy,
+            // Every byte in [0..total) is written below: [0..16] zero-filled,
+            // [16..24] header u32s, [24..24+sync_bytes] sync table memcpy,
             // [stream_offset..stream_offset+win_stream.len()] stream memcpy,
             // [total-STREAM_TAIL_PAD..total] zero-filled. These ranges are
-            // contiguous (HEADER_SIZE==32, stream_offset==32+sync_bytes), so
+            // contiguous (HEADER_SIZE==24, stream_offset==24+sync_bytes), so
             // no uninit bytes are exposed by set_len.
             // SAFETY: every byte in [0..total) is written below (see comment above).
             let blob = unsafe { out.list.writable_slice_exact(total) };
 
-            blob[0..24].fill(0);
-            blob[24..28].copy_from_slice(
+            blob[0..16].fill(0);
+            blob[16..20].copy_from_slice(
                 &u32::try_from(self.sync_entries.len())
                     .expect("int cast")
                     .to_ne_bytes(),
             );
-            blob[28..32].copy_from_slice(&stream_offset.to_ne_bytes());
+            blob[20..24].copy_from_slice(&stream_offset.to_ne_bytes());
             if sync_bytes > 0 {
                 // SAFETY: SyncEntry is #[repr(C)] POD with no padding (size==24,
                 // 6×4-byte fields); reinterpreting as bytes is sound.
@@ -1075,7 +1068,7 @@ pub enum FromVlqError {
 /// 1-field segments are skipped (no original location). The 5th field
 /// (`name_index`) is decoded but discarded; nothing in the stack-trace remap
 /// path reads it.
-pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, FromVlqError> {
+pub fn from_vlq(vlq: &[u8]) -> Result<Box<[u8]>, FromVlqError> {
     /// Accumulate a VLQ delta into an absolute value. Like `Mapping::parse`,
     /// reject streams whose absolute value overflows `i32` or goes negative —
     /// both make the mapping meaningless, and unchecked garbage here would
@@ -1094,7 +1087,6 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
     let mut source_index: i32 = 0;
     let mut original_line: i32 = 0;
     let mut original_column: i32 = 0;
-    let mut max_original_line: i32 = 0;
 
     let mut remain = vlq;
     while !remain.is_empty() {
@@ -1155,7 +1147,6 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
             remain = &remain[1..];
         }
 
-        max_original_line = max_original_line.max(original_line);
         builder.append_mapping(&SourceMapState {
             generated_column,
             source_index,
@@ -1171,11 +1162,8 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
     let out = builder.finalize();
     let blob = out.list.as_mut_slice();
     let total_len: u64 = blob.len() as u64;
-    let input_lines: u64 =
-        (input_line_count_hint as u64).max(u64::try_from(max_original_line).expect("int cast") + 1);
     blob[0..8].copy_from_slice(&total_len.to_ne_bytes());
     blob[8..16].copy_from_slice(&mapping_count.to_ne_bytes());
-    blob[16..24].copy_from_slice(&input_lines.to_ne_bytes());
 
     let owned = core::mem::take(&mut out.list).into_boxed_slice();
     builder.finalized = None;

@@ -946,7 +946,6 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
             mappings_vlq,
             None,
             i32::MAX,
-            i32::MAX as usize,
             mapping::ParseOptions {
                 allow_names: matches!(
                     hint,

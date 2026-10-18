@@ -13,7 +13,6 @@ use crate::{
 /// ParsedSourceMap can be acquired by different threads via the thread-safe
 /// source map store (SavedSourceMap), so the reference count must be thread-safe.
 pub struct ParsedSourceMap {
-    pub input_line_count: usize,
     pub mappings: mapping::List,
     /// Set when this map's mappings are backed by an InternalSourceMap blob
     /// instead of a materialized `Mapping.List`. The blob is *owned* (freed in
@@ -63,7 +62,6 @@ impl Drop for ParsedSourceMap {
 impl Default for ParsedSourceMap {
     fn default() -> Self {
         Self {
-            input_line_count: 0,
             mappings: mapping::List::default(),
             internal: None,
             external_source_names: Vec::new(),
@@ -227,7 +225,6 @@ impl ParsedSourceMap {
     /// [`Self::is_standalone_module_graph`].
     pub fn from_internal(internal: InternalSourceMap) -> Self {
         Self {
-            input_line_count: internal.input_line_count(),
             mappings: mapping::List::default(),
             internal: Some(internal),
             external_source_names: Vec::new(),

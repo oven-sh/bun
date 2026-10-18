@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { gcTick } from "harness";
+import { gcTick, isLinux } from "harness";
+import { readdirSync, readFileSync, readlinkSync } from "node:fs";
 
 test("Blob.arrayBuffer copy-on-write is not shared", async () => {
   // 8 MB is the threshold for copy-on-write without --smol.
@@ -115,6 +116,53 @@ describe("two reads of one large Blob body are not shared with each other", () =
         expectKeptAfterWrite(kept, mine);
       });
     });
+  });
+
+  // The names of the memfds that hold this process's Blobs.
+  function blobMemfds() {
+    return readdirSync("/proc/self/fd").flatMap(fd => {
+      try {
+        return /^\/memfd:(memfd-num-\d+) \(deleted\)$/.exec(readlinkSync(`/proc/self/fd/${fd}`))?.[1] ?? [];
+      } catch {
+        // The fd that listed the directory is closed by now.
+        return [];
+      }
+    });
+  }
+
+  // Every mapping of one memfd: its permissions, and whether it is exempt from the commit charge.
+  function mappingsOf(memfd: string) {
+    const mappings: { perms: string; noreserve: boolean }[] = [];
+    let perms: string | undefined;
+    for (const line of readFileSync("/proc/self/smaps", "utf8").split("\n")) {
+      if (line.endsWith(`/memfd:${memfd} (deleted)`)) {
+        perms = line.split(" ")[1];
+      } else if (perms !== undefined && line.startsWith("VmFlags:")) {
+        mappings.push({ perms, noreserve: line.split(/\s+/).includes("nr") });
+        perms = undefined;
+      }
+    }
+    return mappings.sort((a, b) => Number(a.noreserve) - Number(b.noreserve));
+  }
+
+  // The cases above compare bytes, so they also pass when no memfd is in use.
+  // Only Linux keeps a Blob in a memfd.
+  test.skipIf(!isLinux)("the bytes of a large body are in a memfd that is only mapped privately", async () => {
+    // The kernel ignores MAP_NORESERVE under vm.overcommit_memory=2.
+    const noreserve = readFileSync("/proc/sys/vm/overcommit_memory", "utf8").trim() !== "2";
+    const storeView = { perms: "rw-p", noreserve };
+    const copyOnWriteView = { perms: "rw-p", noreserve: false };
+
+    const before = new Set(blobMemfds());
+    const response = new Response(parts());
+    const created = blobMemfds().filter(name => !before.has(name));
+    expect(created).toHaveLength(1);
+
+    // The clone's read maps the memfd once more. The last owner gets the store's view.
+    const kept = await response.clone().bytes();
+    const mine = await response.bytes();
+    expect(mappingsOf(created[0])).toEqual([copyOnWriteView, storeView]);
+    expect([kept.length, mine.length]).toEqual([size, size]);
   });
 
   // A transfer moves the memory of the second copy to another ArrayBuffer.

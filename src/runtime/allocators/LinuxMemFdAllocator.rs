@@ -118,8 +118,8 @@ impl LinuxMemFdAllocator {
             core::ptr::null_mut(),
             map_len,
             libc::PROT_READ | libc::PROT_WRITE,
-            // Without `MAP_NORESERVE` the kernel charges a writable private
-            // mapping against the commit limit, on top of the file's pages.
+            // `MAP_NORESERVE` keeps this view out of `Committed_AS`: the file's
+            // pages are counted already. `vm.overcommit_memory=2` ignores it.
             libc::MAP_PRIVATE | libc::MAP_NORESERVE,
             self_fd,
             0,

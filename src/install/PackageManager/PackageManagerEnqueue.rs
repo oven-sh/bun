@@ -3971,10 +3971,11 @@ fn existing_peer_target(
     .then_some(highest)
 }
 
-/// A peer shares `copy` if a package above the peer's declaring package has a dependency of its own
-/// with the peer's name: `react@17` in a workspace serves every library below that workspace. It
-/// also shares a `copy` that was itself installed for a peer. A copy that is only there as the
-/// dependency of unrelated packages is not meant for it.
+/// A peer shares `copy` if a package above the peer's declaring package names it too, as a peer or
+/// not: `react@17` in a workspace serves every library below that workspace, and a UI kit with the
+/// peer `react` uses one `react` together with the libraries it depends on. It also shares a `copy`
+/// that was itself installed for a peer. A copy that is only there as the dependency of unrelated
+/// packages is not meant for it.
 fn may_use_copy_out_of_range(
     lockfile: &Lockfile::Lockfile,
     name_hash: PackageNameHash,
@@ -3986,22 +3987,15 @@ fn may_use_copy_out_of_range(
     let Some(package) = lockfile.get_parent_pkg_of_dependency(row) else {
         return true;
     };
-    let kinds = lockfile.packages.items_resolution();
     let mut is_a_dependency = false;
     let mut have_the_name: Vec<PackageID> = Vec::new();
     for (owner, list) in lockfile.packages.items_dependencies().iter().enumerate() {
-        // The peer dependencies of the root and of a workspace name what the project is used with.
-        let peers_count = matches!(
-            kinds[owner].tag,
-            ResolutionTag::Root | ResolutionTag::Workspace
-        );
         for id in list.begin()..list.end() {
             let dep = &deps[id as usize];
-            let is_peer = dep.behavior.is_peer();
-            if dep.name_hash == name_hash && id != row && (!is_peer || peers_count) {
+            if dep.name_hash == name_hash && id != row {
                 have_the_name.push(owner as PackageID);
             }
-            is_a_dependency |= !is_peer && resolutions[id as usize] == copy;
+            is_a_dependency |= !dep.behavior.is_peer() && resolutions[id as usize] == copy;
         }
     }
     let all = reachable::Options::all(0);

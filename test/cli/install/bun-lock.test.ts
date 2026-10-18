@@ -4458,6 +4458,37 @@ it.each<OrderedShape>([
     z: { "z": "z@2.0.0", "o/z": "z@1.0.5" },
   },
   {
+    // kit and the r it depends on use one z, the one that kit's range accepts, though it came with o.
+    shape: "kit peers z@~1.0.0 and -> r, r peers z@^2.0.0, o -> z@1.0.5",
+    manifests: {
+      kit: { "1.0.0": { dependencies: { r: "1.0.0" }, peerDependencies: { z: "~1.0.0" } } },
+      o: { "1.0.0": { dependencies: { z: "1.0.5" } } },
+      r: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      z: zVersions,
+    },
+    files: { "package.json": { name: "foo", dependencies: { kit: "1.0.0", o: "1.0.0" } } },
+    orders: {
+      "r's manifest last": [{ manifest: "r", until: "/z" }],
+      "o's manifest last": [{ manifest: "o", until: "/kit-1.0.0.tgz" }],
+    },
+    z: { "z": "z@1.0.5" },
+  },
+  {
+    // Nothing above r names z, so o's copy is not for it.
+    shape: "r peers z@^2.0.0, o -> z@1.0.5",
+    manifests: {
+      o: { "1.0.0": { dependencies: { z: "1.0.5" } } },
+      r: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      z: zVersions,
+    },
+    files: { "package.json": { name: "foo", dependencies: { o: "1.0.0", r: "1.0.0" } } },
+    orders: {
+      "r's manifest last": [{ manifest: "r", until: "/z" }],
+      "o's manifest last": [{ manifest: "o", until: "/r" }],
+    },
+    z: { "z": "z@1.0.5", "r/z": "z@2.0.0" },
+  },
+  {
     // h ships z@1.0.0, y and y's z@1.0.5 in its own tarball. Sharing one of those versions saves no copy, so r
     // and p get what they would get without h, whether or not h's rows are resolved first.
     shape: "h bundles z@1.0.0 and y -> z@1.0.5, r -> z@^1.0.0, p peers z@*",

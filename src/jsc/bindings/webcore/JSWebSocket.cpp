@@ -1121,7 +1121,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketStreamClosedForWs, (JSGlobalObject * lexical
     return JSValue::encode(jsUndefined());
 }
 
-// sendFrame(ws, data, opcode, fin, compress). No-op unless `ws` is OPEN. `compress` is honored as-is, with no minimum size.
+// sendFrame(ws, data, opcode, fin, compress). Sends nothing and returns false unless `ws` is OPEN. `compress` is honored as-is, with no minimum size.
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketSendFrameForWs, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1142,7 +1142,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketSendFrameForWs, (JSGlobalObject * lexicalGlo
 
     auto& impl = socket->wrapped();
     if (impl.readyState() != WebSocket::OPEN)
-        return JSValue::encode(jsUndefined());
+        return JSValue::encode(jsBoolean(false));
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.sendFrame(opcode, *payload, flags); })));
 }
 

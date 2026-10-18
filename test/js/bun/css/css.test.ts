@@ -281,13 +281,13 @@ describe("css tests", () => {
     minify_test(`a { color: color(display-p3 0 calc(NaN * 1%) 0) }`, `a{color:color(display-p3 0 0 0)}`);
     minify_test(`a { color: color(xyz 0 0 0 / calc(NaN)) }`, `a{color:color(xyz 0 0 0/0)}`);
 
-    // rgb(), hsl() and hwb() print the same text as before. The channel is now stored as 0.
+    // rgb(), hsl() and hwb() in the space syntax.
     minify_test(`a { color: rgb(calc(NaN) 0 0) }`, `a{color:#000}`);
     minify_test(`a { color: hsl(calc(NaN) 50% 50%) }`, `a{color:#bf4040}`);
     minify_test(`a { color: hwb(calc(NaN) 20% 20%) }`, `a{color:#c33}`);
     minify_test(`a { color: hsl(120 50% 50% / calc(NaN)) }`, `a{color:#40bf4000}`);
 
-    // The comma syntax has no `none`. A channel that was NaN made the whole color unparsed.
+    // The comma syntax has no `none`, and a calculation that is NaN is not one.
     minify_test(`a { color: rgb(calc(NaN), 0, 0) }`, `a{color:#000}`);
     minify_test(`a { color: rgb(255, calc(NaN), 0) }`, `a{color:red}`);
     minify_test(`a { color: rgb(calc(NaN * 1%), 0%, 100%) }`, `a{color:#00f}`);
@@ -356,19 +356,18 @@ describe("css tests", () => {
     // `0e999` is 0. The tokenizer reads it as 0 * infinity.
     minify_test(`a { color: lab(50% 0e999 0) }`, `a{color:lab(50% 0 0)}`);
 
-    // A typed @property takes the comma syntax too. It was `Unexpected token: rgb(`.
+    // A typed @property reads the same color.
     minify_test(
       `@property --c { syntax: "<color>"; inherits: false; initial-value: rgb(calc(NaN), 0, 0) }`,
       `@property --c{syntax:"<color>";inherits:false;initial-value:#000}`,
     );
   });
   describe("asin(), acos() and atan() that are NaN", () => {
-    // The result is an <angle>, as it is for asin(.5). It was a <number>.
-    // A <number> and a <length> do not take it. They were folded to 0.
+    // The result is an <angle>, as it is for asin(.5). A <number> and a <length> do not take it.
     minify_test(`a { opacity: asin(2) }`, `a{opacity:asin(2)}`);
     minify_test(`a { line-height: acos(2) }`, `a{line-height:acos(2)}`);
     minify_test(`a { width: calc(1px * asin(2)) }`, `a{width:calc(1px*asin(2))}`);
-    // An <angle> takes it. It was left as written. It is 0 now, as `calc(NaN * 1deg)` is.
+    // An <angle> takes it. The NaN is 0, as for `calc(NaN * 1deg)`.
     minify_test(`a { rotate: asin(2) }`, `a{rotate:0rad}`);
     minify_test(`a { rotate: calc(acos(2) + 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transform: rotate(asin(2)) scale(2) }`, `a{transform:rotate(0rad)scale(2)}`);
@@ -376,7 +375,7 @@ describe("css tests", () => {
       `a { background: linear-gradient(asin(2), red, blue) }`,
       `a{background:linear-gradient(0rad,red,#00f)}`,
     );
-    // A result that is not NaN, and sin() of a NaN angle, are as before.
+    // A result that is not NaN is an <angle> too. sin() of a NaN angle is a <number>.
     minify_test(`a { rotate: asin(.5) }`, `a{rotate:30deg}`);
     minify_test(`a { opacity: asin(.5) }`, `a{opacity:asin(.5)}`);
     minify_test(`a { opacity: sin(asin(2)) }`, `a{opacity:0}`);

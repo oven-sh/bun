@@ -606,7 +606,7 @@ describe("?mode=", () => {
     expect({
       existing: await observe(true, query, options),
       missing: await observe(false, query, options),
-    }).toEqual({ existing, missing });
+    }).toEqual<object>({ existing, missing });
   });
 
   test("a name without a scheme: data.db?mode=ro opens data.db read-only", async () => {
@@ -664,7 +664,7 @@ describe("what the options object inherits", () => {
     ],
     [
       "new SQL(undefined, { adapter, filename })",
-      (file, inherited) => new SQL(undefined, inheriting(inherited, { adapter: "sqlite", filename: file })),
+      (file, inherited) => new SQL(undefined as any, inheriting(inherited, { adapter: "sqlite", filename: file })),
     ],
     ["an inherited adapter", (file, inherited) => new SQL(file, inheriting({ ...inherited, adapter: "sqlite" }))],
     [

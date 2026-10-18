@@ -200,7 +200,6 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", internalFields: ["a", "a"] })).toThrow("two internal fields are both a");
   const constructible = { rustPath: "T", construct: {} };
   for (const extra of [{ cache: true }, { setter: true }]) {
-    // @ts-expect-error
     expect(() => b.class({ ...constructible, static: { x: { getter: b.u32, ...extra } } })).toThrow(
       "x: a static getter has no cache and no setter",
     );
@@ -874,7 +873,7 @@ describe("unions", () => {
       [new Blob(["x"]), "blob"],
       [Bun.file("/nonexistent"), "blob"],
       [new TestCounter(3), "counter 3"],
-      [new SubCounter(4), "counter 4"],
+      [new (SubCounter as any)(4), "counter 4"],
       [bindgen.makeToken(9), "token 9"],
       [[], "list []"],
       [[1, 2.5], "list [1.0, 2.5]"],

@@ -43,7 +43,7 @@ async function against(
     let authed = false;
     const pending = { ...replies };
     socket.write(mysqlHandshakeV10());
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (_seq, payload) => {
         if (!authed) {
           authed = true;

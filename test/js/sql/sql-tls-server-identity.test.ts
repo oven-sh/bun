@@ -103,7 +103,11 @@ async function mysqlServer(cert: ServerCert): Promise<MockServer> {
   return { url: `mysql://u@127.0.0.1:${port}/db`, bytesInsideTls: closed.promise, close: () => server.close() };
 }
 
-async function connect(url: string, tlsOptions: Bun.SQL.Options["tls"], sslmode = "verify-full"): Promise<unknown> {
+async function connect(
+  url: string,
+  tlsOptions: Bun.SQL.PostgresOrMySQLOptions["tls"],
+  sslmode = "verify-full",
+): Promise<unknown> {
   await using sql = new SQL({ url: `${url}?sslmode=${sslmode}`, tls: tlsOptions, max: 1, idleTimeout: 1 });
   return await sql.connect().then(
     () => "CONNECTED",
@@ -163,7 +167,7 @@ describe.concurrent.each([
     await withServer(agent1, async server => {
       const calls: string[][] = [];
       const checkServerIdentity = (hostname: string, cert: tls.PeerCertificate) =>
-        void calls.push([hostname, cert.subject.CN]);
+        void calls.push([hostname, cert.subject.CN as string]);
       expect(await connect(server.url, { ca: agent1.ca, checkServerIdentity })).toBe("CONNECTED");
       expect(await connect(server.url, { ca: agent1.ca, serverName: "other", checkServerIdentity })).toBe("CONNECTED");
       expect(calls).toEqual([

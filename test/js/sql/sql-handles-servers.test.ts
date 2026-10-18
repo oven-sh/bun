@@ -9,7 +9,7 @@ const outcome = (promise: PromiseLike<unknown>): Promise<any> =>
   promise.then(
     value => (value === undefined || Array.isArray(value) ? "resolved" : value),
     err => err?.code ?? err?.message ?? err,
-  );
+  ) as Promise<any>;
 
 function parked() {
   const entered = Promise.withResolvers<void>();

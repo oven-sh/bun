@@ -572,7 +572,7 @@ function suite(dialect: Dialect, url: () => string) {
         ".b": await outcome(".b"),
         "b.": await outcome("b."),
         "": await outcome(""),
-      }).toEqual(
+      }).toEqual<Record<string, unknown>>(
         by<Record<string, unknown>>({
           sqlite: {
             "a..b": "no such column: a..b",

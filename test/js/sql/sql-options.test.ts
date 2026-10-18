@@ -376,7 +376,7 @@ describe("what the options object inherits", () => {
         return false;
       },
     });
-    await using sql = new SQL(first as string, logged);
+    await using sql = new SQL(first as string, logged as Bun.SQL.Options);
     expect(sql.options.adapter).toBeString();
     expect(reads).toEqual([...new Set(reads)]);
     expect(reads.slice(0, 3).toSorted()).toEqual(["adapter", "filename", "url"]);

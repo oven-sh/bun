@@ -1080,7 +1080,7 @@ describe.each(linkers)("linker: %s", linker => {
     await frozen(packageDir, linker, [skippedNote("no-deps")]);
 
     expect(await lockText(packageDir)).toBe(full);
-    expect(await installedPackages(packageDir, linker)).toEqual(
+    expect(await installedPackages(packageDir, linker)).toEqual<unknown[]>(
       byLinker<unknown[]>(linker, ["app", "opt"], [expect.stringMatching(/^opt@/)]),
     );
     expect(await exists(join(packageDir, "packages", "no-deps"))).toBeFalse();

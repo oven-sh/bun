@@ -46,7 +46,7 @@ import {
 } from "./wire-frames";
 
 const settledError = (e: any) => ({ code: e.code, errno: e.errno, message: e.message });
-const settled = (promise: PromiseLike<unknown>) => promise.then(rows => [...(rows as unknown[])], settledError);
+const settled = (promise: Promise<unknown>) => promise.then(rows => [...(rows as unknown[])], settledError);
 
 const adminShutdown = { S: "FATAL", C: "57P01", M: "terminating connection due to administrator command" };
 const adminShutdownError = { code: "ERR_POSTGRES_SERVER_ERROR", errno: "57P01", message: adminShutdown.M };
@@ -63,7 +63,7 @@ async function simpleQueryServer(greeting: (connection: number) => Buffer[]) {
     socket.on("error", () => {});
     socket.once("data", () => {
       socket.write(Buffer.concat(greeting(connection)));
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         buffered = pgReadFrontendMessages(Buffer.concat([buffered, chunk]), type => {
           if (type === 0x51 /* 'Q' */) socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
         });
@@ -564,7 +564,7 @@ async function cancelServer(
     let buffered = Buffer.alloc(0);
     let started = false;
     let reply: Buffer[] = [];
-    stream.on("data", chunk => {
+    stream.on("data", (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk]);
       if (!started) {
         const startup = pgParseStartupMessage(buffered);
@@ -591,7 +591,7 @@ async function cancelServer(
 
   function serveOther(stream: net.Socket) {
     let buffered = Buffer.alloc(0);
-    stream.on("data", chunk => {
+    stream.on("data", (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk]);
       if (buffered.length < 16) return;
       request(server.requested++).resolve(buffered);
@@ -1271,7 +1271,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         const isSession = sockets.push(client, upstream) === 2;
         client.on("error", () => {}).on("close", () => upstream.destroy());
         upstream.on("error", () => {}).on("close", () => client.destroy());
-        upstream.on("data", chunk => void (held?.push(chunk) ?? client.write(chunk)));
+        upstream.on("data", (chunk: Buffer) => void (held?.push(chunk) ?? client.write(chunk)));
         if (isSession) client.on("data", chunk => upstream.write(chunk));
         else client.once("data", chunk => proxy.request.resolve(() => upstream.write(chunk)));
       });
@@ -1585,7 +1585,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       test("is prepared again after DEALLOCATE ALL, for the last query of a burst and for the next burst", async () => {
         await using sql = await connect();
         let conversions = 0;
-        const burst = () =>
+        const burst = (): Promise<unknown[]> =>
           Promise.all([
             ...range(0, 12).map(i => settled(sql.unsafe(`select $1::int + ${i % 3} as x`, [i]))),
             settled(sql`select 'no parameter' as x`),

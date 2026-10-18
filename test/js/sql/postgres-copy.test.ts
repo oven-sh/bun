@@ -524,7 +524,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         await tx`insert into copied values (0, 'zero')`;
         await leaveOpen(tx);
       });
-      expect(failure(await outcome(transaction))).toEqual(expected("transaction"));
+      expect(failure(await outcome(transaction))).toEqual<object>(expected("transaction"));
       expect([await pidOf(sql), await rowsOf(sql)]).toEqual([pid, []]);
     });
 

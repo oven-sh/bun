@@ -1086,7 +1086,7 @@ const scripted = [
       let buffered: Buffer = Buffer.alloc(0);
       let authenticated = false;
       socket.write(mysqlHandshakeV10());
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
           if (authenticated) return void (mysqlAckSessionSetup(socket, payload) || (answers && this.answer(socket)));
           authenticated = true;
@@ -1466,7 +1466,10 @@ describe.each(scripted)("$adapter, scripted server", script => {
     expect(server.sockets.length).toBe(2);
   });
 
-  test.concurrent.each([[new Error("no password"), "Error: no password"], [undefined], [""]])(
+  test.concurrent.each([[new Error("no password"), "Error: no password"], [undefined], [""]] as [
+    string | Error | undefined,
+    string?,
+  ][])(
     "a password function that throws %p rejects the query",
     async (thrown, expected = prefix + "CONNECTION_CLOSED") => {
       await using sql = new SQL({

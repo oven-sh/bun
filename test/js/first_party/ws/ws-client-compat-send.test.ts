@@ -958,8 +958,8 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
         const { ws, conn } = client;
         const events: unknown[] = [];
         ws.on("close", code => events.push(code));
-        ws._socket!.destroy();
-        ws[method]("abcd", (error?: NodeJS.ErrnoException | null) => events.push(error?.code));
+        (ws as any)._socket.destroy();
+        (ws as any)[method]("abcd", (error?: NodeJS.ErrnoException | null) => events.push(error?.code));
         expect(ws.readyState).toBe(WebSocket.OPEN);
         await client.closed;
         expect(events).toEqual(["ERR_STREAM_DESTROYED", 1006]);

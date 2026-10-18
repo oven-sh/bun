@@ -1117,7 +1117,7 @@ describe.concurrent("notify()", () => {
     const settled = Promise.allSettled([sql.notify("ch", "payload"), sql.notify("signal")]);
     await server.untilQuery(queries => queries.some(query => query.includes("pg_notify($1, $2)")));
     const rejected = {
-      status: "rejected",
+      status: "rejected" as const,
       reason: expect.objectContaining(serverError("mock rejects extended-protocol queries")),
     };
     expect(await settled).toEqual([rejected, rejected]);

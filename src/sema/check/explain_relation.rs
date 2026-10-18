@@ -10,7 +10,7 @@
 
 use super::explain::Line;
 use super::explain::NOWHERE;
-use super::relate::{REC_BOTH, Relater, Relation, STACK_DEPTH_OVERFLOW, STATE_NONE, Ternary};
+use super::relate::{REC_BOTH, Relater, Relation, STATE_NONE, Ternary};
 use super::related::Place;
 use super::*;
 use std::rc::Rc;
@@ -325,7 +325,7 @@ impl<'p, 's> Checker<'p, 's> {
         is_related
     }
 
-    /// `isTypeRelatedTo`. `Err(code)`: the comparison overflowed (`r.overflow`); `code` is 2859 (complexity) or 2321 (stack depth).
+    /// `isTypeRelatedTo`. `Err(2859)`: the comparison exceeded the complexity limit.
     /// `is_trial`: tsgo has no comparison at this point, see `Relater::caches_failures`.
     pub(super) fn try_is_type_related_to(
         &mut self,
@@ -334,23 +334,15 @@ impl<'p, 's> Checker<'p, 's> {
         relation: Relation,
         is_trial: bool,
     ) -> Result<bool, u32> {
-        self.relation_too_deep = false;
         let too_complex_before = std::mem::replace(&mut self.relation_too_complex, false);
         self.is_trial_comparison = is_trial;
         let is_related = self.related(source, target, relation);
         self.is_trial_comparison = false;
         let is_too_complex = std::mem::replace(&mut self.relation_too_complex, too_complex_before);
-        let mut is_too_deep = self.relation_too_deep;
-        // "such that we don't attempt the overflowing operation again"
-        if !is_related && !is_too_deep && !is_trial {
-            let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
-            let entry = self.p.relations.get(&self.task, &key);
-            is_too_deep = entry.is_some_and(|entry| entry & STACK_DEPTH_OVERFLOW != 0);
-        }
-        match () {
-            _ if is_too_complex => Err(2859),
-            _ if is_too_deep => Err(2321),
-            _ => Ok(is_related),
+        if is_too_complex {
+            Err(2859)
+        } else {
+            Ok(is_related)
         }
     }
 
@@ -1103,7 +1095,7 @@ impl<'p, 's> Checker<'p, 's> {
         let gives_way = !is_conversion_or_interface_implementation_message(message);
         let is_already_reported = match r.get_chain_message(0) {
             Some(2353 | 2561) => true,
-            Some(2859 | 2321 | 4104) => r.chain_args_match(&names),
+            Some(2859 | 4104) => r.chain_args_match(&names),
             Some(2741) => gives_way && r.chain_args_match(&[None, names[0], names[1]]),
             Some(2740 | 2739) => gives_way && r.chain_args_match(&names),
             _ => false,

@@ -379,6 +379,11 @@ describe("TextDecoder", () => {
       expect(messageOf(() => new TextDecoder().decode(new Uint8Array(), "a\ud800"))).toBe(message);
     });
 
+    it("has the lengths of the IDL", () => {
+      expect(TextDecoder.length).toBe(0);
+      expect(TextDecoder.prototype.decode.length).toBe(0);
+    });
+
     it("refuses options before it looks up the label", () => {
       expect(() => new TextDecoder("nope", 1)).toThrow(
         expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),

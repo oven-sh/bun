@@ -218,10 +218,9 @@ impl FileSystemRouterClass for FileSystemRouter {
             }
         }
         let global = cx.global();
-        let vm = global.bun_vm().as_mut();
 
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
-        let mut root_dir_path = vm.top_level_dir();
+        let mut root_dir_path = global.bun_vm().top_level_dir();
         if !(options.dir.is_empty() || options.dir == b".") {
             // An absolute path is joined too: a route's name is cut from the resolver's normalized spelling.
             let Some(joined) =
@@ -263,6 +262,7 @@ impl FileSystemRouterClass for FileSystemRouter {
             root_dir_info.abs_path
         };
 
+        let vm = global.bun_vm().as_mut();
         // The interning cache adds no ref on a hit, so each router takes its own. `drop` releases it.
         let mut claim = |bytes: &[u8]| -> BackRef<RefString> {
             let p = vm.ref_counted_string::<true>(bytes, None);

@@ -38,8 +38,8 @@ export const Crypto = b.class({
   construct: { capability: "heap", throws: true },
   proto: {
     /** What is not an integer typed array throws a `DOMException`, as in Node. */
-    getRandomValues: { args: { typedArray: b.any }, returns: b.any, capability: "js", throws: true, length: 0 },
-    randomUUID: { returns: b.string, length: 1 },
+    getRandomValues: { args: { typedArray: b.any }, returns: b.any, capability: "js", throws: true },
+    randomUUID: { returns: b.string },
     timingSafeEqual: equal,
   },
 });

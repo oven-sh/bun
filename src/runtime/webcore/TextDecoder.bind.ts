@@ -31,7 +31,6 @@ export const TextDecoder = b.class({
       capability: "heap",
       throws: true,
       mutates: true,
-      length: 1,
     },
     encoding: { getter: b.any, cache: true, capability: "heap" },
     fatal: { getter: b.bool },

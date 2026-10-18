@@ -70,33 +70,51 @@ test("maxHeaderSize", async () => {
   (http as any).maxHeaderSize = originalMaxHeaderSize;
 });
 
-describe("maxHeaderSize is not wrapped to 32 or to 64 bits", () => {
+describe("http.maxHeaderSize = value takes what the maxHeaderSize option takes", () => {
   const originalMaxHeaderSize = http.maxHeaderSize;
   afterEach(() => {
     (http as any).maxHeaderSize = originalMaxHeaderSize;
   });
+  const thrownBy = (call: () => void) => {
+    try {
+      call();
+    } catch (error: any) {
+      return { name: error.name, code: error.code, message: error.message };
+    }
+  };
 
-  test.each([
-    ['"5000000000"', "5000000000", 5000000000],
-    ['"3000000000"', "3000000000", 3000000000],
-    ["an object whose valueOf gives 5000000000", { valueOf: () => 5000000000 }, 5000000000],
-    ["an object whose valueOf gives 5n", { valueOf: () => 5n }, 5],
-    ["Infinity", Infinity, 2 ** 63],
-    ["2 ** 63", 2 ** 63, 2 ** 63],
-    ["2n ** 63n", 2n ** 63n, 2 ** 63],
-    ["2n ** 64n + 16384n", 2n ** 64n + 16384n, 2 ** 63],
-  ])("%s", (_, value, expected) => {
+  test.each([1, 1024, 5000000000, Number.MAX_SAFE_INTEGER])("%d", value => {
     (http as any).maxHeaderSize = value;
-    expect(http.maxHeaderSize).toBe(expected);
+    expect(http.maxHeaderSize).toBe(value);
   });
 
   test.each([
-    ['"-4294950912"', "-4294950912"],
-    ["-(2n ** 64n) + 5n", -(2n ** 64n) + 5n],
-  ])("%s is negative", (_, value) => {
+    ['"16384"', "16384", "ERR_INVALID_ARG_TYPE"],
+    ['"5000000000"', "5000000000", "ERR_INVALID_ARG_TYPE"],
+    ['"-4294950912"', "-4294950912", "ERR_INVALID_ARG_TYPE"],
+    ["5n", 5n, "ERR_INVALID_ARG_TYPE"],
+    ["2n ** 64n + 16384n", 2n ** 64n + 16384n, "ERR_INVALID_ARG_TYPE"],
+    ["-(2n ** 64n) + 5n", -(2n ** 64n) + 5n, "ERR_INVALID_ARG_TYPE"],
+    ["an object with a valueOf", { valueOf: () => 5 }, "ERR_INVALID_ARG_TYPE"],
+    ["true", true, "ERR_INVALID_ARG_TYPE"],
+    ["null", null, "ERR_INVALID_ARG_TYPE"],
+    ["1.5", 1.5, "ERR_OUT_OF_RANGE"],
+    ["NaN", NaN, "ERR_OUT_OF_RANGE"],
+    ["Infinity", Infinity, "ERR_OUT_OF_RANGE"],
+  ])("%s throws what the option throws", (_, value, code) => {
+    const thrown = thrownBy(() => {
+      (http as any).maxHeaderSize = value;
+    });
+    expect(thrown).toMatchObject({ code });
+    expect(thrown).toEqual(thrownBy(() => http.createServer({ maxHeaderSize: value as any })));
+    expect(http.maxHeaderSize).toBe(originalMaxHeaderSize);
+  });
+
+  test.each([0, -1, 2 ** 53, 2 ** 63])("%d is out of range", value => {
     expect(() => {
       (http as any).maxHeaderSize = value;
-    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    }).toThrow(expect.objectContaining({ name: "RangeError", code: "ERR_OUT_OF_RANGE" }));
+    expect(http.maxHeaderSize).toBe(originalMaxHeaderSize);
   });
 });
 

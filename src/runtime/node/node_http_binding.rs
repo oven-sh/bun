@@ -1,8 +1,8 @@
 //! `node:http` native binding — `getBunServerAllClosedPromise` /
-//! `getBunServerOpenCount` / `{get,set}MaxHTTPHeaderSize`, and the `ws` package's native server
+//! `getBunServerOpenCount`, and the `ws` package's native server
 //! transport: `upgradeNodeHTTPResponseToWebSocket` / `sendWebSocketFrame`.
 
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws_sys::Opcode;
 use bun_uws_sys::response::PerMessageDeflateParams;
@@ -120,18 +120,4 @@ pub(crate) fn send_web_socket_frame<'a>(
     compress: bool,
 ) -> JsResult<JSValue> {
     handle.send_frame(cx.global(), data.to_js(), Opcode(opcode), fin, compress)
-}
-
-pub(crate) fn set_max_http_header_size<'a>(
-    heap: &JsHeap<'a>,
-    value: f64,
-) -> bindgen::Result<'a, usize> {
-    let num = value as i64;
-    if num <= 0 {
-        return Err(
-            heap.invalid_arguments(format_args!("maxHeaderSize must be a positive integer"))
-        );
-    }
-    bun_http::set_max_http_header_size(num as usize);
-    Ok(bun_http::max_http_header_size())
 }

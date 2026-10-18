@@ -2201,6 +2201,49 @@ c {
     },
   });
 
+  // External imports are hoisted to the top, and only "@layer" statements may
+  // precede an "@import". Bun rejects an "@import" that follows any other rule,
+  // so the second build throws if the first one printed an invalid prologue.
+  itBundled("css/CSSAtLayerStatementBeforeExternalAtImport", {
+    files: {
+      "/entry.css": /* css */ `
+        @layer first;
+        @import "https://example.com/e.css";
+        @import "./local.css" layer(second);
+      `,
+      "/local.css": `.l { c: d }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    async onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toEqualIgnoringWhitespace('@layer first;@import "https://example.com/e.css";@layer second{.l{c:d}}');
+      await Bun.build({ entrypoints: [api.outfile], outdir: api.join("again") });
+    },
+  });
+
+  // Under import conditions the layer list prints as a block, so it stays behind the import.
+  itBundled("css/CSSAtLayerStatementBeforeExternalAtImportConditional", {
+    files: {
+      "/entry.css": `@import "./mid.css" layer(wrap) supports(display: flex);`,
+      "/mid.css": /* css */ `
+        @layer inner;
+        @import "https://example.com/e.css";
+      `,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    async onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toEqualIgnoringWhitespace(
+          '@import "https://example.com/e.css" layer(wrap) supports(display:flex);@supports (display:flex){@layer wrap{@layer inner;}}@supports (display:flex){@layer wrap;}',
+        );
+      await Bun.build({ entrypoints: [api.outfile], outdir: api.join("again") });
+    },
+  });
+
   // This test mainly just makes sure that this scenario doesn't crash
   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {
     files: {

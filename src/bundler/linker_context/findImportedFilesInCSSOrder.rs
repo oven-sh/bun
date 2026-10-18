@@ -343,35 +343,28 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     // the file when bundling, even though doing so will change the order of CSS
     // evaluation.
     if has_external_import {
-        // Pass 1: Pull out leading "@layer" and external "@import" rules
+        // Pass 1: Pull out leading "@layer" statements and external "@import" rules.
+        // A layer list under import conditions prints as a block, so it ends the prefix.
         let mut is_at_layer_prefix = true;
         for entry in order.slice() {
-            if (matches!(entry.kind, CssImportOrderKind::Layers(_)) && is_at_layer_prefix)
-                || matches!(entry.kind, CssImportOrderKind::ExternalPath(_))
-            {
+            is_at_layer_prefix &= entry.prints_as_layer_statements();
+            if is_at_layer_prefix || matches!(entry.kind, CssImportOrderKind::ExternalPath(_)) {
                 // SAFETY: `entry` is moved back into `order` via
                 // `memcpy_and_reset` (which `set_len(0)`s without dropping), so
                 // each `CssImportOrder` value is dropped at most once.
                 wip_order.push(unsafe { bitwise_copy(entry) });
-            }
-            if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
-                is_at_layer_prefix = false;
             }
         }
 
         // Pass 2: Append everything that we didn't pull out in pass 1
         is_at_layer_prefix = true;
         for entry in order.slice() {
-            if (!matches!(entry.kind, CssImportOrderKind::Layers(_)) || !is_at_layer_prefix)
-                && !matches!(entry.kind, CssImportOrderKind::ExternalPath(_))
-            {
+            is_at_layer_prefix &= entry.prints_as_layer_statements();
+            if !is_at_layer_prefix && !matches!(entry.kind, CssImportOrderKind::ExternalPath(_)) {
                 // SAFETY: `entry` is moved back into `order` via
                 // `memcpy_and_reset` (which `set_len(0)`s without dropping), so
                 // each `CssImportOrder` value is dropped at most once.
                 wip_order.push(unsafe { bitwise_copy(entry) });
-            }
-            if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
-                is_at_layer_prefix = false;
             }
         }
 

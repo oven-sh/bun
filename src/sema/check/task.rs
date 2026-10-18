@@ -306,7 +306,7 @@ impl<'s> Task<'s> {
 
     /// Before the task visits a file. `is_first`: every file before that one in program order is checked for good, or the
     /// task has checked it itself. `is_first_in_component`: the same, counting only the earlier files in that file's
-    /// import cycle.
+    /// import cycle and the files they import, directly or through other files.
     pub(super) fn set_first_in_order(&self, is_first: bool, is_first_in_component: bool) {
         self.is_first_in_order.set(is_first);
         (self.is_first_in_component).set(is_first_in_component);

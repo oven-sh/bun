@@ -31,6 +31,11 @@ first asks. Four tests show the difference: `commentsOnJSXExpressionsArePreserve
 `tsxSpreadChildrenInvalidType`. Their eleven `.errors.txt` with that error are those of typescript-go
 89d5d5b2849a0db0957065889ca58536fa6d2e4a. A sync with an older version brings the old ones back.
 
+In a union, `bun check` has bigint literals in the order of their values, as TypeScript 7.1 has them. In 7.0 the one
+that a checker creates first comes first. Two tests show the difference: `parseBigInt.types`, `parseBigInt.errors.txt`
+and `temporal.types` are those of microsoft/TypeScript 5237fd46890956e4bb8177a1a05dcd69e4166560. A sync with an older
+version brings the old ones back.
+
 ```sh
 bun bd test test/cli/check/conformance
 # One test, or all whose path contains the text

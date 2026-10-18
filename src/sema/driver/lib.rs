@@ -5013,7 +5013,8 @@ fn check_named_files(
                 waiting.push(index);
                 (done, spent) = (done + 1, spent + size_of(index));
                 let upcoming = next();
-                let is_last = upcoming.is_none() || spent >= task_cost;
+                let is_last =
+                    upcoming.is_none() || spent >= task_cost || checker.ends_with_the_file();
                 // Nothing waits for what the tasks that end last have found out.
                 let is_read = upcoming.is_some() || is_read_afterwards || !lost.lock().is_empty();
                 match checker.commit_after_file(is_last, is_read) {

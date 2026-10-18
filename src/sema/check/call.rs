@@ -2272,6 +2272,7 @@ impl<'p, 's> Checker<'p, 's> {
             construct,
             index,
             instantiation_expression: Some(node),
+            created_from: Some((ty, TypeId::NEVER)),
             mapper,
             ..Shape::new_in(self.arena)
         })

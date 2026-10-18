@@ -4614,7 +4614,8 @@ export const c: 1 = { icon: "gear" } satisfies { icon?: "gear" | (string & NonNu
       `);
     });
 
-    test("instantiations of one mapped type are ordered by creation in a union", async () => {
+    // As in TypeScript 7.1. In 7.0 the one that is created first comes first.
+    test("instantiations of one mapped type are ordered by their type arguments in a union", async () => {
       using dir = project({
         "a.ts": `
 type Flat<T> = { [K in keyof T]: T[K] } & {};
@@ -4626,7 +4627,52 @@ export const x: 1 = null! as typeof first | typeof second;
       });
       const { stdout } = await check(dir);
       expect(stdout.split("\n")[0]).toBe(
-        "a.ts(6,14): error TS2322: Type '{ b: 1; } | { a: 1; }' is not assignable to type '1'.",
+        "a.ts(6,14): error TS2322: Type '{ a: 1; } | { b: 1; }' is not assignable to type '1'.",
+      );
+    });
+
+    // As in TypeScript 7.1. In 7.0 the union has the alias of the one that is created first.
+    test("a mapped type over a union with a primitive, and the union of its results", async () => {
+      using dir = project({
+        "a.ts": `
+interface A { a: 1 } interface B { b: 2 }
+declare const x: Partial<A | string>; declare const y: Partial<A> | string;
+const a1: never = [x, y];
+const a2: never = [y, x];
+const c1: never = Math.random() ? x : y;
+const c2: never = Math.random() ? y : x;
+declare const x2: Partial<A | undefined>; declare const y2: Partial<A> | undefined;
+const a3: never = [x2, y2];
+const c3: never = Math.random() ? x2 : y2;
+// the same without a primitive member, and without subtype reduction: the two agree
+declare const x3: Partial<A | B>; declare const y3: Partial<A> | Partial<B>;
+const a4: never = [x3, y3];
+const c4: never = Math.random() ? x3 : y3;
+declare const u: typeof x | typeof y; const n: never = u;
+const a5: never = [x, x];
+const sentinel: number = "";
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toBe(
+        `
+a.ts(4,7): error TS2322: Type '(string | Partial<A>)[]' is not assignable to type 'never'.
+a.ts(5,7): error TS2322: Type '(string | Partial<A>)[]' is not assignable to type 'never'.
+a.ts(6,7): error TS2322: Type 'string | Partial<A>' is not assignable to type 'never'.
+  Type 'string' is not assignable to type 'never'.
+a.ts(7,7): error TS2322: Type 'string | Partial<A>' is not assignable to type 'never'.
+  Type 'string' is not assignable to type 'never'.
+a.ts(9,7): error TS2322: Type '(Partial<A> | undefined)[]' is not assignable to type 'never'.
+a.ts(10,7): error TS2322: Type 'Partial<A> | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+a.ts(13,7): error TS2322: Type '(Partial<A> | Partial<B>)[]' is not assignable to type 'never'.
+a.ts(14,7): error TS2322: Type 'Partial<A> | Partial<B>' is not assignable to type 'never'.
+  Type 'Partial<A>' is not assignable to type 'never'.
+a.ts(15,45): error TS2322: Type 'Partial<A> | Partial<string | A>' is not assignable to type 'never'.
+  Type 'string' is not assignable to type 'never'.
+a.ts(16,7): error TS2322: Type 'Partial<string | A>[]' is not assignable to type 'never'.
+a.ts(17,7): error TS2322: Type 'string' is not assignable to type 'number'.
+`.slice(1, -1),
       );
     });
 

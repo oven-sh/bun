@@ -2550,11 +2550,34 @@ impl<'p, 's> Checker<'p, 's> {
                     .then_with(|| x.partial_cmp(&y).unwrap_or(Equal))
             }
             (TypeData::BoolLit { value: x, .. }, TypeData::BoolLit { value: y, .. }) => x.cmp(y),
-            // tsgo orders them by id, and creates `zeroBigIntType` with the checker.
-            (TypeData::BigIntLit { text: x, .. }, TypeData::BigIntLit { text: y, .. }) => {
-                let is_zero =
-                    |text: Atom| atoms.bytes(text).iter().all(|&c| c == b'0' || c == b'n');
-                is_zero(*y).cmp(&is_zero(*x))
+            // TypeScript 7.1: by value.
+            (
+                TypeData::BigIntLit {
+                    text: x,
+                    negative: is_x_negative,
+                    ..
+                },
+                TypeData::BigIntLit {
+                    text: y,
+                    negative: is_y_negative,
+                    ..
+                },
+            ) => {
+                let digits = |text: Atom| {
+                    let text = atoms.bytes(text);
+                    let text = text.strip_suffix(b"n").unwrap_or(text);
+                    &text[text.iter().take_while(|&&c| c == b'0').count()..]
+                };
+                let (x, y) = (digits(*x), digits(*y));
+                let by_magnitude = x.len().cmp(&y.len()).then_with(|| x.cmp(y));
+                match (
+                    *is_x_negative && !x.is_empty(),
+                    *is_y_negative && !y.is_empty(),
+                ) {
+                    (true, true) => by_magnitude.reverse(),
+                    (false, false) => by_magnitude,
+                    (is_x_negative, is_y_negative) => is_y_negative.cmp(&is_x_negative),
+                }
             }
             (
                 TypeData::Marker(Marker::Restrictive(x)),
@@ -2612,11 +2635,24 @@ impl<'p, 's> Checker<'p, 's> {
                     .then_with(|| lists(x, y))
             }
             // TypeScript orders them by id, in the order `getSpreadType` created them: `mapType`
-            // iterates over the left operand, and for each of its members over the right.
+            // iterates over the left operand, and for each of its members over the right. Likewise
+            // `getInstantiationExpressionType`, one expression after the other.
             (TypeData::Synth(x), TypeData::Synth(y)) => match (x.created_from, y.created_from) {
-                (Some((l, r)), Some((m, s))) => (x.spread_rank.cmp(&y.spread_rank))
-                    .then_with(|| types(l, m))
-                    .then_with(|| types(r, s)),
+                (Some((l, r)), Some((m, s))) => {
+                    let node = |shape: &Shape| {
+                        let (file, pos) = match shape.instantiation_expression? {
+                            InstantiationExpression::Expr(file, e) => (file, self.hir(file)[e].pos),
+                            InstantiationExpression::TypeNode(file, node) => {
+                                (file, self.hir(file)[node].pos)
+                            }
+                        };
+                        Some(self.place_in_program_order(file, pos))
+                    };
+                    some_first(node(x), node(y))
+                        .then_with(|| x.spread_rank.cmp(&y.spread_rank))
+                        .then_with(|| types(l, m))
+                        .then_with(|| types(r, s))
+                }
                 _ => match (x.single_signature_arguments, y.single_signature_arguments) {
                     (Some(x), Some(y)) => types(x, y),
                     (x, y) => y.is_some().cmp(&x.is_some()),
@@ -2651,7 +2687,6 @@ impl<'p, 's> Checker<'p, 's> {
                     TypeData::EvolvingArray(_) => 3,
                     _ => 0,
                 };
-                let kind_of_both_is_mapped = kind(x) == 1 && kind(y) == 1;
                 let mapper = |data: &TypeData| match *data {
                     TypeData::Anon { mapper, .. } | TypeData::Fns { mapper, .. } => Some(mapper),
                     _ => None,
@@ -2659,12 +2694,7 @@ impl<'p, 's> Checker<'p, 's> {
                 kind(x)
                     .cmp(&kind(y))
                     .then_with(|| match (mapper(x), mapper(y)) {
-                        // `instantiateAnonymousType` combines the mapper of a mapped type with one
-                        // for its fresh type parameter, and `compareTypeMappers` does not order a
-                        // `CompositeTypeMapper`, so the ids decide.
-                        (Some(x), Some(y)) if kind_of_both_is_mapped => {
-                            self.is_instantiating(y).cmp(&self.is_instantiating(x))
-                        }
+                        // TypeScript 7.1: also for two mapped types, without the mapper for the fresh type parameter.
                         (Some(x), Some(y)) => self.compare_type_mappers(x, y),
                         (x, y) => y.is_some().cmp(&x.is_some()),
                     })

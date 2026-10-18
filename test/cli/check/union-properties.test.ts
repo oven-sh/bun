@@ -1191,7 +1191,8 @@ export {};
 (60,9): error TS2322: Type '{ shown: "x" | 1 | T | A | B | (U & "b"); }' is not assignable to type '0'.
 `,
   },
-  "members that nothing but the order of their creation tells apart": {
+  // What TypeScript 7.1 reports: 7.0 has them in the order of their creation.
+  "bigint literals are in the order of their values": {
     program: `
 interface A { a: 1 } interface B { b: 1 }
 interface Runs {
@@ -1220,25 +1221,25 @@ function narrowed(x: Runs["biggest"] | Runs["big"] | Runs["bigger"]) {
 export {};
 `,
     errors: `
-(10,7): error TS2322: Type '"a" | 3n | 1n | 2n | B' is not assignable to type 'never'.
+(10,7): error TS2322: Type '"a" | 1n | 2n | 3n | B' is not assignable to type 'never'.
   Type '"a"' is not assignable to type 'never'.
-(11,7): error TS2322: Type '"a" | 3n | 1n | 2n | B | undefined' is not assignable to type 'never'.
+(11,7): error TS2322: Type '"a" | 1n | 2n | 3n | B | undefined' is not assignable to type 'never'.
   Type 'undefined' is not assignable to type 'never'.
-(12,7): error TS2322: Type '"a" | 0n | 3n | 1n | 2n | 5n | 4n | B' is not assignable to type 'never'.
+(12,7): error TS2322: Type '"a" | 0n | 1n | 2n | 3n | 4n | 5n | B' is not assignable to type 'never'.
   Type '"a"' is not assignable to type 'never'.
-(13,7): error TS2322: Type '0n | 3n | 1n | 5n | 4n' is not assignable to type 'never'.
+(13,7): error TS2322: Type '0n | 1n | 3n | 4n | 5n' is not assignable to type 'never'.
   Type '0n' is not assignable to type 'never'.
-(14,7): error TS2322: Type '0n | 3n | 5n | 4n | 6n' is not assignable to type 'never'.
+(14,7): error TS2322: Type '0n | 3n | 4n | 5n | 6n' is not assignable to type 'never'.
   Type '0n' is not assignable to type 'never'.
-(15,7): error TS2322: Type 'string | 2 | 3n | 1n | 2n | B' is not assignable to type 'never'.
+(15,7): error TS2322: Type 'string | 2 | 1n | 2n | 3n | B' is not assignable to type 'never'.
   Type 'string' is not assignable to type 'never'.
 (16,7): error TS2322: Type 'bigint | "a" | A | B' is not assignable to type 'never'.
   Type 'bigint' is not assignable to type 'never'.
-(19,9): error TS2322: Type '0n | 3n | 2n | 5n | 4n | B' is not assignable to type 'never'.
+(19,9): error TS2322: Type '0n | 2n | 3n | 4n | 5n | B' is not assignable to type 'never'.
   Type '0n' is not assignable to type 'never'.
-(21,9): error TS2322: Type '0n | 3n | 2n | 5n | 4n | B' is not assignable to type 'never'.
+(21,9): error TS2322: Type '0n | 2n | 3n | 4n | 5n | B' is not assignable to type 'never'.
   Type '0n' is not assignable to type 'never'.
-(23,11): error TS2322: Type '0n | 3n | 2n | 5n | 4n' is not assignable to type 'never'.
+(23,11): error TS2322: Type '0n | 2n | 3n | 4n | 5n' is not assignable to type 'never'.
   Type '0n' is not assignable to type 'never'.
 `,
   },

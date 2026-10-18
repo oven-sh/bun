@@ -1250,6 +1250,8 @@ impl<'p, 's> Checker<'p, 's> {
                 .push(IndexInfo::new(TypeId::STRING, TypeId::EMPTY_OBJECT, false));
         }
         shape.literal = Literalness::OfLiteralKeyof;
+        // A conditional type that distributes over literals makes one after the other.
+        shape.created_from = Some((ty, TypeId::NEVER));
         self.synth(shape)
     }
 

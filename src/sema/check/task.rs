@@ -117,6 +117,8 @@ pub struct Task<'s> {
     /// How many of `diagnostics`, from the first on, were logged before `stop_writing_at_once`. `usize::MAX`: it was not
     /// called since the last commit.
     logged_before_the_stop: Cell<usize>,
+    /// See `keep_the_rest_for_itself`: the file that the task was visiting, and how many of `diagnostics` were logged before.
+    keeps_for_itself_since: Cell<Option<(FileId, usize)>>,
     /// See `super::self_check`.
     pub(crate) differing: RefCell<DifferingEntries>,
     /// The types, signatures, mappers and component lists that the task has created.
@@ -155,6 +157,7 @@ impl<'s> Task<'s> {
             at_once: Cell::new(0),
             at_once_unless_stopped: 0,
             logged_before_the_stop: Cell::new(usize::MAX),
+            keeps_for_itself_since: Cell::new(None),
             differing: RefCell::default(),
             own: OwnStore::new_in(arena, types),
             buffer: UnsafeCell::new(Buffer::new()),
@@ -232,9 +235,33 @@ impl<'s> Task<'s> {
         }
     }
 
+    /// The checker has given up at a limit. What it returns then, and what it computes from that, is no function of the
+    /// question alone, so from here on no other task sees what this one stores. It ends with the file that it is
+    /// visiting: what it finds out about the next file would depend on which files it has visited before.
+    ///
+    /// The file is not checked again: whoever did that would find what this task has shared before the limit, would have
+    /// less to do, and would not come to the limit.
+    pub(super) fn keep_the_rest_for_itself(&self) {
+        if let Some(file) = self.file
+            && self.commits()
+            && !self.is_believed
+            && self.keeps_for_itself_since.get().is_none()
+        {
+            let since = (file, self.diagnostics.len());
+            self.keeps_for_itself_since.set(Some(since));
+            self.buffer().stop_logging();
+        }
+        self.stop_writing_at_once();
+    }
+
+    /// See `keep_the_rest_for_itself`.
+    pub(super) fn keeps_for_itself_since(&self) -> Option<(FileId, usize)> {
+        self.keeps_for_itself_since.get()
+    }
+
     /// At the beginning, and after a commit: what the task had noted is valid, and what it had held back is there for all.
     pub(super) fn write_at_once_again(&self) {
-        if !self.is_lost() {
+        if !self.is_lost() && self.keeps_for_itself_since.get().is_none() {
             self.at_once.set(self.at_once_unless_stopped);
             let logged = match self.at_once_unless_stopped {
                 0 => 0,
@@ -455,6 +482,7 @@ impl<'s> Task<'s> {
         self.waits.set([Duration::ZERO; 3]);
         (self.at_once_unless_stopped, self.at_once) = (0, Cell::new(0));
         self.logged_before_the_stop.set(usize::MAX);
+        self.keeps_for_itself_since.set(None);
         *self.differing.get_mut() = DifferingEntries::default();
         // Outside the plan it publishes nothing.
         let sharing = self.own.sharing().min(Sharing::Finds);

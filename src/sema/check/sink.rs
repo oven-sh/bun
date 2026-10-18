@@ -953,8 +953,15 @@ impl Checker<'_, '_> {
         }
         let mut directives = Default::default();
         let [mut of_entries_written_at_once, mut others] = [Vec::new(), Vec::new()];
+        let for_itself = self.task.keeps_for_itself_since();
         for (at, (owner, diagnostic)) in taken {
             if diagnostic.is_taken() {
+                continue;
+            }
+            // No entry goes with it, so the task that visits the file asks the same and reports what it finds.
+            if owner.is_some()
+                && for_itself.is_some_and(|(file, since)| at >= since && diagnostic.file != file)
+            {
                 continue;
             }
             let Some(diagnostic) = self.settled(diagnostic, &mut directives) else {

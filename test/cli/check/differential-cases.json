@@ -13127,12 +13127,6 @@
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
-  "73-R17": {
-    "files": {
-      "a.ts": "interface A { a: 1 } interface B { b: 2 }\ndeclare const x: Partial<A | string>; declare const y: Partial<A> | string;\nconst a1: never = [x, y];\nconst a2: never = [y, x];\nconst c1: never = Math.random() ? x : y;\nconst c2: never = Math.random() ? y : x;\ndeclare const x2: Partial<A | undefined>; declare const y2: Partial<A> | undefined;\nconst a3: never = [x2, y2];\nconst c3: never = Math.random() ? x2 : y2;\n// the same without a primitive member, and without subtype reduction: the two agree\ndeclare const x3: Partial<A | B>; declare const y3: Partial<A> | Partial<B>;\nconst a4: never = [x3, y3];\nconst c4: never = Math.random() ? x3 : y3;\ndeclare const u: typeof x | typeof y; const n: never = u;\nconst a5: never = [x, x];\nconst sentinel: number = \"\";\n",
-      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    }
-  },
   "73-R18": {
     "files": {
       "a.ts": "type Props = Readonly<{ x: number }>;\ninterface Box<T> { p: Props; v: T }\ntype GA<T> = { p: Props; t: T };\ndeclare const b: Box<number>;\ndeclare const u0: Props | Box<number>[\"p\"]; const n0: never = u0;\ndeclare const u1: [Props] | [typeof b.p]; const n1: never = u1;\ndeclare const u2: [Props] | [Box<number>[\"p\"]]; const n2: never = u2;\ndeclare const u3: [Props] | [GA<number>[\"p\"]]; const n3: never = u3;\ndeclare const u4: Props & Box<number>[\"p\"]; const n4: never = u4;\n// right since batch 1: the return type of a generic function, an element of a generic tuple alias\ndeclare function g<T>(t: T): Props; const r = g(1); declare const u5: [Props] | [typeof r]; const n5: never = u5;\ntype GT<T> = [Props, T]; declare const u6: [Props] | [GT<1>[0]]; const n6: never = u6;\nconst sentinel: number = \"\";\n",

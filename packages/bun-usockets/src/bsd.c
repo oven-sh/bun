@@ -632,6 +632,13 @@ int bsd_socket_user_timeout(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int ms) {
         return errno;
     }
     return 0;
+#elif defined(TCP_MAXUNACKTIME)
+    /* FreeBSD counts in seconds. Round up so the bound is never shorter than asked. */
+    int seconds = ms == 0 ? 0 : (int)(ms / 1000 + (ms % 1000 != 0));
+    if (setsockopt(fd, IPPROTO_TCP, TCP_MAXUNACKTIME, &seconds, sizeof seconds) == -1) {
+        return errno;
+    }
+    return 0;
 #else
     (void)fd;
     (void)ms;

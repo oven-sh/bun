@@ -1,6 +1,5 @@
 //! The memory that the checker manages by hand. The containers of this crate that need `unsafe` are
-//! here. The file depends on `std`, and on `libc` for the three calls of `os`, which have a stand-in
-//! under Miri: so its tests run there.
+//! here. What it asks of the system (`os`, `aside`) has a stand-in under Miri, so its tests run there.
 //!
 //! An element never moves and is never freed before its container, so a reference to one stays
 //! valid while others are added:
@@ -16,6 +15,7 @@
 //! thread that adds to an `AppendVec`, a `Cells` or a `Newest` may allocate, and the thread that drops
 //! it frees.
 
+use bun_threading::Guarded;
 use std::alloc::{Allocator, Global};
 use std::cell::Cell;
 use std::marker::PhantomData;
@@ -385,8 +385,8 @@ mod os {
     // that it is not told about.
     #[cfg(bun_asan)]
     unsafe extern "C" {
-        safe fn __lsan_register_root_region(start: *const std::ffi::c_void, len: usize);
-        safe fn __lsan_unregister_root_region(start: *const std::ffi::c_void, len: usize);
+        pub(super) safe fn __lsan_register_root_region(start: *const std::ffi::c_void, len: usize);
+        pub(super) safe fn __lsan_unregister_root_region(start: *const std::ffi::c_void, len: usize);
     }
 
     /// Null: the addresses are not to be had.
@@ -519,13 +519,134 @@ mod os {
     }
 }
 
-#[cold]
-#[inline(never)]
-fn out_of_memory(bytes: usize) -> ! {
-    match std::alloc::Layout::from_size_align(bytes, SMALLEST_PAGE) {
-        Ok(layout) => std::alloc::handle_alloc_error(layout),
-        Err(_) => std::alloc::handle_alloc_error(std::alloc::Layout::new::<u8>()),
+/// Where the system counts the addresses that a process has reserved like the memory that it uses
+/// (`RLIMIT_AS`), or has few to give (39 bits), a range is set aside, not reserved: nothing is mapped
+/// there until a part of it gets memory, so it takes as many addresses as it has memory.
+///
+/// The system does not know about such a range. All of them are in a quarter of the address space that
+/// is far from what the system and the allocators give out by themselves: stacks, libraries and
+/// mappings at the top, or from a third of the way up where the layout is bottom-up, the program and
+/// its heap at two thirds or at the bottom, and the hints of the allocator below 30 TB. Memory is asked
+/// for in a way that fails if anything is there all the same.
+#[cfg(all(any(target_os = "linux", target_os = "android"), not(miri)))]
+mod aside {
+    use super::STEP;
+    use bun_threading::Guarded;
+    use std::ptr::NonNull;
+    use std::sync::OnceLock;
+
+    /// The ranges, by address: where each starts and ends.
+    static RANGES: Guarded<Vec<(usize, usize)>> = Guarded::new(Vec::new());
+
+    const FLAGS: libc::c_int =
+        libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_NORESERVE | libc::MAP_FIXED_NOREPLACE;
+
+    /// Whether `len` bytes at `at` are mapped now, and were not before.
+    fn map(at: usize, len: usize, protection: libc::c_int) -> bool {
+        let wanted = std::ptr::with_exposed_provenance_mut(at);
+        // SAFETY: with `MAP_FIXED_NOREPLACE` no mapping that exists changes.
+        let got = unsafe { libc::mmap(wanted, len, protection, FLAGS, -1, 0) };
+        if got == libc::MAP_FAILED || got == wanted {
+            return got == wanted;
+        }
+        // A system that does not know the flag takes the address for a hint.
+        // SAFETY: the call above has made this mapping, and nothing has its address.
+        unsafe { libc::munmap(got, len) };
+        false
     }
+
+    /// The length of the quarter of the largest address space.
+    const LARGEST: usize = 2 << 44;
+
+    /// Where the quarter starts and ends. `None`: there is no such quarter.
+    fn quarter() -> Option<(usize, usize)> {
+        static QUARTER: OnceLock<Option<(usize, usize)>> = OnceLock::new();
+        *QUARTER.get_or_init(|| {
+            // The sizes of an address space, in bits.
+            [47, 39].into_iter().find_map(|bits| {
+                let (start, end) = (3_usize << (bits - 3), 5_usize << (bits - 3));
+                if !map(end - STEP, STEP, libc::PROT_NONE) {
+                    return None;
+                }
+                // SAFETY: `map` has made this mapping, and nothing has its address.
+                unsafe { libc::munmap(std::ptr::with_exposed_provenance_mut(end - STEP), STEP) };
+                Some((start, end))
+            })
+        })
+    }
+
+    /// A range of `len` bytes, a multiple of `STEP`, and its length: in a smaller address space all
+    /// ranges are smaller in proportion. `None`: there is none to be had.
+    pub(super) fn claim(len: usize) -> Option<(NonNull<u8>, usize)> {
+        let (mut start, end) = quarter()?;
+        let len = (len >> (end - start).leading_zeros().saturating_sub(LARGEST.leading_zeros()))
+            .next_multiple_of(STEP);
+        let mut ranges = RANGES.lock();
+        // Before the first range that leaves room enough after the one before it.
+        let at = ranges.iter().position(|&range| {
+            let fits = range.0 - start >= len;
+            if !fits {
+                start = range.1;
+            }
+            fits
+        });
+        if end - start < len {
+            return None;
+        }
+        let at = at.unwrap_or(ranges.len());
+        ranges.insert(at, (start, start + len));
+        let base = NonNull::<u8>::new(std::ptr::with_exposed_provenance_mut(start))?;
+        #[cfg(bun_asan)]
+        super::os::__lsan_register_root_region(base.as_ptr().cast(), len);
+        Some((base, len))
+    }
+
+    /// Whether the range has memory now. One thread at a time.
+    ///
+    /// # Safety
+    /// The range is part of one that `claim` returned and `release` has not been given, and has no
+    /// memory.
+    pub(super) unsafe fn commit(at: *mut u8, len: usize) -> bool {
+        map(at.addr(), len, libc::PROT_READ | libc::PROT_WRITE)
+    }
+
+    /// # Safety
+    /// `commit` has given the range memory, and nothing in it is in use.
+    pub(super) unsafe fn decommit(at: *mut u8, len: usize) {
+        // SAFETY: the caller's.
+        unsafe { libc::munmap(at.cast(), len) };
+    }
+
+    /// # Safety
+    /// `claim(len)` returned `at`, this is the only call for it, and none of the range has memory.
+    pub(super) unsafe fn release(at: *mut u8, len: usize) {
+        #[cfg(bun_asan)]
+        super::os::__lsan_unregister_root_region(at.cast(), len);
+        RANGES.lock().retain(|&range| range != (at.addr(), at.addr() + len));
+    }
+}
+
+#[cfg(not(all(any(target_os = "linux", target_os = "android"), not(miri))))]
+mod aside {
+    use std::ptr::NonNull;
+
+    pub(super) fn claim(_: usize) -> Option<(NonNull<u8>, usize)> {
+        None
+    }
+
+    /// # Safety
+    /// None: `claim` returns nothing.
+    pub(super) unsafe fn commit(_: *mut u8, _: usize) -> bool {
+        false
+    }
+
+    /// # Safety
+    /// None: `claim` returns nothing.
+    pub(super) unsafe fn decommit(_: *mut u8, _: usize) {}
+
+    /// # Safety
+    /// None: `claim` returns nothing.
+    pub(super) unsafe fn release(_: *mut u8, _: usize) {}
 }
 
 /// What a `Reserved` is made for.
@@ -540,10 +661,14 @@ pub(crate) struct Reserved {
     base: NonNull<u8>,
     /// In bytes: a multiple of `STEP`, and so is `committed`.
     len: usize,
+    /// See `aside`.
+    is_set_aside: bool,
     /// What `new` was given.
     room: Room,
     /// How many bytes have memory.
     committed: AtomicUsize,
+    /// Held by the thread that gives it more.
+    is_growing: Guarded<()>,
     is_taken: AtomicBool,
 }
 
@@ -554,27 +679,35 @@ unsafe impl Send for Reserved {}
 unsafe impl Sync for Reserved {}
 
 impl Reserved {
-    /// Where as many addresses as `room` has bytes are not to be had, it has half as many, or half
-    /// of that, and so on: whoever needs more than it has is out of memory.
     pub(crate) fn new(room: Room) -> Reserved {
-        let mut len = room.bytes.next_multiple_of(STEP);
-        let mut base = NonNull::dangling();
-        while len != 0 {
-            match NonNull::new(os::reserve(len)) {
-                Some(start) => {
-                    base = start;
-                    break;
-                }
-                None if len == STEP => out_of_memory(len),
-                None => len = (len / 2).next_multiple_of(STEP),
-            }
-        }
+        let (base, len, is_set_aside) = Self::addresses(room.bytes.next_multiple_of(STEP));
         Reserved {
             base,
             len,
+            is_set_aside,
             room,
             committed: AtomicUsize::new(0),
+            is_growing: Guarded::new(()),
             is_taken: AtomicBool::new(false),
+        }
+    }
+
+    /// `base`, `len` and `is_set_aside` of a range of `len` bytes.
+    fn addresses(mut len: usize) -> (NonNull<u8>, usize, bool) {
+        if len == 0 {
+            return (NonNull::dangling(), 0, false);
+        }
+        if let Some((base, len)) = aside::claim(len) {
+            return (base, len, true);
+        }
+        // Where so many are not to be had, half as many, or half of that, and so on: whoever needs more
+        // than it has is out of memory.
+        loop {
+            match NonNull::new(os::reserve(len)) {
+                Some(base) => return (base, len, false),
+                None if len == STEP => bun_alloc::out_of_memory(),
+                None => len = (len / 2).next_multiple_of(STEP),
+            }
         }
     }
 
@@ -600,22 +733,38 @@ impl Reserved {
     }
 
     /// Gives memory to the first `bytes` bytes, and to some more. Returns how many have it. Any
-    /// thread: two that are here at a time ask for ranges that overlap, which does no harm.
+    /// thread.
     fn commit(&self, bytes: usize) -> usize {
         if bytes > self.len {
-            out_of_memory(bytes);
+            bun_alloc::out_of_memory();
         }
-        let had = self.committed.load(Ordering::Acquire);
+        let _held = self.is_growing.lock();
+        let had = self.committed.load(Ordering::Relaxed);
         if bytes <= had {
             return had;
         }
-        // Half as much again, so that the number of calls grows with the logarithm of the size.
-        let wanted = (bytes.max(had + had / 2).next_multiple_of(STEP)).min(self.len);
-        // SAFETY: `had <= wanted <= len`, so the range is in the one that `new` reserved.
-        if !unsafe { os::commit(self.base.as_ptr().add(had), wanted - had) } {
-            out_of_memory(wanted - had);
-        }
-        (self.committed.fetch_max(wanted, Ordering::Release)).max(wanted)
+        let grow_to = |wanted: usize| {
+            let (at, more) = (self.base.as_ptr().wrapping_add(had), wanted - had);
+            // SAFETY: `had < wanted <= len`, so the range is in the one that `new` got, and it has no
+            // memory. The lock is held.
+            unsafe {
+                match self.is_set_aside {
+                    true => aside::commit(at, more),
+                    false => os::commit(at, more),
+                }
+            }
+        };
+        // Half as much again, so that the number of calls grows with the logarithm of the size. If
+        // that is not to be had, what is needed.
+        let generous = (bytes.max(had + had / 2).next_multiple_of(STEP)).min(self.len);
+        let Some(wanted) = [generous, bytes.next_multiple_of(STEP)]
+            .into_iter()
+            .find(|&wanted| grow_to(wanted))
+        else {
+            bun_alloc::out_of_memory();
+        };
+        self.committed.store(wanted, Ordering::Release);
+        wanted
     }
 
     /// Takes the memory back from all but the first `keep` bytes. Returns how many have memory.
@@ -628,9 +777,15 @@ impl Reserved {
         if keep >= had {
             return had;
         }
-        // SAFETY: `keep < had <= len`, so the range is in the one that `new` reserved. The rest is
-        // the caller's.
-        unsafe { os::decommit(self.base.as_ptr().add(keep), had - keep) };
+        let (at, len) = (self.base.as_ptr().wrapping_add(keep), had - keep);
+        // SAFETY: `keep < had <= len`, so the range is in the one that `new` got, and it has memory.
+        // The rest is the caller's.
+        unsafe {
+            match self.is_set_aside {
+                true => aside::decommit(at, len),
+                false => os::decommit(at, len),
+            }
+        }
         self.committed.store(keep, Ordering::Relaxed);
         keep
     }
@@ -638,9 +793,17 @@ impl Reserved {
 
 impl Drop for Reserved {
     fn drop(&mut self) {
-        if self.len != 0 {
-            // SAFETY: `new` reserved it, and a `Taken` borrows this, so there is none.
-            unsafe { os::release(self.base.as_ptr(), self.len) };
+        if self.len == 0 {
+            return;
+        }
+        // SAFETY: `new` got it, and a `Taken` borrows this, so there is none.
+        unsafe {
+            if self.is_set_aside {
+                self.decommit(0);
+                aside::release(self.base.as_ptr(), self.len);
+            } else {
+                os::release(self.base.as_ptr(), self.len);
+            }
         }
     }
 }
@@ -763,7 +926,7 @@ impl<'a, T, L: Length> Flat<'a, T, L> {
     #[inline(never)]
     fn commit(&self, index: u32) {
         if index as usize >= Self::MOST {
-            out_of_memory(Self::ROOM.bytes);
+            bun_alloc::out_of_memory();
         }
         let committed = self.block.0.commit((index as usize + 1) * size_of::<T>());
         (self.committed).fetch_max(Self::elements_in(committed), Ordering::Release);
@@ -1651,6 +1814,49 @@ mod tests {
         assert!(range.take(other).is_none());
         assert!(range.take(room).is_some());
         assert!(range.take(room).is_some());
+    }
+
+    #[test]
+    #[cfg(all(target_os = "linux", not(miri)))]
+    fn threads_give_memory_to_a_range_that_is_set_aside() {
+        let room = room_of(64 * STEP);
+        let range = Reserved::new(room);
+        assert!(range.is_set_aside && range.len == 64 * STEP);
+        let mut vec = Flat::<u64, AtomicU32>::new_in(range.take(room).unwrap());
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| (0..50_000).for_each(|value| drop(vec.push(value))));
+            }
+        });
+        assert_eq!(vec.len(), 200_000);
+        let sum: u64 = (0..vec.len()).map(|index| *vec.get(index)).sum();
+        assert_eq!(sum, 4 * (49_999 * 50_000 / 2));
+        vec.clear();
+        assert_eq!(range.committed_bytes(), KEPT * size_of::<u64>());
+    }
+
+    #[test]
+    #[cfg(all(target_os = "linux", not(miri)))]
+    fn ranges_that_are_set_aside_do_not_overlap() {
+        let lengths = [3, 1, 64, 2, 1 << 20, 5].map(|steps: usize| steps * STEP);
+        let mut ranges: Vec<Reserved> = Vec::new();
+        for round in 0..4 {
+            ranges.extend(lengths.map(|len| Reserved::new(room_of(len))));
+            // Leaves gaps of all lengths for the next round.
+            let mut at = 0;
+            ranges.retain(|_| {
+                at += 1;
+                (at + round) % 3 != 0
+            });
+            let span = |range: &Reserved| {
+                let start = range.base.as_ptr().addr();
+                (start, start + range.len)
+            };
+            for (at, one) in ranges.iter().map(span).enumerate() {
+                let is_apart = |other: (usize, usize)| one.1 <= other.0 || other.1 <= one.0;
+                assert!(ranges[at + 1..].iter().map(span).all(is_apart));
+            }
+        }
     }
 
     #[test]

@@ -1544,6 +1544,26 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       },
     );
 
+    // `RLIMIT_AS`, as on the nodes of a cluster. It counts the addresses that a process has reserved like the memory that
+    // it uses. A sanitizer reserves terabytes.
+    test.skipIf(!isLinux || isASAN)("a process that may have 4 GB of addresses", async () => {
+      using dir = project({ "a.ts": `export const a: number = "";\n` });
+      await using proc = spawn({
+        cmd: ["sh", "-c", `ulimit -v 4000000; exec "$0" check --threads 8`, bunExe()],
+        cwd: String(dir),
+        env,
+        timeout: longLimit,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({
+        stdout: `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`,
+        stderr: "",
+      });
+      expect(exitCode).toBe(1);
+    });
+
     test("two directories", async () => {
       using dir = project({
         "a/a.ts": `export const a: string = 1;\n`,

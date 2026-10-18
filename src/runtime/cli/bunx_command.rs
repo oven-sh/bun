@@ -35,6 +35,8 @@ struct PackageBin {
     name: Box<[u8]>,
     /// The path of the bin's file, relative to the package's directory.
     file: Box<[u8]>,
+    /// The installer can point the `.bin` entry of such a package into one of them: a native build.
+    has_optional_dependencies: bool,
 }
 
 /// `flock` on `<bunx cache dir>.lock`, next to the tree. CLOEXEC: exec'ing the target releases it.
@@ -308,10 +310,6 @@ impl BunxCommand {
         subpath_z: &ZStr,
         preferred: &[u8],
     ) -> crate::Result<PackageBin> {
-        let package_bin = |name: &[u8], file: &[u8]| PackageBin {
-            name: name.into(),
-            file: file.into(),
-        };
         let target_package_json_fd = bun_sys::openat(dir_fd, subpath_z, O::RDONLY, 0)?;
         let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
         let package_json_bytes = target_package_json.read_to_end()?;
@@ -322,6 +320,12 @@ impl BunxCommand {
 
         let parsed = json::ParsedJson::parse_package_json(&source, transpiler.log_mut())?;
         let expr = parsed.root;
+        let has_optional_dependencies = expr.get(b"optionalDependencies").is_some();
+        let package_bin = |name: &[u8], file: &[u8]| PackageBin {
+            name: name.into(),
+            file: file.into(),
+            has_optional_dependencies,
+        };
 
         if let Some(bin_expr) = expr.get(b"bin") {
             match &bin_expr.data {
@@ -354,6 +358,8 @@ impl BunxCommand {
                         && let Some(name) = name_expr.as_utf8_string_literal()
                         && !name.is_empty()
                         && let Some(target) = bin_expr.as_utf8_string_literal()
+                        && !target.is_empty()
+                        && !bun_install::bin::bin_target_escapes_package_dir(target)
                     {
                         let bin_name = bun_install::dependency::unscoped_package_name(name);
                         if Self::is_safe_bin_name(bin_name) {
@@ -381,11 +387,22 @@ impl BunxCommand {
             let bin_in_dir = |name: &[u8]| package_bin(name, &[dir_name, b"/", name].concat());
             let mut first: Option<PackageBin> = None;
             while let Ok(Some(current)) = iterator.next() {
-                if current.kind == bun_sys::EntryKind::File && !current.name.slice().is_empty() {
-                    if current.name.slice_u8() == preferred {
+                let name = current.name.slice_u8();
+                let is_file = match current.kind {
+                    bun_sys::EntryKind::File => true,
+                    // The bin linker links these too. On Windows every reparse point is one.
+                    bun_sys::EntryKind::SymLink if cfg!(not(windows)) => {
+                        bun_sys::fstatat(bin_dir, &ZBox::from_bytes(name)).is_ok_and(|stat| {
+                            bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode)
+                        })
+                    }
+                    _ => false,
+                };
+                if is_file && !name.is_empty() {
+                    if name == preferred {
                         return Ok(bin_in_dir(preferred));
                     }
-                    first.get_or_insert_with(|| bin_in_dir(current.name.slice_u8()));
+                    first.get_or_insert_with(|| bin_in_dir(name));
                 }
             }
             if let Some(bin) = first {
@@ -396,8 +413,73 @@ impl BunxCommand {
         Err(crate::Error::NoBinFound)
     }
 
+    /// Returns true if the path `real` is below the directory `dir`.
+    fn is_inside(real: &[u8], dir: &[u8]) -> bool {
+        (real.strip_prefix(dir)).is_some_and(|rest| rest.starts_with(SEP))
+    }
+
+    /// Returns where the symlink `entry` in `bin_dir` points, from its text alone.
+    fn symlink_target<'a>(
+        entry: &ZStr,
+        bin_dir: &'a [u8],
+        link: &mut bun_paths::PathBuffer,
+        target: &'a mut bun_paths::PathBuffer,
+    ) -> Option<&'a [u8]> {
+        use bun_paths::{platform::Auto, resolve_path::join_abs_string_buf_checked};
+        let len = bun_sys::readlink(entry, &mut link[..]).ok()?;
+        join_abs_string_buf_checked::<Auto>(bin_dir, &mut target[..], &[&link[..len]])
+    }
+
+    /// Returns true if `target` is in one of the `optionalDependencies` of the package.
+    #[cold]
+    fn is_in_optional_dependency(
+        transpiler: &mut Transpiler,
+        package_json: &ZStr,
+        target: &[u8],
+    ) -> bool {
+        let Some((_, in_node_modules)) = strings::rsplit_once(target, b"/node_modules/") else {
+            return false;
+        };
+        let Ok(contents) = bun_sys::File::read_from(Fd::cwd(), package_json.as_bytes()) else {
+            return false;
+        };
+        let source =
+            bun_ast::Source::init_path_string(package_json.as_bytes(), contents.as_slice());
+        bun_ast::initialize_store();
+        let Ok(parsed) = json::ParsedJson::parse_package_json(&source, transpiler.log_mut()) else {
+            return false;
+        };
+        let Some(optional) = parsed.root.get(b"optionalDependencies") else {
+            return false;
+        };
+        let ExprData::EObjectJSON(optional) = &optional.data else {
+            return false;
+        };
+        optional.get().properties().iter().any(|dependency| {
+            (in_node_modules.strip_prefix(dependency.key.slice()))
+                .is_some_and(|rest| rest.starts_with(b"/"))
+        })
+    }
+
+    /// `--backend=symlink` installs a package as symlinks, so its package.json says where it is.
+    fn is_file_of_package(
+        file: &ZStr,
+        package_dir: &ZStr,
+        package_json: &ZStr,
+        real_file: &mut bun_paths::PathBuffer,
+    ) -> bool {
+        let Ok(real_file) = bun_sys::realpath(file, real_file) else {
+            return false;
+        };
+        let mut dir = bun_paths::path_buffer_pool::get();
+        bun_sys::realpath(package_dir, &mut dir).is_ok_and(|dir| Self::is_inside(real_file, dir))
+            || (bun_sys::realpath(package_json, &mut dir).ok())
+                .and_then(bun_paths::dirname)
+                .is_some_and(|dir| Self::is_inside(real_file, dir))
+    }
+
     /// Finds the bin in the nearest `node_modules/<package_name>` from `cwd` up to `project`. Two
-    /// packages can share a bin name, so the `.bin` entry is used only if it resolves there.
+    /// packages can share a bin name, so the `.bin` entry is used only if it is that package's.
     fn find_in_project(
         transpiler: &mut Transpiler,
         cwd: &[u8],
@@ -415,17 +497,14 @@ impl BunxCommand {
             next_dir = bun_paths::dirname(dir);
             let node_modules = [dir, SEP, b"node_modules", SEP].concat();
             let package_dir = [node_modules.as_slice(), package_name].concat();
-            let package_json = [package_dir.as_slice(), SEP, b"package.json"].concat();
-            let bin = match Self::get_bin_from_subpath(
-                transpiler,
-                Fd::cwd(),
-                &ZBox::from_vec(package_json),
-                bin_name,
-            ) {
-                Ok(bin) => bin,
-                Err(err @ crate::Error::NoBinFound) => return Err(err),
-                Err(_) => continue,
-            };
+            let package_json =
+                ZBox::from_vec([package_dir.as_slice(), SEP, b"package.json"].concat());
+            let bin =
+                match Self::get_bin_from_subpath(transpiler, Fd::cwd(), &package_json, bin_name) {
+                    Ok(bin) => bin,
+                    Err(err @ crate::Error::NoBinFound) => return Err(err),
+                    Err(_) => continue,
+                };
             if only_that_bin && *bin.name != *bin_name {
                 return Err(crate::Error::NoBinFound);
             }
@@ -439,19 +518,23 @@ impl BunxCommand {
             if cfg!(windows) {
                 return Ok(entry);
             }
+            if let Some(entry) = entry {
+                // The installer points the entry into the package, or into its native build.
+                let mut target = bun_paths::path_buffer_pool::get();
+                if let Some(target) = Self::symlink_target(&entry, &bin_dir, &mut buf, &mut target)
+                    && (Self::is_inside(target, &package_dir)
+                        || (bin.has_optional_dependencies
+                            && Self::is_in_optional_dependency(transpiler, &package_json, target)))
+                {
+                    return Ok(Some(entry));
+                }
+            }
             let file = [package_dir.as_slice(), SEP, &*bin.file].concat();
             let file = bun_which::which(&mut buf, b"", b"", &file)
                 .map(|file| ZBox::from_bytes(file.as_bytes()));
-
-            let mut real_dir = bun_paths::path_buffer_pool::get();
-            let Ok(real_dir) = bun_sys::realpath(&ZBox::from_vec(package_dir), &mut real_dir)
-            else {
-                return Ok(None);
-            };
-            return Ok([entry, file].into_iter().flatten().find(|candidate| {
-                bun_sys::realpath(candidate, &mut buf).is_ok_and(|real| {
-                    (real.strip_prefix(real_dir)).is_some_and(|rest| rest.starts_with(SEP))
-                })
+            let package_dir = ZBox::from_vec(package_dir);
+            return Ok(file.filter(|file| {
+                Self::is_file_of_package(file, &package_dir, &package_json, &mut buf)
             }));
         }
         Ok(None)

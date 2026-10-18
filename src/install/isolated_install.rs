@@ -1725,7 +1725,7 @@ fn check_link_entries(manager: &mut PackageManager, lockfile: &Lockfile, store: 
             Global::exit(1);
         }
         let mut mem = Scratch::new();
-        let mut path = AbsPathBuf::from_in(&mut mem, top_level_dir());
+        let mut path = AbsPathBuf::unset_in(&mut mem);
         installer::set_link_target(&mut path, &manager.global_link_dir_path, target);
         if path.error() == Some(PathError::TooLong) {
             Output::err(

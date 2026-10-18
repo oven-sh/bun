@@ -1658,7 +1658,8 @@ impl<'a> Installer<'a> {
         let (cache_dir, cache_dir_path) =
             directories::get_cache_directory_and_abs_path(unsafe { &mut *self.manager });
         // BOUNDARY: `get_cache_directory_and_abs_path` gives the old type.
-        let cache_dir_path = AbsPath::from_os(cache_dir_path.slice());
+        let cache_dir_path = AbsPath::from_os(cache_dir_path.slice())
+            .ok_or_else(|| path_error(PathError::Relative))?;
 
         let uses_global_store = self.entry_uses_global_store(entry_id);
         let staging = if uses_global_store {
@@ -2591,7 +2592,7 @@ impl<'a> Installer<'a> {
     ) -> sys::Maybe<()> {
         let path_error = path_error(sys::Tag::rename);
         let (mut final_mem, mut staging_mem) = (Scratch::new(), Scratch::new());
-        let mut final_ = RelPathBuf::<_, u8>::new_in(&mut final_mem);
+        let mut final_ = RelPathBuf::new_in(&mut final_mem);
         self.append_local_store_package_path(&mut final_, entry_id);
         let final_ = final_.get().map_err(path_error)?;
         let mut staging = RelPathBuf::new_in(&mut staging_mem);
@@ -2636,7 +2637,7 @@ impl<'a> Installer<'a> {
         let (mut staging_mem, mut final_mem) = (Scratch::new(), Scratch::new());
         let mut staging = RelPathBuf::new_in(&mut staging_mem);
         self.append_local_staging_path(&mut staging, entry_id, mode);
-        let mut final_ = RelPathBuf::<_, u8>::new_in(&mut final_mem);
+        let mut final_ = RelPathBuf::new_in(&mut final_mem);
         self.append_local_store_package_path(&mut final_, entry_id);
 
         if let (Ok(staging), Ok(final_)) = (staging.get(), final_.get())
@@ -2929,8 +2930,7 @@ pub(crate) fn set_link_target<V: HoldsAbs + ?Sized>(
     if crate::dependency::is_link_path(target) {
         buf.set_abs(top_level_dir()).join::<Loose>(target);
     } else {
-        buf.set_abs(AbsPath::from_os(global_link_dir))
-            .push_names::<Posix>(target);
+        buf.set_os(global_link_dir).push_names::<Posix>(target);
     }
 }
 

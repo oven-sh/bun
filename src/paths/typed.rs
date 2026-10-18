@@ -63,8 +63,11 @@ macro_rules! transcodes {
             }
             #[inline]
             unsafe fn transcode(from: &[$from], to: *mut $to) -> usize {
-                // SAFETY: the caller's. Storage of the other width is pooled, so initialized.
-                let to = unsafe { core::slice::from_raw_parts_mut(to, Self::bound(from)) };
+                // SAFETY: the caller's, and zeroed because the converters take initialized slices.
+                let to = unsafe {
+                    core::ptr::write_bytes(to, 0, Self::bound(from));
+                    core::slice::from_raw_parts_mut(to, Self::bound(from))
+                };
                 <$to as PathUnit>::convert_from_other(to, from)
             }
         }
@@ -380,16 +383,19 @@ impl<C: PathUnit> AbsPath<C> {
         (root > 0 && is_clean_below_root(&units[root..], false)).then(|| Self::wrap_units(units))
     }
 
-    /// For what the OS returned as an absolute path: `getcwd`, `realpath`, the path of an fd.
+    /// For what the OS returned as an absolute path: `getcwd`, `realpath`, the path of an fd. Only
+    /// the root is looked at: `None` without one.
     #[inline]
-    pub fn from_os(units: &[C]) -> &Self {
+    pub fn from_os(units: &[C]) -> Option<&Self> {
         let root = root_len(units);
-        assert!(root > 0);
+        if root == 0 {
+            return None;
+        }
         let mut end = units.len();
         while end > root && is_native_sep(units[end - 1]) {
             end -= 1;
         }
-        Self::wrap_units(&units[..end])
+        Some(Self::wrap_units(&units[..end]))
     }
 
     #[inline]
@@ -753,26 +759,27 @@ struct Saved {
 pub struct PathBuf<V: View + ?Sized, S: Storage<V::Unit>> {
     mem: S,
     len: usize,
-    /// `..` removes nothing below this length.
+    /// `..` removes nothing below this length, which is never more than `len`.
     fence: usize,
     at_fence: AtFence,
     err: Option<PathError>,
     view: PhantomData<fn(&V)>,
 }
-pub type AbsPathBuf<S, C = u8> = PathBuf<AbsPath<C>, S>;
-pub type RelPathBuf<S, C = u8> = PathBuf<RelPath<C>, S>;
-pub type SubPathBuf<S, C = u8> = PathBuf<SubPath<C>, S>;
-pub type AnyPathBuf<S, C = u8> = PathBuf<Path<C>, S>;
+pub type AbsPathBuf<S> = PathBuf<AbsPath, S>;
+pub type RelPathBuf<S> = PathBuf<RelPath, S>;
+pub type SubPathBuf<S> = PathBuf<SubPath, S>;
+pub type AnyPathBuf<S> = PathBuf<Path, S>;
 
 impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
+    /// Holds no path yet: [`get`](Self::get) fails as `Relative` until one is set.
     #[inline(always)]
-    fn blank(mem: S) -> Self {
+    pub fn unset_in(mem: S) -> Self {
         Self {
             mem,
             len: 0,
             fence: 0,
             at_fence: V::WHEN_RELATIVE,
-            err: None,
+            err: Some(PathError::Relative),
             view: PhantomData,
         }
     }
@@ -780,7 +787,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
     /// Holds a copy of `path`.
     #[inline]
     pub fn from_in(mem: S, path: &V) -> Self {
-        let mut this = Self::blank(mem);
+        let mut this = Self::unset_in(mem);
         this.set(path);
         this
     }
@@ -792,7 +799,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         V: HoldsAbs,
         V::Unit: FromUnit<D>,
     {
-        let mut this = Self::blank(mem);
+        let mut this = Self::unset_in(mem);
         this.set_abs(path);
         this
     }
@@ -806,7 +813,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
     where
         V: HoldsAbs,
     {
-        let mut this = Self::blank(mem);
+        let mut this = Self::unset_in(mem);
         this.set_from_os(fill)?;
         Ok(this)
     }
@@ -817,7 +824,8 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
     where
         V: HoldsEmpty,
     {
-        let mut this = Self::blank(mem);
+        let mut this = Self::unset_in(mem);
+        this.err = None;
         this.write::<V::Unit>(0, false, &[]);
         this
     }
@@ -836,6 +844,23 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         V::Unit: FromUnit<D>,
     {
         self.replace(path.units())
+    }
+
+    /// [`set_abs`](Self::set_abs) to what the OS returned as an absolute path, which fails as
+    /// `Relative` if it has no root.
+    #[inline]
+    pub fn set_os<D: PathUnit>(&mut self, units: &[D]) -> &mut Self
+    where
+        V: HoldsAbs,
+        V::Unit: FromUnit<D>,
+    {
+        match AbsPath::from_os(units) {
+            Some(path) => self.set_abs(path),
+            None => {
+                self.poison(PathError::Relative);
+                self
+            }
+        }
     }
 
     #[inline(always)]
@@ -890,8 +915,11 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         if self.is_scoped() {
             return Ok(self);
         }
-        self.err = None;
+        // Until the OS has written one there is no path, whichever way this returns.
+        self.err = Some(PathError::Relative);
         self.len = 0;
+        self.fence = 0;
+        self.at_fence = V::WHEN_RELATIVE;
         // Storage that cannot grow lends what it has, and the OS says whether that is enough.
         self.mem.reserve(0, V::Unit::MAX_PATH);
         let capacity = self.mem.capacity();
@@ -900,16 +928,16 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         let len = fill(room)?;
         // No room left for the terminator also means the OS may have cut the path short.
         if len >= capacity {
-            self.poison(PathError::TooLong);
+            self.err = Some(PathError::TooLong);
             return Ok(self);
         }
         self.len = len;
         let root = root_len(self.written());
         if root == 0 {
             self.len = 0;
-            self.poison(PathError::Relative);
             return Ok(self);
         }
+        self.err = None;
         let mut end = len;
         while end > root && is_native_sep(self.written()[end - 1]) {
             end -= 1;
@@ -958,7 +986,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
     fn truncate(&mut self, len: usize) {
         debug_assert!(len <= self.len);
         self.len = len;
-        // SAFETY: `len` is at most the old length, below which the storage has room.
+        // SAFETY: every caller passes the fence or more, or a length it took from `len`.
         unsafe { self.mem.ptr_mut().add(len).write(V::Unit::from_u8(0)) };
     }
 
@@ -1110,23 +1138,32 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         if let Some(err) = self.err {
             return Err(err);
         }
+        struct PutBack<C: Copy>(*mut C, C);
+        impl<C: Copy> Drop for PutBack<C> {
+            fn drop(&mut self) {
+                // SAFETY: where it was read.
+                unsafe { self.0.write(self.1) };
+            }
+        }
         let units = self.written();
-        let is_boundary = len == units.len()
-            || (len < units.len()
-                && (is_native_sep(units[len]) || (len > 0 && len == root_len(units))));
-        if !is_boundary {
+        let root = root_len(units);
+        let is_ancestor = len > 0
+            && (len == units.len()
+                || len == root
+                || (len > root && len < units.len() && is_native_sep(units[len])));
+        if !is_ancestor {
             return Err(PathError::BadName);
         }
         // SAFETY: `len` is at most the written length, where a unit or the terminator is.
         unsafe {
             let at = self.mem.ptr_mut().add(len);
-            let saved = at.read();
+            let put_back = PutBack(at, at.read());
             at.write(V::Unit::from_u8(0));
             let result = f(Z::wrap(V::wrap(core::slice::from_raw_parts(
                 self.mem.ptr(),
                 len,
             ))));
-            self.mem.ptr_mut().add(len).write(saved);
+            drop(put_back);
             Ok(result)
         }
     }
@@ -1167,6 +1204,8 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
             }
             self.write_text_root(&text[..root]);
             self.fence_at_root();
+        } else if has_drive::<P>(text) {
+            self.poison(PathError::Absolute);
         }
         self.parse::<P, false>(&text[root..]);
         self
@@ -1269,7 +1308,8 @@ impl<C: Unit, S: Storage<C>> PathBuf<AbsPath<C>, S> {
     where
         C: FromUnit<D>,
     {
-        let mut this = Self::blank(mem);
+        let mut this = Self::unset_in(mem);
+        this.err = None;
         #[cfg(windows)]
         if matches!(path.units(), [_, colon, ..] if colon.eq_ascii(b':')) {
             this.write(0, false, C::LONG_PATH_PREFIX);
@@ -1342,6 +1382,11 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> DerefMut for Scope<'_, V, S> {
 impl<V: View + ?Sized, S: Storage<V::Unit>> Drop for Scope<'_, V, S> {
     #[inline(always)]
     fn drop(&mut self) {
+        // Safe code can move another builder in through `DerefMut`.
+        if self.buf.at_fence != AtFence::Scoped || self.buf.fence != self.saved.len {
+            self.buf.poison(PathError::Escapes);
+            return;
+        }
         self.buf.truncate(self.saved.len);
         self.buf.err = self.saved.err;
         self.buf.fence = self.saved.fence;
@@ -1403,4 +1448,5 @@ pub fn relative_in<C: Unit, S: Storage<C>>(
 #[inline]
 pub fn top_level_dir() -> &'static AbsPath {
     AbsPath::from_os(crate::fs::FileSystem::instance().top_level_dir())
+        .expect("the project's directory is absolute")
 }

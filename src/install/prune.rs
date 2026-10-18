@@ -2095,12 +2095,12 @@ impl LinkedNodeModules {
     /// On Windows `path` is not rewritten, because a relative link resolves differently behind a
     /// junction than behind a symlink. A link out of this `node_modules` gets an absolute target.
     pub(crate) fn resolve(&self, path: &mut AbsPathBuf<impl Storage<u8>>) -> bool {
-        if self.real_path.is_empty() {
+        let Some(real_path) = AbsPath::from_os(&self.real_path) else {
             return path
                 .get()
                 .is_ok_and(|path| path.strip_prefix(&self.abs_path).is_some());
-        }
-        path.rebase(&self.abs_path, AbsPath::from_os(&self.real_path))
+        };
+        path.rebase(&self.abs_path, real_path)
     }
 
     /// `folders` are the symlinked `node_modules` folders, relative to the project root, that a

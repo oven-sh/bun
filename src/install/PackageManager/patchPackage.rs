@@ -1520,9 +1520,10 @@ fn copy_cache_entry(
     let src_path = {
         let mut path_buf = bun_paths::w_path_buffer_pool::get();
         let cache_dir_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
-        let cache_dir_path = bun_paths::typed::AbsPath::from_os(cache_dir_path);
-        let mut src_path = OsAbsPathBuf::from_in(Pooled::new(), cache_dir_path);
-        src_path.push_names::<platform::Auto>(cache_dir_subpath);
+        let mut src_path = OsAbsPathBuf::unset_in(Pooled::new());
+        src_path
+            .set_os(&*cache_dir_path)
+            .push_names::<platform::Auto>(cache_dir_subpath);
         src_path
     };
 

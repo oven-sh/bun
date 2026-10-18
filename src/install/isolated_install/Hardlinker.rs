@@ -1,7 +1,7 @@
 use bun_alloc::AllocError;
 #[cfg(windows)]
-use bun_paths::typed::{AbsPath, Classified};
-use bun_paths::typed::{AbsPathBuf, AnyPathBuf, Pooled, SubPath};
+use bun_paths::typed::Classified;
+use bun_paths::typed::{AbsPath, Path, PathBuf, Pooled, SubPath};
 use bun_paths::{OSPathChar, OSPathSlice};
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
@@ -10,8 +10,8 @@ use bun_sys::{self as sys, EntryKind, Fd, FdExt};
 
 use super::path_error;
 
-pub(crate) type OsAbsPathBuf = AbsPathBuf<Pooled<OSPathChar>, OSPathChar>;
-pub(crate) type OsPathBuf = AnyPathBuf<Pooled<OSPathChar>, OSPathChar>;
+pub(crate) type OsAbsPathBuf = PathBuf<AbsPath<OSPathChar>, Pooled<OSPathChar>>;
+pub(crate) type OsPathBuf = PathBuf<Path<OSPathChar>, Pooled<OSPathChar>>;
 
 pub(crate) struct Hardlinker {
     pub(crate) src: OsAbsPathBuf,
@@ -63,10 +63,10 @@ impl Hardlinker {
         #[cfg(windows)]
         {
             let mut cwd_buf = bun_paths::w_path_buffer_pool::get();
-            let Ok(cwd) = sys::get_fd_path_w(Fd::cwd(), &mut cwd_buf[..]) else {
+            let cwd = sys::get_fd_path_w(Fd::cwd(), &mut cwd_buf[..]).ok();
+            let Some(cwd) = cwd.and_then(|cwd| AbsPath::from_os(cwd)) else {
                 return Err(sys::Error::from_code(sys::E::ACCES, sys::Tag::link));
             };
-            let cwd = AbsPath::from_os(cwd);
 
             while let Some(entry) = self.walker.next()? {
                 let (mut src, mut dest) = (self.src.scope(), self.dest.scope());

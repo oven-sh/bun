@@ -288,3 +288,166 @@ test("util.getCallSites and url.parse do not read or write the program's hook", 
     exitCode: 0,
   });
 });
+
+// The tests of https://github.com/oven-sh/bun/pull/44547.
+const restoredFormatterFixture = String.raw`
+const assert = require("node:assert/strict");
+const mode = process.argv[1];
+const original = Error.prepareStackTrace;
+let cachedCalls = 0;
+const cached = () => { cachedCalls++; return "cached formatter"; };
+Error.prepareStackTrace = cached;
+const descriptor = Object.getOwnPropertyDescriptor(Error, "prepareStackTrace");
+if (mode === "restore-descriptor") {
+  Error.prepareStackTrace = () => "temporary formatter";
+  Object.defineProperty(Error, "prepareStackTrace", descriptor);
+} else if (mode === "delete-restore" || mode === "restore-default") {
+  delete Error.prepareStackTrace;
+  assert.equal(typeof new Error("default stack").stack, "string");
+  assert.equal(cachedCalls, 0);
+  Error.prepareStackTrace = mode === "restore-default" ? original : cached;
+} else if (mode === "replace-value") {
+  Object.defineProperty(Error, "prepareStackTrace", { ...descriptor, value: () => "replacement" });
+} else if (mode === "replace-accessor") {
+  let value = cached;
+  Object.defineProperty(Error, "prepareStackTrace", { configurable: true, get() { return value; }, set(next) { value = next; } });
+} else if (mode === "inherited-write") {
+  class ChildError extends Error {}
+  ChildError.prepareStackTrace = () => "child formatter";
+  assert.equal(Error.prepareStackTrace, cached);
+}
+let calls = 0;
+Error.prepareStackTrace = function(error, frames) {
+  assert.equal(this, Error);
+  calls++;
+  return frames;
+};
+const target = {};
+Error.captureStackTrace(target);
+const stacks = [target.stack, new Error("instance").stack];
+assert.equal(calls, 2);
+for (const frames of stacks) {
+  assert.equal(Array.isArray(frames), true);
+  assert.ok(frames.length > 0);
+  assert.equal(typeof frames[0].getFileName, "function");
+}
+console.log("ok");
+`;
+
+test.concurrent.each([
+  "restore-descriptor",
+  "delete-restore",
+  "restore-default",
+  "replace-value",
+  "replace-accessor",
+  "inherited-write",
+])("Error.prepareStackTrace property restoration: %s", async mode => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", restoredFormatterFixture, mode],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+});
+
+// The tests of https://github.com/oven-sh/bun/pull/41395. They also keep the two groups of processes apart.
+test("default Error.prepareStackTrace formats a non-Error object", () => {
+  // The original prepareStackTrace is forwarded whatever captureStackTrace was
+  // given; Node's default formatter accepts any object, not only Errors.
+  const original = Error.prepareStackTrace;
+  Error.prepareStackTrace = (err, callSites) => original(err, callSites);
+  try {
+    const target = { message: "not an error" };
+    expect(() => Error.captureStackTrace(target)).not.toThrow();
+    expect(typeof target.stack).toBe("string");
+    expect(target.stack).toStartWith("Error: not an error");
+    expect(target.stack).toMatch(/\n    at /);
+
+    const bare = Object.create(null);
+    expect(() => Error.captureStackTrace(bare)).not.toThrow();
+    expect(typeof bare.stack).toBe("string");
+
+    expect(() => Error.captureStackTrace(1)).toThrow(TypeError);
+    // The default formatter itself: any object is accepted, primitives are still rejected.
+    expect(typeof original({ message: "plain" }, [])).toBe("string");
+    expect(() => original(1, [])).toThrow(TypeError);
+    expect(() => original(null, [])).toThrow(TypeError);
+  } finally {
+    Error.prepareStackTrace = original;
+  }
+});
+
+test("captureStackTrace with a delegating prepareStackTrace and a caller not on the stack", () => {
+  // Repro from https://github.com/oven-sh/bun/issues/41151: `this.constructor` is Error, which is
+  // not on the stack, so every frame is elided and the stack is just the header, as in Node.
+  const original = Error.prepareStackTrace;
+  Error.prepareStackTrace = (err, callSites) => original(err, callSites);
+  try {
+    function CustomError() {
+      Error.captureStackTrace(this, this.constructor);
+    }
+    CustomError.prototype = new Error();
+    expect(new CustomError().stack).toBe("Error");
+  } finally {
+    Error.prepareStackTrace = original;
+  }
+});
+
+const formatterAccessorFixture = String.raw`
+const assert = require("node:assert/strict");
+const mode = process.argv[1];
+let reads = 0;
+let calls = 0;
+let nested;
+const failure = new Error("formatter failure");
+Object.defineProperty(Error, "prepareStackTrace", {
+  configurable: true,
+  get() {
+    reads++;
+    if (mode === "getter-throws") throw failure;
+    if (mode === "changes-between-reads" && reads === 2) return null;
+    nested = new Error("nested").stack;
+    return function(error, frames) {
+      calls++;
+      if (mode === "formatter-throws") throw failure;
+      return frames;
+    };
+  },
+});
+function capture() {
+  const target = {};
+  Error.captureStackTrace(target);
+  return target.stack;
+}
+if (mode === "getter-throws" || mode === "formatter-throws") {
+  assert.throws(capture, error => error === failure);
+} else if (mode === "changes-between-reads") {
+  assert.throws(capture, { name: "TypeError", message: "globalThis.Error.prepareStackTrace is not a function" });
+} else {
+  assert.equal(Array.isArray(capture()), true);
+  assert.equal(calls, 1);
+}
+assert.equal(reads, mode === "getter-throws" ? 1 : 2);
+if (mode !== "getter-throws") assert.equal(typeof nested, "string");
+Object.defineProperty(Error, "prepareStackTrace", {
+  configurable: true, writable: true, value: (_error, frames) => frames,
+});
+assert.equal(Array.isArray(new Error("healthy later capture").stack), true);
+console.log("ok");
+`;
+
+test.concurrent.each(["nested", "getter-throws", "formatter-throws", "changes-between-reads"])(
+  "Error.prepareStackTrace accessor lookup: %s",
+  async mode => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", formatterAccessorFixture, mode],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  },
+);

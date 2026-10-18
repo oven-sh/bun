@@ -61,16 +61,20 @@ prefixes["clip-path"].browsers = prefixes["clip-path"].browsers.filter(b => {
 });
 
 // MDN has both ends of `:-webkit-any()` and `:-moz-any()`: the first version with it, and the first with `:is()`.
+const isSupport = mdn.css.selectors.is.__compat.support;
 const anyPseudoUntil = {};
 prefixes["any-pseudo"] = {
-  browsers: Object.entries(mdn.css.selectors.is.__compat.support).flatMap(([key, value]) => {
+  browsers: Object.entries(isSupport).flatMap(([key, value]) => {
     if (Array.isArray(value)) {
-      key = MDN_BROWSER_MAPPING[key] || key;
+      let name = MDN_BROWSER_MAPPING[key] || key;
       let any = value.find(v => v.alternative_name?.includes("-any"))?.version_added;
       let supported = value.find(x => x.version_added && !x.alternative_name)?.version_added;
       if (any && supported) {
-        anyPseudoUntil[key] = Math.max(anyPseudoUntil[key] ?? 0, parseVersion(supported));
-        return [`${key} ${any}`];
+        // A target names the desktop browser, so its own entry decides the end: Firefox has `:is()` from 78, Firefox for Android from 79.
+        if (name === key || !(name in isSupport)) {
+          anyPseudoUntil[name] = Math.max(anyPseudoUntil[name] ?? 0, parseVersion(supported));
+        }
+        return [`${name} ${any}`];
       }
     }
 

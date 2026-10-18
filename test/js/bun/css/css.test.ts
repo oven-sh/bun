@@ -2835,15 +2835,6 @@ describe("css tests", () => {
     ] as const) {
       prefix_test(`.${name} { ${source} }`, `.${name} { ${expected}; }`, targets);
     }
-
-    for (const [name, targets, prefixed] of [
-      ["safari-13-1", { safari: (13 << 16) | (1 << 8) }, true],
-      ["safari-13-1-2", { safari: (13 << 16) | (1 << 8) | 2 }, true],
-      ["safari-14", { safari: 14 << 16 }, false],
-    ] as const) {
-      const rule = (pseudo: string) => `.${name}:${pseudo}(.b, .c) { color: red; }`;
-      prefix_test(rule("is"), (prefixed ? rule("-webkit-any") : "") + rule("is"), targets);
-    }
   });
 
   describe("background", () => {
@@ -5591,6 +5582,24 @@ describe("css tests", () => {
         firefox: 50 << 16,
       },
     );
+
+    // A browser gets its copy until its first version with `:is()`: Safari 14, Firefox 78. Chrome 80 has no `:is()`.
+    for (const [name, targets, fallbacks] of [
+      ["safari-13-1", { safari: (13 << 16) | (1 << 8) }, ["-webkit-any"]],
+      ["safari-13-1-2", { safari: (13 << 16) | (1 << 8) | 2 }, ["-webkit-any"]],
+      ["safari-14", { safari: 14 << 16 }, []],
+      ["firefox-77", { firefox: 77 << 16 }, ["-moz-any"]],
+      ["chrome-80-firefox-77", { chrome: 80 << 16, firefox: 77 << 16 }, ["-webkit-any", "-moz-any"]],
+      ["chrome-80-firefox-78", { chrome: 80 << 16, firefox: 78 << 16 }, ["-webkit-any"]],
+      [
+        "default-targets",
+        { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 },
+        ["-webkit-any"],
+      ],
+    ] as const) {
+      const rule = (pseudo: string) => `.${name}:${pseudo}(.b, .c) { color: red; }`;
+      prefix_test(rule("is"), [...fallbacks, "is"].map(rule).join(" "), targets);
+    }
 
     prefix_test(
       "a:is(.foo > .bar) {color:red}",

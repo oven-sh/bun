@@ -2155,7 +2155,7 @@ impl Feature {
                     }
                 }
                 if let Some(version) = browsers.firefox {
-                    if version >= 262144 && version < 5177344 {
+                    if version >= 262144 && version < 5111808 {
                         prefixes |= VendorPrefix::MOZ;
                     }
                 }

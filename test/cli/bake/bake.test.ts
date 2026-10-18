@@ -207,6 +207,21 @@ test.concurrent.each([
     error: `"bake.config.ts": the plugin "half" has no setup() function. "bun bake" takes Bun plugins.`,
   },
   {
+    name: "plugins in bake.config.ts that are not an array",
+    files: { "app/pages/index.html": page, "bake.config.ts": `export default { plugins: {} };` },
+    error: `The "plugins" argument must be of type array.`,
+  },
+  {
+    name: "a plugin in bake.config.ts that is not an object",
+    files: { "app/pages/index.html": page, "bake.config.ts": `export default { plugins: ["bun-plugin-tailwind"] };` },
+    error: `"bake.config.ts": plugins[0] is not a plugin object.`,
+  },
+  {
+    name: "a plugin in bake.config.ts with no name",
+    files: { "app/pages/index.html": page, "bake.config.ts": `export default { plugins: [{ setup() {} }] };` },
+    error: `"bake.config.ts": plugins[0] has no "name".`,
+  },
+  {
     name: "a bake.config.ts default export that is not an object",
     files: { "app/pages/index.html": page, "bake.config.ts": `export default 1;` },
     error: `"bake.config.ts" must have a default export: a config object, or a function that returns one.`,
@@ -461,11 +476,11 @@ test.concurrent("bun bake serves a Hono app exported from app/server.ts, with it
   ws.close();
 });
 
-test.concurrent("bun bake uses Bun.serve options from the export, and its flags come first", async () => {
+test.concurrent.each(["hostname", "host"])("bun bake uses Bun.serve options from the export, with %s", async key => {
   using dir = tempDir("bake-command-options", {
     "app/server.ts": `
       export default {
-        host: "127.0.0.1",
+        ${key}: "127.0.0.1",
         fetch: () => { throw new Error("boom"); },
         error: () => new Response("from the error option", { status: 500 }),
       };
@@ -496,7 +511,8 @@ test.concurrent.skipIf(isWindows)("bun bake keeps a unix socket from the export 
   const socket = join(String(dir), "s.sock");
   await Bun.write(
     join(String(dir), "app/server.ts"),
-    `export default { unix: ${JSON.stringify(socket)}, fetch: () => new Response("via unix") };`,
+    // `host` does not stop the socket: `bun bake` sets no address for it.
+    `export default { unix: ${JSON.stringify(socket)}, host: "localhost", fetch: () => new Response("via unix") };`,
   );
 
   await using proc = spawnBake(String(dir), ["bake"]);
@@ -549,4 +565,38 @@ test.concurrent("bun bake loads the plugins of bake.config.ts, with those of bun
   expect(css).toContain(".config-development");
   expect(css).toContain(".bunfig-plugin");
   expect(css).not.toContain(".unchanged");
+});
+
+test.concurrent("bun bake listens on localhost when the export of app/server.ts has an empty hostname", async () => {
+  using dir = tempDir("bake-command-empty-hostname", {
+    "app/server.ts": `export default { hostname: "", fetch: () => new Response("ok") };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  expect(new URL(url).hostname).toBe("localhost");
+});
+
+test.concurrent("bun bake runs a plugin function from bake.config.ts, with the project as its root", async () => {
+  using dir = tempDir("bake-command-config-function", {
+    "bake.config.ts": `
+      function rootPlugin() {}
+      rootPlugin.setup = build => {
+        const root = build.config.root;
+        build.onLoad({ filter: /style\\.css$/ }, () => ({
+          contents: (root === process.cwd() ? ".project-root" : ".other-root") + " { color: red; }",
+          loader: "css",
+        }));
+      };
+      export default { plugins: [rootPlugin] };
+    `,
+    "app/style.css": `.unchanged { color: red; }`,
+    "app/pages/index.html": `<!doctype html><html><head><link rel="stylesheet" href="../style.css" /></head><body></body></html>`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  expect(await getPageCss(url, "/")).toContain(".project-root");
 });

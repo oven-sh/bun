@@ -136,7 +136,8 @@ async function loadConfig(cwd: string): Promise<{ plugins: unknown[]; names: str
   const names: string[] = [];
   for (let i = 0, length = list.length; i < length; i++) {
     const plugin = list[i];
-    if (plugin === null || typeof plugin !== "object") {
+    // A function with `name` and `setup` is a plugin too, as in `Bun.build()`.
+    if (plugin === null || (typeof plugin !== "object" && typeof plugin !== "function")) {
       throw new TypeError(`"${name}": plugins[${i}] is not a plugin object.`);
     }
     const pluginName = plugin.name;
@@ -242,7 +243,8 @@ async function start() {
   const exported = app?.server;
   // Each is read once: a getter may return a new value on each read.
   // `host` is an alias of `hostname` in `Bun.serve()`.
-  const exportedHostname = exported?.hostname ?? exported?.host;
+  // An empty one is no hostname: `Bun.serve()` would listen on every interface.
+  const exportedHostname = (exported?.hostname ?? exported?.host) || undefined;
   const exportedPort = exported?.port;
   // A `unix` socket in the export is kept unless a flag asks for a TCP address.
   const useUnix = exported?.unix !== undefined && flags.hostname === undefined && flags.port === undefined;
@@ -258,6 +260,7 @@ async function start() {
       own("development", { console: flags.console, hmr: undefined });
       if (useUnix) {
         own("hostname", undefined);
+        own("host", undefined);
         own("port", undefined);
       } else {
         own("unix", undefined);

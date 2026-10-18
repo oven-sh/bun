@@ -989,9 +989,12 @@ impl ServePlugins {
         // NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
         let plugin_list: Vec<_> = plugin_list.iter().collect();
         let bunfig_path: &[u8] = &global.bun_vm().transpiler.options.bunfig_path;
-        let bunfig_folder: &[u8] = bun_paths::resolve_path::dirname::<
-            bun_paths::resolve_path::platform::Auto,
-        >(bunfig_path);
+        // With no bunfig.toml, only `bake.config.ts` has plugins: their root is the project.
+        let bunfig_folder: &[u8] = if bunfig_path.is_empty() {
+            FileSystem::instance().top_level_dir
+        } else {
+            bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path)
+        };
 
         // NOTE: the keep-alive ref/deref pair
         // lives in the caller (`get_or_load_plugins`), which holds the heap-allocated

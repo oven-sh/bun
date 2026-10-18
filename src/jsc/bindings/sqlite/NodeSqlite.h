@@ -195,10 +195,6 @@ public:
 
     // Incremented for the duration of any native call that may re-enter JS.
     // close()/deserialize()/session.close()/process-exit consult it.
-    // db.close() defers sqlite3_close_v2 until the outermost BusyScope
-    // unwinds; session.close()/Symbol.dispose throw ERR_INVALID_STATE.
-    // Bumped at host-function entry, so unlike Node's in-callback counter it
-    // also covers bind/option getters and the backup() progress callback.
     bool isBusy() const { return m_busyDepth > 0; }
     struct BusyScope {
         JSDatabaseSync* db;
@@ -639,8 +635,6 @@ public:
     sqlite3_session* session() const { return m_record ? m_record->handle : nullptr; }
     NodeSqliteSessionRecord* record() const { return m_record.get(); }
     JSDatabaseSync* database() const { return m_database.get(); }
-    // Checked before session(): after close()+open() the database is open
-    // but the handle is gone, and Node reports "session is not open" there.
     bool databaseClosed() const;
     void deleteSession();
 

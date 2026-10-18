@@ -3894,8 +3894,7 @@ void JSNodeSqliteTagStoreConstructor::finishCreation(VM& vm, JSGlobalObject*, JS
 // Matching Node's contract would mean dispatching each step to Bun's
 // WorkPool (webcrypto's PhonyWorkQueue is the in-tree precedent).
 //
-// The `progress` callback still fires between each batch of `rate` pages,
-// inside the source connection's BusyScope (session.close() throws there).
+// The `progress` callback still fires between each batch of `rate` pages.
 JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);

@@ -3966,30 +3966,37 @@ fn existing_peer_target(
         return Some(id);
     }
     let highest = highest_peer_candidate(lockfile, name_hash, version)?;
-    (shares_copy_with_dependent(lockfile, name_hash, row)
+    (may_use_copy_out_of_range(lockfile, name_hash, row, highest)
         && !would_revive_leftover(lockfile, row, highest))
     .then_some(highest)
 }
 
-/// True if the root, or a package that depends on the peer's declaring package, has a dependency
-/// of its own with the peer's name. The peer then uses that copy, even one outside its range. A
-/// copy that only unrelated packages depend on is not meant for it.
-fn shares_copy_with_dependent(
+/// A peer shares `copy` if the root, or a package that depends on the peer's declaring package, has
+/// a dependency of its own with the peer's name, or if `copy` was itself installed for a peer. A
+/// copy that is only there as the dependency of unrelated packages is not meant for it.
+fn may_use_copy_out_of_range(
     lockfile: &Lockfile::Lockfile,
     name_hash: PackageNameHash,
     row: DependencyID,
+    copy: PackageID,
 ) -> bool {
     let deps = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let Some(package) = lockfile.get_parent_pkg_of_dependency(row) else {
         return true;
     };
-    (lockfile.packages.items_dependencies().iter().enumerate()).any(|(dependent, list)| {
+    let mut is_a_dependency = false;
+    for (dependent, list) in lockfile.packages.items_dependencies().iter().enumerate() {
         let mut own =
             (list.begin() as usize..list.end() as usize).filter(|&id| !deps[id].behavior.is_peer());
-        own.clone().any(|id| deps[id].name_hash == name_hash)
-            && (dependent == 0 || own.any(|id| resolutions[id] == package))
-    })
+        if own.clone().any(|id| deps[id].name_hash == name_hash)
+            && (dependent == 0 || own.clone().any(|id| resolutions[id] == package))
+        {
+            return true;
+        }
+        is_a_dependency |= own.any(|id| resolutions[id] == copy);
+    }
+    !is_a_dependency
 }
 
 /// By a `file:`, `link:`, tarball or git row: the tree builder binds the peer to the nearest copy.

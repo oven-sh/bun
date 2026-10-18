@@ -642,9 +642,15 @@ impl PeerProbes {
                         && resolutions[dep_id as usize] != invalid_package_id
                 })
                 .map(|dep_id| resolutions[dep_id as usize]);
-            if owner_copy.map_or(!peer.behavior.is_optional_peer(), |id| {
-                pkg_resolutions[id as usize].satisfies_dependency_version(&peer.version, buf, buf)
-            }) {
+            let is_listed = match owner_copy {
+                Some(id) => pkg_resolutions[id as usize].satisfies_dependency_version(
+                    &peer.version,
+                    buf,
+                    buf,
+                ),
+                None => !peer.behavior.is_optional_peer(),
+            };
+            if is_listed {
                 self.0.push((peer_dep_id, owner_copy));
             }
         }

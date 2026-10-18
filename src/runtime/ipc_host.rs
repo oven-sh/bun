@@ -480,6 +480,20 @@ impl IPCInstance {
 pub(crate) fn get_ipc_instance(
     vm: &mut bun_jsc::virtual_machine::VirtualMachine,
 ) -> Option<*mut IPCInstance> {
+    open_ipc_instance(vm, true)
+}
+
+/// For the methods of `process.channel`, which say nothing in Node where the channel cannot be opened.
+pub(crate) fn get_ipc_instance_quietly(
+    vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+) -> Option<*mut IPCInstance> {
+    open_ipc_instance(vm, false)
+}
+
+fn open_ipc_instance(
+    vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+    warn: bool,
+) -> Option<*mut IPCInstance> {
     if let Some(inst) = CHANNEL.get() {
         return Some(inst.as_ptr());
     }
@@ -530,7 +544,9 @@ pub(crate) fn get_ipc_instance(
             // (heap::alloc) above and is not yet aliased.
             unsafe { IPCInstance::deinit(instance) };
             CHANNEL.set(None);
-            bun_core::warn!("Unable to start IPC socket");
+            if warn {
+                bun_core::warn!("Unable to start IPC socket");
+            }
             return None;
         };
         socket.set_timeout(0);
@@ -566,7 +582,9 @@ pub(crate) fn get_ipc_instance(
             // (heap::alloc) above and is not yet aliased.
             unsafe { IPCInstance::deinit(instance) };
             CHANNEL.set(None);
-            bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
+            if warn {
+                bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
+            }
             return None;
         }
 

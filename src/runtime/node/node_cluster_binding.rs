@@ -274,9 +274,10 @@ fn with_channel(subprocess: Option<&Subprocess<'_>>, f: impl FnOnce(&SendQueue))
         if let Some(channel) = subprocess.ipc() {
             f(channel);
         }
-    } else if let Some(instance) = crate::ipc_host::get_ipc_instance(VirtualMachine::get().as_mut())
+    } else if let Some(instance) =
+        crate::ipc_host::get_ipc_instance_quietly(VirtualMachine::get().as_mut())
     {
-        // SAFETY: `get_ipc_instance` returns the live boxed instance that `CHANNEL` holds.
+        // SAFETY: `get_ipc_instance_quietly` returns the live boxed instance that `CHANNEL` holds.
         f(unsafe { (*instance).data() });
     }
 }
@@ -299,7 +300,10 @@ pub(crate) fn start_channel_with_ref(subprocess: &Subprocess<'_>) {
 
 // HOST_EXPORT(Bun__setChannelListenerCount, c)
 pub(crate) fn set_channel_listener_count(count: i32) {
-    with_channel(None, |channel| channel.set_listener_count(count));
+    if let Some(instance) = crate::ipc_host::get_ipc_instance(VirtualMachine::get().as_mut()) {
+        // SAFETY: `get_ipc_instance` returns the live boxed instance that `CHANNEL` holds.
+        unsafe { (*instance).data() }.set_listener_count(count);
+    }
 }
 
 pub(crate) fn channel_ignore_one_disconnect_event_listener() {

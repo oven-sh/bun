@@ -906,10 +906,13 @@ impl<'p> Checker<'p, '_> {
             return;
         }
         // `typeToStringEx` returns "?" and `addDiagnostic` discards the diagnostic. TypeScript 7.0 never reports it after
-        // that, so what it prints depends on which file or statement gets here first. 7.1 always reports it. So the
-        // access isn't cached, and the walk of its file evaluates it again and reports.
+        // that, so what it prints depends on which file or statement gets here first. 7.1 always reports it. So nothing
+        // that was evaluated for the type being printed is cached: not the access, and not the call, array or object
+        // around it. The walk of its file evaluates them again and reports.
         if self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
-            self.mark_tainted_from(self.frames.len().saturating_sub(1));
+            let innermost = self.frames.len().saturating_sub(1);
+            let floor = self.printing_floors.last().copied().unwrap_or(innermost);
+            self.mark_tainted_from(floor.min(innermost));
             return;
         }
         let created = self.non_existent_properties.insert((file, e), false);

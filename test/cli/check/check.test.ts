@@ -850,6 +850,44 @@ export function first() { return cache.entrees[0]; }
           "server.ts(5,40): error TS2551: Property 'entrees' does not exist on type '{ entries: number[]; }'. Did you mean 'entries'?",
         ],
       ],
+      [
+        "as a call's argument, from a caller above it",
+        {
+          "config.ts": `declare function listen(port: number): number;
+const env = { ports: { http: "80" } };
+export const server: number = { start };
+export function start() { return listen({ port }); }
+export function port() { return Number(env.ports.htpp); }
+`,
+        },
+        [
+          "config.ts(3,14): error TS2322: Type '{ start: () => number; }' is not assignable to type 'number'.",
+          "config.ts(4,41): error TS2345: Argument of type '{ port: () => number; }' is not assignable to parameter of type 'number'.",
+          "config.ts(5,50): error TS2339: Property 'htpp' does not exist on type '{ http: string; }'.",
+        ],
+      ],
+      [
+        "as a call's argument, from callers above it and from a larger file",
+        {
+          "big.ts": filler("b", 400) + "export {};\n",
+          "dep.ts": `declare function takesNumber(n: number): number;
+declare const p: Promise<any>;
+export function g1() { return takesNumber({ g: g2 }); }
+export function g2() { return takesNumber({ g: f2 }); }
+export function f2() { return String(p.nope); }
+export function f1() { return takesNumber({ g: f2 }); }
+export const api = { f1 };
+`,
+          "user.ts": user + filler("u", 60),
+        },
+        [
+          "dep.ts(3,43): error TS2345: Argument of type '{ g: () => number; }' is not assignable to parameter of type 'number'.",
+          "dep.ts(4,43): error TS2345: Argument of type '{ g: () => string; }' is not assignable to parameter of type 'number'.",
+          "dep.ts(5,40): error TS2339: Property 'nope' does not exist on type 'Promise<any>'.",
+          "dep.ts(6,43): error TS2345: Argument of type '{ g: () => string; }' is not assignable to parameter of type 'number'.",
+          inUser,
+        ],
+      ],
     ] as const)("%s", async (_, files, expected) => {
       using dir = project(files);
       const threads = [1, 2, 2, 2, 3, 3, 3, 8];

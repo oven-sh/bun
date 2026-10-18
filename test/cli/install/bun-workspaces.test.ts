@@ -4696,6 +4696,30 @@ test.concurrent.skipIf(isWindows)("`**` in a workspace glob does not go through 
   expect(exitCode).toBe(0);
 });
 
+// In a brace group too: `s` is a link that only the wildcard alternative matches, `named` is a link that an alternative spells.
+test.concurrent.skipIf(isWindows)(
+  "a brace group in a workspace glob matches a symlinked member directory",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "mono", workspaces: ["packages/{s*,named}"] })),
+      write(join(packageDir, "real", "s", "package.json"), JSON.stringify({ name: "s", version: "1.0.0" })),
+      write(join(packageDir, "real", "named", "package.json"), JSON.stringify({ name: "named", version: "1.0.0" })),
+    ]);
+    mkdirSync(join(packageDir, "packages"));
+    symlinkSync(join("..", "real", "s"), join(packageDir, "packages", "s"));
+    symlinkSync(join("..", "real", "named"), join(packageDir, "packages", "named"));
+
+    await using proc = spawn({ cmd: [bunExe(), "install"], cwd: packageDir, stdout: "pipe", stderr: "pipe", env });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    const members = (await file(join(packageDir, "bun.lock")).text()).matchAll(/^    "([^"]*)": \{$/gm);
+    expect(Array.from(members, match => match[1])).toEqual(["", "packages/named", "packages/s"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
 // The npm lockfile migration reads each workspace package.json through the cache of the package manager.
 test.concurrent("the package.json cache keeps no mimalloc heap for each file", async () => {
   await acquireSlot();

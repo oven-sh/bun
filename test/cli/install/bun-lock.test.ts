@@ -4935,6 +4935,19 @@ it.concurrent.each(["2.0.0", "latest"])(
   },
 );
 
+it.concurrent("a version that is resolved for a peer reports a tarball URL that bun cannot download", async () => {
+  using registry = await serveRegistry({
+    a: { "1.0.0": { peerDependencies: { z: "1.0.0" } } },
+    z: { "1.0.0": { dist: { tarball: "ftp://example.invalid/z.tgz" } } },
+  });
+  using dir = projectOn(registry, { "package.json": { name: "foo", dependencies: { a: "1.0.0" } } });
+  const { err, code } = await runWithOwnCache(String(dir), "install");
+  expect(err.split("\n").filter(line => line.startsWith("error:"))).toEqual([
+    'error: Expected tarball URL to start with https:// or http://, got "ftp://example.invalid/z.tgz" while fetching package "z"',
+  ]);
+  expect(code).toBe(1);
+});
+
 it.concurrent(
   "a peer of the project that any version suits shares the version that another peer asks for",
   async () => {

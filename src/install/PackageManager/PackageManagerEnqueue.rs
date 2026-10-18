@@ -94,14 +94,14 @@ fn kept_tarball_task(
 }
 
 /// `rows` is what `Lockfile::unmark_reachable_only_peers` returned.
-pub(crate) fn download_kept(this: &mut PackageManager, rows: &[DependencyID]) -> crate::Result<()> {
+pub(crate) fn download_kept(this: &mut PackageManager, rows: &[DependencyID]) {
     for &row in rows {
         let package_id = this.lockfile.buffers.resolutions[row as usize];
-        if let Some(task) = kept_tarball_task(this, row, package_id)? {
+        // A download that cannot start is in the log.
+        if let Ok(Some(task)) = kept_tarball_task(this, row, package_id) {
             enqueue_resolved_task(this, package_id, task);
         }
     }
-    Ok(())
 }
 
 fn task_callback_list(this: &mut PackageManager, task_id: Task::Id) -> &mut TaskCallbackList {

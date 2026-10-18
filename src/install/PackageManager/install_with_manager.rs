@@ -1831,7 +1831,7 @@ fn settle_only_peers(
         if kept.is_empty() {
             return Ok(());
         }
-        download_kept(manager, &kept)?;
+        download_kept(manager, &kept);
         manager.drain_dependency_list();
         if manager.pending_task_count() > 0 {
             resolve_pending_tasks(manager, root, progress, &mut NamedUpdates::default())?;

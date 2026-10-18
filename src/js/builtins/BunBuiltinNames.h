@@ -167,6 +167,7 @@ using namespace JSC;
     macro(signal) \
     macro(size) \
     macro(specifier) \
+    macro(stackWithoutFrames) \
     macro(start) \
     macro(status) \
     macro(statusCode) \

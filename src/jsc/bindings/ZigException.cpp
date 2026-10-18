@@ -255,14 +255,18 @@ public:
         if (offset >= stack.length())
             return false;
 
-        auto start = stack.find("\n    at "_s, offset);
+        size_t start = 7;
+        // What Error.prepareStackTrace returns can begin with a frame.
+        if (offset || !stack.startsWith("    at "_s)) {
+            start = stack.find("\n    at "_s, offset);
 
-        if (start == WTF::notFound) {
-            offset = stack.length();
-            return false;
+            if (start == WTF::notFound) {
+                offset = stack.length();
+                return false;
+            }
+
+            start += 8;
         }
-
-        start += 8;
         auto end = stack.find("\n"_s, start);
 
         if (end == WTF::notFound) {
@@ -587,7 +591,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
             if (stackValue == val) {
                 return;
             }
-            if (stackValue.isString()) {
+            if (stackValue.isString() && stackValue != obj->getDirect(vm, names.stackWithoutFramesPrivateName())) {
                 WTF::String stack = stackValue.toWTFString(global);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
                     return;

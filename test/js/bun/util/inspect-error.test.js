@@ -548,15 +548,37 @@ describe("lines of the name and the message that look like stack frames are not 
     expect(printedFrames(make(message, changes))).toEqual(["at make (this file)", "at this file"]);
   });
 
-  test("in the message of an error without frames", () => {
+  function withoutFrames(message) {
     const origLimit = Error.stackTraceLimit;
-    let withoutFrames;
     try {
       Error.stackTraceLimit = 0;
-      withoutFrames = new Error("m" + fake);
+      return new Error(message);
     } finally {
       Error.stackTraceLimit = origLimit;
     }
-    expect(printedFrames(withoutFrames)).toEqual([]);
+  }
+
+  test("in the message of an error without frames", () => {
+    expect(printedFrames(withoutFrames("m" + fake))).toEqual([]);
   });
+
+  test("in the message that an error without frames had when its stack was read", () => {
+    const err = withoutFrames("m" + fake);
+    err.stack;
+    err.message = "context: " + err.message;
+    expect(printedFrames(err)).toEqual([]);
+  });
+
+  test("the frames of a stack that was assigned to an error without frames are printed", () => {
+    const err = withoutFrames("m");
+    err.stack;
+    err.stack = "Error: m\n    at real (/real.js:1:5)";
+    expect(printedFrames(err)).toEqual(["at real (/real.js:1:5)"]);
+  });
+});
+
+test("a stack that begins with a frame has that frame printed", () => {
+  const err = new Error("m");
+  err.stack = "    at first (/first.js:1:5)\n    at second (/second.js:2:6)";
+  expect(Bun.inspect(err)).toEndWith("error: m\n      at first (/first.js:1:5)\n      at second (/second.js:2:6)\n");
 });

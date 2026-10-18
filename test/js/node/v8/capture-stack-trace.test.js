@@ -1451,9 +1451,7 @@ test.each([0, -1])("an error made under Error.stackTraceLimit = %p has its heade
     [true, "Error: m"],
     [true, "RangeError: m"],
   ]);
-  expect(errors.filter(e => "sourceURL" in e)).toEqual([]);
-  // A clone with a stack has a line and a column, whatever it is a clone of.
-  expect(errors.filter(e => "line" in e || "column" in e)).toEqual([errors[6]]);
+  expect(errors.filter(e => "line" in e || "column" in e || "sourceURL" in e)).toEqual([]);
 });
 
 test("Error.prepareStackTrace gets no call sites under Error.stackTraceLimit = 0", () => {
@@ -1467,6 +1465,77 @@ test("Error.prepareStackTrace gets no call sites under Error.stackTraceLimit = 0
     Error.stackTraceLimit = origLimit;
   }
   expect(stack).toEqual(["m", []]);
+});
+
+test("Error.prepareStackTrace is called for an error with no frames when its stack is read, not before", async () => {
+  const withoutFrames = () => {
+    const origLimit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 0;
+    try {
+      return new Error("m");
+    } finally {
+      Error.stackTraceLimit = origLimit;
+    }
+  };
+  const prepareStackTrace = (Error.prepareStackTrace = mock(() => "prepared"));
+
+  // node (v26.7.0) has the same results, with its own order for ownKeys
+  expect({
+    hasOwn: Object.hasOwn(withoutFrames(), "stack"),
+    in: "stack" in withoutFrames(),
+    ownKeys: Reflect.ownKeys(withoutFrames()),
+    descriptor: Object.keys(Object.getOwnPropertyDescriptor(withoutFrames(), "stack")),
+    delete: delete withoutFrames().stack,
+    assign: (withoutFrames().stack = 1),
+    define: Object.defineProperty(withoutFrames(), "stack", { value: 1 }).stack,
+    freeze: Object.isFrozen(Object.freeze(withoutFrames())),
+    seal: Object.isSealed(Object.seal(withoutFrames())),
+    spread: { ...withoutFrames() },
+    otherReceiver: Reflect.get(withoutFrames(), "stack", {}),
+  }).toEqual({
+    hasOwn: true,
+    in: true,
+    ownKeys: ["message", "stack"],
+    descriptor: ["get", "set", "enumerable", "configurable"],
+    delete: true,
+    assign: 1,
+    define: 1,
+    freeze: true,
+    seal: true,
+    spread: {},
+    otherReceiver: undefined,
+  });
+  using dir = tempDir("parse-error-prepare", { "bad.js": `"".test(/[a-0]/);` });
+  const parseError = await import(join(String(dir), "bad.js")).catch(e => e);
+  expect(prepareStackTrace).toHaveBeenCalledTimes(0);
+
+  expect([parseError.stack, parseError.stack]).toEqual(["prepared", "prepared"]);
+  expect(prepareStackTrace).toHaveBeenCalledTimes(1);
+  expect(prepareStackTrace).toHaveBeenLastCalledWith(parseError, []);
+
+  for (const [restrict, check] of [
+    [Object.freeze, Object.isFrozen],
+    [Object.seal, Object.isSealed],
+    [Object.preventExtensions, e => !Object.isExtensible(e)],
+  ]) {
+    prepareStackTrace.mockClear();
+    const error = restrict(withoutFrames());
+    expect([error.stack, error.stack, check(error)]).toEqual(["prepared", "prepared", true]);
+    expect(prepareStackTrace).toHaveBeenCalledTimes(1);
+  }
+
+  const touched = withoutFrames();
+  Object.hasOwn(touched, "stack");
+  Error.prepareStackTrace = origPrepareStackTrace;
+  expect(touched.stack).toBe("Error: m");
+
+  const thrower = withoutFrames();
+  Error.prepareStackTrace = mock(() => {
+    throw new RangeError("from prepareStackTrace");
+  });
+  expect(() => thrower.stack).toThrow(RangeError);
+  expect(() => thrower.stack).toThrow(RangeError);
+  expect(Error.prepareStackTrace).toHaveBeenCalledTimes(2);
 });
 
 test("an error that native code makes with no JavaScript on the stack has a stack", async () => {
@@ -1495,7 +1564,7 @@ test("a SyntaxError from import() of a file that only JavaScriptCore's parser re
   expect(Bun.inspect(error)).toEndWith(`6 | "".test(/[a-0]/);
     ^
 SyntaxError: Invalid regular expression: range out of order in character class
-      at <parse> (${file}:6:1)
+      at ${file}:6:1
 `);
 
   Error.prepareStackTrace = () => {

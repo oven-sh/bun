@@ -460,6 +460,8 @@ impl<'a> Pass<'a> {
                     id if id == invalid_package_id => (lockfile.packages_named(name_hash).iter())
                         .copied()
                         .find(|&id| live.is_set(id as usize) && !lockfile.is_only_for_peers(id))?,
+                    // The vote may move a peer of the root.
+                    id if lockfile.is_only_for_peers(id) => return None,
                     id => id,
                 };
                 Some((name_hash, row, copy))

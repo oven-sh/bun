@@ -634,10 +634,12 @@ pub fn install_with_manager(
 
     // `--depth 0`: a transitive edge that shared the old package with a moved entry stays.
     let direct_only = manager.options.do_.update_direct_only();
-    direct_deps_before.redirect_dependents(&mut manager.lockfile, direct_only);
-    transitive.redirect_dependents(&mut manager.lockfile);
-    redirect_moved_edges(&mut manager.lockfile, &named.moved, direct_only);
-    settle_only_peers(manager, &root, &mut progress)?;
+    let redirect = |lockfile: &mut Lockfile| {
+        direct_deps_before.redirect_dependents(lockfile, direct_only);
+        transitive.redirect_dependents(lockfile);
+        redirect_moved_edges(lockfile, &named.moved, direct_only);
+    };
+    settle_only_peers(manager, &root, &mut progress, &redirect)?;
     wait_for_pending_tasks(manager)?;
     progress.close(manager);
     // `bun audit fix` moved its rows to the fixed versions on purpose.
@@ -1814,13 +1816,16 @@ fn resolve_unbound_peers(manager: &mut PackageManager) -> bool {
 }
 
 /// Decides which `Lockfile::only_peers` packages stay, and resolves what those depend on. That can
-/// add more of them.
+/// add more of them. `redirect` takes what was resolved off the packages that the command has moved
+/// a dependency away from.
 fn settle_only_peers(
     manager: &mut PackageManager,
     root: &lockfile::Package,
     progress: &mut ResolveProgress,
+    redirect: &dyn Fn(&mut Lockfile),
 ) -> crate::Result<()> {
     loop {
+        redirect(&mut manager.lockfile);
         crate::dedupe::collapse_appended_peers(manager);
         let kept = manager.lockfile.unmark_reachable_only_peers()?;
         if kept.is_empty() {
@@ -2289,7 +2294,7 @@ fn resolve_pending_tasks(
     }
     wait_for_pending_tasks(manager)?;
     // A peer among the children moves from the version that it would share.
-    settle_only_peers(manager, root, progress)?;
+    settle_only_peers(manager, root, progress, &|_| {})?;
     let child_moves = refresh_children_of_named(manager, &named.latest_rows)?;
     named.moved.extend(child_moves);
     wait_for_pending_tasks(manager)
@@ -2573,8 +2578,8 @@ fn reresolve_rows_outside_overrides(
     if manager.pending_task_count() > 0 {
         resolve_pending_tasks(manager, root, &mut progress, &mut NamedUpdates::default())?;
     }
-    redirect_moved_edges(&mut manager.lockfile, &moved, false);
-    settle_only_peers(manager, root, &mut progress)?;
+    let redirect = |lockfile: &mut Lockfile| redirect_moved_edges(lockfile, &moved, false);
+    settle_only_peers(manager, root, &mut progress, &redirect)?;
     wait_for_pending_tasks(manager)?;
     progress.close(manager);
     if manager.log_mut().has_errors() {

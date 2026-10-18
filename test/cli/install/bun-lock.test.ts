@@ -4935,6 +4935,18 @@ it.concurrent.each(["2.0.0", "latest"])(
   },
 );
 
+it.concurrent(
+  "a peer of the project that any version suits shares the version that another peer asks for",
+  async () => {
+    using registry = await serveRegistry({ a: { "1.0.0": { peerDependencies: { z: "1.0.5" } } }, z: zVersions });
+    using dir = projectOn(registry, {
+      "package.json": { name: "foo", dependencies: { a: "1.0.0" }, peerDependencies: { z: "*" } },
+    });
+    await installWithOwnCache(String(dir));
+    expect(instancesOf(await file(join(String(dir), "bun.lock")).text(), "z")).toEqual({ "z": "z@1.0.5" });
+  },
+);
+
 it.concurrent.each([
   ["is not warned about if it goes again", { a: "1.0.0", o: "1.0.0" }, "z@1.0.0"],
   ["is warned about if it stays", { o: "1.0.0" }, "z@1.9.0"],
@@ -5395,6 +5407,24 @@ it.concurrent.each(["update", "update a"])(
     const lock = await file(join(cwd, "bun.lock")).text();
     expect({ ...instancesOf(lock, "a"), ...instancesOf(lock, "z") }).toEqual({ "a": "a@1.1.0", "z": "z@2.0.0" });
     expect(code).toBe(0);
+  },
+);
+
+it.concurrent(
+  "what a package that a peer installed depends on does not bring back the version that the project moved away from",
+  async () => {
+    using registry = await serveRegistry({
+      a: { "1.0.0": { peerDependencies: { p: "1.0.0" } } },
+      p: { "1.0.0": { dependencies: { z: ">=1.0.0" } } },
+      z: zVersions,
+    });
+    using dir = projectOn(registry, { "package.json": { name: "foo", dependencies: { z: "2.0.0" } } });
+    const cwd = String(dir);
+    await installWithOwnCache(cwd);
+
+    await write(join(cwd, "package.json"), JSON.stringify({ name: "foo", dependencies: { a: "1.0.0", z: "1.0.0" } }));
+    await installWithOwnCache(cwd);
+    expect(instancesOf(await file(join(cwd, "bun.lock")).text(), "z")).toEqual({ "z": "z@1.0.0" });
   },
 );
 

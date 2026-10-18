@@ -426,7 +426,10 @@ fn loop_heads<'a>(file: &'a File<'a>, has_scopes: bool, all: &mut Vec<SyntaxErro
         let Some(name) = hir.pats.get(only.pat.idx()) else {
             continue;
         };
-        if matches!(file.bound.parent_of_stmt(hir::StmtId(i as u32)), Parent::None) {
+        if matches!(
+            file.bound.parent_of_stmt(hir::StmtId(i as u32)),
+            Parent::None
+        ) {
             continue;
         }
         if only.init.is_some() {

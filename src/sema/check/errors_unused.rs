@@ -1350,7 +1350,10 @@ impl Unused<'_, '_> {
             // `checkGrammarModuleElementContext`.
             if let StmtKind::ExportNamed(id) = s.kind
                 && !hir[id].has_module_specifier
-                && matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::File | Parent::Module(_))
+                && matches!(
+                    bound.parent_of_stmt(StmtId(i as u32)),
+                    Parent::File | Parent::Module(_)
+                )
             {
                 let scope = bound.export_scope[id.idx()];
                 for item in hir[id].items.iter() {
@@ -1450,8 +1453,10 @@ impl Unused<'_, '_> {
                 // `ParenthesizedExpression` alone, which `checkSourceElement` never visits.
                 StmtKind::Expr(_) => hir.text.get(s.start as usize) != Some(&b'('),
                 // `checkTryStatement` and `checkCatchClause` call `checkBlock` themselves.
-                StmtKind::Block(_) => !matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::Stmt(outer)
-                    if outer.is_some() && matches!(hir[outer].kind, StmtKind::Try { .. })),
+                StmtKind::Block(_) => {
+                    !matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::Stmt(outer)
+                    if outer.is_some() && matches!(hir[outer].kind, StmtKind::Try { .. }))
+                }
                 _ => true,
             };
             if !is_host {

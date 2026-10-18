@@ -595,9 +595,7 @@ impl ToNode for Parent {
             Parent::Expr(e) => file.node(e),
             Parent::Stmt(s) => file.node(s),
             Parent::VarInit(d) => file.node(d),
-            Parent::ParamDefault(p) | Parent::ParamDecorator(p) => {
-                file.node(p)
-            }
+            Parent::ParamDefault(p) | Parent::ParamDecorator(p) => file.node(p),
             Parent::PatPropDefault(p) => file.node(p),
             Parent::PatElemDefault(e) => file.node(e),
             Parent::Prop(p) => file.node(p),
@@ -608,9 +606,7 @@ impl ToNode for Parent {
             Parent::FnBody(f) => file.node(f),
             Parent::EnumInit(m) => file.node(m),
             Parent::Case(c) => file.node(c),
-            Parent::ClassExtends(c) | Parent::ClassDecorator(c) => {
-                file.node(c)
-            }
+            Parent::ClassExtends(c) | Parent::ClassDecorator(c) => file.node(c),
             Parent::Module(m) => file.node(m),
             Parent::File => Node::FILE,
         }

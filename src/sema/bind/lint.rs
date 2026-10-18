@@ -252,10 +252,7 @@ impl<'l, S: Storage> Yields<'l, S> {
                 | Parent::File
                 | Parent::None => NOWHERE,
             },
-            Place::Stmt(s) => match (
-                f.stmts.get(s.idx()).map(|it| it.kind),
-                b.parent_of_stmt(s),
-            ) {
+            Place::Stmt(s) => match (f.stmts.get(s.idx()).map(|it| it.kind), b.parent_of_stmt(s)) {
                 (
                     None
                     | Some(

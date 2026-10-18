@@ -278,32 +278,26 @@ impl<'a> Node<'a> {
                 })
             }
             Parent::VarInit(d) => Node::VarDecl(VarDecl::new(file, d)),
-            Parent::ParamDefault(p) | Parent::ParamDecorator(p) => {
-                Node::Param(Param::new(file, p))
-            }
+            Parent::ParamDefault(p) | Parent::ParamDecorator(p) => Node::Param(Param::new(file, p)),
             Parent::PatPropDefault(p) | Parent::PatKey(p) => Node::PatProp(PatProp::new(file, p)),
             Parent::PatElemDefault(e) => Node::PatElem(PatElem::new(file, e)),
             Parent::Prop(p) | Parent::PropKey(p) | Parent::MethodKey(p) => {
                 Node::Prop(Prop::new(file, p))
             }
-            Parent::MemberKey(m)
-            | Parent::MemberInit(m)
-            | Parent::MemberDecorator(m) => Node::Member(Member::new(file, m)),
+            Parent::MemberKey(m) | Parent::MemberInit(m) | Parent::MemberDecorator(m) => {
+                Node::Member(Member::new(file, m))
+            }
             Parent::FnBody(f) => Node::Func(Func::new(file, f)),
             Parent::EnumInit(m) => Node::EnumMember(EnumMember::new(file, m)),
             Parent::Case(c) => Node::Case(Case::new(file, c)),
-            Parent::ClassExtends(c) | Parent::ClassDecorator(c) => {
-                Node::Class(Class::new(file, c))
-            }
+            Parent::ClassExtends(c) | Parent::ClassDecorator(c) => Node::Class(Class::new(file, c)),
             Parent::Module(mut m) => loop {
                 let Some(module) = hir.modules.get(m.idx()) else {
                     break Node::File(file);
                 };
                 // From the `C` of `namespace A.B.C` to the `A`.
                 match bound.parent_of_stmt(module.stmt) {
-                    Parent::Module(outer) if file.is_nested_namespace(module.stmt) => {
-                        m = outer
-                    }
+                    Parent::Module(outer) if file.is_nested_namespace(module.stmt) => m = outer,
                     _ => break Node::Stmt(Stmt::new(file, module.stmt)),
                 }
             },
@@ -856,7 +850,10 @@ impl Parents {
                 continue;
             }
             // What the parser has left behind can share its type arguments with a node.
-            if matches!(file.bound.parent_of_expr(hir::ExprId(i as u32)), Parent::None) {
+            if matches!(
+                file.bound.parent_of_expr(hir::ExprId(i as u32)),
+                Parent::None
+            ) {
                 continue;
             }
             let parent = packed(Tag::Expr, i);

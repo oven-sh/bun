@@ -777,7 +777,10 @@ impl Checker<'_, '_> {
                 let start = hir[c].start;
                 self.error_at((cx.file, start, 0), 1211, &[]);
             }
-            if matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::File | Parent::Module(_)) {
+            if matches!(
+                bound.parent_of_stmt(StmtId(i as u32)),
+                Parent::File | Parent::Module(_)
+            ) {
                 continue;
             }
             if !matches!(

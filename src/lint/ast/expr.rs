@@ -1256,8 +1256,7 @@ impl File<'_> {
         {
             return false;
         }
-        let bun_sema::bind::Parent::Expr(parent) = self.bound.parent_of_expr(id)
-        else {
+        let bun_sema::bind::Parent::Expr(parent) = self.bound.parent_of_expr(id) else {
             return false;
         };
         let Some(&hir::Expr {

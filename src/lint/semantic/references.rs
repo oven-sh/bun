@@ -708,10 +708,7 @@ impl<'f> Collector<'f, '_> {
         for &id in file.bound.type_query_operands {
             if let Some(e) = file.hir.exprs.get(id.idx())
                 && let ExprKind::Ident(name) = e.kind
-                && !matches!(
-                    file.bound.parent_of_expr(id),
-                    Parent::None
-                )
+                && !matches!(file.bound.parent_of_expr(id), Parent::None)
                 && name != known::empty
                 && !(file.has_synthetic_nodes() && file.is_in_jsdoc(e.pos))
             {
@@ -774,16 +771,14 @@ impl<'f> Collector<'f, '_> {
                     op,
                     UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
                 ),
-                Some(kind) if can_be_part_of_target(kind) => {
-                    match bound.parent_of_expr(parent) {
-                        Parent::Expr(around) => hir
-                            .exprs
-                            .get(around.idx())
-                            .is_some_and(|it| !can_be_part_of_target(it.kind)),
-                        Parent::None | Parent::Prop(_) | Parent::Stmt(_) => false,
-                        _ => true,
-                    }
-                }
+                Some(kind) if can_be_part_of_target(kind) => match bound.parent_of_expr(parent) {
+                    Parent::Expr(around) => hir
+                        .exprs
+                        .get(around.idx())
+                        .is_some_and(|it| !can_be_part_of_target(it.kind)),
+                    Parent::None | Parent::Prop(_) | Parent::Stmt(_) => false,
+                    _ => true,
+                },
                 Some(_) => true,
             },
             Parent::Stmt(s) => !matches!(

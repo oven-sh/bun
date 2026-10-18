@@ -859,8 +859,7 @@ impl super::File<'_> {
         if !matches!(self.hir.stmts.get(id.idx())?.kind, hir::StmtKind::Expr(_)) {
             return None;
         }
-        let bun_sema::bind::Parent::Stmt(parent) = self.bound.parent_of_stmt(id)
-        else {
+        let bun_sema::bind::Parent::Stmt(parent) = self.bound.parent_of_stmt(id) else {
             return None;
         };
         let raw = self.hir.stmts.get(parent.idx())?;

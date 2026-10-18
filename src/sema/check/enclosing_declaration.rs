@@ -119,9 +119,7 @@ impl Checker<'_, '_> {
         }
         match self.bound(file).parent_of_expr(e) {
             Parent::MemberKey(m) => self.enclosing_scope_of_member(file, m),
-            Parent::PropKey(p) | Parent::MethodKey(p) => {
-                self.enclosing_scope_of_property(file, p)
-            }
+            Parent::PropKey(p) | Parent::MethodKey(p) => self.enclosing_scope_of_property(file, p),
             Parent::PatKey(p) => self.enclosing_scope_of_pat(file, self.hir(file)[p].value),
             _ => ScopeId(0),
         }

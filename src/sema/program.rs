@@ -2543,9 +2543,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         // `checkGrammarModuleElementContext`, and 1063 or 1319 in a namespace.
         let is_checked = match self.bound(file).parent_of_stmt(stmt) {
             bind::Parent::File => true,
-            bind::Parent::Module(m) => {
-                !matches!(self.hir(file)[m].name, ModuleName::Ident(_))
-            }
+            bind::Parent::Module(m) => !matches!(self.hir(file)[m].name, ModuleName::Ident(_)),
             _ => false,
         };
         // `resolveEntityName`, then `checkExpressionCached` of what is not found: here no alias is

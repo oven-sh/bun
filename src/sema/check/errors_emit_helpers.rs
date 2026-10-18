@@ -369,9 +369,7 @@ impl Checker<'_, '_> {
                 Parent::ParamDefault(p) | Parent::ParamDecorator(p) => {
                     self.emit_helpers_out_of_fn(file, bound.param_fn[p.idx()], true, &mut deferred)?
                 }
-                Parent::MemberInit(m)
-                | Parent::MemberKey(m)
-                | Parent::MemberDecorator(m) => {
+                Parent::MemberInit(m) | Parent::MemberKey(m) | Parent::MemberDecorator(m) => {
                     if hir[m].flags.contains(Flags::AMBIENT) {
                         return None;
                     }
@@ -398,8 +396,7 @@ impl Checker<'_, '_> {
                 {
                     return None;
                 }
-                Parent::ClassExtends(class)
-                | Parent::ClassDecorator(class) => {
+                Parent::ClassExtends(class) | Parent::ClassDecorator(class) => {
                     if hir[class].flags.contains(Flags::AMBIENT) {
                         return None;
                     }

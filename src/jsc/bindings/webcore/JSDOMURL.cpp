@@ -293,6 +293,11 @@ unsigned JSDOMURL::offsetInHref(const URL& url, StringView view)
 JSString* JSDOMURL::substringOfHref(JSGlobalObject& lexicalGlobalObject, unsigned offset, unsigned length) const
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
+    const String& string = wrapped().href().string();
+    // An already-canonical input is reused as the URL string. When that input is itself a slice of a larger string
+    // (a line of a file), a substring of it would keep the whole source alive. Copy the component instead.
+    if (string.impl()->isSubString()) [[unlikely]]
+        return JSC::jsString(vm, string.substring(offset, length));
     JSString* base = href(lexicalGlobalObject);
     return JSC::jsSubstring(&lexicalGlobalObject, vm, base, offset, length);
 }
@@ -338,8 +343,7 @@ static inline JSValue jsDOMURL_originGetter(JSGlobalObject& lexicalGlobalObject,
 {
     const URL& url = thisObject.wrapped().href();
     // protocolHostAndPort() with no credentials is the prefix of the string up to the path.
-    bool isTupleOrigin = url.protocolIsInHTTPFamily() || url.protocolIsInFTPFamily() || url.protocolIs("ws"_s) || url.protocolIs("wss"_s);
-    if (isTupleOrigin && !url.hasCredentials()) [[likely]]
+    if (URLDecomposition::hasTupleOrigin(url) && !url.hasCredentials()) [[likely]]
         return thisObject.substringOfHref(lexicalGlobalObject, 0, url.pathStart());
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

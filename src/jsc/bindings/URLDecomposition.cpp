@@ -42,7 +42,7 @@ String URLDecomposition::origin() const
 {
     auto fullURL = this->fullURL();
 
-    if (fullURL.protocolIsInHTTPFamily() or fullURL.protocolIsInFTPFamily() or fullURL.protocolIs("ws"_s) or fullURL.protocolIs("wss"_s))
+    if (hasTupleOrigin(fullURL))
         return fullURL.protocolHostAndPort();
     if (fullURL.protocolIsBlob()) {
         const String& path = fullURL.path().toString();

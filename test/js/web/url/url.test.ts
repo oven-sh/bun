@@ -1,4 +1,4 @@
-import { isRope } from "bun:jsc";
+import { heapStats, isRope } from "bun:jsc";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { resolveObjectURL } from "node:buffer";
@@ -331,6 +331,27 @@ describe("url", () => {
     Bun.gc(true);
     expect(parts.join("|")).toBe("example.com|/long/path/name|?query=string|#fragment");
     expect(parts.map(p => p.length)).toEqual([11, 15, 13, 9]);
+  });
+
+  it("components of a URL parsed from a slice do not keep the source string alive", () => {
+    // The parser reuses an already-canonical input as the URL string. When that input is a slice of a larger
+    // string, the component getters must copy instead of slicing it, or one hostname keeps the whole file.
+    function parseLines(): string[] {
+      const kept: string[] = [];
+      for (let i = 0; i < 16; i++) {
+        const filler = Buffer.alloc(2 * 1024 * 1024, 120).toString();
+        const big = `https://host${i}.example.com/some/path?q=${i}\n${filler}\n`;
+        const u = new URL(big.split("\n")[0]);
+        kept.push(u.hostname, u.pathname, u.search);
+      }
+      return kept;
+    }
+    const kept = parseLines();
+    Bun.gc(true);
+    Bun.gc(true);
+    // 16 filler strings of 2 MiB are 32 MiB. The unfixed getters keep all of it.
+    expect(heapStats().extraMemorySize).toBeLessThan(8 * 1024 * 1024);
+    expect(kept.slice(0, 3)).toEqual(["host0.example.com", "/some/path", "?q=0"]);
   });
 
   it("prints", () => {

@@ -516,12 +516,8 @@ impl Stream {
         unsafe { lsquic_stream_read(self.0, buf.as_mut_ptr().cast(), buf.len()) }
     }
     /// Returns the bytes lsquic copied out of `bufs`, 0 when it can take none, -1 on error.
-    ///
-    /// lsquic keeps its offset into the current iovec in an `unsigned`, so a
-    /// buffer of 4 GiB or more makes it spin. Such a buffer is offered up to
-    /// that limit and the buffers after it are held back, so lsquic never
-    /// skips the rest of it. It takes at most a send window per call, and the
-    /// caller offers what is left on the next call.
+    /// A buffer over `u32::MAX` bytes is cut there (lsquic's iovec offset is an
+    /// `unsigned`), and the buffers after it are kept for the next call.
     pub fn writev<const N: usize>(&self, bufs: [&[u8]; N]) -> isize {
         const MAX_IOV_LEN: usize = u32::MAX as usize;
         let mut iov = [const {

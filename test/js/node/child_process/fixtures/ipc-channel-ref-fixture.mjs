@@ -47,6 +47,7 @@ if (role === "idle") {
     "disconnect": () => child.disconnect(),
     "send(small)": () => send(child, 1),
     "send(big)": () => sendBig(child),
+    "send(big)x2": () => Promise.all([sendBig(child), sendBig(child)]),
     "send(handle)": async () => {
       const server = createServer().listen(0);
       await once(server, "listening");
@@ -83,6 +84,7 @@ if (role === "idle") {
     ["parent", "child.unref send(small)"],
     ["parent", "child.unref send(big)"],
     ["parent", "child.unref ref send(big)"],
+    ["parent", "child.unref unrefCounted send(big)x2"],
     ["parent", "child.unref send(handle)"],
     ["parent", "advanced child.unref"],
     ...(process.versions.bun ? [["Bun.spawn", "child.unref"]] : []),

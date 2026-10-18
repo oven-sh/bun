@@ -30,6 +30,7 @@ test.concurrent("which operations on subprocess.channel hold the event loop", as
     parent: child.unref send(small): not held
     parent: child.unref send(big): not held
     parent: child.unref ref send(big): held
+    parent: child.unref unrefCounted send(big)x2: not held
     parent: child.unref send(handle): not held
     parent: advanced child.unref: held
     Bun.spawn: child.unref: not held

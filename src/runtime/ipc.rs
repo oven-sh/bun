@@ -783,16 +783,13 @@ pub(crate) struct SendHandle {
     /// keep sending the handle until data is drained (assume it hasn't sent until data is fully drained)
     pub(crate) handle: Option<Handle>,
     pub(crate) callbacks: CallbackList,
+    /// How many `send()` are in `data`. None for the version packet alone, which Node does not have.
+    pub(crate) sends: i32,
 }
 
 impl SendHandle {
     pub(crate) fn is_ack_nack(&self) -> bool {
         matches!(self.callbacks, CallbackList::AckNack)
-    }
-
-    /// By its bytes: a message that was queued behind it can have been appended to it.
-    fn is_version_packet(&self, mode: Mode) -> bool {
-        self.data.list.as_slice() == get_version_packet(mode)
     }
 
     /// Call the callback and deinit
@@ -908,8 +905,8 @@ struct Control {
     has_ref: Cell<bool>,
     /// The share of `refs` that stands for `process`'s 'message' and 'disconnect' listeners.
     listeners: Cell<i32>,
-    /// The one of `refs` for all sends under way. Node has one for each, which only differs while `refs` is negative.
-    sending: Cell<bool>,
+    /// The share of `refs` that stands for the sends under way.
+    sending: Cell<i32>,
 }
 
 #[derive(bun_ptr::CellRefCounted)]
@@ -1326,11 +1323,13 @@ impl SendQueue {
                     last.callbacks.push(callback, global)?;
                 }
                 handle_oom(last.data.write(&payload.list));
+                last.sends += 1;
             } else {
                 queue.push(SendHandle {
                     data: payload,
                     handle,
                     callbacks: CallbackList::init(callback),
+                    sends: 1,
                 });
             }
             Ok(())
@@ -1497,16 +1496,9 @@ impl SendQueue {
 
     fn update_ref(&self) {
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L868-L874
-        let waiting_for_ack = self.waiting_for_ack.get().is_some();
-        // Node has no version packet, and on Windows its write ends after the channel was started.
-        let queue = self.queue.get();
-        let sending = waiting_for_ack
-            || queue
-                .iter()
-                .any(|message| !message.is_version_packet(self.mode));
-        if sending != self.control.sending.replace(sending) {
-            self.add_refs(if sending { 1 } else { -1 });
-        }
+        let under_way = self.waiting_for_ack.get().iter().chain(self.queue.get());
+        let sending: i32 = under_way.map(|message| message.sends).sum();
+        self.add_refs(sending - self.control.sending.replace(sending));
         // Note: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
         // break vtable), not `&VirtualMachine`; dispatch is
         // routed through `bun_io::get_vm_ctx` which `bun_runtime` registers.
@@ -1669,6 +1661,7 @@ impl SendQueue {
                     data: StreamBuffer::default(),
                     handle: None,
                     callbacks: CallbackList::None,
+                    sends: 0,
                 });
                 let last = queue.len() - 1;
                 handle_oom(queue[last].data.write(bytes));
@@ -2199,6 +2192,7 @@ fn handle_ipc_message(
                     data: StreamBuffer::default(),
                     handle: None,
                     callbacks: CallbackList::AckNack,
+                    sends: 1,
                 };
                 handle_oom(handle.data.write(packet));
 
@@ -2279,6 +2273,7 @@ fn handle_ipc_message(
                         data: StreamBuffer::default(),
                         handle: None,
                         callbacks: CallbackList::AckNack,
+                        sends: 1,
                     };
                     handle_oom(reply.data.write(packet));
                     send_queue.insert_message(reply);

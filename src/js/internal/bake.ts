@@ -200,17 +200,23 @@ async function loadAppServer(
   return { file, server, routes, fetch };
 }
 
+/** How many times `start()` ran: once, then once more for each reload. */
+let runs = 0;
+
 /**
- * Prints the message of `error` and exits. An error that a change to `app/server.ts` or
- * `bake.config.ts` can fix is thrown instead: the process waits for that change and reloads. These
- * come from the arguments or from files that `bun bake` does not load, so no change reloads it.
+ * At the start, prints the message of `error` and exits. An error that a change to `app/server.ts`
+ * or `bake.config.ts` can fix is thrown instead: the process waits for that change and reloads.
+ * These come from the arguments or from files that `bun bake` does not load, so no change reloads
+ * it. On a reload, the server is up: throw, so it keeps serving until the next change.
  */
 function exitWith(error: any): never {
+  if (runs > 1) throw $isObject(error) ? error : new Error(error);
   console.error(`error: ${error?.message ?? error}`);
   process.exit(1);
 }
 
 async function start() {
+  runs++;
   const flags = defaultServeFlags();
   // There is no entry module, so the arguments start at argv[1], as for `bun -e`.
   for (let i = 1, argvLength = argv.length; i < argvLength;) {

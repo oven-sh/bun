@@ -228,8 +228,15 @@ test.concurrent.each([
 
   expect(output.text).not.toContain("url: ");
   if (waits) {
-    // A change to a file that it loaded can fix this, so it waits for one, as `bun --hot` does.
-    expect(proc.exitCode).toBeNull();
+    // A change to a file that it loaded can fix this, so it waits for one, as `bun --hot` does. The
+    // file that is not loaded is written first: it does not start a reload.
+    const fixes = [
+      ["bake.config.ts", `export default {};`],
+      ["app/server.ts", `export default { fetch: () => new Response("fixed") };`],
+    ];
+    if ("bake.config.ts" in files) fixes.reverse();
+    for (const [file, contents] of fixes) await Bun.write(join(String(dir), file), contents);
+    await output.waitFor(/url: /);
   } else {
     expect(await proc.exited).toBe(1);
   }
@@ -604,4 +611,51 @@ test.concurrent("bun bake asks for a restart when bake.config.ts changes, and on
   const [line] = await output.waitFor(/"bake\.config\.ts" changed\..*/);
 
   expect(line).toBe(`"bake.config.ts" changed. Restart "bun bake" to use the new plugins.`);
+});
+
+// Windows has no signal handlers to run before a restart.
+test.concurrent.skipIf(isWindows)(
+  "bun --watch-kill-signal ... bake --check sends that signal before a restart",
+  async () => {
+    using dir = tempDir("bake-command-kill-signal", {
+      "tsconfig.json": checkedTsconfig,
+      "app/server.ts": `
+      declare const Response: any;
+      declare const process: any;
+      declare const console: any;
+      process.on("SIGUSR2", () => console.log("SIGUSR2 before restart"));
+      export default { fetch: () => new Response("v1") };
+    `,
+    });
+
+    // `--check` starts the process again after a change, which sends the signal: SIGTERM without the flag.
+    await using proc = spawnBake(String(dir), ["--watch-kill-signal", "SIGUSR2", "bake", "--check", "--port=0"]);
+    const output = collectOutput(proc);
+    await output.waitFor(/url: /);
+
+    await Bun.write(
+      join(String(dir), "app/server.ts"),
+      `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
+    );
+    await output.waitFor(/SIGUSR2 before restart/);
+  },
+);
+
+test.concurrent("bun bake keeps serving when a reload finds a page it cannot serve", async () => {
+  using dir = tempDir("bake-command-reload-error", {
+    "app/pages/index.html": page,
+    "app/server.ts": `export default { fetch: () => new Response("v1") };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+
+  // A page that `bun bake` rejects at the start: on a reload, it reports it instead of exiting.
+  await Bun.write(join(String(dir), "app/pages/[slug].html"), page);
+  await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("v2") };`);
+  await output.waitFor(/a page cannot have/);
+
+  expect(proc.exitCode).toBeNull();
+  expect(await get(url, "/missing")).toBe("200 v1");
 });

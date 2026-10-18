@@ -1022,13 +1022,14 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
         const pixels = Array.from({ length: w * h }, () => pixel(levels, withAlpha));
         expect(countedModel(pixels, colors)).toEqual(model(pixels, colors));
       }
-      // A table needs more than 4096 pixels: 65x64 to 72x64. Two levels per
+      // A table needs more than 4096 pixels and a palette of 3 entries or
+      // more: 65x64 to 72x64, and 3 to 7 entries. Two levels per
       // channel are 8 colours, which repeat from the start. Six levels are
       // 216 colours, which do not. "mixed" is 3,000 to 4,000 pixels of the
       // first kind, then the second.
       const kinds = ["flat", "flat", "dense", "dense", "mixed", "mixed", "mixed", "mixed"] as const;
       const cases = kinds.map(kind => {
-        const [w, colors, withAlpha] = [65 + next(8), 2 + next(6), next(3) === 0];
+        const [w, colors, withAlpha] = [65 + next(8), 3 + next(5), next(3) === 0];
         const few = kind === "dense" ? 0 : kind === "flat" ? w * 64 : 3000 + next(1000);
         const pixels = Array.from({ length: w * 64 }, (_, p) => pixel(p < few ? 2 : 6, withAlpha));
         return { w, colors, pixels };
@@ -1039,7 +1040,7 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
         const pixelsCounted = quantizeRoute(new Uint8Array(pixels.flat()), colors);
         return pixelsCounted === w * 64 ? "all" : pixelsCounted;
       });
-      expect(counted).toEqual(["all", "all", 9, 10, "all", 3731, 3163, 4182]);
+      expect(counted).toEqual(["all", "all", 9, 10, "all", 4161, "all", 4182]);
       const got = await Promise.all(
         cases.map(async ({ w, colors, pixels }) => {
           const out = await new Bun.Image(makePng(w, 64, (x, y) => pixels[y * w + x]))
@@ -1081,6 +1082,8 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
       };
       const counted = (length: number, colors: number, keyAt: (i: number) => number) =>
         quantizeRoute(new Uint8Array(Uint32Array.from({ length }, (_, i) => keyAt(i)).buffer), colors);
+      // `flat` pixels of one colour, then a new colour per pixel.
+      const burst = (flat: number) => (i: number) => spread(i < flat ? 0 : i - flat + 1);
 
       test("an image of at most 4096 pixels is not counted", () => {
         // 17 colours, 200 pixels apart.
@@ -1088,18 +1091,22 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
         expect([counted(4096, 16, sparse), counted(4097, 16, sparse)]).toEqual([0, 4097]);
       });
 
-      test("a colour stands for 12 pixels, and for 64, 28 and 16 in a palette of 2, 3 and 4", () => {
+      test("an image for a palette of 2 entries is not counted", () => {
+        expect([counted(5120, 2, burst(1000)), counted(5120, 3, burst(1000))]).toEqual([0, 1047]);
+      });
+
+      test("a colour stands for 12 pixels, and for 28 and 16 in a palette of 3 and 4", () => {
         // 1000 pixels of one colour, then a new colour per pixel. One colour
         // in 512 pixels is free: 10 of 5120. Colour j is taken while
         // j × 12 ≤ 1000 + j + 10 × 12, which holds up to j = 101.
-        const burst = (i: number) => spread(i < 1000 ? 0 : i - 999);
-        expect([2, 3, 4, 5].map(colors => counted(5120, colors, burst))).toEqual([1026, 1047, 1077, 1101]);
+        expect([3, 4, 5].map(colors => counted(5120, colors, burst(1000)))).toEqual([1047, 1077, 1101]);
+        // After 1002 pixels colour 102 just fits: 102 × 12 = 1002 + 102 + 10 × 12.
+        expect(counted(5120, 5, burst(1002))).toBe(1104);
       });
 
       test("one colour in 512 pixels is free", () => {
         // 5110 pixels have 9 free colours: 100 colours are taken, not 101.
-        const burst = (i: number) => spread(i < 1000 ? 0 : i - 999);
-        expect(counted(5110, 5, burst)).toBe(1100);
+        expect(counted(5110, 5, burst(1000))).toBe(1100);
         // With every colour at the start, 51,200 pixels take 110: the last
         // one is colour j = 109, and 109 × 12 ≤ 110 + 100 × 12.
         const first = (colours: number) => (i: number) => spread(i < colours ? i : 0);
@@ -1148,7 +1155,7 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
       test("a run of equal pixels is one probe, and all its pixels pay for it", () => {
         // The sixth colour of a slot is 5 slots from it. As one run it is
         // probed once. Pixel by pixel that is 5 slots per pixel.
-        expect(counted(4505, 2, i => homed(300, Math.min(i, 5)))).toBe(4505);
+        expect(counted(4505, 3, i => homed(300, Math.min(i, 5)))).toBe(4505);
         // 57 colours of one slot in runs of 7 pixels pass 1596 slots: 4 for
         // each of 399 pixels. The last probe needs the 7 pixels of its run.
         const runs = (colours: number) => (i: number) =>
@@ -1161,7 +1168,7 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
         // slots from it. The pixels that hide two colours in turn pass 5
         // slots each: 10 + 5 × 3278 = 4 × 4100.
         const hidden = (i: number) => (i < 817 ? spread(7) : i < 822 ? homed(0, i - 817) : 1 + (i & 1));
-        expect([counted(4100, 2, hidden), counted(4101, 2, hidden)]).toEqual([4100, 4100]);
+        expect([counted(4100, 3, hidden), counted(4101, 3, hidden)]).toEqual([4100, 4100]);
       });
 
       test("the key is folded before the multiply", () => {

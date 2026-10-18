@@ -7,9 +7,14 @@
 // same with a banner of one colour per column (under 256 colours, so it fits
 // the default palette), a photo-like one (gradients with noise), a thumbnail
 // of it, a flat image with sparse marks (opaque and with alpha) and a sprite
-// on a transparent background. Pass PNG/JPEG paths to measure real files
-// instead. Run with --sharp to add a sharp column (requires `bun install` in
-// this dir first) and with --rounds=N for N timed rounds per row (default 7).
+// on a transparent background. Four more are the images a count of the
+// colours can lose on: the screenshot with the photo over its last fifth
+// (the colours run out late) and over its first fifth (they run out at
+// once), a soft gradient and a scanned page (thousands of colours that are
+// near each other, a new run at nearly every pixel). Pass PNG/JPEG paths to
+// measure real files instead. Run with --sharp to add a sharp column
+// (requires `bun install` in this dir first) and with --rounds=N for N timed
+// rounds per row (default 7).
 //
 // `error` is the mean squared difference per channel between the output and
 // the pixels Bun.Image decodes from the input, with colour multiplied by
@@ -103,6 +108,60 @@ const photo = step => (x, y, px) => {
     10 + 235 * wave(fy + fx * 0.5, 4.1) + ((n >>> 8) % 13) - 6,
     10 + 235 * wave(fx + fy, 3.0) + ((n >>> 16) % 13) - 6,
   );
+};
+
+// The screenshot with the photo over its first or its last 216 rows.
+const banded = first => {
+  const [page, band] = [screenshot(1), photo(1)];
+  return (x, y, px) => ((first ? y < 216 : y >= 864) ? band(x, y, px) : page(x, y, px));
+};
+// The photo's gradients over a fifth of their range, with ±1 of noise: 31,871
+// colours at 1920×1080, and 97 of 100 pixels start a run.
+const haze = (w, h) => (x, y, px) => {
+  const n = hash(x, y);
+  const wave = (v, k) => Math.sin(v * k) * 0.5 + 0.5;
+  const fx = x / w;
+  const fy = y / h;
+  set(
+    px,
+    10 + 50 * wave(fx, 6.3) + (n % 3) - 1,
+    10 + 50 * wave(fy + fx * 0.5, 4.1) + ((n >>> 8) % 3) - 1,
+    10 + 50 * wave(fx + fy, 3.0) + ((n >>> 16) % 3) - 1,
+  );
+};
+// A scanned page: warm white paper that is darker toward the corners, ±4 of
+// sensor noise on every pixel, and lines of dark marks with soft edges. 23,046
+// colours at 1654×2339 (A4 at 200 dpi), and every pixel starts a run.
+const scan = (w, h) => {
+  const mix = (x, y) => {
+    let v = hash(x, y);
+    v ^= v >>> 15;
+    v = Math.imul(v, 0x2c1b3c6d);
+    return (v ^ (v >>> 12)) >>> 0;
+  };
+  const paper = [244, 241, 232];
+  const ink = [38, 38, 44];
+  const draw = bits => (bits % 5) - 2;
+  return (x, y, px) => {
+    const dx = x / w - 0.5;
+    const dy = y / h - 0.5;
+    const light = 1 - 0.28 * (dx * dx + dy * dy);
+    // Lines 34 rows apart, strokes 7 columns apart, words broken by gaps.
+    const line = Math.floor(y / 34);
+    const inLine = y % 34;
+    const word = mix(Math.floor(x / 90), line) % 7 !== 0 && x > w * 0.08 && x < w * 0.92 && line % 9 !== 8;
+    const stroke = (mix(Math.floor(x / 7), line * 131 + Math.floor(inLine / 6)) & 3) === 0;
+    const across = Math.min(1, Math.max(0, 1.5 - Math.abs((x % 7) - 3) * 0.6));
+    const down = Math.min(1, Math.max(0, 1.2 - Math.abs((inLine % 6) - 2.5) * 0.45));
+    const cover = word && stroke && inLine >= 8 && inLine < 26 ? across * down : 0;
+    const n1 = mix(x, y);
+    const n2 = mix(x + 7919, y + 104729);
+    for (let c = 0; c < 3; c++) {
+      const v = (paper[c] * (1 - cover) + ink[c] * cover) * light;
+      px[c] = Math.min(255, Math.max(0, v + draw((n1 >>> (8 * c)) & 255) + draw((n2 >>> (8 * c)) & 255)));
+    }
+    px[3] = 255;
+  };
 };
 
 // A flat background with one marked pixel every 32 columns and rows: 121
@@ -230,6 +289,10 @@ const fixtures = paths.length
       ["flat with sparse marks 1920×1080", makePng(1920, 1080, marks(false)), 1],
       ["flat with sparse marks 1920×1080, with alpha", makePng(1920, 1080, marks(true)), 1],
       ["sprite 1024×1024, with alpha", makePng(1024, 1024, sprite), 1],
+      ["screenshot 1920×1080, photo over the last fifth", makePng(1920, 1080, banded(false)), 1],
+      ["screenshot 1920×1080, photo over the first fifth", makePng(1920, 1080, banded(true)), 1],
+      ["soft gradient 1920×1080", makePng(1920, 1080, haze(1920, 1080)), 1],
+      ["scanned page 1654×2339", makePng(1654, 2339, scan(1654, 2339)), 1],
     ];
 
 let sharp = null;
@@ -272,7 +335,7 @@ for (const [name, buf, calls] of fixtures) {
   }
   const truecolour = await measure(() => new Bun.Image(buf).png().bytes(), calls);
   const rows = [["png()", truecolour, null]];
-  for (const colors of [2, 16, 32, 64, 256]) {
+  for (const colors of [2, 3, 4, 8, 16, 32, 64, 256]) {
     for (const dither of [false, true]) {
       const label = `palette, colors ${colors}${dither ? ", dither" : ""}`;
       const bun = await measure(() => new Bun.Image(buf).png({ palette: true, colors, dither }).bytes(), calls);

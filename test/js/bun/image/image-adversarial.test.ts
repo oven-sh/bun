@@ -1332,17 +1332,18 @@ describe("palette PNG of colours built to share slots of the colour table", () =
   const limit = 6;
 
   test("every colour starts at the same slot: the count stops", async () => {
-    // 4,096 colours on 16 pixels each, with the hash values 0x5a5a0000 | j.
+    // 5,462 colours on 12 pixels each, with the hash values 0x5a5a0000 | j.
     // Their top 16 bits are equal, so at every size of the table each colour
-    // walks past all the colours before it: 8.3 million slots to count them,
-    // 2.8 million more when the table grows, and 8.3 million to look them up.
-    // The count stops at colour 66: the probes have passed 2,145 slots and
-    // the growth to 256 slots 2,080, which is over 4 for each of 1,056 pixels.
+    // walks past all the colours before it: 14.8 million slots to count
+    // them, 11.2 million more when the table grows, and 14.8 million to look
+    // them up. The count stops at colour 66: the probes have passed 2,145
+    // slots and the growth to 256 slots 2,080, which is over 4 for each of
+    // 792 pixels.
     const [w, h, colors] = [256, 256, 16];
-    const hostile = Uint32Array.from({ length: w * h }, (_, i) => withHash(0x5a5a0000 | (i >> 4)));
-    const control = Uint32Array.from({ length: w * h }, (_, i) => spread(i >> 4));
+    const hostile = Uint32Array.from({ length: w * h }, (_, i) => withHash(0x5a5a0000 | Math.floor(i / 12)));
+    const control = Uint32Array.from({ length: w * h }, (_, i) => spread(Math.floor(i / 12)));
     expect([quantizeRoute(pixelsOf(hostile), colors), quantizeRoute(pixelsOf(control), colors)]).toEqual([
-      65 * 16,
+      65 * 12,
       w * h,
     ]);
     expect(await slowdown(w, h, hostile, control, colors)).toBeLessThan(limit);
@@ -1354,7 +1355,7 @@ describe("palette PNG of colours built to share slots of the colour table", () =
     // 101, in turn to the end. They are behind the 500, so each lookup walks
     // 500 slots. No insert is slow here: the budget has to count the lookups
     // too. It stops the count after 148 of them.
-    const [w, h, colors, flat, chain] = [256, 256, 2, 24000, 500];
+    const [w, h, colors, flat, chain] = [256, 256, 3, 24000, 500];
     const fill = (slot: number) =>
       Uint32Array.from({ length: w * h }, (_, i) => {
         if (i < flat) return withHash((900 << 22) | 0x77);

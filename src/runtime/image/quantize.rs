@@ -185,7 +185,7 @@ fn exact_palette(pixels: &[[u8; 4]], want: usize, indices: &mut [u8]) -> Option<
 const PROBE_BUDGET: usize = 4;
 /// Pixels per counted colour, at least: a colour is 48 bytes while the table grows, a pixel 4.
 const PIXELS_PER_COLOR: usize = 12;
-/// Or this over the square of the palette size, for up to 4 entries: their boxes are cut few times.
+/// Or this over the square of the palette size, for 3 and 4 entries: their boxes are cut few times.
 const PIXELS_PER_COLOR_FEW_ENTRIES: usize = 256;
 /// Colours per palette entry, at most: a larger table leaves the cache, and a probe costs a cut.
 const COLORS_PER_ENTRY: usize = 32768;
@@ -197,6 +197,8 @@ const MANY_ENTRIES: usize = 64;
 const PIXELS_PER_FREE_COLOR_MANY_ENTRIES: usize = 96;
 /// An image of at most this many pixels is not counted: its boxes of pixels cost less than a table.
 const UNCOUNTED_PIXELS: usize = 4096;
+/// Nor is an image for fewer palette entries than this: one cut of the pixels costs less too.
+const COUNTED_ENTRIES: usize = 3;
 /// Slots of the table at the start, 1 KB: a count that stops at once costs a small image little.
 const FIRST_SLOTS: usize = 128;
 
@@ -345,7 +347,7 @@ fn count_colors(pixels: &[[u8; 4]], want: usize) -> Result<Counts, AllocError> {
         head_start: pixels.len() / per_free * per_color,
         image: pixels.len(),
     };
-    if pixels.len() <= UNCOUNTED_PIXELS {
+    if pixels.len() <= UNCOUNTED_PIXELS || want < COUNTED_ENTRIES {
         return Ok(table);
     }
     table.slots = try_filled(FIRST_SLOTS)?;

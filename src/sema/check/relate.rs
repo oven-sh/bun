@@ -4365,9 +4365,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && !is_cut_short
                 && cached.is_none()
             {
-                // `relation.set`: this replaces an entry that a nested comparison stored under the same generic key. See
-                // `note_variance_cycle`.
-                self.set_relation(key, FAILED | propagating, stored);
+                self.store_relation_result(key, FAILED | propagating, stored);
             }
             r.relation_count -= 1;
             self.reset_maybe_stack(r, maybe_start, propagating, false, stored, REPORT);
@@ -4420,6 +4418,19 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `relation.set(key, entry)` for the result of a comparison that had no entry when it began.
+    ///
+    /// During a variance measurement a restart can compare the same generic key and store its own result first. As in
+    /// typescript-go, the outer comparison's result replaces it: see `note_variance_cycle`. Outside a measurement the
+    /// first result stays. typescript-go's output matches that where a comparison re-enters itself through the type of
+    /// a variable whose initializer is being checked.
+    fn store_relation_result(&mut self, key: Key, entry: u8, stored: Stored) {
+        match self.in_variance_computation {
+            true => self.set_relation(key, entry, stored),
+            false => self.insert_relation(key, entry, stored),
+        }
+    }
+
     /// `relation.set(key, entry)` for a key that has no entry.
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
         self.relation_sizes[usize::from(key.2 & 0xf)] += 1;
@@ -4469,7 +4480,9 @@ impl<'p, 's> Checker<'p, 's> {
                     Some(stored) if report_errors => {
                         self.set_relation(key, SUCCEEDED | propagating, stored);
                     }
-                    Some(stored) => self.insert_relation(key, SUCCEEDED | propagating, stored),
+                    Some(stored) => {
+                        self.store_relation_result(key, SUCCEEDED | propagating, stored);
+                    }
                     None => {}
                 }
                 r.relation_count -= 1;

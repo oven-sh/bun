@@ -5124,6 +5124,23 @@ dynamic.getSSRProps = binding => {
       }
     });
 
+    // The argument is wrong: without the cycle through `keyof typeof shapes`, TypeScript reports TS2345. Inside the initializer
+    // that the type refers back to, the comparison re-enters itself, and TypeScript 7.0 and 7.1 keep the inner result.
+    test("keeps the first result of a comparison that re-enters itself through a variable's initializer", async () => {
+      using dir = project({
+        "a.ts": `
+interface A { id: string; shape?: 1 }
+interface B { id: string; shape?: keyof typeof shapes }
+type Members = A | B;
+declare function acc<T>(t: T): 1;
+const shapes = { circle: (<U extends Members>() => acc<{ id?: string }>(null! as { [K in keyof U as K extends "id" ? K : never]: 1 }))() };
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toBe("");
+    });
+
     // The restart from T3 caches that `T0<sub, X>` is assignable to `T0<super, X>`. The suspended measurement of T0 then finds that
     // it isn't, and that result has to replace the cached one before T2 is measured.
     test.each([1, 8])(

@@ -533,7 +533,9 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
             let start = std::mem::replace(segment.get_mut(), null_mut());
             if !start.is_null() {
                 // SAFETY: `install` got it from a box of this length and this allocator.
-                drop(unsafe { Box::from_raw_in(slice_from_raw_parts_mut(start, SEGMENT), alloc.clone()) });
+                drop(unsafe {
+                    Box::from_raw_in(slice_from_raw_parts_mut(start, SEGMENT), alloc.clone())
+                });
             }
         }
     }
@@ -701,7 +703,8 @@ impl<'a, T, A: Allocator + Clone> Segmented<'a, T, Cell<u32>, A> {
         let which = (number >> 30) as usize;
         // No number without `OWN` is less than its limit before `lay_over`.
         assert!(number < self.limits[which].get());
-        let segment = (self.directories[which].get()).wrapping_add((number >> SEGMENT_BITS) as usize);
+        let segment =
+            (self.directories[which].get()).wrapping_add((number >> SEGMENT_BITS) as usize);
         // SAFETY: the directory of the one of the two that the number is an index of has a segment
         // for every number below the limit. `lay_over` was given a borrow of the other that lasts as
         // long as this one can exist. The rest is as in `get`.
@@ -1413,7 +1416,11 @@ mod tests {
         let vec = Segmented::<Box<u32>, Cell<u32>>::new_in(Global);
         let first = vec.get(vec.push(Box::new(0)));
         // More than two segments. 131,077 elements take a minute under Miri.
-        let many = if cfg!(miri) { 300 } else { 2 * SEGMENT as u32 + 5 };
+        let many = if cfg!(miri) {
+            300
+        } else {
+            2 * SEGMENT as u32 + 5
+        };
         for value in 1..many {
             assert_eq!(vec.push(Box::new(value)), value);
         }
@@ -1511,7 +1518,11 @@ mod tests {
         own.lay_over(shared.elements());
         assert!(own.is_laid_over(shared.elements()));
         // Both sides of the end of a segment, and so many segments that the directory grows twice.
-        let many = if cfg!(miri) { 300 } else { 9 * SEGMENT as u32 + 1 };
+        let many = if cfg!(miri) {
+            300
+        } else {
+            9 * SEGMENT as u32 + 1
+        };
         for value in 0..many {
             shared.push(u64::from(value));
             own.push(u64::from(value) + 1_000_000_000);
@@ -1520,7 +1531,10 @@ mod tests {
             assert!(std::ptr::eq(own.of_either(number), shared.get(number)));
             assert!(std::ptr::eq(own.of_either(number | OWN), own.get(number)));
             assert_eq!(*own.of_either(number), u64::from(number));
-            assert_eq!(*own.of_either(number | OWN), u64::from(number) + 1_000_000_000);
+            assert_eq!(
+                *own.of_either(number | OWN),
+                u64::from(number) + 1_000_000_000
+            );
         }
     }
 

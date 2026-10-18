@@ -1020,14 +1020,6 @@ where
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct InvalidCharacter;
 
-impl core::fmt::Display for InvalidCharacter {
-    #[inline]
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("InvalidCharacter")
-    }
-}
-impl core::error::Error for InvalidCharacter {}
-
 /// `WTF.parseDouble` — partial-match Latin-1 double parser. Returns `Ok` if
 /// any numeric prefix was consumed; `Err(InvalidCharacter)` on empty input or
 /// when no leading digit/sign was recognised.

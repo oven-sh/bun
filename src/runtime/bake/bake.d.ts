@@ -282,6 +282,7 @@ declare module "bun" {
       ignoreDirs?: string[];
       /**
        * Extensions to match on.
+       * A `.ts`, `.mts` or `.cts` entry does not match a declaration file (`.d.ts`, `.d.mts`, `.d.cts`).
        * '*' - any extension
        * @default (set of all valid JavaScript/TypeScript extensions)
        */

@@ -1,6 +1,6 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
@@ -76,6 +76,85 @@ describe("pattern parse", () => {
   testApp("/route/(group)/page.tsx", "/route/(group)", "page");
   testApp("/route/[param]/not-found.tsx", "/route/:param", "extra");
   testApp.isNull("/route/_layout.tsx");
+});
+
+test("does not discover TypeScript declaration files", () => {
+  using dir = tempDir("fsr-declaration", {
+    "about.tsx": "1",
+    "about.d.ts": "1",
+    "index.d.ts": "1",
+    // As a page, each of these two fails the scan: "Parameters must take up the entire file name".
+    "[id].d.ts": "1",
+    "docs/[...slug].d.ts": "1",
+  });
+  const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+  expect(router.toJSON()).toEqual({
+    part: "/",
+    page: null,
+    layout: null,
+    children: [
+      {
+        part: "/about",
+        page: path.join(dir, "about.tsx"),
+        layout: null,
+        children: [],
+      },
+    ],
+  });
+  expect(router.match("/about.d")).toBeNull();
+});
+
+// The test-only FrameworkRouter class has a fixed extension list. This goes through the
+// `extensions` option of a real router type: the default list, and "*" (any extension).
+test('Bun.serve({ app }) serves a declaration file only under extensions: "*"', async () => {
+  const page = (name: string) => `export default () => new Response(${JSON.stringify(name)});`;
+  using dir = tempDir("bake-declaration-files", {
+    "listed/kept.ts": page("kept.ts"),
+    "listed/a.d.ts": page("a.d.ts"),
+    "listed/b.d.mts": page("b.d.mts"),
+    "listed/c.d.cts": page("c.d.cts"),
+    "any/x.d.ts": page("x.d.ts"),
+    "server.ts": `export const render = (request, meta) => meta.pageModule.default();`,
+    "fixture.ts": `
+      const fsr = { style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        app: {
+          framework: {
+            fileSystemRouterTypes: [
+              { ...fsr, root: "listed" },
+              { ...fsr, root: "any", extensions: "*" },
+            ],
+          },
+        },
+        fetch: () => new Response("not a route", { status: 404 }),
+      });
+      const pages = {};
+      for (const path of ["/kept", "/a.d", "/b.d", "/c.d", "/x.d"]) {
+        const response = await fetch(new URL(path, server.url));
+        pages[path] = response.status === 200 ? await response.text() : response.status;
+      }
+      console.log(JSON.stringify(pages));
+      await server.stop(true);
+      process.exit(0);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // stderr holds the dev server's "Bundled page in Nms" lines. It is the message of a failure.
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: JSON.stringify({ "/kept": "kept.ts", "/a.d": 404, "/b.d": 404, "/c.d": 404, "/x.d": "x.d.ts" }) + "\n",
+    exitCode: 0,
+  });
 });
 
 test("discovers from filesystem paths", () => {

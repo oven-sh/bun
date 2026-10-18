@@ -137,6 +137,7 @@ pub(crate) struct Type {
     pub(crate) abs_root: Box<[u8]>,
     pub(crate) ignore_underscores: bool,
     pub(crate) ignore_dirs: Box<[Box<[u8]>]>,
+    /// Empty means any extension (`extensions: "*"`).
     pub(crate) extensions: Box<[Box<[u8]>]>,
     pub(crate) style: Style,
     pub(crate) allow_layouts: bool,
@@ -647,6 +648,10 @@ impl FrameworkRouter {
                                     }
                                 }
                                 if !found {
+                                    continue 'outer;
+                                }
+                                // `x.d.ts` passes a `.ts` entry.
+                                if paths::is_typescript_declaration(base) {
                                     continue 'outer;
                                 }
                             }

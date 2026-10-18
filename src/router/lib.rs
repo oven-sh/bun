@@ -607,6 +607,11 @@ impl<'a> RouteLoader<'a> {
 
                     for _extname in self.config.extensions.iter() {
                         if &extname[1..] == _extname.as_ref() {
+                            // `x.d.ts` passes the `ts` filter. Next.js does not make it a page.
+                            if bun_paths::is_typescript_declaration(entry.base()) {
+                                continue 'outer;
+                            }
+
                             // `entry.dir()` is `base_dir` or a subdirectory of it, cached
                             // with or without a trailing slash depending on which resolver
                             // spelled it first (`base_dir` always has one). Both spellings

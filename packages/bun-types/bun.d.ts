@@ -9212,7 +9212,10 @@ declare module "bun" {
       /** The base path to use when routing */
       assetPrefix?: string;
       origin?: string;
-      /** Limit the pages to those with particular file extensions. */
+      /**
+       * Limit the pages to those with particular file extensions. TypeScript
+       * declaration files (`.d.ts`, `.d.mts`, `.d.cts`) are never pages.
+       */
       fileExtensions?: string[];
     });
 

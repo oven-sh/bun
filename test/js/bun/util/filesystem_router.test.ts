@@ -133,6 +133,109 @@ it("should handle empty dirs", () => {
   expect(Object.values(routes).length).toBe(0);
 });
 
+// Route name to file path relative to `dir`, with forward slashes.
+function routeFiles(router: FileSystemRouter, dir: string) {
+  return Object.fromEntries(
+    Object.entries(router.routes).map(([name, file]) => [name, path.relative(dir, file).replaceAll("\\", "/")]),
+  );
+}
+
+it("does not load TypeScript declaration files as routes", () => {
+  using dir = tempDir("fsr-declaration-files", {
+    "index.tsx": "",
+    "index.d.ts": "",
+    "about.tsx": "",
+    "about.d.ts": "",
+    "posts/[id].tsx": "",
+    "posts/[id].d.ts": "",
+    // Without its `.ts`, a declaration file beside a dynamic page is a route name with
+    // text after the `]`. After a catch-all, that name makes the constructor throw
+    // "Catch-all route must be at the end of the path".
+    "docs/[...slug].tsx": "",
+    "docs/[...slug].d.ts": "",
+    "shop/[[...slug]].tsx": "",
+    "shop/[[...slug]].d.ts": "",
+    // As the route `/users/[id].d`, this file takes a URL from the catch-all page.
+    "users/[...rest].tsx": "",
+    "users/[id].d.ts": "",
+  });
+
+  const router = new Bun.FileSystemRouter({ style: "nextjs", dir: String(dir) });
+
+  expect(routeFiles(router, String(dir))).toEqual({
+    "/": "index.tsx",
+    "/about": "about.tsx",
+    "/posts/[id]": "posts/[id].tsx",
+    "/docs/[...slug]": "docs/[...slug].tsx",
+    "/shop/[[...slug]]": "shop/[[...slug]].tsx",
+    "/users/[...rest]": "users/[...rest].tsx",
+  });
+  expect({
+    "/about.d": router.match("/about.d"),
+    "/index.d": router.match("/index.d"),
+    "/posts/1/d": router.match("/posts/1/d"),
+  }).toEqual({
+    "/about.d": null,
+    "/index.d": null,
+    "/posts/1/d": null,
+  });
+  expect({
+    "/posts/1": router.match("/posts/1")?.name,
+    "/users/7": router.match("/users/7")?.name,
+    "/users/7/d": router.match("/users/7/d")?.name,
+  }).toEqual({
+    "/posts/1": "/posts/[id]",
+    "/users/7": "/users/[...rest]",
+    "/users/7/d": "/users/[...rest]",
+  });
+});
+
+it("reload() does not load a declaration file that was added later", () => {
+  using dir = tempDir("fsr-declaration-reload", {
+    "about.tsx": "",
+    "docs/[...slug].tsx": "",
+  });
+  const router = new Bun.FileSystemRouter({ style: "nextjs", dir: String(dir) });
+
+  fs.writeFileSync(path.join(String(dir), "about.d.ts"), "");
+  fs.writeFileSync(path.join(String(dir), "docs", "[...slug].d.ts"), "");
+  router.reload();
+
+  expect(routeFiles(router, String(dir))).toEqual({
+    "/about": "about.tsx",
+    "/docs/[...slug]": "docs/[...slug].tsx",
+  });
+});
+
+it("skips .d.ts, .d.mts and .d.cts for every fileExtensions list, and no other name", () => {
+  using dir = tempDir("fsr-declaration-extensions", {
+    "a.ts": "",
+    "a.d.ts": "",
+    "b.mts": "",
+    "b.d.mts": "",
+    "c.cts": "",
+    "c.d.cts": "",
+    // Still routes, as in Next.js: the module `d`, a `.tsx` file, a `.d.css.ts` file,
+    // and a name that differs in case.
+    "d.ts": "",
+    "e.d.tsx": "",
+    "f.d.css.ts": "",
+    "g.D.ts": "",
+  });
+  const routes = (options: { fileExtensions?: string[] } = {}) =>
+    routeFiles(new Bun.FileSystemRouter({ style: "nextjs", dir: String(dir), ...options }), String(dir));
+
+  expect({
+    "default": routes(),
+    ".ts": routes({ fileExtensions: [".ts"] }),
+    ".mts .cts": routes({ fileExtensions: [".mts", ".cts"] }),
+  }).toEqual({
+    "default": { "/a": "a.ts", "/d": "d.ts", "/e.d": "e.d.tsx", "/f.d.css": "f.d.css.ts", "/g.D": "g.D.ts" },
+    ".ts": { "/a": "a.ts", "/d": "d.ts", "/f.d.css": "f.d.css.ts", "/g.D": "g.D.ts" },
+    ".mts .cts": { "/b": "b.mts", "/c": "c.cts" },
+  });
+});
+
 it("should match dynamic routes", () => {
   // set up the test
   const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx"]);

@@ -270,14 +270,7 @@ impl Local {
             && self.origin.is_commonjs_export() == other.origin.is_commonjs_export()
     }
 
-    /// Whether the linker may print `decl` as `var x = value` above the `__esm`
-    /// wrapper of its module, so the store runs when the chunk loads and not at
-    /// the statement. No program can tell for `let`, `const`, `class` or the
-    /// value of `export default`: a read before the statement throws. A `var`
-    /// and a lifted `exports.x = value` read `undefined` there, so their store
-    /// keeps its place.
-    ///
-    /// `symbol_of` gives `None` when the file cannot get an `__esm` wrapper.
+    /// Whether the linker may print `decl` with its value above the `__esm` wrapper of its module.
     pub fn value_can_leave_esm_wrapper<'s>(
         &self,
         decl: &G::Decl,
@@ -287,11 +280,11 @@ impl Local {
         let crate::binding::Data::BIdentifier(id) = decl.binding.data else {
             return false;
         };
-        !self.origin.is_commonjs_export()
-            // The kind of a `var` only, not of a function's name: the linker turns
-            // `export default (function f() {})` into a local that binds `f`.
-            && symbol_of(id.get().r#ref).is_none_or(|bound| bound.kind != symbol::Kind::Hoisted)
-            && decl.value.is_some_and(|value| value.can_be_moved())
+        // Before its statement a lifted `exports.x` or a `var` reads `undefined`. The rest throw.
+        let store_keeps_its_place = self.origin.is_commonjs_export()
+            // Not a function's name, which the linker binds for `export default (function f() {})`.
+            || symbol_of(id.get().r#ref).is_some_and(|bound| bound.kind == symbol::Kind::Hoisted);
+        !store_keeps_its_place && decl.value.is_some_and(|value| value.can_be_moved())
     }
 }
 

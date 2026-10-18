@@ -5450,9 +5450,6 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::ANY;
         };
         let is_async = self.hir(file)[func].flags.contains(Flags::ASYNC);
-        if star && is_async {
-            self.note_external_emit_helpers_check(file, e);
-        }
         // "There is no point in doing an assignability check if the function has no explicit return type"
         let mut return_type = self.return_type_from_annotation(file, func);
         if let Some(declared) = return_type

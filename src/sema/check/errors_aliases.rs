@@ -237,22 +237,20 @@ impl Checker<'_, '_> {
 
     /// `markJsxAliasReferenced`, as `MarkLinkedReferencesRecursively` calls it for every tag of the
     /// file, a node before its children: `getJsxNamespaceContainerForImplicitImport` reports a
-    /// module that is missing at the first one.
-    pub(super) fn mark_jsx_aliases_referenced(&mut self, file: FileId) {
+    /// module that is missing at the first one, which is returned.
+    pub(super) fn first_jsx_alias_referenced(&mut self, file: FileId) -> Option<ExprId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `importElisionEnabled`
-        if hir.jsx.is_empty()
+        if !self.emits_first()
             || !self.emits_js_file(file)
             || self.p.files.options.verbatim_module_syntax
         {
-            return;
+            return None;
         }
         let index = self.exprs_by_kind(file);
         let tags = index.of(ExprTag::Jsx).iter().copied();
-        let first = tags
-            .filter(|e| !bound.is_unchecked(e.idx()))
-            .min_by_key(|&e| hir[e].pos);
-        self.first_jsx = (file, first, None);
+        tags.filter(|e| !bound.is_unchecked(e.idx()))
+            .min_by_key(|&e| hir[e].pos)
     }
 
     /// `markPropertyAliasReferenced`, as `MarkLinkedReferencesRecursively` calls it for every `a.b`

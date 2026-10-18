@@ -289,6 +289,140 @@ test.concurrent.skipIf(!tsc)("a long chain of modules and many beside it, on any
   for (const lines of ours) expect(lines).toEqual(theirs);
 });
 
+/**
+ * `n` modules of components. Each calls and renders the component `Outer` of three modules before it, so the check of a
+ * module evaluates part of those. The tag that the check of a module comes to first is not the first one in its text.
+ */
+function modulesOfComponents(n: number) {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < n; i++) {
+    const used = [i - 1, i - 5, i - 11].filter(j => j >= 0);
+    const own = [
+      // The bodies of both are deferred.
+      [`const Inner = () => <i>inner</i>;`, `export const Outer${i} = () => <b><Inner /></b>;`],
+      // The body of a declaration is not.
+      [`const Inner = () => <i>inner</i>;`, `export function Outer${i}() { return <b><Inner /></b>; }`],
+      [`const Inner = () => <>inner</>;`, `export const Outer${i} = () => <><Inner /></>;`],
+      [
+        `const inner = { get a() { return <i>a</i>; }, b() { return <i>b</i>; } };`,
+        `export class Outer${i} { render() { return <b>{inner.a}{inner.b()}</b>; } }`,
+      ],
+      // What is in an element is deferred, what is in a fragment is not.
+      [
+        `export function Outer${i}() {`,
+        `  const item = () => <li>item</li>;`,
+        `  return <ul><>{item}</></ul>;`,
+        `}`,
+        `export const last = <></>;`,
+      ],
+      [
+        `const Inner = class { render() { return <i>inner</i>; } };`,
+        `export const Outer${i} = function () { return <b><Inner /></b>; };`,
+      ],
+      // What a function expression returns is asked for before its body is checked.
+      [`export const Outer${i} = () => {`, `  const a = <a>a</a>;`, `  return <b>{a}</b>;`, `};`],
+      // And what a declaration returns, at its first `return`.
+      [
+        `export function Outer${i}(x?: number) {`,
+        `  if (x) return null;`,
+        `  const a = <a>a</a>;`,
+        `  return <b>{a}</b>;`,
+        `}`,
+      ],
+      // At once, if a signature is expected of the function.
+      [
+        `const table: { render: () => unknown }[] = [{ render: () => <i>i</i> }];`,
+        `export function Outer${i}() { return <b>{table.length}</b>; }`,
+      ],
+      [
+        `export function Outer${i}() {`,
+        `  const items = [1].map(n => <li>{n}</li>);`,
+        `  return <ul>{items}</ul>;`,
+        `}`,
+      ],
+      [
+        `declare const memo: any;`,
+        `const Inner = memo(() => <i>i</i>);`,
+        `export function Outer${i}() { return <b><Inner /></b>; }`,
+      ],
+      // Its parameters are not deferred.
+      [`export const Outer${i} = ({ icon = <i>i</i> }: { icon?: unknown } = {}) => <b>{icon}</b>;`],
+      // A call asks for what the function returns, and a name for what the variable is initialized with.
+      [
+        `export function Outer${i}() {`,
+        `  const inner = content();`,
+        `  return <b>{inner}</b>;`,
+        `}`,
+        `function content() { return <i>i</i>; }`,
+      ],
+      [
+        `export const Outer${i} = (x?: number) => {`,
+        `  const a = <a>a</a>;`,
+        `  if (x) return a;`,
+        `  return <b>b</b>;`,
+        `};`,
+      ],
+    ];
+    const isClass = (j: number) => j % own.length === 3;
+    files[`c${i}.tsx`] = [
+      ...used.map(j => `import { Outer${j} } from "./c${j}";`),
+      ...own[i % own.length],
+      ...used.map(j => `export const used${j} = ${isClass(j) ? `new Outer${j}().render()` : `Outer${j}()`};`),
+      `export const Last = () => <p>${used.map(j => `<Outer${j} />`).join("")}</p>;`,
+      ``,
+    ].join("\n");
+  }
+  return files;
+}
+
+// Without the types of react, a file gets one TS2875, or one TS2879 if it has a fragment: at the tag that its check comes
+// to first. What the check of another file has evaluated in it before does not move the error.
+for (const [jsx, code] of [
+  ["react-jsx", "TS2875"],
+  ["react", "TS2879"],
+]) {
+  test.concurrent.skipIf(!tsc)(`${code} is at the first tag that is checked, on any number of threads`, async () => {
+    using dir = tempDir("bun-check-differential", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx } }),
+      ...modulesOfComponents(isDebug || isASAN ? 28 : 56),
+    });
+    const root = String(dir);
+    const [theirs, ...ours] = await Promise.all([
+      linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+      ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+    ]);
+    expect(theirs.join("\n")).toContain(code);
+    for (const lines of ours) expect(lines).toEqual(theirs);
+  });
+}
+
+// Likewise TS2354, where `tslib` is missing: here the first syntax that needs a helper is `this.#x`, which the `return`
+// in the first line leads to. The modules that import `first` ask for the same.
+test.concurrent.skipIf(!tsc)("TS2354 is at the first syntax that is checked, on any number of threads", async () => {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < (isDebug || isASAN ? 16 : 48); i++) {
+    const used = [i - 1, i - 5, i - 11].filter(j => j >= 0);
+    files[`m${i}.ts`] = [
+      ...used.map(j => `import { first${j} } from "./m${j}";`),
+      `export function first${i}() { return make().get(); }`,
+      `export async function next() {}`,
+      `function make() { return new C(); }`,
+      `class C { #x = 1; get() { return this.#x; } }`,
+      ...used.map(j => `export const used${j} = first${j}();`),
+      ``,
+    ].join("\n");
+  }
+  const compilerOptions = { ...JSON.parse(tsconfig).compilerOptions, target: "es2015", importHelpers: true };
+  using dir = tempDir("bun-check-differential", { "tsconfig.json": JSON.stringify({ compilerOptions }), ...files });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  expect(theirs.join("\n")).toContain("TS2354");
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
 /** The error lines of `cmd`, which are in the format of `tsc --pretty false`, by line of `a.ts`. */
 async function errorsOf(cmd: string[], cwd: string) {
   await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });

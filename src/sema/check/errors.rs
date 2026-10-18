@@ -275,7 +275,6 @@ impl Checker<'_, '_> {
         self.alias_targets_reported.clear();
         self.signatures_resolved_discarding.clear();
         self.expressions_cached_discarding.clear();
-        self.emit_helpers_checked_elsewhere.clear();
         self.reported.clear();
         self.release_provisional_shapes();
         self.is_type_checked = false;
@@ -323,7 +322,6 @@ impl Checker<'_, '_> {
             let from = self.reported.len();
             self.is_emitting = true;
             self.mark_linked_references_recursively(file);
-            self.mark_jsx_aliases_referenced(file);
             self.mark_property_aliases_referenced(file);
             self.inline_const_enums(file);
             self.is_emitting = false;
@@ -2606,7 +2604,6 @@ impl Checker<'_, '_> {
             // value. A name that none of them declares is reported as missing on the type of the
             // right operand as it is.
             ExprKind::PrivateIdentifier(name) if !is_parenthesized(hir, left) => {
-                self.note_external_emit_helpers_check(file, left);
                 if !self.bound(file).private_class.contains_key(&left)
                     && !self.enclosing_classes(file, left).is_empty()
                 {

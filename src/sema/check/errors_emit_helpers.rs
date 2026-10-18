@@ -9,8 +9,8 @@
 //! A file requests each helper once, where `checkSourceFile` first reaches syntax that needs it. So
 //! the requesting positions are collected and sorted in the order it visits them: source order,
 //! except for nodes that `checkNodeDeferred` defers until everything else is checked. An expression
-//! that is checked early, because a type is requested, is placed where that happened
-//! (`note_external_emit_helpers_check`). If that was in the check of an earlier file, the task of
+//! that is checked early, because a type is requested, is placed where that happens
+//! (`emit_helpers_checked_out_of_order`). If that is in the check of an earlier file, the task of
 //! that file reports (`check_external_emit_helpers_of_later_files`).
 
 use super::sink::held;
@@ -81,7 +81,7 @@ struct Request {
     start: u32,
     end: u32,
     helpers: u32,
-    /// The expression whose check makes it (`note_external_emit_helpers_check`). `NONE`: the check
+    /// The expression whose check makes it (`emit_helpers_checked_out_of_order`). `NONE`: the check
     /// of something else, which only `checkSourceFile` of the file comes to.
     expression: ExprId,
 }
@@ -97,7 +97,7 @@ pub(super) struct EarlierEmitHelperError {
 }
 
 /// `Request::order` of the request that the check of `expression` makes. `regular`: the number of
-/// deferrals on the way to it, and its position. `checked`: `Checker::emit_helpers_checked_early`.
+/// deferrals on the way to it, and its position. `checked`: `emit_helpers_checked_out_of_order`.
 fn order_of_expression(
     expression: (FileId, ExprId),
     regular: (u32, u32),
@@ -122,11 +122,12 @@ struct AllAccessorDeclarations {
 
 impl Checker<'_, '_> {
     pub(super) fn check_external_emit_helpers(&mut self, file: FileId) {
-        let checked = std::mem::take(&mut self.emit_helpers_checked_early);
-        if !self.files().options.import_helpers {
+        // FOR SPEED: a file whose `tslib` has every helper is not walked, not even for a later file with another `tslib`.
+        if !self.files().options.import_helpers || self.emit_helpers_lacks_none(file) {
             return;
         }
-        self.check_external_emit_helpers_of_later_files(file);
+        let (checked, elsewhere) = self.emit_helpers_checked_out_of_order(file);
+        self.check_external_emit_helpers_of_later_files(file, elsewhere);
         if self.emit_helpers_is_effective_external_module(file) {
             let mut requests = self.emit_helpers_requests(file, &checked);
             requests.shared_sort_by_key(|request| request.order);
@@ -148,8 +149,11 @@ impl Checker<'_, '_> {
     /// that is checked later: `requestedExternalEmitHelpers` belongs to the file of the location,
     /// so that file does not report the same again. Its task does not see this one:
     /// `finish_file` takes back what it has reported instead.
-    fn check_external_emit_helpers_of_later_files(&mut self, visited: FileId) {
-        let elsewhere = std::mem::take(&mut self.emit_helpers_checked_elsewhere);
+    fn check_external_emit_helpers_of_later_files(
+        &mut self,
+        visited: FileId,
+        elsewhere: Vec<(FileId, ExprId)>,
+    ) {
         let mut later: Vec<FileId> = elsewhere.iter().map(|it| it.0).collect();
         later.shared_sort_unstable();
         later.dedup();
@@ -323,7 +327,7 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── who asks ─────────────────────────────
 
-    /// `checked`, here and below: `Checker::emit_helpers_checked_early`
+    /// `checked`, here and below: `emit_helpers_checked_out_of_order`
     fn emit_helpers_requests(
         &mut self,
         file: FileId,
@@ -1036,68 +1040,49 @@ impl Checker<'_, '_> {
         None
     }
 
-    /// `checkExternalEmitHelpers`, where the check of the expression `node` calls it: notes when
-    /// that is, if it is before the regular order of `node`. `emit_helpers_requests` makes the
-    /// request.
-    pub(super) fn note_external_emit_helpers_check(&mut self, file: FileId, node: ExprId) {
-        if self.files().options.import_helpers
-            && !self.is_type_checked
-            && let Some(visited) = self.task.file
-            && visited != file
-            && self.emit_helpers_checked_elsewhere.last() != Some(&(file, node))
-            && self.is_checked_no_later_than(visited, file)
-        {
-            self.emit_helpers_checked_elsewhere.push((file, node));
-        }
-        if self.files().options.import_helpers
-            && self.task.file == Some(file)
-            && !self.is_type_checked
-            && let current = self.current_source_element
-            && let Some(order) = self.emit_helpers_order_of_early_check(file, node, current)
-            && !(self.emit_helpers_checked_early.iter()).any(|it| (it.0, it.1) == (file, node))
-        {
-            self.emit_helpers_checked_early.push((file, node, order));
-        }
-    }
-
-    /// `checkClassExpressionExternalHelpers`, where `checkClassExpression` calls it for `node`,
-    /// which is `class`. `emit_helpers_of_class_expressions` has the conditions.
-    pub(super) fn check_class_expression_external_helpers(
+    /// The expressions whose check calls `checkExternalEmitHelpers` and that the check of `file` comes to because
+    /// something asks for a type, in that order. Those of `file` that it comes to before their regular order, each with
+    /// `emit_helpers_order_of_early_check`, and those of files that are checked later. `emit_helpers_requests` has the
+    /// conditions, and makes the requests.
+    fn emit_helpers_checked_out_of_order(
         &mut self,
         file: FileId,
-        node: ExprId,
-        class: ClassId,
-    ) {
-        if self.hir(file)[class].name.is_none() {
-            self.note_external_emit_helpers_check(file, node);
-        }
+    ) -> (Vec<(FileId, ExprId, (u32, u32))>, Vec<(FileId, ExprId)>) {
+        let (mut early, mut elsewhere) = (Vec::new(), Vec::new());
+        self.follow_check(file, true, &mut |c, of, e, current| {
+            let hir = c.hir(of);
+            let is_requesting = match hir[e].kind {
+                ExprKind::Dot { name_pos, .. } => is_private_name_at(hir, name_pos),
+                ExprKind::PrivateIdentifier(_)
+                | ExprKind::Yield { .. }
+                | ExprKind::Object(_)
+                | ExprKind::Class(_) => true,
+                _ => false,
+            };
+            if is_requesting && of != file {
+                elsewhere.push((of, e));
+            } else if is_requesting
+                && let Some(order) = c.emit_helpers_order_of_early_check(file, e, current)
+                && !early.iter().any(|it: &(FileId, ExprId, _)| it.1 == e)
+            {
+                early.push((file, e, order));
+            }
+            false
+        });
+        (early, elsewhere)
     }
 
-    /// `Request::order` of what is checked while `c.currentNode` is `current`, as
+    /// `Request::order` of what is checked while `c.currentNode` is `node`, as
     /// `checkSourceElement` or `checkDeferredNode` has set it, because something asks for its type.
-    /// `None`: `current` is the innermost such node around `e`, so `e` is checked in its regular
+    /// `None`: `node` is the innermost such node around `e`, so `e` is checked in its regular
     /// order.
     fn emit_helpers_order_of_early_check(
         &self,
         file: FileId,
         e: ExprId,
-        current: Option<CurrentNode>,
+        node: Node,
     ) -> Option<(u32, u32)> {
         let hir = self.hir(file);
-        let node = match current {
-            // `checkSourceFile` has not begun.
-            None => return Some((0, 0)),
-            // `checkExpressionEx` has set it: an assignment is never deferred.
-            Some(CurrentNode::Expr(of, x))
-                if of == file && matches!(hir[x].kind, ExprKind::Assign { .. }) =>
-            {
-                Self::emit_helpers_source_element(hir, hir.node(x)).0
-            }
-            Some(CurrentNode::Expr(of, x)) if of == file => hir.node(x),
-            Some(CurrentNode::TypeNode(of, t)) if of == file => hir.node(t),
-            Some(CurrentNode::Node(of, node)) if of == file => node,
-            Some(_) => return None,
-        };
         if Self::emit_helpers_source_element(hir, hir.parent(hir.node(e))).0 == node {
             return None;
         }

@@ -362,7 +362,6 @@ impl Checker<'_, '_> {
                 self.error_at((file, start, self.end_of_prop(file, p)), 2462, &[]);
                 return;
             }
-            self.note_external_emit_helpers_check(file, node);
             // A name that is not numeric omits the property of that name and no other. Any other
             // name omits by its type.
             let (mut names, mut keys) = (Vec::new(), Vec::new());

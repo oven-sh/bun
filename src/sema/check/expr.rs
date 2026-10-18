@@ -13,12 +13,6 @@ use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
 use smallvec::SmallVec;
 use std::ops::ControlFlow;
 
-/// `false`: `type_of_property_access` reduces the type on the left before it takes its apparent type, as before.
-const REDUCES_NO_LEFT_TYPE: bool = true;
-
-/// It does that as well. It is a panic that names the type and the file if the result is another type. For debugging.
-const CHECKS_LEFT_TYPE_REDUCED: bool = false;
-
 /// See `Checker::pattern_that_may_expect`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum PatternKind {
@@ -275,7 +269,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether evaluating `e` has a side effect on the checker that a pass of `check_file` of
-    /// `file` reads later: `first_jsx`, `unresolved_identifiers`. A cache hit has no side effect.
+    /// `file` reads later: `deferred_nodes`, `unresolved_identifiers`. A cache hit has no side effect.
     /// So only the task that is checking `file` stores the entry, and every other task evaluates
     /// `e` again. A class expression checks its decorators and heritage clauses, and nothing else
     /// visits them.
@@ -1043,7 +1037,6 @@ impl<'p, 's> Checker<'p, 's> {
             return (access.any_like.unwrap_or(TypeId::ERROR), stops);
         }
         let lexical = if is_private {
-            self.note_external_emit_helpers_check(file, e);
             self.lookup_symbol_for_private_identifier_declaration(file, e, name)
         } else {
             None
@@ -1112,17 +1105,10 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // `getPropertyOfType(apparentType, ..)` reduces the apparent type, and nothing reduces `leftType`. To reduce
         // `U & { id: string }` lists the properties of the constraint of `U`, which creates them.
-        let apparent = if REDUCES_NO_LEFT_TYPE {
-            if !self.never_in_progress.is_empty() {
-                self.reduce_apparent_type_of_intersection_in_progress(access.apparent);
-            }
-            self.reduced(access.apparent)
-        } else {
-            self.reduced_apparent_type(receiver)
-        };
-        if CHECKS_LEFT_TYPE_REDUCED && self.reduced_apparent_type(receiver) != apparent {
-            self.fact_differs_for("the reduced apparent type of a left type", &[receiver]);
+        if !self.never_in_progress.is_empty() {
+            self.reduce_apparent_type_of_intersection_in_progress(access.apparent);
         }
+        let apparent = self.reduced(access.apparent);
         let Some((declared, how)) = found else {
             // A cycle whose head is this expression or a caller: the members are not all known. One
             // that began and ended in the lookup, as two interfaces that extend each other, is
@@ -1808,7 +1794,6 @@ impl<'p, 's> Checker<'p, 's> {
                 self.check_class_like_declaration(file, class);
                 self.end_recheck(outer);
                 self.check_node_deferred(file, e);
-                self.check_class_expression_external_helpers(file, e, class);
                 let sym = self.class_sym(file, class);
                 self.type_of_symbol(sym)
             }
@@ -1911,15 +1896,6 @@ impl<'p, 's> Checker<'p, 's> {
                 let is_fragment = hir[j].tag.is_none();
                 if !is_fragment {
                     self.check_node_deferred(file, e);
-                }
-                if self.task.file == Some(file) {
-                    if self.first_jsx.0 != file {
-                        self.first_jsx = (file, None, None);
-                    }
-                    self.first_jsx.1 = self.first_jsx.1.or(Some(e));
-                    if is_fragment {
-                        self.first_jsx.2 = self.first_jsx.2.or(Some(e));
-                    }
                 }
                 // `checkJsxFragment` defers nothing: `checkJsxOpeningLikeElementOrOpeningFragment`,
                 // then `checkJsxChildren(node, CheckModeNormal)`.

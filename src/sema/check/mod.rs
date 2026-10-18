@@ -11,6 +11,7 @@ macro_rules! cat {
 
 mod alias;
 mod call;
+mod check_order;
 mod check_source_file;
 pub mod commit;
 mod context;
@@ -660,7 +661,6 @@ impl<'s> Program<'s> {
             left_frame: None,
             files: self.files,
             variance_type_parameter: Atom::NONE,
-            first_jsx: (FileId(u32::MAX), None, None),
             auto_array_type: self.auto_array_type,
             stack: Vec::new(),
             in_progress: [0; 1024],
@@ -891,8 +891,6 @@ impl<'s> Program<'s> {
             apparent_types_with_this_argument: Default::default(),
             deferred_nodes: Default::default(),
             deferred_type_parameters: Vec::new(),
-            emit_helpers_checked_early: Vec::new(),
-            emit_helpers_checked_elsewhere: Vec::new(),
             unresolved_identifiers: Vec::new(),
             unknown_symbols: Default::default(),
             alias_targets_reported: Default::default(),
@@ -1201,9 +1199,6 @@ pub struct Checker<'p, 's> {
     files: &'p Files<'s>,
     /// `varianceTypeParameter`: its name.
     variance_type_parameter: Atom,
-    /// A file that the task has checked, and the first JSX node and the first fragment of it that
-    /// `checkExpression` reached.
-    first_jsx: (FileId, Option<ExprId>, Option<ExprId>),
     /// `autoArrayType`
     auto_array_type: TypeId,
     stack: Vec<Query>,
@@ -1740,14 +1735,6 @@ pub struct Checker<'p, 's> {
     /// The class expressions that have two entries in `deferred_nodes`, the first for their type
     /// parameters, and whether `checkDeferredNodes` has come to the first.
     deferred_type_parameters: Vec<(ExprId, bool)>,
-    /// With `importHelpers`: the expressions of the file being checked whose check calls
-    /// `checkExternalEmitHelpers` and came before their regular order, because something asked for
-    /// a type. In the order of those checks, each with `emit_helpers_order_of_early_check`. Until
-    /// `check_external_emit_helpers`.
-    emit_helpers_checked_early: Vec<(FileId, ExprId, (u32, u32))>,
-    /// The same for the expressions of files that are checked later than the file being checked,
-    /// in the order of those checks.
-    emit_helpers_checked_elsewhere: Vec<(FileId, ExprId)>,
     /// The identifiers `getResolvedSymbol` could not resolve, until
     /// `report_unresolved_identifiers`.
     unresolved_identifiers: Vec<(FileId, ExprId, Atom)>,

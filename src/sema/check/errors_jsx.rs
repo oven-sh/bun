@@ -78,22 +78,54 @@ impl Checker<'_, '_> {
             .filter(|e| !bound.is_unchecked(e.idx()))
             .collect();
         elements.shared_sort_unstable_by_key(|&e| hir[e].pos);
+        // `getJSXRuntimeImportSpecifier`: the specifier of the synthetic import the loader
+        // added, which has no import clause and is nowhere in the text.
+        let resolve_runtime = |c: &mut Self, spec: Atom, location: (FileId, u32, u32)| {
+            let specifier = SpecifierUse {
+                spec,
+                pos: u32::MAX,
+                kind: SpecifierKind::Import,
+                mode: c.files().module(file).default_mode,
+            };
+            let site = SpecifierSite::default();
+            c.resolve_external_module_at(file, specifier, site, location, Some(2875));
+        };
         // An error reported once per file is reported on the element that is checked first.
         // Elements the walk does not reach come last, in source order.
-        let (mut first, mut first_fragment) = (None, None);
-        if runtime.is_some() || checks_fragment_type {
-            // Only this task stores the entry of a JSX element of the file (`is_noted_for_check_file`), so it has evaluated each itself.
-            let reached = match self.first_jsx {
-                (of, first, first_fragment) if of == file => (first, first_fragment),
-                _ => (None, None),
-            };
-            let is_fragment =
-                |e: &ExprId| matches!(hir[*e].kind, ExprKind::Jsx(j) if hir[j].tag.is_none());
-            first = reached.0.or_else(|| elements.first().copied());
-            first_fragment = reached
-                .1
-                .or_else(|| elements.iter().copied().find(is_fragment));
+        let is_fragment =
+            |e: &ExprId| matches!(hir[*e].kind, ExprKind::Jsx(j) if hir[j].tag.is_none());
+        let first_checked = |c: &mut Self, only_fragments: bool| {
+            let mut sought = elements
+                .iter()
+                .filter(|e| !only_fragments || is_fragment(e));
+            let (in_source_order, is_only_one) = (sought.next().copied(), sought.next().is_none());
+            let mut first = None;
+            if !is_only_one {
+                c.follow_check(file, false, &mut |_, _, e, _| {
+                    let is_sought = matches!(hir[e].kind, ExprKind::Jsx(_))
+                        && (!only_fragments || is_fragment(&e))
+                        && !bound.is_unchecked(e.idx());
+                    first = is_sought.then_some(e);
+                    is_sought
+                });
+            }
+            first.or(in_source_order)
+        };
+        // FOR SPEED: in most files there is nothing to report about the module, so no place to find.
+        let since = self.reported.len();
+        if let Some(spec) = runtime {
+            resolve_runtime(self, spec, (file, 0, 0));
         }
+        let first = if self.take_reported_from(since).is_empty() {
+            None
+        } else {
+            (self.first_jsx_alias_referenced(file)).or_else(|| first_checked(self, false))
+        };
+        let first_fragment = if checks_fragment_type {
+            first_checked(self, true)
+        } else {
+            None
+        };
         for e in elements {
             let ExprKind::Jsx(j) = hir[e].kind else {
                 continue;
@@ -119,16 +151,7 @@ impl Checker<'_, '_> {
                     && element.tag.is_some()
                     && element.close_pos != u32::MAX;
                 let end = if is_whole_element { element.end } else { end };
-                // `getJSXRuntimeImportSpecifier`: the specifier of the synthetic import the loader
-                // added, which has no import clause and is nowhere in the text.
-                let specifier = SpecifierUse {
-                    spec,
-                    pos: u32::MAX,
-                    kind: SpecifierKind::Import,
-                    mode: self.files().module(file).default_mode,
-                };
-                let (site, location) = (SpecifierSite::default(), (file, start, end));
-                self.resolve_external_module_at(file, specifier, site, location, Some(2875));
+                resolve_runtime(self, spec, (file, start, end));
             }
             // `resolveName`, starting at `jsxFactoryLocation`: the tag name, or the opening fragment.
             let scope = bound.expr_scope.get(&e).copied().unwrap_or(ScopeId(0));

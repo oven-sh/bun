@@ -431,6 +431,7 @@ error: Hello World`,
     },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
+      expect(out).toContain('"bundled"');
       expect(out).not.toContain('"left"');
       for (const kept of [
         "createRequire(import.meta.url)",

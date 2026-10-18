@@ -2,6 +2,7 @@
 
 namespace WebCore {
 class JSVMClientData;
+enum class ScriptExecutionContextIdentifier : uint32_t;
 }
 
 #include <JavaScriptCore/DeferredWorkTimer.h>
@@ -44,7 +45,7 @@ public:
         BunLoopKind loopKind { BunLoopKind::Regular };
         // The identifier of the Bun.ModuleGraph context whose script asked for the work, or 0 for
         // the realm's own: the completion of a stopped one is dropped.
-        uint32_t graphContext { 0 };
+        WebCore::ScriptExecutionContextIdentifier graphContext {};
     };
 
     Lock m_lock;

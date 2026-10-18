@@ -447,7 +447,7 @@ static JSValue makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph
 
 // VirtualMachine::entered_context: makes `context` the one native code entered (0: none) and
 // returns the one to put back.
-extern "C" uint32_t Bun__VirtualMachine__replaceEnteredContext(void* bunVM, uint32_t context);
+extern "C" WebCore::ScriptExecutionContextIdentifier Bun__VirtualMachine__replaceEnteredContext(void* bunVM, WebCore::ScriptExecutionContextIdentifier context);
 
 ErrorHandlerContextScope::ErrorHandlerContextScope(Zig::GlobalObject* globalObject, JSModuleGraph* owner)
     : m_globalObject(globalObject)

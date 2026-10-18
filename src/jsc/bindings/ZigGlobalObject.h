@@ -22,6 +22,7 @@ enum class JSPromiseRejectionOperation : unsigned;
 namespace WebCore {
 class MessagePort;
 class ScriptExecutionContext;
+enum class ScriptExecutionContextIdentifier : uint32_t;
 class DOMGuardedObject;
 class EventLoopTask;
 class DOMWrapperWorld;
@@ -101,6 +102,16 @@ namespace Zig {
 
 class JSCStackTrace;
 
+// Which VM a global is the first global of: `GlobalObjectKind` in VirtualMachine.rs.
+enum class GlobalObjectKind : uint8_t {
+    // The main thread's: its context takes ScriptExecutionContext::mainThreadIdentifier.
+    Main = 0,
+    // A Worker's: its context takes the identifier its WorkerMessagingProxy drew.
+    Worker = 1,
+    // Any other VM's (a macro's, the debugger's): its context takes one drawn for it.
+    Other = 2,
+};
+
 using DOMGuardedObjectSet = UncheckedKeyHashSet<WebCore::DOMGuardedObject*>;
 
 class GlobalObject : public Bun::GlobalScope {
@@ -138,7 +149,7 @@ public:
     GlobalObject* globalObject() { return this; }
 
     GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable*);
-    GlobalObject(JSC::VM& vm, JSC::Structure* structure, uint32_t, const JSC::GlobalObjectMethodTable*);
+    GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier, const JSC::GlobalObjectMethodTable*);
 
     DOMGuardedObjectSet& guardedObjects() WTF_REQUIRES_LOCK(m_gcLock) { return m_guardedObjects; }
 
@@ -154,9 +165,9 @@ public:
     }
 
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure);
-    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId);
+    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier);
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable);
-    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId, const JSC::GlobalObjectMethodTable* methodTable);
+    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier, const JSC::GlobalObjectMethodTable* methodTable);
 
     JSC::Structure* domStructure(WebCore::DOMStructureSlot slot) const
     {

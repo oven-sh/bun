@@ -152,7 +152,7 @@ public:
 private:
     Zig::GlobalObject* m_globalObject;
     JSC::JSValue m_previous;
-    uint32_t m_previousEntered;
+    WebCore::ScriptExecutionContextIdentifier m_previousEntered;
 };
 
 class ModuleGraphContextScope {

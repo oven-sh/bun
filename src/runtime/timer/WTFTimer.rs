@@ -271,7 +271,7 @@ unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut
             run_loop_timer: NonNull::new_unchecked(run_loop_timer),
             repeat: false,
             script_execution_context_id: ScriptExecutionContextIdentifier(
-                vm_ref.initial_script_execution_context_identifier as u32,
+                vm_ref.initial_script_execution_context_identifier,
             ),
         })
     };

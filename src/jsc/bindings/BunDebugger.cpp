@@ -575,7 +575,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisconnect, (JSC::JSGlobalObject * globalObje
 
 const JSC::ClassInfo JSBunInspectorConnection::s_info = { "BunInspectorConnection"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBunInspectorConnection) };
 
-extern "C" unsigned int Bun__createJSDebugger(Zig::GlobalObject* globalObject)
+extern "C" ScriptExecutionContextIdentifier Bun__createJSDebugger(Zig::GlobalObject* globalObject)
 {
     {
         Locker<Lock> locker(inspectorConnectionsLock);
@@ -586,7 +586,7 @@ extern "C" unsigned int Bun__createJSDebugger(Zig::GlobalObject* globalObject)
         inspectorConnections->add(globalObject->scriptExecutionContext()->identifier(), Vector<RefPtr<BunInspectorConnection>, 8>());
     }
 
-    return static_cast<unsigned int>(globalObject->scriptExecutionContext()->identifier());
+    return globalObject->scriptExecutionContext()->identifier();
 }
 extern "C" void Bun__tickWhilePaused(bool*);
 
@@ -649,7 +649,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ScriptExecutionContext* targetContext = ScriptExecutionContext::getScriptExecutionContext(static_cast<ScriptExecutionContextIdentifier>(callFrame->argument(0).toUInt32(globalObject)));
+    ScriptExecutionContext* targetContext = ScriptExecutionContext::getScriptExecutionContext(ScriptExecutionContextIdentifier { callFrame->argument(0).toUInt32(globalObject) });
     RETURN_IF_EXCEPTION(scope, {});
     bool shouldRef = !callFrame->argument(1).toBoolean(globalObject);
     JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(callFrame->argument(2).toObject(globalObject));
@@ -936,7 +936,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
 
     MarkedArgumentBuffer arguments;
 
-    arguments.append(jsNumber(static_cast<unsigned int>(scriptId)));
+    arguments.append(jsNumber(std::to_underlying(scriptId)));
     auto* portOrPathJS = Bun::toJS(debuggerGlobalObject, *portOrPathString);
     RETURN_IF_EXCEPTION(scope, );
     if (!portOrPathJS) [[unlikely]] {

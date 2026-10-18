@@ -24,7 +24,7 @@ void MessagePortPipe::send(uint8_t fromSide, MessageWithMessagePorts&& message)
     ASSERT(fromSide < 2);
     auto& dst = m_sides[1 - fromSide];
 
-    ScriptExecutionContextIdentifier wakeCtx = 0;
+    ScriptExecutionContextIdentifier wakeCtx {};
     BunLoopKind wakeLoopKind = BunLoopKind::Regular;
     {
         Locker locker { dst.lock };
@@ -43,7 +43,7 @@ void MessagePortPipe::send(uint8_t fromSide, MessageWithMessagePorts&& message)
         dst.state.store(ns, std::memory_order_release);
     }
 
-    if (wakeCtx)
+    if (wakeCtx != ScriptExecutionContextIdentifier {})
         scheduleDrain(1 - fromSide, wakeCtx, wakeLoopKind);
 }
 
@@ -118,7 +118,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     auto* globalObject = defaultGlobalObject(context->globalObject());
 
     static constexpr size_t takeAtOnce = 64;
-    ScriptExecutionContextIdentifier rescheduleCtx = 0;
+    ScriptExecutionContextIdentifier rescheduleCtx {};
     while (true) {
         std::optional<MessageWithMessagePorts> message;
         {
@@ -176,7 +176,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     // Budget spent with messages left. We are on `context`'s thread: continue on
     // its next loop iteration (after I/O and timers), not in this drain.
-    if (rescheduleCtx) {
+    if (rescheduleCtx != ScriptExecutionContextIdentifier {}) {
         context->postTaskAfterYield([pipe = Ref { *this }, side, rescheduleCtx](ScriptExecutionContext&) {
             pipe->drainAndDispatch(side, rescheduleCtx);
         });
@@ -203,7 +203,7 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContext& context, Thre
     auto& s = m_sides[side];
     ScriptExecutionContextIdentifier ctxId = context.identifier();
     BunLoopKind ctxLoopKind = context.currentLoopKind();
-    ScriptExecutionContextIdentifier wakeCtx = 0;
+    ScriptExecutionContextIdentifier wakeCtx {};
     {
         Locker locker { s.lock };
         s.ctxId = ctxId;
@@ -217,7 +217,7 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContext& context, Thre
         }
         s.state.store(ns, std::memory_order_release);
     }
-    if (wakeCtx)
+    if (wakeCtx != ScriptExecutionContextIdentifier {})
         scheduleDrain(side, wakeCtx, ctxLoopKind);
     // Peer already closed while this side was in transit (detach() cleared
     // ContextKnown so notifyPeerClosed() early-returned): re-deliver to the new
@@ -257,7 +257,7 @@ void MessagePortPipe::detach(uint8_t side)
     // Taken for dispatch by the owner that is letting go: back in front, in order.
     while (!s.draining.isEmpty())
         s.inbox.prepend(s.draining.takeLast());
-    s.ctxId = 0;
+    s.ctxId = {};
     s.port = nullptr;
     // Drop Attached and DrainScheduled. A drain task already in flight on
     // the old context can't be recalled, but it captured the old ctxId and
@@ -287,7 +287,7 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind)
         Deque<MessageWithMessagePorts> dropped;
         {
             Locker locker { s.lock };
-            s.ctxId = 0;
+            s.ctxId = {};
             s.port = nullptr;
             // Closed is terminal; queued messages are dropped.
             s.state.store(sdKind == CloseKind::Explicit ? (Closed | ClosedByRequest) : Closed, std::memory_order_release);
@@ -323,7 +323,7 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind)
 void MessagePortPipe::notifyPeerClosed(uint8_t peerSide)
 {
     auto& s = m_sides[peerSide];
-    ScriptExecutionContextIdentifier ctxId = 0;
+    ScriptExecutionContextIdentifier ctxId {};
     BunLoopKind ctxLoopKind = BunLoopKind::Regular;
     {
         Locker locker { s.lock };
@@ -333,7 +333,7 @@ void MessagePortPipe::notifyPeerClosed(uint8_t peerSide)
         ctxId = s.ctxId;
         ctxLoopKind = s.ctxLoopKind;
     }
-    if (!ctxId)
+    if (ctxId == ScriptExecutionContextIdentifier {})
         return;
     ScriptExecutionContext::postTaskTo(ctxId, ctxLoopKind, [pipe = Ref { *this }, peerSide, ctxId](ScriptExecutionContext&) {
         RefPtr<MessagePort> port;

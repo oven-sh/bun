@@ -40,7 +40,8 @@ class EventLoopTask;
 class ActiveDOMObject;
 class ContextDestructionObserver;
 
-using ScriptExecutionContextIdentifier = uint32_t;
+// The key of a context in the process-wide registry. Zero is no context's.
+enum class ScriptExecutionContextIdentifier : uint32_t {};
 
 #if ENABLE(MALLOC_BREAKDOWN)
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
@@ -65,7 +66,11 @@ public:
 
     ~ScriptExecutionContext();
 
+    // The main thread's. generateIdentifier() counts up from it.
+    static constexpr ScriptExecutionContextIdentifier mainThreadIdentifier { 1 };
     static ScriptExecutionContextIdentifier generateIdentifier();
+    // Returns the identifier that the next context would have drawn.
+    static ScriptExecutionContextIdentifier setNextIdentifierForTesting(ScriptExecutionContextIdentifier);
 
     JSC::JSGlobalObject* jsGlobalObject();
 
@@ -79,7 +84,7 @@ public:
     {
         return m_url;
     }
-    bool isMainThread() const { return realm().m_identifier == 1; }
+    bool isMainThread() const { return realm().m_identifier == mainThreadIdentifier; }
     // The Rust half, `bun_jsc::ScriptExecutionContext`: it has this context's identifier. A
     // graph's context makes and frees its own; a global's is bound to its VM's root context.
     void* bunContext() const { return m_bunContext; }
@@ -221,6 +226,18 @@ public:
 #if ASSERT_ENABLED
     bool m_inScriptExecutionContextDestructor = false;
 #endif
+};
+
+}
+
+namespace WTF {
+
+template<> struct DefaultHash<WebCore::ScriptExecutionContextIdentifier> : IntHash<WebCore::ScriptExecutionContextIdentifier> {};
+// As for the integer under it: zero is the empty key and the largest value is the deleted key.
+template<> struct HashTraits<WebCore::ScriptExecutionContextIdentifier> : GenericHashTraits<WebCore::ScriptExecutionContextIdentifier> {
+    static constexpr bool emptyValueIsZero = true;
+    static void constructDeletedValue(WebCore::ScriptExecutionContextIdentifier& slot) { slot = static_cast<WebCore::ScriptExecutionContextIdentifier>(-1); }
+    static bool isDeletedValue(WebCore::ScriptExecutionContextIdentifier value) { return value == static_cast<WebCore::ScriptExecutionContextIdentifier>(-1); }
 };
 
 }

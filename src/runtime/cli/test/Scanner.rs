@@ -15,7 +15,7 @@ use bun_sys::{Dir, Fd};
 
 declare_scope!(jest, hidden);
 
-pub struct Scanner<'a> {
+pub(crate) struct Scanner<'a> {
     /// Memory is borrowed.
     pub(crate) exclusion_names: &'a [&'a [u8]],
     /// When this list is empty, no filters are applied.
@@ -23,7 +23,7 @@ pub struct Scanner<'a> {
     pub(crate) filter_names: &'a [&'a [u8]],
     /// Glob patterns for paths to ignore. Matched against the path relative to the
     /// project root (top_level_dir). When a file matches any pattern, it is excluded.
-    pub(crate) path_ignore_patterns: &'a [&'a [u8]],
+    pub(crate) path_ignore_patterns: &'a [bun_glob::Prepared<&'a [u8]>],
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
@@ -39,7 +39,7 @@ pub struct Scanner<'a> {
 // FIFO queue of scan entries (pop_front / push_back).
 pub(crate) type Fifo = VecDeque<ScanEntry>;
 
-pub struct ScanEntry {
+pub(crate) struct ScanEntry {
     /// `None` for children of the root, which are opened by absolute path.
     pub(crate) relative_dir: Option<Rc<Dir>>,
     // `'static` is sound here: borrows from FileSystem.dirname_store, a
@@ -49,7 +49,7 @@ pub struct ScanEntry {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum ScanError {
+pub(crate) enum ScanError {
     /// The entrypoint does not exist or does not fit a `PathBuffer`; never returned for subdirectories.
     #[error("DoesNotExist")]
     DoesNotExist,
@@ -305,15 +305,15 @@ impl<'a> Scanner<'a> {
         };
 
         for pattern in self.path_ignore_patterns {
-            if bun_glob::r#match(pattern, rel_path).matches() {
+            if pattern.r#match(rel_path).matches() {
                 return true;
             }
             // Only try trailing separator for ** patterns (e.g. "vendor/**").
             // Single-star patterns like "vendor/*" must not prune entire
             // directories because * doesn't cross directory boundaries.
             if let Some(p) = rel_with_slash {
-                if strings::index_of(pattern, b"**").is_some() {
-                    if bun_glob::r#match(pattern, p).matches() {
+                if strings::index_of(pattern.pattern(), b"**").is_some() {
+                    if pattern.r#match(p).matches() {
                         return true;
                     }
                 }
@@ -419,6 +419,7 @@ impl<'a> Scanner<'a> {
                 entry.abs_path = Interned::from_static(stored);
                 self.test_files.push(entry.abs_path);
             }
+            fs::EntryKind::Dangling => {}
         }
     }
 }

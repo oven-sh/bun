@@ -9,7 +9,8 @@ import {
   zstdDecompressSync,
 } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, rss } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, libcPathForDlopen, rss } from "harness";
+import { readFileSync } from "node:fs";
 import zlib from "node:zlib";
 import path from "path";
 
@@ -264,8 +265,8 @@ describe("Zstandard compression", async () => {
           expect(syncDecompressed).toStrictEqual(asyncDecompressed);
 
           // Verify both match original
-          expect(syncDecompressed).toStrictEqual(input);
-          expect(asyncDecompressed).toStrictEqual(input);
+          expect(syncDecompressed).toStrictEqual<Uint8Array>(input);
+          expect(asyncDecompressed).toStrictEqual<Uint8Array>(input);
         });
       }
     });
@@ -580,20 +581,20 @@ describe("sync compression argument handling", () => {
     expect(zstdDecompressSync(compressed).byteLength).toBe(0);
   });
 
-  it("zstdCompressSync evaluates the options object before validating the input", () => {
+  it("zstdCompressSync refuses an input that is not bytes before it evaluates the options object", () => {
     expect(() =>
       zstdCompressSync(42 as any, {
-        get level() {
+        get level(): never {
           throw new Error("level option was read");
         },
       }),
-    ).toThrow("level option was read");
+    ).toThrow("data must be a string, ArrayBuffer or ArrayBufferView");
   });
 
   it("gzipSync evaluates the options object before capturing the input", () => {
     const input = new Uint8Array(64).fill(97);
     const compressed = gzipSync(input, {
-      get level() {
+      get level(): 6 {
         input.buffer.transfer();
         return 6;
       },
@@ -604,7 +605,7 @@ describe("sync compression argument handling", () => {
   it("deflateSync evaluates the options object before capturing the input", () => {
     const input = new Uint8Array(64).fill(97);
     const compressed = deflateSync(input, {
-      get level() {
+      get level(): 6 {
         input.buffer.transfer();
         return 6;
       },
@@ -612,24 +613,117 @@ describe("sync compression argument handling", () => {
     expect(inflateSync(compressed).byteLength).toBe(0);
   });
 
-  it("gunzipSync evaluates the options object before validating the input", () => {
+  it("gunzipSync refuses an input that is not bytes before it evaluates the options object", () => {
     expect(() =>
       gunzipSync(42 as any, {
-        get windowBits() {
+        get windowBits(): never {
           throw new Error("windowBits option was read");
         },
       }),
-    ).toThrow("windowBits option was read");
+    ).toThrow("data must be a string, ArrayBuffer or ArrayBufferView");
   });
 
-  it("inflateSync evaluates the options object before validating the input", () => {
+  it("inflateSync refuses an input that is not bytes before it evaluates the options object", () => {
     expect(() =>
       inflateSync(42 as any, {
-        get windowBits() {
+        get windowBits(): never {
           throw new Error("windowBits option was read");
         },
       }),
-    ).toThrow("windowBits option was read");
+    ).toThrow("data must be a string, ArrayBuffer or ArrayBufferView");
+  });
+
+  it("a numeric option is converted to a number, and then treated as that number is", () => {
+    const input = "hello hello hello";
+    const beyond32Bits = [
+      2 ** 32 + 1,
+      "4294967297",
+      4294967297n,
+      2n ** 64n + 1n,
+      { valueOf: () => 2 ** 32 + 1 },
+      "Infinity",
+    ];
+    for (const [compress, outOfRange] of [
+      [gzipSync, "Zlib error: Invalid argument"],
+      [deflateSync, "Zlib error: Invalid argument"],
+      [zstdCompressSync, "Compression level must be between 1 and 22"],
+    ] as [(data: string, options: any) => Uint8Array, string][]) {
+      const expected = compress(input, { level: 1 });
+      for (const level of ["1", 1n, Object(1n), [1], { valueOf: () => 1 }, { valueOf: () => 1n }]) {
+        expect(compress(input, { level })).toEqual(expected);
+      }
+      for (const level of beyond32Bits) expect(() => compress(input, { level })).toThrow(outOfRange);
+    }
+    for (const [decompress, compressed, bits] of [
+      [gunzipSync, gzipSync(input), 31],
+      [inflateSync, deflateSync(input), -15],
+    ] as [(data: Uint8Array, options: any) => Uint8Array, Uint8Array, number][]) {
+      for (const windowBits of [bits, String(bits), BigInt(bits), { valueOf: () => bits }]) {
+        expect(new TextDecoder().decode(decompress(compressed, { windowBits }))).toBe(input);
+      }
+      for (const windowBits of beyond32Bits) {
+        expect(() => decompress(compressed, { windowBits })).toThrow("Zlib error: Invalid argument");
+      }
+    }
+  });
+
+  it("zstdCompress and zstdCompressSync take the same levels", async () => {
+    const input = "hello hello hello";
+    for (const level of [undefined, 1, 22, "1", 1n, Object(1n), { valueOf: () => 1 }]) {
+      expect(await zstdCompress(input, { level } as any)).toEqual(zstdCompressSync(input, { level } as any));
+    }
+    for (const level of [0, 23, NaN, 2 ** 32 + 1, "4294967297", 4294967297n, { valueOf: () => 2 ** 32 + 1 }]) {
+      for (const compress of [zstdCompress, zstdCompressSync]) {
+        expect(() => compress(input, { level } as any)).toThrow("Compression level must be between 1 and 22");
+      }
+    }
+  });
+
+  it("zstdDecompress and zstdDecompressSync take no options", async () => {
+    const compressed = zstdCompressSync("hello");
+    for (const ignored of [undefined, null, 5, "x", {}, { level: 99 }]) {
+      expect(
+        (
+          await (zstdDecompress as (data: Uint8Array, ignored: unknown) => Promise<Buffer>)(compressed, ignored)
+        ).toString(),
+      ).toBe("hello");
+      expect(
+        (zstdDecompressSync as (data: Uint8Array, ignored: unknown) => Buffer)(compressed, ignored).toString(),
+      ).toBe("hello");
+    }
+  });
+
+  it("takes the bytes of every kind of buffer, and a string as UTF-8", () => {
+    const text = "h\u00e9llo w\u00f6rld, \u65e5\u672c\u8a9e!";
+    const bytes = new TextEncoder().encode(text);
+    const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
+    shared.set(bytes);
+    const padded = new Uint8Array(bytes.length + 8);
+    padded.set(bytes, 4);
+    const inputs = [
+      text,
+      new String(text),
+      bytes,
+      bytes.buffer,
+      Buffer.from(bytes),
+      new DataView(bytes.buffer),
+      padded.subarray(4, 4 + bytes.length),
+      shared,
+      shared.buffer,
+    ];
+    for (const [compress, decompress] of [
+      [gzipSync, gunzipSync],
+      [deflateSync, inflateSync],
+      [zstdCompressSync, zstdDecompressSync],
+    ] as ((data: any) => Uint8Array)[][]) {
+      const expected = compress(text);
+      for (const input of inputs) expect(compress(input)).toEqual(expected);
+      const sharedCompressed = new Uint8Array(new SharedArrayBuffer(expected.length));
+      sharedCompressed.set(expected);
+      for (const compressed of [expected, sharedCompressed, new DataView(expected.slice().buffer)]) {
+        expect(new TextDecoder().decode(decompress(compressed))).toBe(text);
+      }
+    }
   });
 
   // An empty result must not register a GC-time deallocator: the backing Vec is
@@ -680,6 +774,47 @@ describe("sync compression argument handling", () => {
     });
     expect(exitCode).toBe(0);
   }, 60_000);
+});
+
+// x64 builds target nehalem, so zstd picks its BMI2 kernels at run time. It used to ask CPUID in
+// every CCtx and DCtx init. CPUID is a VM exit under a hypervisor, about 2 us each, two per init.
+// arch_prctl(ARCH_SET_CPUID, 0) makes CPUID raise SIGSEGV on the calling thread, so a context that
+// still probes the CPU kills the child. The first context of each kind is allowed to probe.
+describe("zstd context setup", () => {
+  const canFaultOnCpuid =
+    isLinux && process.arch === "x64" && /^flags\s*:.*\bcpuid_fault\b/m.test(readFileSync("/proc/cpuinfo", "utf8"));
+
+  it.skipIf(!canFaultOnCpuid)("asks CPUID once, not for each context", async () => {
+    const script = `
+      const { dlopen } = require("bun:ffi");
+      const zlib = require("node:zlib");
+      const { symbols: { syscall } } = dlopen(process.argv[1], {
+        syscall: { args: ["i64", "i32", "u64"], returns: "i64" },
+      });
+      const SYS_arch_prctl = 158n, ARCH_SET_CPUID = 0x1012;
+      const input = Buffer.alloc(1024, "a");
+      function roundtrip() {
+        const native = Bun.zstdDecompressSync(Bun.zstdCompressSync(input));
+        const node = zlib.zstdDecompressSync(zlib.zstdCompressSync(input));
+        if (!input.equals(native) || !input.equals(node)) throw new Error("roundtrip mismatch");
+      }
+      roundtrip();
+      if (syscall(SYS_arch_prctl, ARCH_SET_CPUID, 0n) !== 0n) throw new Error("ARCH_SET_CPUID failed");
+      for (let i = 0; i < 20; i++) roundtrip();
+      syscall(SYS_arch_prctl, ARCH_SET_CPUID, 1n);
+      console.log("ok");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script, libcPathForDlopen()],
+      // JSC runs CPUID as a serializing instruction each time it installs JIT code.
+      env: { ...bunEnv, BUN_JSC_useBaselineJIT: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.slice(0, 2000) }).toEqual({ stdout: "ok\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // The async functions read the input on a pool thread. The unfixed build segfaults there, so each

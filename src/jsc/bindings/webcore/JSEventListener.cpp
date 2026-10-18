@@ -28,6 +28,7 @@
 // #include "JSDocument.h"
 #include "JSEvent.h"
 #include "JSEventTarget.h"
+#include "ModuleGraph.h"
 #include "WebCoreJSClientData.h"
 // #include "JSExecState.h"
 // #include "JSExecStateInstrumentation.h"
@@ -201,6 +202,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     }
 
     Ref<JSEventListener> protectedThis(*this);
+    Bun::ModuleGraphContextScope moduleGraphContext(scriptExecutionContext);
 
     MarkedArgumentBuffer args;
     args.append(toJS(lexicalGlobalObject, globalObject, &event));

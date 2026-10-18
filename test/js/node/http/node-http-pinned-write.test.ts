@@ -14,13 +14,13 @@ const CHUNK_SIZE = 64 * 1024 * 1024;
 const PATTERN_256 = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
 const PATTERN_64_HIGH = Buffer.from(Array.from({ length: 64 }, (_, i) => 0xc0 + i));
 
-function makePayload(size: number): Buffer {
+function makePayload(size: number): Buffer<ArrayBuffer> {
   return Buffer.alloc(size, PATTERN_256);
 }
 
 // A Buffer that already has an ArrayBuffer behind it: the pending write pins
 // that ArrayBuffer, so transfer() copies rather than detaches while it is held.
-function makeArrayBufferBackedPayload(size: number): Buffer {
+function makeArrayBufferBackedPayload(size: number): Buffer<ArrayBuffer> {
   return Buffer.from(new ArrayBuffer(size)).fill(PATTERN_256);
 }
 
@@ -90,7 +90,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
 
       // Now drain the client side and verify the body.
       const chunks: Buffer[] = [];
-      socket.on("data", chunk => chunks.push(chunk));
+      socket.on("data", (chunk: Buffer) => chunks.push(chunk));
       const closed = once(socket, "close");
       socket.resume();
       await closed;
@@ -144,7 +144,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     socket.write(`GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
     await serverReady.promise;
     const chunks: Buffer[] = [];
-    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
     const closed = once(socket, "close");
     socket.resume();
     await closed;

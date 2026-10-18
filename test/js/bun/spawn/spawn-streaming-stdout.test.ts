@@ -8,7 +8,7 @@ test("spawn can read from stdout multiple chunks", async () => {
   let concurrency = 7;
   const count = 100;
   const interval = setInterval(dumpStats, 1000).unref();
-  for (let i = 0; i < count; ) {
+  for (let i = 0; i < count;) {
     const promises = new Array(concurrency);
     for (let j = 0; j < concurrency; j++) {
       promises[j] = (async function () {
@@ -19,7 +19,7 @@ test("spawn can read from stdout multiple chunks", async () => {
           stderr: "ignore",
           env: bunEnv,
         });
-        var chunks = [];
+        var chunks: Uint8Array[] = [];
         let counter = 0;
         try {
           for await (var chunk of proc.stdout) {

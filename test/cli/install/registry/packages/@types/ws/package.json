@@ -1,0 +1,42 @@
+{
+  "_id": "@types/ws",
+  "name": "@types/ws",
+  "dist-tags": {
+    "latest": "8.5.4"
+  },
+  "versions": {
+    "7.4.7": {
+      "name": "@types/ws",
+      "version": "7.4.7",
+      "main": "",
+      "types": "index.d.ts",
+      "_id": "@types/ws@7.4.7",
+      "dist": {
+        "integrity": "sha512-m0IDEYuIAUn21CLWs4MLJAaDlOosrWqlZjV6SD9NyklE+NWA2/FdAOksfuHC/LenWGdXYmpT++CqGrMttN9n9A==",
+        "shasum": "490839492318df99171e86e39ab3e3d8e7985687",
+        "tarball": "http://localhost:4873/@types/ws/-/@types/ws-7.4.7.tgz"
+      }
+    },
+    "8.5.4": {
+      "name": "@types/ws",
+      "version": "8.5.4",
+      "main": "",
+      "types": "index.d.ts",
+      "exports": {
+        ".": {
+          "types": {
+            "import": "./index.d.mts",
+            "default": "./index.d.ts"
+          }
+        },
+        "./package.json": "./package.json"
+      },
+      "_id": "@types/ws@8.5.4",
+      "dist": {
+        "integrity": "sha512-pR6ehWPSxQTiaZY7MVS2xMv3qZS8lCVkidNotjxaykHpYxXWZmFi6iPV8QDLtYfAZ+wnJx/bgA5sNSCRnfHzJg==",
+        "shasum": "23a3c6386723a8fea64a32c809abd4b0043fa151",
+        "tarball": "http://localhost:4873/@types/ws/-/@types/ws-8.5.4.tgz"
+      }
+    }
+  }
+}

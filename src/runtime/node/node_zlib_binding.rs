@@ -5,7 +5,6 @@ use core::ptr::NonNull;
 
 use bun_ptr::{ParentRef, RefPtr};
 
-use bun_core::Utf8Bytes;
 use bun_event_loop::Taskable;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
@@ -16,7 +15,6 @@ use bun_jsc::{
     WorkPoolTask,
 };
 use bun_threading::work_pool::WorkPool;
-use bun_zlib;
 
 bun_output::declare_scope!(zlib, hidden);
 
@@ -31,7 +29,7 @@ bun_output::declare_scope!(zlib, hidden);
 pub(crate) struct CompressionStream<T>(PhantomData<T>);
 
 #[derive(Default)]
-pub struct CountedKeepAlive {
+pub(crate) struct CountedKeepAlive {
     pub(crate) keep_alive: KeepAlive,
     pub(crate) ref_count: u32,
 }
@@ -46,7 +44,7 @@ impl Drop for CountedKeepAlive {
 /// Kept as raw `*const c_char` (not `&'static str`) because zlib (`z_stream.msg`)
 /// and zstd (`ZSTD_getErrorString`) hand back runtime C pointers.
 #[derive(Clone, Copy)]
-pub struct Error {
+pub(crate) struct Error {
     pub(crate) msg: *const c_char,
     pub(crate) err: c_int,
     pub(crate) code: *const c_char,
@@ -98,81 +96,8 @@ impl CountedKeepAlive {
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_as_array::<2>();
-
-    let data_view;
-    let data_buffer;
-    let data: Utf8Bytes = 'blk: {
-        let data: JSValue = arguments[0];
-
-        if callframe.arguments_count() < 1 {
-            return Err(global_this.throw_invalid_argument_type_value(
-                b"data",
-                b"string or an instance of Buffer, TypedArray, or DataView",
-                JSValue::UNDEFINED,
-            ));
-        }
-        if data.is_string_literal() {
-            data_view = data.as_string().view(global_this)?;
-            break 'blk data_view.to_utf8();
-        }
-        let Some(buffer) = data.as_array_buffer(global_this) else {
-            let ty_str = data.js_type_string(global_this);
-            return Err(global_this
-                .err(
-                    ErrorCode::INVALID_ARG_TYPE,
-                    format_args!(
-                        "The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {}",
-                        ty_str,
-                    ),
-                )
-                .throw());
-        };
-        data_buffer = buffer;
-        break 'blk Utf8Bytes::Borrowed(data_buffer.byte_slice());
-    };
-
-    let value: u32 = 'blk: {
-        let value: JSValue = arguments[1];
-        if callframe.arguments_count() < 2 {
-            break 'blk 0;
-        }
-        if !value.is_number() {
-            return Err(global_this.throw_invalid_argument_type_value(b"value", b"number", value));
-        }
-        let valuef = value.as_number();
-        let min: u32 = 0;
-        let max: u32 = u32::MAX;
-
-        if valuef.floor() != valuef {
-            return Err(global_this
-                .err(
-                    ErrorCode::OUT_OF_RANGE,
-                    format_args!(
-                        "The value of \"{}\" is out of range. It must be an integer. Received {}",
-                        "value", valuef,
-                    ),
-                )
-                .throw());
-        }
-        if valuef < min as f64 || valuef > max as f64 {
-            return Err(global_this
-                .err(
-                    ErrorCode::OUT_OF_RANGE,
-                    format_args!(
-                        "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
-                        "value", min, max, valuef,
-                    ),
-                )
-                .throw());
-        }
-        break 'blk valuef as u32;
-    };
-
-    let crc = bun_zlib::crc32_bytes(value, data.slice());
-    Ok(JSValue::js_number(f64::from(crc)))
+pub(crate) fn crc32(data: &[u8], value: u32) -> u32 {
+    bun_zlib::crc32_bytes(value, data)
 }
 
 // ─── CompressionStream mixin trait ────────────────────────────────────────
@@ -581,8 +506,13 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // `init()` caches the JS write callback; a handle whose `init()` was
         // never called has none, so there is nothing to notify.
         if let Some(write_callback) = T::write_callback_get_cached(this_value) {
-            vm.event_loop_ref()
-                .run_callback(write_callback, global, this_value, &[]);
+            vm.event_loop_ref().run_callback(
+                bun_event_loop::ContextId::NONE,
+                write_callback,
+                global,
+                this_value,
+                &[],
+            );
         }
 
         if this.pending_close().get() {
@@ -858,6 +788,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // SAFETY: `bun_vm()` and `event_loop()` are non-null for a Bun-owned global.
             let vm = global_this.bun_vm();
             vm.event_loop_ref().run_callback(
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global_this,
                 this_value,
@@ -881,7 +812,7 @@ macro_rules! __compression_stream_mixin_reexports {
         impl $native {
             // R-2: `this: &Self` — see CompressionStreamImpl note above.
             #[inline]
-            pub fn write(
+            pub(crate) fn write(
                 this: &Self,
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
@@ -891,7 +822,7 @@ macro_rules! __compression_stream_mixin_reexports {
                 )
             }
             #[inline]
-            pub fn write_sync(
+            pub(crate) fn write_sync(
                 this: &Self,
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
@@ -901,7 +832,7 @@ macro_rules! __compression_stream_mixin_reexports {
                 )
             }
             #[inline]
-            pub fn reset(
+            pub(crate) fn reset(
                 this: &Self,
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
@@ -911,7 +842,7 @@ macro_rules! __compression_stream_mixin_reexports {
                 )
             }
             #[inline]
-            pub fn close(
+            pub(crate) fn close(
                 this: &Self,
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
@@ -921,7 +852,7 @@ macro_rules! __compression_stream_mixin_reexports {
                 )
             }
             #[inline]
-            pub fn set_on_error(
+            pub(crate) fn set_on_error(
                 this: &Self,
                 this_value: ::bun_jsc::JSValue,
                 global: &::bun_jsc::JSGlobalObject,
@@ -932,7 +863,7 @@ macro_rules! __compression_stream_mixin_reexports {
                 )
             }
             #[inline]
-            pub fn get_on_error(
+            pub(crate) fn get_on_error(
                 this: &Self,
                 this_value: ::bun_jsc::JSValue,
                 global: &::bun_jsc::JSGlobalObject,
@@ -984,6 +915,11 @@ macro_rules! __impl_compression_stream {
             unsafe fn release_unrun(this: *mut Self) {
                 // SAFETY: fn contract — the stream the pool posted (write's ref held).
                 unsafe { $crate::node::node_zlib_binding::CompressionStream::<$native>::release_unrun(this) }
+            }
+            /// The write always completes (its buffers are unpinned); the callbacks it reports to carry
+            /// the async context of the script that set them.
+            unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+                bun_event_loop::ContextId::NONE
             }
         }
 

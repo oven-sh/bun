@@ -1341,6 +1341,245 @@ test("Error.captureStackTrace with caller not in stack clears async frames too",
   expect(err.stack).toBe("Error: async test");
 });
 
+// Async functions that await each other make the await chain a cycle. In `awaitCycle`, `a` awaits a
+// race that holds the promise of `b`, and `b` awaits the promise of `a`. In `awaitCycleWithoutFrames`,
+// an Array.fromAsync call awaits a race that holds its own promise: it awaits in a builtin async
+// function, which has no frame in a trace. `capture` runs in `c`, under the cycle.
+//
+// The walk over the await chain used to end only at the frame limit. It never returned from a walk
+// with no limit, which also used all memory, or from a cycle that adds no frame. So each child has a
+// timeout, and the children run one at a time.
+const functionsOf = `const functionsOf = stack => stack.split("\\n").map(line => /^(?:\\s*at )?((?:async )?\\w+)[ @]/.exec(line)?.[1]).filter(Boolean).join(", ");`;
+const awaitCycle = capture => `${functionsOf}
+  let pa, pb;
+  async function c() { await null; ${capture} }
+  async function a() { await null; await Promise.race([pb, c()]); }
+  async function b() { await null; await pa; }
+  pa = a();
+  pb = b();`;
+const awaitCycleWithoutFrames = capture => `${functionsOf}
+  let p;
+  async function c() { await null; ${capture} }
+  p = Array.fromAsync({ length: 2, 0: null, get 1() { return Promise.race([p, c()]); } });`;
+const captureInto = (target, caller = "") =>
+  `const e = ${target}; Error.captureStackTrace(e${caller && ", " + caller}); console.log(functionsOf(e.stack));`;
+const nineFramesOfCycle = "async a, async b, async a, async b, async a, async b, async a, async b, async a";
+// Every cycle of up to three functions behind a tail of up to one, each function with or without a
+// frame, at a limit of 3 and with no limit: for new Error() and for an fs.promises rejection, whose
+// trace starts from the rejected promise.
+const everySmallCycle = `
+  const { readFile } = require("node:fs/promises");
+  const asyncFunctions = {};
+  function waiter(kind, name, body) {
+    if (kind === "-") return () => Array.fromAsync({ length: 2, 0: null, get 1() { return body(); } });
+    asyncFunctions[name] ??= new Function("body", "return async function " + name + "() { await null; await body(); };");
+    return asyncFunctions[name](body);
+  }
+  const functionsOf = stack => stack.split("\\n").map(line => /^\\s*at ((?:async )?\\w+) /.exec(line)?.[1]).filter(Boolean);
+  const captures = {
+    newError: resolve => async function c() { await null; resolve(functionsOf(new Error().stack)); },
+    rejection: resolve => async function c() {
+      await null;
+      try { await readFile("/nonexistent-path/does-not-exist.txt"); } catch (e) { resolve(functionsOf(e.stack)); }
+    },
+  };
+  // t1 awaits c(), t2 awaits t1(), and so on. f1 awaits a race of the last f and the last t, f2 awaits f1, and so on.
+  const traceUnderCycle = (capture, tail, lap) => new Promise(resolve => {
+    let awaited = captures[capture](resolve);
+    for (let i = 0; i < tail.length; i++) awaited = waiter(tail[i], "t" + (i + 1), awaited);
+    const promises = [waiter(lap[0], "f1", () => Promise.race([promises[lap.length - 1], awaited()]))()];
+    for (let i = 1; i < lap.length; i++) promises.push(waiter(lap[i], "f" + (i + 1), () => promises[i - 1])());
+  });
+  const patterns = length => (length ? patterns(length - 1).flatMap(pattern => [pattern + "f", pattern + "-"]) : [""]);
+  const framesOf = (pattern, prefix) => [...pattern].flatMap((kind, i) => (kind === "f" ? ["async " + prefix + (i + 1)] : []));
+  (async () => {
+    const wrong = [];
+    let traces = 0;
+    for (const capture of ["newError", "rejection"]) {
+      for (const limit of [3, Infinity]) {
+        Error.stackTraceLimit = limit;
+        for (const tail of [0, 1].flatMap(patterns)) {
+          for (const lap of [1, 2, 3].flatMap(patterns)) {
+            // With a limit, a cycle that adds frames repeats up to the limit. With none, the trace has each generator once.
+            const chain = [...(capture === "rejection" ? ["async c"] : []), ...framesOf(tail, "t")];
+            const lapFrames = framesOf(lap, "f");
+            if (limit === Infinity) chain.push(...lapFrames);
+            else if (lapFrames.length) while (chain.length < limit) chain.push(...lapFrames);
+            const expected = [...(capture === "newError" ? ["c"] : []), ...chain.slice(0, limit)].join(", ");
+            const actual = (await traceUnderCycle(capture, tail, lap)).join(", ");
+            traces++;
+            if (actual !== expected) wrong.push({ capture, limit: String(limit), tail, lap, actual, expected });
+          }
+        }
+      }
+    }
+    console.log(JSON.stringify({ traces, wrong: wrong.slice(0, 3) }));
+  })();`;
+test.each([
+  // With a limit, the trace repeats the cycle up to the limit, as in Node.
+  ["Error.captureStackTrace(object)", awaitCycle(captureInto("{}")), `c, ${nineFramesOfCycle}`],
+  ["Error.captureStackTrace(error)", awaitCycle(captureInto("new Error()")), `c, ${nineFramesOfCycle}`],
+  ["Error.captureStackTrace(object, c)", awaitCycle(captureInto("{}", "c")), `${nineFramesOfCycle}, async b`],
+  // Node does not return from the next five: the caller is not on the stack, or there is no limit.
+  ["Error.captureStackTrace(object, function not on the stack)", awaitCycle(captureInto("{}", "() => {}")), ""],
+  // Without a limit, the trace has each generator of the cycle once.
+  [
+    "Error.captureStackTrace(object) with Error.stackTraceLimit = Infinity",
+    `Error.stackTraceLimit = Infinity; ${awaitCycle(captureInto("{}"))}`,
+    "c, async a, async b",
+  ],
+  [
+    "new Error() with Error.stackTraceLimit = Infinity",
+    `Error.stackTraceLimit = Infinity; ${awaitCycle(`console.log(functionsOf(new Error().stack));`)}`,
+    "c, async a, async b",
+  ],
+  [
+    "Error.captureStackTrace(object) with Error.stackTraceLimit = Infinity in a node:vm context",
+    `require("node:vm").runInNewContext(${JSON.stringify(`Error.stackTraceLimit = Infinity; ${awaitCycle(captureInto("{}"))}`)}, { console });`,
+    "c, async a, async b",
+  ],
+  // Two generators of `down` lead to the cycle, and two generators of `around` are in it.
+  [
+    "new Error() with Error.stackTraceLimit = Infinity, the same function twice in the cycle",
+    `Error.stackTraceLimit = Infinity; ${functionsOf}
+      let pa;
+      async function c() { await null; console.log(functionsOf(new Error().stack)); }
+      async function down(depth) { await null; return depth > 1 ? await down(depth - 1) : await c(); }
+      async function around(depth) { await null; return depth > 1 ? await around(depth - 1) : await pa; }
+      async function a() { await null; await Promise.race([pb, down(2)]); }
+      pa = a();
+      const pb = around(2);`,
+    "c, async down, async down, async a, async around, async around",
+  ],
+  // process.report asks for every frame.
+  [
+    "process.report.getReport()",
+    awaitCycle(`console.log(functionsOf(process.report.getReport().javascriptStack.stack.join("\\n")));`),
+    "c, async a, async b",
+  ],
+  ["new Error(), no frame in the cycle", awaitCycleWithoutFrames(`console.log(functionsOf(new Error().stack));`), "c"],
+  ["Error.captureStackTrace(object), no frame in the cycle", awaitCycleWithoutFrames(captureInto("{}")), "c"],
+  [
+    "a throw that an await passes on, no frame in the cycle",
+    awaitCycleWithoutFrames(
+      `try { await (async () => { await null; throw 1; })(); } catch (e) { console.log("caught", e); }`,
+    ),
+    "caught 1",
+  ],
+  [
+    "a write to require.extensions, no frame in the cycle",
+    awaitCycleWithoutFrames(`require.extensions[".cycle"] = () => {}; console.log("returned");`),
+    "returned",
+  ],
+  [
+    "new WebAssembly.Exception() with traceStack, no frame in the cycle",
+    awaitCycleWithoutFrames(
+      `new WebAssembly.Exception(new WebAssembly.Tag({ parameters: [] }), [], { traceStack: true }); console.log("returned");`,
+    ),
+    "returned",
+  ],
+  ["every small cycle, for new Error() and for an fs.promises rejection", everySmallCycle, `{"traces":168,"wrong":[]}`],
+])(
+  "a stack trace taken under a cycle of awaits ends: %s",
+  async (_, source, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: expected,
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
+  },
+  20_000,
+);
+
+// Error.captureStackTrace takes at most Error.stackTraceLimit frames from the await chain. It still
+// takes every frame of the stack: the caller argument can be deeper in the stack than the limit.
+test("Error.captureStackTrace under an await chain and a stack that are both longer than Error.stackTraceLimit", async () => {
+  const functionsOf = stack => stack.split("\n").map(line => /^\s*at ((?:async )?\w+) /.exec(line)?.[1]);
+  async function chain(depth, capture) {
+    await null;
+    return depth > 1 ? await chain(depth - 1, capture) : capture();
+  }
+
+  const underChain = await chain(40, function capture() {
+    const e = {};
+    Error.captureStackTrace(e);
+    return functionsOf(e.stack).slice(1);
+  });
+  expect(underChain).toEqual(["capture", "chain", ...Array(8).fill("async chain")]);
+
+  // The `finally` blocks keep each `return` out of tail position.
+  function above(depth, e) {
+    try {
+      return depth ? above(depth - 1, e) : Error.captureStackTrace(e, start);
+    } finally {
+    }
+  }
+  function start(e) {
+    try {
+      return above(15, e);
+    } finally {
+    }
+  }
+  function below(depth, e) {
+    try {
+      return depth ? below(depth - 1, e) : start(e);
+    } finally {
+    }
+  }
+  const underStack = await chain(40, function capture() {
+    const e = {};
+    below(29, e);
+    return functionsOf(e.stack).slice(1);
+  });
+  expect(underStack).toEqual(Array(10).fill("below"));
+
+  // With no limit and no cycle, the trace has every frame of the chain.
+  const savedLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = Infinity;
+  try {
+    const [fromError, fromCapture] = await chain(40, function capture() {
+      const e = {};
+      Error.captureStackTrace(e);
+      return [functionsOf(new Error().stack).slice(1), functionsOf(e.stack).slice(1)];
+    });
+    expect(fromError.slice(0, 41)).toEqual(["capture", "chain", ...Array(39).fill("async chain")]);
+    expect(fromCapture.slice(0, 41)).toEqual(["capture", "chain", ...Array(39).fill("async chain")]);
+  } finally {
+    Error.stackTraceLimit = savedLimit;
+  }
+});
+
+// The cycles without a frame above are cycles only if the walk over the await chain goes through the
+// builtin async function of Array.fromAsync: here it finds `outer` behind it.
+test("the await chain goes through Array.fromAsync, which has no frame", async () => {
+  const functionsOf = stack => stack.split("\n").map(line => /^\s*at ((?:async )?\w+) /.exec(line)?.[1]);
+  async function c() {
+    await null;
+    return functionsOf(new Error().stack).slice(1, 3);
+  }
+  async function outer() {
+    return (
+      await Array.fromAsync({
+        length: 1,
+        get 0() {
+          return c();
+        },
+      })
+    )[0];
+  }
+  expect(await outer()).toEqual(["c", "async outer"]);
+});
+
 test("Error.captureStackTrace applies stackTraceLimit after caller removal", () => {
   // Build a deep call chain so the caller sits beyond stackTraceLimit.
   // If the limit were applied before removal, all collected frames would

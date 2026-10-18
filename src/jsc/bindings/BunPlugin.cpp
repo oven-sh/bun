@@ -1510,15 +1510,36 @@ __attribute__((minsize)) JSC::JSPromise* JSModuleMock::run(Zig::GlobalObject* gl
 }
 
 // Such a fetch settles without waiting on a factory, so waiting for it can't deadlock. See runModuleMock().
-static bool isBeingFetchedWithoutFactory(Zig::GlobalObject* globalObject, JSC::ModuleRegistryEntry* entry)
+static bool isFetchedWithoutFactory(Zig::GlobalObject* globalObject, const String& key)
 {
-    if (entry->record() || entry->status() != JSC::ModuleRegistryEntry::Status::Fetching)
-        return false;
-    String key = entry->key().string();
     if (globalObject->onLoadPlugins.moduleMocksBeingLoaded.contains(key))
         return false;
     JSModuleMock* mock = registeredModuleMock(globalObject, key);
     return !mock || mock->state == JSModuleMock::State::Settled || (mock->state == JSModuleMock::State::NotCalled && mock->importsOriginal);
+}
+
+static bool isBeingFetchedWithoutFactory(Zig::GlobalObject* globalObject, JSC::ModuleRegistryEntry* entry)
+{
+    return !entry->record() && entry->status() == JSC::ModuleRegistryEntry::Status::Fetching && isFetchedWithoutFactory(globalObject, entry->key().string());
+}
+
+extern "C" int32_t Bun__onLoadNamespaceLength(const BunString* key);
+
+static bool isLoadedByPlugin(Zig::GlobalObject* globalObject, const String& key)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    if (plugins.isEmpty())
+        return false;
+    BunString keyString = Bun::toString(key);
+    int32_t namespaceLength = Bun__onLoadNamespaceLength(&keyString);
+    auto* group = namespaceLength < 0 ? nullptr : plugins.group(namespaceLength ? key.substringSharingImpl(0, namespaceLength) : String());
+    if (!group)
+        return false;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    String path = withoutOriginalModuleQuery(namespaceLength ? key.substringSharingImpl(namespaceLength + 1) : key);
+    bool isLoadedByPlugin = group->find(globalObject, path);
+    (void)scope.tryClearException();
+    return isLoadedByPlugin;
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionGiveTurnsToModuleMocks);
@@ -1541,7 +1562,6 @@ __attribute__((minsize)) static void rankAgainAfter(Zig::GlobalObject* globalObj
 
 // Finds the load each waiting mock belongs to. Once a load has fetched all it can without a factory, ranks its mocks in the order
 // their modules would be evaluated, which is the order Vitest calls the factories in. isWaitingForModule() then sees the whole graph.
-// Fetches of other loads aren't waited for, because those may never end.
 __attribute__((noinline)) static void rankWaitingModuleMocks(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1576,21 +1596,52 @@ __attribute__((noinline)) static void rankWaitingModuleMocks(Zig::GlobalObject* 
     Vector<UniquedStringImpl*> loads;
     Vector<String> finished;
     Vector<JSC::JSPromise*> fetches;
+    // If a factory imports a module that's still being read, we can't tell yet whether that module imports the mock, so the factory gets a private copy.
+    // To avoid that, don't start a factory while any load is reading a file. Don't wait for onLoad() callbacks, which may depend on the test's progress.
+    bool isReadingFile = false;
+    auto addFetch = [&](const String& key, JSC::JSPromise* fetch) {
+        fetches.append(fetch);
+        isReadingFile = isReadingFile || !isLoadedByPlugin(globalObject, key);
+    };
+    // A mock passed to import() gets its own turn right away, even if another load also imports it and already has a factory running. Vitest does the same.
+    Vector<bool> isAskedForDirectly;
+    isAskedForDirectly.fill(false, plugins.waitingModuleMocks.size());
+    size_t askedForDirectly = 0;
     for (auto& key : plugins.modulesAskedFor) {
+        if (auto index = indexOf.find(JSC::Identifier::fromString(vm, key).impl()); index != indexOf.end()) {
+            isAskedForDirectly[index->value] = true;
+            askedForDirectly++;
+            continue;
+        }
         auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key));
-        if (!entry || (entry->record() && !unfinishedRecord(entry)))
+        JSC::JSPromise* fetchOfUnregistered = nullptr;
+        if (entry)
+            plugins.fetchesOfModulesAskedFor.remove(key);
+        else if (auto fetch = plugins.fetchesOfModulesAskedFor.find(key); fetch != plugins.fetchesOfModulesAskedFor.end())
+            fetchOfUnregistered = uncheckedDowncast<JSC::JSPromise>(fetch->value.get());
+        if (fetchOfUnregistered && isFetchedWithoutFactory(globalObject, key)) {
+            // After it settles, JSC registers the module in a microtask that's already queued.
+            if (fetchOfUnregistered->status() == JSC::JSPromise::Status::Pending)
+                addFetch(key, fetchOfUnregistered);
+            else if (plugins.modulesGivenTimeToRequestImports.add(key).isNewEntry)
+                isReadingFile = true;
+            else
+                finished.append(key);
+        } else if (!entry || (entry->record() && !unfinishedRecord(entry)))
             finished.append(key);
         else if (!entry->record()) {
             if (isBeingFetchedWithoutFactory(globalObject, entry))
-                fetches.append(entry->ensureModulePromise(globalObject));
+                addFetch(key, entry->ensureModulePromise(globalObject));
         } else if (plugins.runningModuleMocks.containsIf([&](auto& running) { return running.importChain.contains(key); }))
             loads.insert(0, entry->key().impl());
         else
             loads.append(entry->key().impl());
     }
-    for (auto& key : finished)
+    for (auto& key : finished) {
         plugins.modulesAskedFor.remove(key);
-    if (!fetches.isEmpty())
+        plugins.fetchesOfModulesAskedFor.remove(key);
+    }
+    if (!fetches.isEmpty() || isReadingFile)
         rankAgainAfter(globalObject, fetches);
 
     // Loads that share a module are fetched together: none is ready before all are.
@@ -1610,7 +1661,7 @@ __attribute__((noinline)) static void rankWaitingModuleMocks(Zig::GlobalObject* 
     Vector<bool> isBeingFetched;
     bool hasOtherLoads = false;
     for (size_t load = 0;; ++load) {
-        if (load == loads.size() && !hasOtherLoads && found.size() < indexOf.size()) {
+        if (load == loads.size() && !hasOtherLoads && found.size() + askedForDirectly < indexOf.size()) {
             // The imports of a test file or a preload, which import() didn't ask for: they start at a module that nothing unfinished imports.
             hasOtherLoads = true;
             UncheckedKeyHashSet<UniquedStringImpl*> imported;
@@ -1639,7 +1690,8 @@ __attribute__((noinline)) static void rankWaitingModuleMocks(Zig::GlobalObject* 
                 return;
             }
             if (auto index = indexOf.find(key); index != indexOf.end()) {
-                found.append({ index->value, load });
+                if (!isAskedForDirectly[index->value])
+                    found.append({ index->value, load });
                 return;
             }
             auto* entry = loader->registryEntry(JSC::Identifier::fromUid(vm, key));
@@ -1648,7 +1700,7 @@ __attribute__((noinline)) static void rankWaitingModuleMocks(Zig::GlobalObject* 
             if (auto* record = unfinishedRecord(entry))
                 stack.append({ record, 0 });
             else if (isBeingFetchedWithoutFactory(globalObject, entry))
-                fetches.append(entry->ensureModulePromise(globalObject));
+                addFetch(String(key), entry->ensureModulePromise(globalObject));
             // A mock that is about to ask for its turn, from a microtask that is already queued. It may come before the ones that wait.
             else if (plugins.moduleMocksBeingLoaded.contains(String(key)) && plugins.modulesGivenTimeToRequestImports.add(String(key)).isNewEntry)
                 needsTime = true;
@@ -1669,6 +1721,7 @@ __attribute__((noinline)) static void rankWaitingModuleMocks(Zig::GlobalObject* 
         }
         if (!fetches.isEmpty() || needsTime) {
             isBeingFetched[load] = true;
+            isReadingFile = isReadingFile || needsTime;
             rankAgainAfter(globalObject, fetches);
         }
     }
@@ -1691,7 +1744,7 @@ __attribute__((noinline)) static void rankWaitingModuleMocks(Zig::GlobalObject* 
     }
     unsigned rank = 0;
     for (auto [index, load] : found) {
-        if (isBeingFetched[first(fetchedWith, load)])
+        if (isReadingFile || isBeingFetched[first(fetchedWith, load)])
             continue;
         plugins.waitingModuleMocks[index].rank = ++rank;
         plugins.waitingModuleMocks[index].load = String(loads[first(sharesTurnWith, load)]);
@@ -1699,7 +1752,7 @@ __attribute__((noinline)) static void rankWaitingModuleMocks(Zig::GlobalObject* 
 
     // Nothing unfinished imports these: import() asked for them.
     for (auto& [key, index] : indexOf) {
-        if (seen.contains(key))
+        if (seen.contains(key) && !isAskedForDirectly[index])
             continue;
         plugins.waitingModuleMocks[index].rank = 1;
         plugins.waitingModuleMocks[index].load = String(key);
@@ -3323,6 +3376,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
     plugins.moduleMocksWithTurn.clear();
     plugins.modulesGivenTimeToRequestImports.clear();
     plugins.modulesAskedFor.clear();
+    plugins.fetchesOfModulesAskedFor.clear();
     while (!plugins.runningModuleMocks.isEmpty()) {
         auto* mock = uncheckedDowncast<JSModuleMock>(plugins.runningModuleMocks.last().mock.get());
         evict.abandonedModules.append(mock->specifier->tryGetValue().data);
@@ -3720,8 +3774,6 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSModuleMock);
-
-extern "C" int32_t Bun__onLoadNamespaceLength(const BunString* key);
 
 JSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const String& key, Matches& matches)
 {

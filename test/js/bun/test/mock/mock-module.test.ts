@@ -1804,6 +1804,58 @@ test.concurrent("the factories that a factory's import calls run in the order of
   );
 });
 
+test.concurrent("a module runs once when a factory imports it while another import() is loading it", async () => {
+  // It's a race, so repeat it. Without the fix, more than a third of the 40 shared modules run twice.
+  const files: Record<string, string> = {
+    "count.ts": `
+      export const runs = {};
+      export const count = name => void (runs[name] = (runs[name] ?? 0) + 1);
+    `,
+  };
+  let mocks = "";
+  for (let i = 0; i < 40; i++) {
+    files[`shared${i}.ts`] = `import { count } from "./count"; count("shared${i}");`;
+    files[`inner${i}.ts`] = `import "./shared${i}";`;
+    files[`page${i}.ts`] = `import "./inner${i}";`;
+    files[`helper${i}.ts`] = `import "./shared${i}";`;
+    files[`mocked${i}.ts`] = ``;
+    files[`other${i}.ts`] = `import "./mocked${i}";`;
+    mocks += `vi.mock("./mocked${i}", async () => (await import("./helper${i}"), {}));\n`;
+  }
+  files["once.test.ts"] = `
+    import { expect, test, vi } from "vitest";
+    import { runs } from "./count";
+    ${mocks}
+    test("every shared module ran once", async () => {
+      for (let i = 0; i < 40; i++) await Promise.all([import(\`./page\${i}\`), import(\`./other\${i}\`)]);
+      expect(Object.entries(runs).filter(([, times]) => times !== 1)).toEqual([]);
+      expect(Object.keys(runs)).toHaveLength(40);
+    });
+  `;
+  await expectFixturesToPass(files, 1);
+});
+
+test.concurrent("import() of a mock doesn't wait for another load's running factory", async () => {
+  await expectFixturesToPass(
+    {
+      "waits.ts": ``,
+      "opens.ts": ``,
+      "page.ts": `import "./waits"; import "./opens";`,
+      "direct.test.ts": `
+        import { expect, test, vi } from "vitest";
+        const gate = vi.hoisted(() => Promise.withResolvers());
+        vi.mock("./waits", async () => (await gate.promise, { name: "waits" }));
+        vi.mock("./opens", async () => (gate.resolve(), { name: "opens" }));
+        test("both load", async () => {
+          const [, opens] = await Promise.all([import("./page"), import("./opens")]);
+          expect(opens.name).toBe("opens");
+        });
+      `,
+    },
+    1,
+  );
+});
+
 test.concurrent("two import() calls that share a module don't wait for each other's factories", async () => {
   await expectFixturesToPass(
     {
@@ -5629,21 +5681,19 @@ test.concurrent(
   },
 );
 
-describe.concurrent(
-  "a factory only waits for the fetches of the modules that import its mock, not for unrelated loads",
-  () => {
-    const files = {
-      "k.js": `export const x = "real";`,
-      "user.js": `import { x } from "./k.js"; export const seen = x;`,
-      "unrelated.js": `export { s } from "./slow.js";`,
-      "slow.js": `export const s = 1;`,
-    };
+describe.concurrent("a factory doesn't wait for an onLoad() callback in an unrelated load", () => {
+  const files = {
+    "k.js": `export const x = "real";`,
+    "user.js": `import { x } from "./k.js"; export const seen = x;`,
+    "unrelated.js": `export { s } from "./slow.js";`,
+    "slow.js": `export const s = 1;`,
+  };
 
-    test("it is called while another load is fetching", async () => {
-      await expectFixturesToPass(
-        {
-          ...files,
-          "another.test.js": `
+  test("it is called while another load is fetching", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "another.test.js": `
           import { expect, test, vi } from "bun:test";
           const started = Promise.withResolvers(), gate = Promise.withResolvers();
           Bun.plugin({
@@ -5661,16 +5711,16 @@ describe.concurrent(
             expect((await unrelated).s).toBe(2);
           });
         `,
-        },
-        1,
-      );
-    });
+      },
+      1,
+    );
+  });
 
-    test("a fetch that never settles in one file doesn't block the next file's mocks", async () => {
-      await expectFixturesToPass(
-        {
-          ...files,
-          "a.test.js": `
+  test("a fetch that never settles in one file doesn't block the next file's mocks", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "a.test.js": `
           import { test } from "bun:test";
           test("leaves a fetch that never settles", async () => {
             const started = Promise.withResolvers();
@@ -5684,41 +5734,41 @@ describe.concurrent(
             await started.promise;
           });
         `,
-          "b.test.js": `
+        "b.test.js": `
           import { expect, test, vi } from "bun:test";
           test("its mock is loaded all the same", async () => {
             vi.doMock("./k.js", () => ({ x: "mock" }));
             expect((await import("./user.js")).seen).toBe("mock");
           });
         `,
-        },
-        2,
-      );
-    });
+      },
+      2,
+    );
+  });
 
-    test("a module that the factory shares with the importers of the mock stays linked to the mock", async () => {
-      await expectFixturesToPass(
-        {
-          ...files,
-          "root.js": `import { x } from "./k.js"; import { seen } from "./user.js"; export const both = [x, seen];`,
-          "shared.test.js": `
+  test("a module that the factory shares with the importers of the mock stays linked to the mock", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "root.js": `import { x } from "./k.js"; import { seen } from "./user.js"; export const both = [x, seen];`,
+        "shared.test.js": `
           import { expect, test, vi } from "bun:test";
           test("the factory has a copy", async () => {
             vi.doMock("./k.js", async () => ({ x: "mock, made with " + (await import("./user.js")).seen }));
             expect((await import("./root.js")).both).toEqual(["mock, made with real", "mock, made with real"]);
           });
         `,
-        },
-        1,
-      );
-    });
+      },
+      1,
+    );
+  });
 
-    test("a factory that imports a module another load is fetching gets its own copy", async () => {
-      await expectFixturesToPass(
-        {
-          ...files,
-          "other.js": `export { seen } from "./user.js";`,
-          "race.test.js": `
+  test("a factory that imports a module another load is fetching gets its own copy", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "other.js": `export { seen } from "./user.js";`,
+        "race.test.js": `
           import { expect, test, vi } from "bun:test";
           const started = Promise.withResolvers(), gate = Promise.withResolvers();
           let fetches = 0;
@@ -5740,23 +5790,23 @@ describe.concurrent(
             expect([(await other).seen, fetches]).toEqual(["mock, made with real", 2]);
           });
         `,
-        },
-        1,
-      );
-    });
+      },
+      1,
+    );
+  });
 
-    test("but shares a package, which can't import the mocked module and would register itself twice", async () => {
-      await expectFixturesToPass(
-        {
-          ...files,
-          "node_modules/registers/package.json": JSON.stringify({
-            name: "registers",
-            type: "module",
-            main: "./index.js",
-          }),
-          "node_modules/registers/index.js": `export const evaluations = (globalThis.evaluations = (globalThis.evaluations ?? 0) + 1);`,
-          "other.js": `export { evaluations } from "registers";`,
-          "package.test.js": `
+  test("but shares a package, which can't import the mocked module and would register itself twice", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "node_modules/registers/package.json": JSON.stringify({
+          name: "registers",
+          type: "module",
+          main: "./index.js",
+        }),
+        "node_modules/registers/index.js": `export const evaluations = (globalThis.evaluations = (globalThis.evaluations ?? 0) + 1);`,
+        "other.js": `export { evaluations } from "registers";`,
+        "package.test.js": `
           import { expect, test, vi } from "bun:test";
           const started = Promise.withResolvers(), gate = Promise.withResolvers();
           Bun.plugin({
@@ -5776,12 +5826,11 @@ describe.concurrent(
             expect([(await import("./k.js")).x, (await other).evaluations, globalThis.evaluations]).toEqual([1, 1, 1]);
           });
         `,
-        },
-        1,
-      );
-    });
-  },
-);
+      },
+      1,
+    );
+  });
+});
 
 describe.concurrent("a factory that loads a module which imports another mock", () => {
   // hook.js is mocked in part. wrapper.js is mocked by a factory that loads the real component, which imports hook.js and store.js.

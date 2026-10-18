@@ -129,6 +129,8 @@ public:
         WTF::UncheckedKeyHashSet<String> modulesGivenTimeToRequestImports = {};
         // The first module of each load that import() or a factory started, oldest first.
         WTF::ListHashSet<String> modulesAskedFor = {};
+        // Fetch promises for those modules, kept until JSC registers them.
+        WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>> fetchesOfModulesAskedFor = {};
         // Preload mocks that the running test file replaced or removed. Restored when the file ends.
         Vector<JSC::Strong<JSC::JSObject>> displacedPreloadModuleMocks = {};
         // Modules a preload loaded that the running test file evicted. Restored when the file ends.
@@ -175,6 +177,7 @@ public:
             moduleMocksWithTurn.clear();
             modulesGivenTimeToRequestImports.clear();
             modulesAskedFor.clear();
+            fetchesOfModulesAskedFor.clear();
             moduleMocksBeingLoaded.clear();
             loadedByImportActual.clear();
         }

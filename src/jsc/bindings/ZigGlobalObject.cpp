@@ -3989,6 +3989,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         return didThrow();
     ASSERT(result);
     if (auto* promise = dynamicDowncast<JSC::JSPromise>(result)) {
+        // JSC doesn't add a registry entry for the module passed to import() until this settles.
+        if (!entry && plugins.modulesAskedFor.contains(moduleKey) && !plugins.moduleMocksBeingLoaded.contains(moduleKey))
+            plugins.fetchesOfModulesAskedFor.set(moduleKey, JSC::Strong<JSC::JSObject> { vm, promise });
         return unlessFetchedMeanwhile(promise);
     }
     return unlessFetchedMeanwhile(rejectedInternalPromise(globalObject, result));

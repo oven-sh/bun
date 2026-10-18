@@ -313,4 +313,51 @@ describe.concurrent("env is copied when the build is scheduled", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // The runtime is told to load other.env only, so the build is the first to
+  // load .env. That load goes into the build's copy of the env. A Worker and a
+  // child process started after the build get the env of the process, which
+  // does not have the variable.
+  test("a build does not load .env into the env of the process that called it", async () => {
+    using dir = tempDir("bun-build-env-host", {
+      "package.json": "{}",
+      ".env": "FROM_DOTENV=from-dotenv\n",
+      "other.env": "FROM_OTHER=from-other\n",
+      "entry.js": "console.log(process.env.FROM_DOTENV);",
+      "worker.mjs": "postMessage(process.env.FROM_DOTENV ?? null);",
+      "build-fixture.mjs": /* js */ `
+        const result = await Bun.build({ entrypoints: ["./entry.js"], env: "inline" });
+        const bundle = await result.outputs[0].text();
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const worker = new Worker(new URL("./worker.mjs", import.meta.url).href);
+        worker.onmessage = event => resolve(event.data);
+        worker.onerror = reject;
+        const fromWorker = await promise;
+        await worker.terminate();
+        const child = Bun.spawnSync({
+          cmd: [process.execPath, "--no-env-file", "-e", "console.log(process.env.FROM_DOTENV ?? null)"],
+        });
+        console.log(
+          JSON.stringify({
+            inlined: bundle.includes('console.log("from-dotenv")'),
+            worker: fromWorker,
+            child: child.stdout.toString().trim(),
+          }),
+        );
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--env-file=other.env", "build-fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ inlined: true, worker: null, child: "null" });
+    expect(exitCode).toBe(0);
+  });
 });

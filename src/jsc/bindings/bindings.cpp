@@ -2196,9 +2196,11 @@ bool Bun__deepMatch(
     // fast path for reference equality.
     if (objValue == subsetValue) return true;
 
-    // A subset object already on the path is a cycle in the pattern. Compare by full equality from here, as Jest does.
+    // A subset object already on the path is a cycle in the pattern. The pair being compared is assumed to
+    // match. A different object at the same point is compared by full equality, as Jest does.
     for (const auto& ancestor : stack) {
         if (ancestor.second == subsetValue) {
+            if (ancestor.first == objValue) return true;
             Vector<std::pair<JSValue, JSValue>, 16> equalsStack;
             MarkedArgumentBuffer equalsBuffer;
             RELEASE_AND_RETURN(throwScope, (Bun__deepEquals<false, enableAsymmetricMatchers, false>(globalObject, objValue, subsetValue, equalsBuffer, equalsStack, throwScope, true)));

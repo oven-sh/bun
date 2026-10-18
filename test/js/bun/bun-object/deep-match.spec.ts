@@ -228,9 +228,21 @@ describe("Bun.deepMatch", () => {
         return nodes[0];
       }
       expect(Bun.deepMatch(ring(4), ring(4))).toBe(true);
+      // the subset ring closes on a node that was paired with a different object
       expect(Bun.deepMatch(ring(2), ring(4))).toBe(false);
-      expect(Bun.deepMatch(ring(4), ring(2))).toBe(false);
       expect(Bun.deepMatch(ring(1000), ring(999))).toBe(false);
+      // the object ring unrolls into the subset ring
+      expect(Bun.deepMatch(ring(4), ring(2))).toBe(true);
+    });
+
+    it("a cycle through the pair being compared is a match", () => {
+      // base.constructor.prototype is base again, and the same for sub
+      const base = { kind: "base" } as any;
+      base.constructor = { prototype: base };
+      const sub = Object.create(base);
+      sub.constructor = { prototype: sub };
+      expect(Bun.deepMatch(base, sub)).toBe(true);
+      expect(Bun.deepMatch(base, { kind: "other", constructor: sub.constructor })).toBe(false);
     });
 
     it("a cyclic subset matches a copy whose cycle starts one level down", () => {

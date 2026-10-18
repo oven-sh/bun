@@ -2099,24 +2099,6 @@ c {
     },
   });
 
-  itBundled("css/CSSAtImportConditionsChainExternal", {
-    files: {
-      "/entry.css": /* css */ `
-        @import "a.css" layer(a) not print;
-      `,
-      "/a.css": /* css */ `
-        @import "http://example.com/external1.css";
-        @import "b.css" layer(b) not tv;
-        @import "http://example.com/external2.css" layer(a2);
-      `,
-      "/b.css": /* css */ `
-        @import "http://example.com/external3.css";
-        @import "http://example.com/external4.css" layer(b2);
-      `,
-    },
-    outfile: "/out.css",
-  });
-
   // "@layer" statements may precede "@import" so that a file can pin the
   // order of the layers its imports create. They have to come out before the
   // imported files, not after them with the rest of the importer's body.
@@ -2242,6 +2224,24 @@ c {
         );
       await Bun.build({ entrypoints: [api.outfile], outdir: api.join("again") });
     },
+  });
+
+  itBundled("css/CSSAtImportConditionsChainExternal", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "a.css" layer(a) not print;
+      `,
+      "/a.css": /* css */ `
+        @import "http://example.com/external1.css";
+        @import "b.css" layer(b) not tv;
+        @import "http://example.com/external2.css" layer(a2);
+      `,
+      "/b.css": /* css */ `
+        @import "http://example.com/external3.css";
+        @import "http://example.com/external4.css" layer(b2);
+      `,
+    },
+    outfile: "/out.css",
   });
 
   // This test mainly just makes sure that this scenario doesn't crash

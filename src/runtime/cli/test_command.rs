@@ -3339,7 +3339,7 @@ impl TestCommand {
                     ));
                     let top_level_dir = FileSystem::instance().top_level_dir;
                     let title = resolve_path::relative(top_level_dir, file_path);
-                    let _ = write!(failures, " {}\n", bstr::BStr::new(title));
+                    let _ = writeln!(failures, " {}", bstr::BStr::new(title));
                 }
 
                 if reporter.jest.bail == reporter.summary().fail {

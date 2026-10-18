@@ -540,14 +540,14 @@ pub(crate) fn encode(
     height: u32,
     mut opts: EncodeOptions,
 ) -> Result<Encoded, Error> {
-    // Every container below stores RGB samples, which only an RGB profile describes.
     // SAFETY: `EncodeOptions.icc_profile` is borrowed from the caller for the
     // duration of this call (raw-ptr stand-in for a lifetime param).
-    opts.icc_profile = opts
+    let icc: Option<&[u8]> = opts
         .icc_profile
-        .filter(|p| icc_is_rgb(unsafe { p.as_ref() }));
-    // SAFETY: same borrow as above.
-    let icc: Option<&[u8]> = opts.icc_profile.map(|p| unsafe { p.as_ref() });
+        .map(|p| unsafe { p.as_ref() })
+        .filter(|p| icc_is_rgb(p));
+    // Every container below stores RGB samples, and `opts` itself goes to the system backend.
+    opts.icc_profile = icc.map(NonNull::from);
     match opts.format {
         Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
         // PNG carries iCCP on both truecolour and indexed images — quantise

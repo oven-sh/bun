@@ -1181,6 +1181,9 @@ interface Console {
   /**
    * Asynchronously read lines from standard input (fd 0)
    *
+   * Bun decodes standard input as UTF-8. Bun removes a byte order mark (U+FEFF) at the start of
+   * standard input. A U+FEFF at any other position stays in its line.
+   *
    * ```ts
    * for await (const line of console) {
    *   console.log(line);

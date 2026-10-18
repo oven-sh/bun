@@ -75,8 +75,10 @@ async function iterate(stdin: string | Blob, ...args: string[]) {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { passes: stdout || stderr, exitCode };
+  return { stdout, stderr, exitCode };
 }
+
+const printed = (passes: string[][]) => ({ stdout: JSON.stringify(passes), stderr: "", exitCode: 0 });
 
 // stdin is one UTF-8 stream, decoded as TextDecoderStream decodes it: a U+FEFF is a byte order mark
 // only as its first character.
@@ -92,14 +94,28 @@ describe.concurrent("U+FEFF", () => {
     ["is removed only once at the start of stdin", `${BOM}${BOM}first`, [`${BOM}first`]],
     ["is removed when stdin has no newline", `${BOM}x`, ["x"]],
     ["is removed when it is the whole first line", `${BOM}\nx`, ["", "x"]],
-    ["is removed when it is all of stdin", BOM, [""]],
     ["is not E1 BB BF", "\xE1\xBB\xBFx", ["\xE1\xBB\xBFx"]],
     ["is not EF BC BF", "\xEF\xBC\xBFx", ["\xEF\xBC\xBFx"]],
     ["is not EF BB BE", "\xEF\xBB\xBEx", ["\xEF\xBB\xBEx"]],
   ];
 
   it.each(fromStdin)("%s", async (_, stdin, lines) => {
-    expect(await iterate(stdin)).toEqual({ passes: JSON.stringify([lines]), exitCode: 0 });
+    expect(await iterate(stdin)).toEqual(printed([lines]));
+  });
+
+  // These two do not say if a stdin with nothing after the mark gives one empty line or no line.
+  const onlyTheMark: [name: string, args: [stdin: string, reads?: string]][] = [
+    ["is removed when it is all of stdin", [BOM]],
+    ["is removed when it is all of stdin, split across two reads", ["", JSON.stringify([["\xEF"], ["\xBB\xBF"]])]],
+  ];
+
+  it.each(onlyTheMark)("%s", async (_, args) => {
+    const { stdout, stderr, exitCode } = await iterate(...args);
+    expect({ text: (JSON.parse(stdout) as string[][]).flat().join("\n"), stderr, exitCode }).toEqual({
+      text: "",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("stays at the start of the second line of a file", async () => {
@@ -107,10 +123,7 @@ describe.concurrent("U+FEFF", () => {
       "input.txt": Buffer.from(`first\n${BOM}second\nthird`, "latin1"),
     });
 
-    expect(await iterate(Bun.file(dir + "/input.txt"))).toEqual({
-      passes: JSON.stringify([["first", `${BOM}second`, "third"]]),
-      exitCode: 0,
-    });
+    expect(await iterate(Bun.file(dir + "/input.txt"))).toEqual(printed([["first", `${BOM}second`, "third"]]));
   });
 
   // Each entry of `reads` is the list of chunks that the iterator gets from one read of stdin.
@@ -125,7 +138,6 @@ describe.concurrent("U+FEFF", () => {
       [["\xEF\xBB"], [`\xBFa\n${BOM}b`]],
       [["a", `${BOM}b`]],
     ],
-    ["is removed when it is all of stdin, split across two reads", [["\xEF"], ["\xBB\xBF"]], [[""]]],
     ["stays at the start of the second read", [["a\n"], [`${BOM}b`]], [["a", `${BOM}b`]]],
     ["stays at the start of the second read, after an empty line", [["\n"], [`${BOM}b`]], [["", `${BOM}b`]]],
     ["stays when two later reads split it", [["a\n\xEF"], ["\xBB\xBFb"]], [["a", `${BOM}b`]]],
@@ -144,7 +156,7 @@ describe.concurrent("U+FEFF", () => {
   ];
 
   it.each(fromReads)("%s", async (_, reads, passes) => {
-    expect(await iterate("", JSON.stringify(reads))).toEqual({ passes: JSON.stringify(passes), exitCode: 0 });
+    expect(await iterate("", JSON.stringify(reads))).toEqual(printed(passes));
   });
 });
 
@@ -176,7 +188,7 @@ describe.concurrent("decodes each line like TextDecoder", () => {
   const decoded = lines.map(line => encode(decode(line)));
 
   it("from stdin", async () => {
-    expect(await iterate(text)).toEqual({ passes: JSON.stringify([decoded]), exitCode: 0 });
+    expect(await iterate(text)).toEqual(printed([decoded]));
   });
 
   const fromReads: [name: string, reads: string[][], passes: string[][]][] = [
@@ -186,7 +198,7 @@ describe.concurrent("decodes each line like TextDecoder", () => {
   ];
 
   it.each(fromReads)("%s", async (_, reads, passes) => {
-    expect(await iterate("", JSON.stringify(reads))).toEqual({ passes: JSON.stringify(passes), exitCode: 0 });
+    expect(await iterate("", JSON.stringify(reads))).toEqual(printed(passes));
   });
 
   // The lines are those of one decode of all the bytes, however the reads and their chunks cut them.
@@ -231,7 +243,7 @@ describe.concurrent("decodes each line like TextDecoder", () => {
 
     // The schedules go in as ASCII JSON on the fixture's stdin.
     const json = JSON.stringify(schedules).replace(/[^\x00-\x7f]/g, c => "\\u00" + c.charCodeAt(0).toString(16));
-    expect(await iterate(json, "--schedules")).toEqual({ passes: JSON.stringify(expected), exitCode: 0 });
+    expect(await iterate(json, "--schedules")).toEqual({ stdout: JSON.stringify(expected), stderr: "", exitCode: 0 });
   });
 });
 

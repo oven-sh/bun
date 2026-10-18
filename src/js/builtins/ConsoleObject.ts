@@ -3,7 +3,7 @@ export function asyncIterator(this: Console) {
   var stream = Bun.stdin.stream();
 
   var decoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
-  // stdin is one UTF-8 stream: only its first three bytes can be a byte order mark.
+  // stdin is one UTF-8 stream: only the first three bytes that this iterator reads can be a byte order mark.
   var bomUndecided = true;
   function skipByteOrderMark() {
     // Fewer than three bytes and no line yet: the next chunk can complete a mark.

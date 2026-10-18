@@ -39,6 +39,8 @@ for await (const line of console) {
 }
 ```
 
+Bun decodes stdin as UTF-8. Bun removes a byte order mark (U+FEFF) at the start of stdin. A U+FEFF at any other position stays in its line.
+
 Use this for interactive programs, like the following addition calculator.
 
 ```ts adder.ts icon="/icons/typescript.svg"

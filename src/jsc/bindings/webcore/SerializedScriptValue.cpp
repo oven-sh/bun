@@ -416,14 +416,13 @@ const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
  * Version 13. added support for ErrorInstance objects.
  * Version 14. Date, RegExp, Error, DOMException, CryptoKey, KeyObject, X509Certificate,
  * and Bun cloneable types are recorded in the object reference pool on both sides.
- * Version 15. an ErrorInstance says whether it has a line, a column or a sourceURL.
  */
-[[maybe_unused]] static constexpr unsigned CurrentVersion = 15;
+[[maybe_unused]] static constexpr unsigned CurrentVersion = 14;
 // Deserializers must not pool the version 14 terminal types for older payloads,
 // whose writers never counted them, or the pool indices stop matching the writer's.
 [[maybe_unused]] static constexpr unsigned FirstVersionWithPooledTerminals = 14;
-[[maybe_unused]] static constexpr unsigned FirstVersionWithErrorPosition = 15;
 [[maybe_unused]] static constexpr unsigned TerminatorTag = 0xFFFFFFFF;
+[[maybe_unused]] static constexpr int32_t ErrorWithoutPosition = -1;
 [[maybe_unused]] static constexpr unsigned StringPoolTag = 0xFFFFFFFE;
 [[maybe_unused]] static constexpr unsigned NonIndexPropertiesTag = 0xFFFFFFFD;
 
@@ -1262,10 +1261,13 @@ private:
                 write(ErrorInstanceTag);
                 write(errorNameToSerializableErrorType(errorTypeString));
                 writeNullableString(message);
-                write(hasPosition);
                 write(line);
                 write(column);
-                writeNullableString(sourceURL);
+                // In place of the 1 of a null sourceURL, which is what released readers take it for.
+                if (hasPosition)
+                    writeNullableString(sourceURL);
+                else
+                    write(ErrorWithoutPosition);
                 writeNullableString(stack);
                 return true;
             }
@@ -3722,11 +3724,6 @@ private:
                 fail();
                 return JSValue();
             }
-            bool hasPosition = true;
-            if (m_version >= FirstVersionWithErrorPosition && !read(hasPosition)) {
-                fail();
-                return JSValue();
-            }
             uint32_t line;
             if (!read(line)) {
                 fail();
@@ -3737,8 +3734,13 @@ private:
                 fail();
                 return JSValue();
             }
+            const uint8_t* afterFlag = m_ptr;
+            int32_t flag;
+            bool hasPosition = !readLittleEndian(afterFlag, m_end, flag) || flag != ErrorWithoutPosition;
+            if (!hasPosition)
+                m_ptr = afterFlag;
             String sourceURL;
-            if (!readNullableString(sourceURL)) {
+            if (hasPosition && !readNullableString(sourceURL)) {
                 fail();
                 return JSValue();
             }

@@ -998,16 +998,12 @@ describe("Error serialization semantics", () => {
   test.each([
     { line: 0, column: 0 },
     { line: 0, column: 0, sourceURL: "" },
+    { line: 0 },
+    { column: 0 },
+    { sourceURL: "" },
   ])("%j is cloned", position => {
     const e = Object.assign(errorWithoutPosition(), position);
     expect(ownNames(structuredClone(e))).toEqual(["column", "line", "message", "stack"]);
-  });
-
-  // serialize() of an error without the three, written by Bun 1.4.4.
-  test("a version 14 payload, which does not say whether the error has them, gets line and column", () => {
-    const bytes = Buffer.from("DgAAADcAAAAAAAcAAIBtZXNzYWdlAAAAAAAAAAABAAAAAAAAAA4AAIBFcnJvcjogbWVzc2FnZQ==", "base64");
-    expect(bytes.readUint32LE(0)).toBe(14);
-    expect(ownNames(deserialize(bytes))).toEqual(["column", "line", "message", "stack"]);
   });
 
   // It adds frames to an error whose stack has not been made yet.

@@ -1600,6 +1600,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// repeat the attempts nested inside the body.
     pub(crate) fn is_type_script_arrow_return_type_after_question_and_before_colon(
         &mut self,
+        arrow_loc: bun_ast::Loc,
         arrow_data: &FnOrArrowDataParse,
     ) -> Result<bool, Error> {
         self.mark_type_script_only();
@@ -1619,7 +1620,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let result: Result<(), Error> = (|| {
             self.lexer.expect(T::TColon)?;
             self.skip_typescript_return_type()?;
-            self.parse_arrow_body(&mut [], &mut data)?;
+            self.parse_arrow_body(arrow_loc, &mut [], &mut data)?;
             // The ":" that pairs with the "?"
             self.lexer.expect(T::TColon)?;
             Ok(())

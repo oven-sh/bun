@@ -89,6 +89,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let func = p.parse_fn(
             None,
+            key.loc,
             FnOrArrowDataParse {
                 needs_async_loc: key.loc,
                 allow_await: if opts.is_async {

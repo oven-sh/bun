@@ -125,6 +125,9 @@ pub struct ScanResult<'a> {
     pub(crate) contents: &'a [u8],
 }
 
+/// `Lexer::react_hooks_suppressed_until` after a bare `eslint-disable`: the end of the file. No source is this long.
+const REACT_HOOKS_SUPPRESSED_TO_END: Loc = Loc { start: i32::MAX };
+
 /// POD snapshot of all backtrack-relevant lexer state.
 ///
 /// Backtracking can't snapshot the lexer with a full struct copy because
@@ -149,8 +152,7 @@ pub struct LexerSnapshot<'a> {
     pub(crate) token: T,
     pub(crate) has_newline_before: bool,
     pub(crate) has_pure_comment_before: bool,
-    pub(crate) has_react_hooks_suppression_before: bool,
-    pub(crate) has_react_hooks_block_suppression: bool,
+    pub(crate) react_hooks_suppressed_until: Loc,
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
@@ -211,15 +213,8 @@ pub struct Lexer<'a> {
     pub token: T,
     pub(crate) has_newline_before: bool,
     pub(crate) has_pure_comment_before: bool,
-    /// Set (and never cleared by `next()`) once an `eslint-disable[-next-line]`
-    /// comment naming `react-hooks/rules-of-hooks` or `react-hooks/exhaustive-deps`
-    /// has been scanned. The parser reads this at function-body close to set
-    /// `flags::Function::HasReactHooksSuppression` / `E::Arrow::has_react_hooks_suppression`.
-    pub(crate) has_react_hooks_suppression_before: bool,
-    /// Sticky variant of the above: set when the suppression comment is a bare
-    /// `eslint-disable` (no `-next-line` suffix). Never cleared by the
-    /// parser, so it applies to every subsequent function in the file.
-    pub(crate) has_react_hooks_block_suppression: bool,
+    /// End of the line that the last `eslint-disable-next-line` comment for a react-hooks rule is for, or `Loc::EMPTY`.
+    pub(crate) react_hooks_suppressed_until: Loc,
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
@@ -336,8 +331,7 @@ impl<'a> Lexer<'a> {
             token: self.token,
             has_newline_before: self.has_newline_before,
             has_pure_comment_before: self.has_pure_comment_before,
-            has_react_hooks_suppression_before: self.has_react_hooks_suppression_before,
-            has_react_hooks_block_suppression: self.has_react_hooks_block_suppression,
+            react_hooks_suppressed_until: self.react_hooks_suppressed_until,
             preserve_all_comments_before: self.preserve_all_comments_before,
             is_legacy_octal_literal: self.is_legacy_octal_literal,
             is_log_disabled: self.is_log_disabled,
@@ -374,8 +368,7 @@ impl<'a> Lexer<'a> {
         self.token = original.token;
         self.has_newline_before = original.has_newline_before;
         self.has_pure_comment_before = original.has_pure_comment_before;
-        self.has_react_hooks_suppression_before = original.has_react_hooks_suppression_before;
-        self.has_react_hooks_block_suppression = original.has_react_hooks_block_suppression;
+        self.react_hooks_suppressed_until = original.react_hooks_suppressed_until;
         self.preserve_all_comments_before = original.preserve_all_comments_before;
         self.is_legacy_octal_literal = original.is_legacy_octal_literal;
         self.is_log_disabled = original.is_log_disabled;
@@ -1905,6 +1898,40 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// `body` is the text of the comment that ends at `self.end`, without a closing `*/`.
+    fn scan_react_hooks_suppression(&mut self, body: &[u8]) {
+        if self.react_hooks_suppressed_until == REACT_HOOKS_SUPPRESSED_TO_END {
+            return;
+        }
+        let Some(i) = strings::index_of(body, b"eslint-disable") else {
+            return;
+        };
+        let after = &body[i + b"eslint-disable".len()..];
+        // Only `eslint-disable[-next-line] <rule>` with a word boundary; not `-line`.
+        let at_word_boundary = |s: &[u8]| s.first().is_none_or(|b| b.is_ascii_whitespace());
+        let (is_block, rest) = if strings::has_prefix_comptime(after, b"-next-line") {
+            (false, &after[b"-next-line".len()..])
+        } else {
+            (true, after)
+        };
+        if !at_word_boundary(rest)
+            || !(strings::contains(rest, b"react-hooks/rules-of-hooks")
+                || strings::contains(rest, b"react-hooks/exhaustive-deps"))
+        {
+            return;
+        }
+        self.react_hooks_suppressed_until = if is_block {
+            REACT_HOOKS_SUPPRESSED_TO_END
+        } else {
+            let contents = self.contents;
+            let line_end = |from: usize| {
+                strings::index_of_char_usize(&contents[from..], b'\n').map(|i| from + i)
+            };
+            let next_line_end = line_end(self.end).and_then(|end| line_end(end + 1));
+            bun_ast::usize2loc(next_line_end.unwrap_or(contents.len()))
+        };
+    }
+
     fn scan_comment_text(&mut self, for_pragma: bool) {
         let text = &self.contents[self.start..self.end];
         let has_legal_annotation = text.len() > 2 && text[2] == b'!';
@@ -1923,33 +1950,8 @@ impl<'a> Lexer<'a> {
             text.len()
         };
 
-        if self.track_react_suppressions
-            && !(self.has_react_hooks_suppression_before && self.has_react_hooks_block_suppression)
-        {
-            let body = &text[..end_comment_text];
-            if let Some(i) = strings::index_of(body, b"eslint-disable") {
-                let after = &body[i + b"eslint-disable".len()..];
-                // Only `eslint-disable[-next-line] <rule>` with a word boundary; not `-line`.
-                let at_word_boundary = |s: &[u8]| s.first().is_none_or(|b| b.is_ascii_whitespace());
-                let matched = if strings::has_prefix_comptime(after, b"-next-line") {
-                    let rest = &after[b"-next-line".len()..];
-                    at_word_boundary(rest).then_some((false, rest))
-                } else if at_word_boundary(after) {
-                    Some((true, after))
-                } else {
-                    None
-                };
-                if let Some((is_block, rest)) = matched {
-                    if strings::contains(rest, b"react-hooks/rules-of-hooks")
-                        || strings::contains(rest, b"react-hooks/exhaustive-deps")
-                    {
-                        self.has_react_hooks_suppression_before = true;
-                        if is_block {
-                            self.has_react_hooks_block_suppression = true;
-                        }
-                    }
-                }
-            }
+        if self.track_react_suppressions {
+            self.scan_react_hooks_suppression(&text[..end_comment_text]);
         }
 
         if has_legal_annotation || self.preserve_all_comments_before {
@@ -2263,8 +2265,7 @@ impl<'a> Lexer<'a> {
             token: T::TEndOfFile,
             has_newline_before: false,
             has_pure_comment_before: false,
-            has_react_hooks_suppression_before: false,
-            has_react_hooks_block_suppression: false,
+            react_hooks_suppressed_until: Loc::EMPTY,
             preserve_all_comments_before: false,
             is_legacy_octal_literal: false,
             is_log_disabled: false,
@@ -2485,6 +2486,10 @@ impl<'a> Lexer<'a> {
                                     _ => {}
                                 }
                             }
+                            if self.track_react_suppressions {
+                                let contents = self.contents;
+                                self.scan_react_hooks_suppression(&contents[self.start..self.end]);
+                            }
                             continue;
                         }
                         0x2A => {
@@ -2515,6 +2520,12 @@ impl<'a> Lexer<'a> {
                                         self.step();
                                     }
                                 }
+                            }
+                            if self.track_react_suppressions {
+                                let contents = self.contents;
+                                self.scan_react_hooks_suppression(
+                                    &contents[self.start..self.end - 2],
+                                );
                             }
                             continue;
                         }

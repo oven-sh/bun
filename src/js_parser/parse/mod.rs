@@ -431,7 +431,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut spread_range = bun_ast::Range::default();
         let mut type_colon_range = bun_ast::Range::default();
         let mut comma_after_spread = bun_ast::Loc::EMPTY;
-        let suppressions_taken = p.react_hooks_suppressions_taken;
 
         // Push a scope assuming this is an arrow function. It may not be, in which
         // case we'll need to roll this change back. This has to be done ahead of
@@ -577,6 +576,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Only do this very expensive check if we must
                     is_arrow_fn = p
                         .is_type_script_arrow_return_type_after_question_and_before_colon(
+                            loc,
                             &arrow_data,
                         )?;
                     if is_arrow_fn {
@@ -602,8 +602,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
-                p.return_react_hooks_suppression(suppressions_taken);
-                let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
+                let mut arrow = p.parse_arrow_body(loc, args_slice, &mut arrow_data)?;
                 arrow.is_async = opts.is_async;
                 arrow.has_rest_arg = spread_range.len > 0;
                 p.pop_scope();
@@ -1660,7 +1659,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             needs_async_loc: async_range.loc,
                             ..Default::default()
                         };
-                        let arrow_body = p.parse_arrow_body(args, &mut data)?;
+                        let arrow_body = p.parse_arrow_body(async_range.loc, args, &mut data)?;
                         p.pop_scope();
                         return Ok(p.new_expr(arrow_body, async_range.loc));
                     }
@@ -1698,13 +1697,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 ..Default::default()
                             };
                             // Pop the scope on the error path too.
-                            let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
-                                Ok(body) => body,
-                                Err(e) => {
-                                    p.pop_scope();
-                                    return Err(e);
-                                }
-                            };
+                            let mut arrow_body =
+                                match p.parse_arrow_body(async_range.loc, args, &mut data) {
+                                    Ok(body) => body,
+                                    Err(e) => {
+                                        p.pop_scope();
+                                        return Err(e);
+                                    }
+                                };
                             arrow_body.is_async = true;
                             p.pop_scope();
                             return Ok(p.new_expr(arrow_body, async_range.loc));

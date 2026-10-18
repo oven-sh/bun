@@ -3769,9 +3769,6 @@ describe("bundler", () => {
   // function it is above or inside. A function in the parameter list closes
   // first. It consumed the suppression, so the component had none. Each
   // component is followed by the same component without the comment.
-  //
-  // A comment right below a function declaration marks that declaration, so
-  // each comment above a component follows a statement that ends in `;`.
   itBundled("react-compiler/SuppressionAheadOfAFunctionInAParameterList", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -3917,6 +3914,452 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // A react-hooks eslint suppression counts for each function that the
+  // comment is inside of, and for a function that starts on the line that the
+  // comment is for. A bare `eslint-disable` counts for every function that
+  // closes after it.
+  //
+  // The parser gave the suppression to the first function that closed into
+  // top-level code, whatever the place of the comment. The parser knows
+  // top-level code only for esm output: with cjs and iife the suppression
+  // stayed, and no function after the comment was compiled.
+  for (const format of ["esm", "cjs", "iife"] as const) {
+    itBundled(`react-compiler/SuppressionFollowsThePlaceOfTheComment-${format}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { memo, useState } from "react";
+          import { render } from "react/compiler-runtime";
+          import {
+            AboveTheBlockForm,
+            BlockFormInTheParameterList,
+            AfterTheBlockForm,
+            AfterALaterComment,
+            ArrowAfterALaterComment,
+          } from "./block-form";
+          import {
+            GenericArrow,
+            AfterGenericArrow,
+            ArrowWithAReturnType,
+            AfterArrowWithAReturnType,
+            GenericExpressionBody,
+            AfterGenericExpressionBody,
+            ReturnTypeExpressionBody,
+            AfterReturnTypeExpressionBody,
+          } from "./typescript";
+
+          // The comment is in the parameter list, ahead of a function in the list.
+          function Declaration({
+            label,
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            onClick = () => {},
+          }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+          function AfterDeclaration({ label, onClick = () => {} }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+          const Arrow = ({
+            label,
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            onClick = () => {},
+          }) => {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          };
+          const AfterArrow = ({ label, onClick = () => {} }) => {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          };
+          const ExpressionBody = ({
+            label,
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            onClick = () => {},
+          }) => <button style={{ color: label }} onClick={onClick}>{label}</button>;
+          const AfterExpressionBody = ({ label, onClick = () => {} }) => (
+            <button style={{ color: label }} onClick={onClick}>{label}</button>
+          );
+          const AsyncArrow = async ({
+            label,
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            onClick = () => {},
+          }) => {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          };
+          const AfterAsyncArrow = async ({ label, onClick = () => {} }) => {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          };
+          const MemoArrow = memo(({
+            label,
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            onClick = () => {},
+          }) => {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          });
+          const AfterMemoArrow = memo(({ label, onClick = () => {} }) => {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          });
+          const MemoFunction = memo(function ({
+            label,
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            onClick = () => {},
+          }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          });
+          const AfterMemoFunction = memo(function ({ label, onClick = () => {} }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          });
+          function useHook(
+            props,
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+            onClick = () => {},
+          ) {
+            const [label] = useState(props.label);
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+          function useAfterHook(props, onClick = () => {}) {
+            const [label] = useState(props.label);
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+
+          // The comment is in another place inside the function.
+          function InTheBodyOfTheDefault({
+            label,
+            onClick = () => {
+              // eslint-disable-next-line react-hooks/rules-of-hooks
+            },
+          }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+          function AfterInTheBodyOfTheDefault({ label, onClick = () => {} }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+          function RightAfterTheDefault({
+            label,
+            onClick = () => {} /* eslint-disable-next-line react-hooks/rules-of-hooks */,
+          }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+          function AfterRightAfterTheDefault({ label, onClick = () => {} }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+          const AheadOfTheExpressionBody = ({ label }) =>
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            <button style={{ color: label }}>{label}</button>;
+          const AfterAheadOfTheExpressionBody = ({ label }) => <button style={{ color: label }}>{label}</button>;
+          const MemoExpressionBody = memo(props =>
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            <button style={{ color: props.label }}>{props.label}</button>);
+          const AfterMemoExpressionBody = memo(props => <button style={{ color: props.label }}>{props.label}</button>);
+          const OneParameter = props => {
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            const style = { color: props.label };
+            return <button style={style}>{props.label}</button>;
+          };
+          const AfterOneParameter = props => {
+            const style = { color: props.label };
+            return <button style={style}>{props.label}</button>;
+          };
+          const AsyncOneParameter = async props => {
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            const style = { color: props.label };
+            return <button style={style}>{props.label}</button>;
+          };
+          const AfterAsyncOneParameter = async props => {
+            const style = { color: props.label };
+            return <button style={style}>{props.label}</button>;
+          };
+          const ParameterNamedAsync = async => {
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            const style = { color: async.label };
+            return <button style={style}>{async.label}</button>;
+          };
+          const AfterParameterNamedAsync = async => {
+            const style = { color: async.label };
+            return <button style={style}>{async.label}</button>;
+          };
+
+          // The comment is between the attributes of a JSX tag.
+          function InAJsxTag({ label }) {
+            const style = { color: label };
+            return (
+              <button
+                // eslint-disable-next-line react-hooks/rules-of-hooks
+                style={style}
+              >
+                {label}
+              </button>
+            );
+          }
+          function AfterInAJsxTag({ label }) {
+            const style = { color: label };
+            return <button style={style}>{label}</button>;
+          }
+          function BlockCommentInAJsxTag({ label }) {
+            const style = { color: label };
+            return <button /* eslint-disable-next-line react-hooks/rules-of-hooks */ style={style}>{label}</button>;
+          }
+          function AfterBlockCommentInAJsxTag({ label }) {
+            const style = { color: label };
+            return <button style={style}>{label}</button>;
+          }
+
+          // The comment is for the line that the function starts on.
+          function RightAboveTheComment({ label }) {
+            const style = { color: label };
+            return <button style={style}>{label}</button>;
+          }
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          function RightBelowTheComment({ label }) {
+            const style = { color: label };
+            return <button style={style}>{label}</button>;
+          }
+          function AfterRightBelowTheComment({ label }) {
+            const style = { color: label };
+            return <button style={style}>{label}</button>;
+          }
+          // eslint-disable-next-line react-hooks/exhaustive-deps
+          const OneLineRightBelowTheComment = props => <button style={{ color: props.label }}>{props.label}</button>;
+          const AfterOneLineRightBelowTheComment = props => <button style={{ color: props.label }}>{props.label}</button>;
+
+          // The comment is for a line that no function starts on.
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          const [initial] = useState("a");
+          function AfterAStatementWithTheComment({ label }) {
+            const style = { color: label };
+            return <button style={style}>{label}</button>;
+          }
+          class Registry {
+            static {
+              // eslint-disable-next-line react-hooks/rules-of-hooks
+              Registry.initial = initial;
+            }
+          }
+          function AfterAClassStaticBlockWithTheComment({ label }) {
+            const style = { color: label };
+            return <button style={style}>{label}</button>;
+          }
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+
+          function TwoLinesBelowTheComment({ label }) {
+            const style = { color: label };
+            return <button style={style}>{label}</button>;
+          }
+
+          // Not the place of the comment: an arrow with an expression body closes at
+          // the token after it, and the lexer scans the comment on the way to that
+          // token. Upstream compiles this arrow.
+          const ExpressionBodyRightAboveTheComment = props => <button style={{ color: props.label }}>{props.label}</button>
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          const unused = initial;
+
+          const forms = {
+            Declaration,
+            AfterDeclaration,
+            Arrow,
+            AfterArrow,
+            ExpressionBody,
+            AfterExpressionBody,
+            AsyncArrow,
+            AfterAsyncArrow,
+            MemoArrow,
+            AfterMemoArrow,
+            MemoFunction,
+            AfterMemoFunction,
+            useHook,
+            useAfterHook,
+            InTheBodyOfTheDefault,
+            AfterInTheBodyOfTheDefault,
+            RightAfterTheDefault,
+            AfterRightAfterTheDefault,
+            AheadOfTheExpressionBody,
+            AfterAheadOfTheExpressionBody,
+            MemoExpressionBody,
+            AfterMemoExpressionBody,
+            OneParameter,
+            AfterOneParameter,
+            AsyncOneParameter,
+            AfterAsyncOneParameter,
+            ParameterNamedAsync,
+            AfterParameterNamedAsync,
+            InAJsxTag,
+            AfterInAJsxTag,
+            BlockCommentInAJsxTag,
+            AfterBlockCommentInAJsxTag,
+            RightAboveTheComment,
+            RightBelowTheComment,
+            AfterRightBelowTheComment,
+            OneLineRightBelowTheComment,
+            AfterOneLineRightBelowTheComment,
+            AfterAStatementWithTheComment,
+            AfterAClassStaticBlockWithTheComment,
+            TwoLinesBelowTheComment,
+            ExpressionBodyRightAboveTheComment,
+            AboveTheBlockForm,
+            BlockFormInTheParameterList,
+            AfterTheBlockForm,
+            AfterALaterComment,
+            ArrowAfterALaterComment,
+            GenericArrow,
+            AfterGenericArrow,
+            ArrowWithAReturnType,
+            AfterArrowWithAReturnType,
+            GenericExpressionBody,
+            AfterGenericExpressionBody,
+            ReturnTypeExpressionBody,
+            AfterReturnTypeExpressionBody,
+          };
+          for (const [name, form] of Object.entries(forms)) {
+            console.log(name + ": " + render(form, { label: "a" }).cacheHooks + " cache hooks in a render");
+          }
+        `,
+        // Upstream counts a bare "eslint-disable" for every function of the file.
+        "/block-form.jsx": /* jsx */ `
+          import { useState } from "react";
+
+          export function AboveTheBlockForm({ label }) {
+            const style = { color: label };
+            return <button style={style}>{label}</button>;
+          }
+          export function BlockFormInTheParameterList({
+            label,
+            /* eslint-disable react-hooks/rules-of-hooks */
+            onClick = () => {},
+          }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+          export function AfterTheBlockForm({ label, onClick = () => {} }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+          // A later comment for one line does not end the block form.
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          const [initial] = useState("a");
+          export function AfterALaterComment({ label = initial }) {
+            const style = { color: label };
+            return <button style={style}>{label}</button>;
+          }
+          export const ArrowAfterALaterComment = ({ label = initial }) => {
+            const style = { color: label };
+            return <button style={style}>{label}</button>;
+          };
+        `,
+        // The parser takes a different path to each of these arrows.
+        "/typescript.tsx": /* tsx */ `
+          export const GenericArrow = <T,>({
+            label,
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            onClick = () => {},
+          }: { label: T; onClick?: () => void }) => {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          };
+          export const AfterGenericArrow = <T,>({ label, onClick = () => {} }: { label: T; onClick?: () => void }) => {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          };
+          export const ArrowWithAReturnType = ({
+            label,
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            onClick = () => {},
+          }: { label: string; onClick?: () => void }): object => {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          };
+          export const AfterArrowWithAReturnType = ({ label, onClick = () => {} }: { label: string; onClick?: () => void }): object => {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          };
+          export const GenericExpressionBody = <T,>({ label }: { label: T }) =>
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            <button style={{ color: label }}>{label}</button>;
+          export const AfterGenericExpressionBody = <T,>({ label }: { label: T }) => <button style={{ color: label }}>{label}</button>;
+          export const ReturnTypeExpressionBody = ({ label }: { label: string }): object =>
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            <button style={{ color: label }}>{label}</button>;
+          export const AfterReturnTypeExpressionBody = ({ label }: { label: string }): object => <button style={{ color: label }}>{label}</button>;
+        `,
+        ...stubReactThatCountsCacheHooks,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target: "browser",
+      format,
+      run: {
+        stdout: `
+          Declaration: 0 cache hooks in a render
+          AfterDeclaration: 1 cache hooks in a render
+          Arrow: 0 cache hooks in a render
+          AfterArrow: 1 cache hooks in a render
+          ExpressionBody: 0 cache hooks in a render
+          AfterExpressionBody: 1 cache hooks in a render
+          AsyncArrow: 0 cache hooks in a render
+          AfterAsyncArrow: 1 cache hooks in a render
+          MemoArrow: 0 cache hooks in a render
+          AfterMemoArrow: 1 cache hooks in a render
+          MemoFunction: 0 cache hooks in a render
+          AfterMemoFunction: 1 cache hooks in a render
+          useHook: 0 cache hooks in a render
+          useAfterHook: 1 cache hooks in a render
+          InTheBodyOfTheDefault: 0 cache hooks in a render
+          AfterInTheBodyOfTheDefault: 1 cache hooks in a render
+          RightAfterTheDefault: 0 cache hooks in a render
+          AfterRightAfterTheDefault: 1 cache hooks in a render
+          AheadOfTheExpressionBody: 0 cache hooks in a render
+          AfterAheadOfTheExpressionBody: 1 cache hooks in a render
+          MemoExpressionBody: 0 cache hooks in a render
+          AfterMemoExpressionBody: 1 cache hooks in a render
+          OneParameter: 0 cache hooks in a render
+          AfterOneParameter: 1 cache hooks in a render
+          AsyncOneParameter: 0 cache hooks in a render
+          AfterAsyncOneParameter: 1 cache hooks in a render
+          ParameterNamedAsync: 0 cache hooks in a render
+          AfterParameterNamedAsync: 1 cache hooks in a render
+          InAJsxTag: 0 cache hooks in a render
+          AfterInAJsxTag: 1 cache hooks in a render
+          BlockCommentInAJsxTag: 0 cache hooks in a render
+          AfterBlockCommentInAJsxTag: 1 cache hooks in a render
+          RightAboveTheComment: 1 cache hooks in a render
+          RightBelowTheComment: 0 cache hooks in a render
+          AfterRightBelowTheComment: 1 cache hooks in a render
+          OneLineRightBelowTheComment: 0 cache hooks in a render
+          AfterOneLineRightBelowTheComment: 1 cache hooks in a render
+          AfterAStatementWithTheComment: 1 cache hooks in a render
+          AfterAClassStaticBlockWithTheComment: 1 cache hooks in a render
+          TwoLinesBelowTheComment: 1 cache hooks in a render
+          ExpressionBodyRightAboveTheComment: 0 cache hooks in a render
+          AboveTheBlockForm: 1 cache hooks in a render
+          BlockFormInTheParameterList: 0 cache hooks in a render
+          AfterTheBlockForm: 0 cache hooks in a render
+          AfterALaterComment: 0 cache hooks in a render
+          ArrowAfterALaterComment: 0 cache hooks in a render
+          GenericArrow: 0 cache hooks in a render
+          AfterGenericArrow: 1 cache hooks in a render
+          ArrowWithAReturnType: 0 cache hooks in a render
+          AfterArrowWithAReturnType: 1 cache hooks in a render
+          GenericExpressionBody: 0 cache hooks in a render
+          AfterGenericExpressionBody: 1 cache hooks in a render
+          ReturnTypeExpressionBody: 0 cache hooks in a render
+          AfterReturnTypeExpressionBody: 1 cache hooks in a render
+        `,
+      },
+    });
+  }
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

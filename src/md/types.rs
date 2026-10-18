@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 // The md crate sits below `bun_jsc` in the layering, so `bun_jsc::JsResult`
 // is unreachable here; this local alias plays the same role.
 pub type JsResult<T> = Result<T, crate::parser::ParserError>;
@@ -173,8 +175,10 @@ impl<'a> Renderer<'a> {
 /// renderers that retain them past that call must copy.
 #[derive(Copy, Clone)]
 pub struct SpanDetail<'a> {
-    pub href: &'a [u8],
-    pub title: &'a [u8],
+    href: &'a [u8],
+    title: &'a [u8],
+    /// Whether `href()` and `title()` look for a backslash escape or a character reference.
+    resolves: bool,
     /// Standard autolink (angle-bracket): use writeUrlEscaped (no entity/escape processing)
     pub autolink: bool,
     /// Standard autolink is an email: prepend "mailto:" to href
@@ -206,11 +210,116 @@ impl<'a> Default for SpanDetail<'a> {
         Self {
             href: b"",
             title: b"",
+            resolves: false,
             autolink: false,
             autolink_email: false,
             permissive_autolink: false,
             autolink_www: false,
             reference: Reference::None,
+        }
+    }
+}
+
+// One is made for every span: the flags take one word behind the two slices.
+const _: () = assert!(size_of::<SpanDetail<'_>>() == 2 * size_of::<&[u8]>() + 8);
+
+impl<'a> SpanDetail<'a> {
+    /// A link or an image with a written destination. Without `resolves`, neither holds a `\` or a `&`.
+    pub(crate) fn link(
+        href: &'a [u8],
+        title: &'a [u8],
+        reference: Reference,
+        resolves: bool,
+    ) -> Self {
+        debug_assert!(
+            resolves
+                || (bun_core::strings::index_of_any(href, b"\\&").is_none()
+                    && bun_core::strings::index_of_any(title, b"\\&").is_none())
+        );
+        Self {
+            href,
+            title,
+            reference,
+            resolves,
+            ..Self::default()
+        }
+    }
+
+    /// `<https://example.com>` or `<a@example.com>`: `href` is the text between the brackets.
+    pub(crate) fn autolink(href: &'a [u8], is_email: bool) -> Self {
+        Self {
+            href,
+            autolink: true,
+            autolink_email: is_email,
+            ..Self::default()
+        }
+    }
+
+    /// A URL, an e-mail address or a `www.` name in the text: `href` is that text.
+    pub(crate) fn permissive_autolink(href: &'a [u8], is_email: bool, is_www: bool) -> Self {
+        Self {
+            href,
+            permissive_autolink: true,
+            autolink_email: is_email,
+            autolink_www: is_www,
+            ..Self::default()
+        }
+    }
+
+    /// `[[target]]` or `[[target|label]]`: `href` is the target.
+    pub(crate) fn wikilink(target: &'a [u8]) -> Self {
+        Self {
+            href: target,
+            ..Self::default()
+        }
+    }
+
+    /// `[^label]`: `href` is the label.
+    pub(crate) fn footnote_reference(label: &'a [u8]) -> Self {
+        Self {
+            href: label,
+            reference: Reference::Footnote,
+            ..Self::default()
+        }
+    }
+
+    /// Where it goes, as html() writes it before it encodes: escapes resolved, the scheme of an autolink added.
+    #[inline]
+    pub fn href(&self) -> Cow<'a, [u8]> {
+        let scheme: &[u8] = if self.autolink_email {
+            b"mailto:"
+        } else if self.autolink_www {
+            b"http://"
+        } else {
+            return self.resolved(self.href);
+        };
+        Cow::Owned(bun_core::strings::concat(&[scheme, self.href]).into_vec())
+    }
+
+    /// The title of a link or an image, with its escapes resolved. Empty if it has none.
+    #[inline]
+    pub fn title(&self) -> Cow<'a, [u8]> {
+        self.resolved(self.title)
+    }
+
+    /// The bytes of the document, without a scheme: for who resolves them while it writes, or keeps them.
+    #[inline]
+    pub fn href_as_written(&self) -> &'a [u8] {
+        self.href
+    }
+
+    /// The bytes of the document, like `href_as_written()`.
+    #[inline]
+    pub fn title_as_written(&self) -> &'a [u8] {
+        self.title
+    }
+
+    #[inline]
+    fn resolved(&self, written: &'a [u8]) -> Cow<'a, [u8]> {
+        if self.resolves && !written.is_empty() {
+            crate::helpers::resolve_escapes(written)
+        } else {
+            Cow::Borrowed(written)
         }
     }
 }

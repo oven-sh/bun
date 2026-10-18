@@ -163,6 +163,14 @@ The `listItem` callback receives everything needed to render markers directly:
 | `strikethrough` | —                                  | Strikethrough (`~~text~~`)   |
 | `text`          | —                                  | Plain text content           |
 
+#### Link and image meta
+
+`href`, `src` and `title` are the values that the document means, not its source text:
+
+- Backslash escapes and character references are resolved. `[a](/x\_y?a=1&amp;b=2 "R&amp;D")` gives `href: "/x_y?a=1&b=2"` and `title: "R&D"`.
+- An e-mail autolink has the `mailto:` scheme, and a `www.` autolink has `http://`. `<me@example.com>` gives `href: "mailto:me@example.com"`.
+- The values are not percent-encoded and not HTML-escaped. Escape them for the format that you write.
+
 ### Examples
 
 #### Custom HTML with classes
@@ -261,11 +269,12 @@ Pass parser options as a separate third argument:
 const result = Bun.markdown.render(
   "Visit www.example.com",
   {
-    link: (children, { href }) => `[${children}](${href})`,
+    link: (children, { href }) => `<a href="${Bun.escapeHTML(href)}">${children}</a>`,
     paragraph: children => children,
   },
   { autolinks: true },
 );
+// 'Visit <a href="http://www.example.com">www.example.com</a>'
 ```
 
 ---
@@ -358,6 +367,8 @@ You can override every HTML tag the parser produces:
 | `code`       | `{ children }`               | Inline code                                                     |
 | `del`        | `{ children }`               | Strikethrough (`~~text~~`)                                      |
 | `br`         | `{}`                         | Hard line break (no children)                                   |
+
+`href`, `src` and `title` are resolved values, like the [meta of `render()`](#link-and-image-meta).
 
 ### React 18 and older
 

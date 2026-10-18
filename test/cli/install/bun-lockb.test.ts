@@ -781,7 +781,7 @@ describe.concurrent("a binary lockfile is refused when", () => {
     corrupt(lockb, l);
 
     // A command that resolves again rewrites the file.
-    const results = [];
+    const results: Awaited<ReturnType<typeof run>>[] = [];
     for (const args of [["bun.lockb"], ["why", "depb"], ["install"], ["install", "--frozen-lockfile"]]) {
       await write(lockbPath, lockb);
       results.push(await run(packageDir, ...args));
@@ -926,7 +926,7 @@ describe.concurrent("--frozen-lockfile after a migration, with a root postinstal
 
   describe.each(Object.keys(foreign))("%s", name => {
     it("bun pm migrate records what an install that migrates records", async () => {
-      const results = [];
+      const results: string[] = [];
       for (const args of [
         ["pm", "migrate"],
         ["install", "--lockfile-only"],

@@ -2561,7 +2561,9 @@ describe.concurrent("a version published after the manifest was cached", () => {
       env: installEnv(cwd),
     });
     const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    const lock = Bun.JSONC.parse(await file(join(cwd, "bun.lock")).text()) as { packages: Record<string, [string]> };
+    const lock = Bun.JSONC.parse(await file(join(cwd, "bun.lock")).text()) as {
+      packages: Record<string, [string] | undefined>;
+    };
     return {
       messages: err.split("\n").filter(line => /^(error|warn):/.test(line)),
       exitCode,
@@ -2583,7 +2585,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
   const noVersion = (spec: string) =>
     `error: No version matching "${spec}" found for specifier "fresh-pkg" (but package exists)`;
 
-  test.each([
+  test.each<{ to: string; args: string[]; locked?: string; messages?: string[]; requests?: (string | null)[] }>([
     { to: depends("1.0.1"), args: [], locked: "fresh-pkg@1.0.1" },
     { to: depends("^1.0.1"), args: [], locked: "fresh-pkg@1.0.1" },
     { to: depends("beta"), args: [], locked: "fresh-pkg@1.0.1" },
@@ -2637,7 +2639,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
     JSON.stringify({ name: "root", workspaces: { packages: ["packages/*"], catalog: { "fresh-pkg": version } } });
   const member = (name: string, spec: string) => JSON.stringify({ name, dependencies: { "fresh-pkg": spec } });
 
-  test.each([
+  test.each<{ version: string; messages: string[] }>([
     { version: "1.0.1", messages: [] },
     { version: "9.9.9", messages: [noVersion("9.9.9"), "error: fresh-pkg@catalog: failed to resolve"] },
   ])("a catalog entry moved to $version, used by two workspaces", async ({ version, messages }) => {

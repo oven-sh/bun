@@ -87,6 +87,7 @@ beforeAll(async () => {
         });
       }
       if (url.pathname === "/left-pad/-/left-pad-1.3.0.tgz") {
+        // @ts-expect-error bytes() takes no argument, so the tarball is not compressed
         return new Response(await new Bun.Archive({ "package/package.json": JSON.stringify(leftPad) }).bytes("gzip"));
       }
       return new Response("Not Found", { status: 404 });
@@ -998,6 +999,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
           versions.map(async version => {
             const manifest = JSON.stringify({ name: "p", version });
             const files = { "package/package.json": manifest, "package/index.js": `${body} ${version}\n` };
+            // @ts-expect-error bytes() takes no argument, so the tarball is not compressed
             return [version, await new Bun.Archive(files).bytes("gzip")] as const;
           }),
         ),
@@ -1240,6 +1242,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
         if (version) {
           const manifest = JSON.stringify({ name, version, ...added(name!, version, 0) });
           return new Response(
+            // @ts-expect-error bytes() takes no argument, so the tarball is not compressed
             await new Bun.Archive({ "package/package.json": manifest, "package/cli.js": "" }).bytes("gzip"),
           );
         }

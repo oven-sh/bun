@@ -3907,7 +3907,7 @@ describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
 
   // docker-compose: a volume for each node_modules, and the source of a package mounted into one.
   // Bind mounts of `vol/*`, so what the installs leave in them can be read after the namespace is gone.
-  test.skipIf(!canMount).concurrent.each([
+  test.skipIf(!canMount).concurrent.each<{ linkers: string[]; root: string[]; web: string[] }>([
     { linkers: ["isolated"], root: [".bun", "@acme", "dep", "mine"], web: ["lib"] },
     { linkers: ["isolated", "hoisted"], root: ["@acme", "dep", "lib", "mine", "web"], web: [] },
   ])(
@@ -4284,7 +4284,7 @@ describe.concurrent("--linker flag", () => {
   });
 
   // Build tools keep their caches in the node_modules of the package they run in.
-  test.each([
+  test.each<{ linkers: ("isolated" | "hoisted")[]; root: string[]; web: string[] }>([
     { linkers: ["isolated", "isolated"], root: [".bun"], web: [".cache", ".vite", "lib"] },
     { linkers: ["isolated", "hoisted"], root: [".cache", ".vite", "lib", "web"], web: [".cache", ".vite"] },
     { linkers: ["hoisted", "isolated"], root: [".bun", ".cache", ".vite"], web: [".cache", ".vite", "lib"] },
@@ -4496,7 +4496,7 @@ describe.concurrent("--linker flag", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout + stderr).toContain("Attempting to install security scanner from npm");
       expect(stdout + stderr).toContain("SCANNER_RAN:");
-      expect({ flags, ...rootEntryKinds(packageDir, [".bun", "test-security-scanner"]) }).toEqual({
+      expect({ flags, ...rootEntryKinds(packageDir, [".bun", "test-security-scanner"]) }).toEqual<object>({
         flags,
         ".bun": "directory",
         "test-security-scanner": "symlink",

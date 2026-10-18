@@ -39,7 +39,7 @@ const BAD_TAG_ESCAPED = `tag-${ESC_ESCAPED}${PASSTHROUGH}\\t${C1_ESCAPED}\\x7f`;
 // C1 character in stdout/stderr came through from the fixture unescaped.
 const RAW_CONTROL = /[\x00-\x09\x0b-\x1f\x7f\x80-\x9f]/;
 
-let registry: Bun.Server;
+let registry: Bun.Server<undefined>;
 let registryUrl: string;
 let tarball: Promise<Uint8Array>;
 /** A tarball specifier that installs (the server ignores the path). */

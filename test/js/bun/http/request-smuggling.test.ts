@@ -1808,7 +1808,7 @@ describe("Host header field values in request.url", () => {
     // Only read the status line. If the server wrongly serves the request it
     // keeps the connection open, so waiting for close would hang.
     const { promise, resolve, reject } = Promise.withResolvers<string>();
-    const client = net.connect(server.port, "127.0.0.1", () => client.write(payload));
+    const client = net.connect(server.port!, "127.0.0.1", () => client.write(payload));
     client.on("error", reject);
     let received = "";
     client.on("data", chunk => {

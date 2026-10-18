@@ -66,7 +66,7 @@ class HotProgram {
       stdout: "pipe",
       stderr: "inherit",
     });
-    this.#reader ??= this.#proc.stdout.getReader();
+    this.#reader ??= this.#proc.stdout.getReader() as ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>;
     for (;;) {
       const newline = this.#buffered.indexOf("\n");
       if (newline === -1) {
@@ -470,7 +470,7 @@ for (const server of servers) {
       for (const [options, open] of [
         ["url", 1],
         ["url, maxLifetime: 3600", 2],
-      ]) {
+      ] as [string, number][]) {
         expect(
           await program.load(`
             const sql = new SQL({ ${options}, max: 1 });

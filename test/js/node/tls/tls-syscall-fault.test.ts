@@ -57,7 +57,7 @@ afterAll(() => {
   server?.close();
 });
 
-function connect(options: tls.ConnectionOptions = {}) {
+function connect(options: tls.ConnectionOptions & { allowHalfOpen?: boolean } = {}) {
   return tls.connect({ port, host: "127.0.0.1", ca: certs.cert, rejectUnauthorized: true, ...options });
 }
 
@@ -178,9 +178,9 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     let received = "";
     let arrived = Promise.withResolvers<void>();
     const socket = await Bun.connect({
-      ...(unix
+      ...((unix
         ? { unix: streaming.address() as string }
-        : { hostname: "127.0.0.1", port: (streaming.address() as AddressInfo).port }),
+        : { hostname: "127.0.0.1", port: (streaming.address() as AddressInfo).port }) as any),
       tls: { ca: certs.cert, serverName: "localhost" },
       socket: {
         handshake: () => handshake.resolve(),

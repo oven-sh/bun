@@ -340,6 +340,6 @@ test("line and column of a PostgresError are PostgreSQL's fields or absent, neve
   expect(bare.stack).toContain("sql-helpers-validation.test.ts");
 
   const full = new SQL.PostgresError("message", { code: "CODE", column: "email", line: "2023" });
-  expect({ ...full }).toEqual({ name: "PostgresError", code: "CODE", column: "email", line: "2023" });
+  expect<object>({ ...full }).toEqual({ name: "PostgresError", code: "CODE", column: "email", line: "2023" });
   expect(Bun.inspect(full)).toContain('column: "email"');
 });

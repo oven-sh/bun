@@ -312,7 +312,7 @@ async function urlTarballProxy(ctx: TestContext, urls: string[], responses: Reco
       urls.push(request.url);
       const registered = responses[request.url];
       if (!registered) return new Response(`nothing registered for ${request.url}`, { status: 404 });
-      return registered instanceof Response ? registered.clone() : new Response(registered);
+      return registered instanceof Response ? (registered.clone() as Response) : new Response(registered);
     },
   });
 
@@ -706,7 +706,7 @@ describe.concurrent("bun-install", () => {
           expect(fresh.exitCode).toBe(0);
 
           // bun.lock does not hold the edge, so it loads again, also when the edge was a required one.
-          const lock = Bun.JSONC.parse(await file(join(ctx.package_dir, "bun.lock")).text());
+          const lock: any = Bun.JSONC.parse(await file(join(ctx.package_dir, "bun.lock")).text());
           expect(Object.keys(lock.packages)).toEqual(["holder"]);
           expect(Object.keys(lock.packages.holder[2])).not.toContain(group);
           await rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true });
@@ -5167,7 +5167,7 @@ describe.concurrent("bun-install", () => {
     expect(err).not.toContain("error:");
     expect(err).toContain("Saved lockfile");
     expect(exitCode).toBe(0);
-    const locked = Bun.JSONC.parse(await file(join(ctx.package_dir, "bun.lock")).text()).packages as Record<
+    const locked = (Bun.JSONC.parse(await file(join(ctx.package_dir, "bun.lock")).text()) as any).packages as Record<
       string,
       [string, ...unknown[]]
     >;
@@ -12698,7 +12698,7 @@ describe.concurrent("dependency names containing terminal control characters", (
       }
       const res = await dummy(req);
       if (name !== "bar") return res;
-      const manifest = await res.json();
+      const manifest: any = await res.json();
       Object.assign(manifest.versions["0.0.2"], barDeps);
       return Response.json(manifest);
     };

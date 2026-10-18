@@ -29,11 +29,11 @@ using server = Bun.serve(config(0));
 
 for (let i = 1; i <= warmup; i++) server.reload(config(i));
 Bun.gc(true);
-const baseline = rss();
+const baseline = rss()!;
 
 for (let i = 1; i <= reloads; i++) server.reload(config(i));
 Bun.gc(true);
-const final = rss();
+const final = rss()!;
 
 console.log(
   JSON.stringify({ reloads, routeCount, deltaMiB: Math.round(((final - baseline) / 1024 / 1024) * 10) / 10 }),

@@ -259,7 +259,7 @@ test.skipIf(isDebug || isASAN)("postgres: SCRAM-SHA-256 iteration count 10000000
     let buffered = Buffer.alloc(0);
     let state: "startup" | "first" | "final" = "startup";
     socket.on("error", () => {});
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk]);
       if (state === "startup") {
         const startup = pgParseStartupMessage(buffered);

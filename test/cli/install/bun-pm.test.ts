@@ -477,7 +477,7 @@ describe.concurrent("bun pm ls lists what is on disk", () => {
       stderr: `error: no packages match: ${names}\n`,
       exitCode: 1,
     });
-    const cases: [string, object][] = [
+    const cases: [string, Awaited<ReturnType<typeof bun>>][] = [
       ["pm ls", direct],
       ["pm ls --production", listed("<dir> node_modules (1 installed)", "└── a-dep@1.0.1")],
       ["pm ls --omit=dev", listed("<dir> node_modules (1 installed)", "└── a-dep@1.0.1")],

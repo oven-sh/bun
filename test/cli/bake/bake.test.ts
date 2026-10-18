@@ -106,7 +106,7 @@ test.concurrent("bun bake runs the project's own bake script instead", async () 
   expect(exitCode).toBe(0);
 });
 
-test.concurrent.each([
+test.concurrent.each<{ name: string; files: Record<string, string>; args?: string[]; error: string; waits?: boolean }>([
   {
     name: "a route that is also a page",
     waits: true,
@@ -911,7 +911,7 @@ test.concurrent.skipIf(isWindows)(
   },
 );
 
-test.concurrent.each([
+test.concurrent.each<{ name: string; files: Record<string, string>; error: string }>([
   { name: "nothing to serve", files: { "README.md": "" }, error: "Nothing to serve in" },
   { name: "a page it cannot serve", files: { "app/pages/[slug].html": page }, error: "a page cannot have" },
 ])("bun bake --check exits at the start on $name", async ({ files, error }) => {

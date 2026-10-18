@@ -1695,7 +1695,7 @@ describe("the trusted set", () => {
         files: {
           "package.json": { name: "foo", workspaces: ["packages/*"] },
           "packages/a/package.json": { name: "a", dependencies: { tok: "link:../../vendor/tok" } },
-        },
+        } as Files,
       },
       {
         title: "a name registered with bun link",
@@ -1892,7 +1892,7 @@ describe("the trusted set", () => {
       ["pm", "trust", "--omit", "dev", "sharp"],
       ["pm", "--omit", "dev", "trust", "sharp"],
       ["pm", "trust", "sharp", "--cache-dir", "cache"],
-    ])("the names are the positional arguments: bun %s %s %s %s %s", async (...args) => {
+    ] as string[][])("the names are the positional arguments: bun %s %s %s %s %s", async (...args) => {
       const names = ["sharp", "dev", "cache"];
       using ctx = await project(linker, {
         "package.json": {
@@ -2503,7 +2503,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("bun add --trust (%s)
     expect((await file(ctx.packageJson).json()).trustedDependencies).toEqual([...trusted, "zzz"]);
     const lockfile = await file(join(ctx.packageDir, "bun.lock")).text();
     // bun.lock keeps the names that a package of the project has.
-    expect(Bun.JSONC.parse(lockfile).trustedDependencies.sort()).toEqual(trusted);
+    expect((Bun.JSONC.parse(lockfile) as any).trustedDependencies.sort()).toEqual(trusted);
     expect(exitCode).toBe(0);
   });
 
@@ -2580,7 +2580,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("a git dependency of 
     ["pm", "trust", "addon"],
     ["pm", "trust", "--all"],
     ["add", "--trust", "host"],
-  ])("is not run by bun %s %s %s", async (...args) => {
+  ] as string[][])("is not run by bun %s %s %s", async (...args) => {
     using repo = addonRepo();
     using ctx = await setupScriptPackages(linker, {
       host: { dependencies: { addon: `git+${pathToFileURL(String(repo)).href}` } },
@@ -2696,7 +2696,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("scripts that bun ski
 
     const { err, exitCode } = await ctx.bun("install");
     expect(err).not.toContain("error:");
-    expect(["plain", "sharp"].filter(name => existsSync(ctx.installed(name, "ran.txt")))).toEqual(ran);
+    expect<unknown>(["plain", "sharp"].filter(name => existsSync(ctx.installed(name, "ran.txt")))).toEqual(ran);
     expect(exitCode).toBe(0);
   });
 });
@@ -3338,7 +3338,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("failed script of an 
     "shares-baz": { peerDependencies: { baz: "1.0.0" } },
   };
   const optional = { optionalDependencies: { baz: "1.0.0" }, trustedDependencies: ["baz"] };
-  const shapes = [
+  const shapes: { title: string; manifest: object; args: string[]; required: boolean }[] = [
     { title: "nothing else needs it", manifest: optional, args: [], required: false },
     {
       title: "another optional dependency",

@@ -382,7 +382,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       await using sql = connect();
       await sql.unsafe("create temp table readings (id int, r real, a real[])");
       await sql.unsafe("insert into readings values (1, 0.1, '{0.1,0.3}')");
-      const found = [];
+      const found: unknown[] = [];
       for (let run = 0; run < 2; run++) {
         const [row] = await sql`select r, a from readings where id = ${1}`;
         found.push(

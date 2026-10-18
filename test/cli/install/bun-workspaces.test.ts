@@ -731,7 +731,7 @@ describe.each(["hoisted", "isolated"] as const)("a member asks for a workspace t
           loads: await file(
             existsSync(nested) ? nested : join(packageDir, "node_modules", "no-deps", "package.json"),
           ).json(),
-          locked: (await file(join(packageDir, "bun.lock")).text()).match(/"no-deps@[^"]+"/g),
+          locked: (await file(join(packageDir, "bun.lock")).text()).match(/"no-deps@[^"]+"/g) as string[] | null,
         };
       }
       const expected = {
@@ -4367,7 +4367,9 @@ describe("a workspace outside the project", () => {
         });
         expect(exitCode).toBe(0);
       }
-      expect(Bun.JSON5.parse(await file(join(project, "bun.lock")).text()).workspaces[path]).toMatchObject({
+      expect(
+        (Bun.JSON5.parse(await file(join(project, "bun.lock")).text()) as Bun.BunLockFile).workspaces[path],
+      ).toMatchObject({
         name: "app",
         dependencies: app.dependencies,
       });
@@ -4430,7 +4432,7 @@ describe("a workspace outside the project", () => {
       });
       expect(await readdirSorted(join(packageDir, "no-deps"))).toEqual(["package.json"]);
       // What it needs stays resolved.
-      const { packages } = Bun.JSON5.parse(await file(join(project, "bun.lock")).text());
+      const { packages } = Bun.JSON5.parse(await file(join(project, "bun.lock")).text()) as Bun.BunLockFile;
       expect(packages["./no-deps/a-dep"][0]).toBe("a-dep@1.0.1");
     });
   });
@@ -4522,7 +4524,7 @@ describe.skipIf(isWindows)("in a member that is a link to a folder elsewhere", (
 
     const dependencies = { "no-deps": "^2.0.0" };
     expect(await file(join(packageDir, real, "package.json")).json()).toEqual({ ...shared, dependencies });
-    const lockfile = Bun.JSON5.parse(await file(join(repo, "bun.lock")).text());
+    const lockfile = Bun.JSON5.parse(await file(join(repo, "bun.lock")).text()) as Bun.BunLockFile;
     expect(lockfile.workspaces["packages/shared"]).toEqual({ ...shared, dependencies });
     expect(Object.keys(lockfile.packages).sort()).toEqual(["no-deps", "shared"]);
     expect(existsSync(join(packageDir, real, "bun.lock"))).toBe(false);

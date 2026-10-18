@@ -2937,7 +2937,7 @@ describe("a relative local path typed from a directory below package.json", () =
   it.each([
     ["bar", "lib"],
     ["lib", "bar"],
-  ] as const)("a registry package and a folder are both added, in the order typed (%s, %s)", async (...order) => {
+  ] as string[][])("a registry package and a folder are both added, in the order typed (%s, %s)", async (...order) => {
     const cwd = await makeNestedCwd();
     setHandler(dummyRegistry([]));
     const positionals = { bar: "bar", lib: posix(relative(cwd, add_dir)) };

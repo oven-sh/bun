@@ -229,8 +229,8 @@ test("server.upgrade() of another connection's pending request doesn't drop pipe
   const received: Buffer[] = [];
   const connectionClosed = Promise.withResolvers<void>();
   await Bun.connect({
-    hostname: server.hostname,
-    port: server.port,
+    hostname: server.hostname!,
+    port: server.port!,
     socket: {
       open(socket) {
         socket.write(

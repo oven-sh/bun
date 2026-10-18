@@ -21,6 +21,7 @@ test.each([
   expect(() => Bun.CryptoHasher.hash("sha1", file)).toThrow(fileBlob);
   expect(() => new Bun.SHA1().update(file)).toThrow(fileBlob);
   expect(() => new Bun.CryptoHasher("sha1").update(file)).toThrow(fileBlob);
+  // @ts-expect-error
   expect(() => Bun.sha(file)).toThrow(fileBlob);
 });
 test("CryptoHasher update should throw when no parameter/null/undefined is passed", () => {

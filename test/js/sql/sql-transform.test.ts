@@ -92,7 +92,7 @@ describe.each(["sqlite://:memory:", "postgres://u@127.0.0.1:1/d", "mysql://u@127
     ],
   ])("%p", async (transform, parsed) => {
     await using sql = new SQL(url, { transform } as never);
-    expect(sql.options.transform).toEqual(parsed);
+    expect(sql.options.transform).toEqual<unknown>(parsed);
   });
 
   test("not given", async () => {

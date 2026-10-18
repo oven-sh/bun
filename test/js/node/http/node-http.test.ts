@@ -7467,7 +7467,7 @@ describe("req.headers and req.rawHeaders", () => {
     });
     const seen = await seenByServer(requests, req => {
       const headers = Object.entries(req.headers);
-      const folded = {};
+      const folded: typeof req.headers = {};
       const raw = req.rawHeaders;
       for (let i = 0; i < raw.length; i += 2) (req as any)._addHeaderLine(raw[i], raw[i + 1], folded);
       return { raw, headers, folded: Object.entries(folded) };
@@ -7495,7 +7495,7 @@ describe("req.headers and req.rawHeaders", () => {
 });
 
 it("setHeader and appendHeader check a name however often names were set before", () => {
-  const message = new OutgoingMessage();
+  const message = new OutgoingMessage() as OutgoingMessage & { getRawHeaderNames(): string[] };
   const invalid = (name: unknown) => {
     const thrown: unknown[] = [];
     for (const method of ["setHeader", "appendHeader"] as const) {

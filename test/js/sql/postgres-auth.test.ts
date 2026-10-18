@@ -286,7 +286,7 @@ describeWithContainer("postgres_tls: channel binding", { image: "postgres_tls", 
           const server = nodeTls.connect({ socket: upstream, rejectUnauthorized: false });
           const isAuthenticationSASL = (chunk: Buffer) => chunk[0] === 0x52 /* 'R' */ && chunk.readInt32BE(5) === 10;
           client.on("data", chunk => server.write(chunk));
-          server.on("data", chunk =>
+          server.on("data", (chunk: Buffer) =>
             client.write(hidePlus && isAuthenticationSASL(chunk) ? pgAuthenticationSASL(["SCRAM-SHA-256"]) : chunk),
           );
           server.on("end", () => client.end());
@@ -489,7 +489,7 @@ describe.concurrent("scripted server", () => {
       "n,,",
     ],
   ] as const)("%s", async (_, server, channelBinding, mechanism, gs2) => {
-    expect(await login(server as Partial<Server>, channelBinding)).toEqual({
+    expect(await login(server as unknown as Partial<Server>, channelBinding)).toEqual({
       result: "connected",
       mechanism,
       gs2,

@@ -383,7 +383,7 @@ describe("WebSocket custom headers", () => {
 describe("WebSocket options are read through the prototype chain", () => {
   // Upgrades every request and echoes the upgrade request headers as the first message.
   function headerEchoServer() {
-    return Bun.serve<Record<string, string>>({
+    return Bun.serve({
       port: 0,
       fetch(req, server) {
         if (server.upgrade(req, { data: req.headers.toJSON() })) return;

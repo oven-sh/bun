@@ -395,8 +395,8 @@ impl<'a> JsLocal<'a, BufferSource> {
 /// `wrapped` is the `T` that a cell wraps, and something holds that cell for the call `heap` belongs to.
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn class_ref_from_extern<'a, T>(
-    wrapped: *mut core::ffi::c_void,
+pub unsafe fn class_ref_from_extern<'a, T: crate::JsClass>(
+    wrapped: *mut c_void,
     _: &JsHeap<'a>,
 ) -> &'a T {
     // SAFETY: forwarded.

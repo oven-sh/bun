@@ -563,12 +563,10 @@ export class UnitType extends Type {
 export class StringType extends Type {
   readonly idlType: string;
   readonly #valueKinds: ValueKinds;
-  readonly isOwned: boolean;
-  constructor(idlType = "Bun::Bindgen::IDLStrictString", valueKinds: ValueKinds = ["string"], isOwned = false) {
+  constructor(idlType = "Bun::Bindgen::IDLStrictString", valueKinds: ValueKinds = ["string"]) {
     super();
     this.idlType = idlType;
     this.#valueKinds = valueKinds;
-    this.isOwned = isOwned;
   }
   get tsType(): string {
     return this.valueKinds === "any" ? "any" : "string";
@@ -582,20 +580,15 @@ export class StringType extends Type {
   /** `ToString`: any value is accepted. */
   get loose(): StringType {
     assert(!this.valueKinds.includes("stringObject"), ".loose already takes a String object");
-    return new StringType("WebCore::IDLDOMString", "any", this.isOwned);
+    return new StringType("WebCore::IDLDOMString", "any");
   }
   /** Also takes a `String` object, as `.utf8` does. */
   get allowStringObject(): StringType {
     assert(this.valueKinds !== "any", ".loose already takes a String object");
-    return new StringType("Bun::Bindgen::IDLStrictStringOrStringObject", ["string", "stringObject"], this.isOwned);
-  }
-  /** As an argument: the body gets the string itself, to keep or to return, and not a `&`. */
-  get owned(): StringType {
-    return new StringType(this.idlType, this.#valueKinds, true);
+    return new StringType("Bun::Bindgen::IDLStrictStringOrStringObject", ["string", "stringObject"]);
   }
   /** `&[u8]`, UTF-8, for the duration of the call, instead of a string. Also takes a `String` object. */
   get utf8(): Utf8Type {
-    assert(!this.isOwned, ".utf8 comes before .owned");
     return new Utf8Type(this.valueKinds === "any");
   }
   get nullRepresentation() {
@@ -633,9 +626,6 @@ export class OwnedUtf8Type extends StringType {
   get allowStringObject(): never {
     throw new TypeError("b.string.utf8.owned already takes a String object");
   }
-  get owned(): never {
-    throw new TypeError("b.string.utf8.owned is already owned");
-  }
   get utf8(): never {
     throw new TypeError("b.string.utf8.owned is already UTF-8");
   }
@@ -669,8 +659,8 @@ export class Utf8Type extends Type {
   /** `bun_core::Utf8Bytes<'static>`, for a body that stores the string. */
   get owned(): OwnedUtf8Type {
     return this.isLoose
-      ? new OwnedUtf8Type("WebCore::IDLDOMString", "any", true)
-      : new OwnedUtf8Type("Bun::Bindgen::IDLStrictStringOrStringObject", this.valueKinds, true);
+      ? new OwnedUtf8Type("WebCore::IDLDOMString", "any")
+      : new OwnedUtf8Type("Bun::Bindgen::IDLStrictStringOrStringObject", this.valueKinds);
   }
   get valueKinds(): ValueKinds {
     return this.isLoose ? "any" : ["string", "stringObject"];
@@ -742,7 +732,7 @@ export class BytesType extends Type {
     assertDistinct(refuse, "refused values");
     const refusesStringObject = refuse.includes("stringObject");
     assert(
-      refuse.length === +refusesStringObject || otherwise === "toString",
+      refuse.every(value => value === "stringObject") || otherwise === "toString",
       'refuse: without otherwise: "toString" undefined and null throw already',
     );
     assert(
@@ -1005,7 +995,7 @@ export class ClassRefType extends Type {
   constructor(name: string) {
     super();
     this.cpp = `WebCore::JS${name}`;
-    this.idlType = `Bun::Bindgen::IDLClassRef<${this.cpp}, std::to_array("${name}")>`;
+    this.idlType = `Bun::Bindgen::IDLWrappedInterface<${this.cpp}, std::to_array("${name}")>`;
     this.rustPath = `crate::generated_classes::${name}`;
   }
   get valueKinds(): ValueKinds {
@@ -1014,6 +1004,7 @@ export class ClassRefType extends Type {
   get refuses() {
     return "instances that wrap nothing";
   }
+  /** The `&'a` is branded with the call, as a JS value is. */
   get holdsJSValue(): boolean {
     return true;
   }

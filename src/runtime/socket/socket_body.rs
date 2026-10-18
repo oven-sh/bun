@@ -4,7 +4,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
-use crate::generated_bindgen::socket::{NativeSocket, SocketHandle};
+use crate::generated_bindgen::socket_body::{BunSocket, SocketHandle};
 use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
@@ -100,7 +100,7 @@ mod tls_socket_functions;
 use crate::api::bun::h2_frame_parser::H2FrameParser;
 use crate::api::bun_secure_context::SecureContext;
 use crate::server::ServerWebSocket;
-use crate::socket::udp_socket_draft::get_us_error;
+use crate::socket::udp_socket::get_us_error;
 
 bun_output::declare_scope!(Socket, visible);
 macro_rules! log {
@@ -4671,33 +4671,37 @@ impl DuplexUpgradeContext {
 /// public `upgradeTLS`, but hostname policy stays with node's JS layer.
 pub(crate) fn upgrade_tls_deferred<'a>(
     cx: &mut JsScope<'a>,
-    socket: NativeSocket<'a>,
+    socket: BunSocket<'a>,
     options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     match socket {
-        NativeSocket::Tcp(this) => {
+        BunSocket::Tcp(this) => {
             NewSocket::<false>::upgrade_tls_impl(this, cx.global(), options.to_js(), true)
         }
-        NativeSocket::Tls(this) => {
+        BunSocket::Tls(this) => {
             NewSocket::<true>::upgrade_tls_impl(this, cx.global(), options.to_js(), true)
         }
     }
 }
 
+/// node:net's `destroy()`: drops the handshake flight held for the handshake callback.
 pub(crate) fn release_held_flight(socket: SocketHandle<'_>) {
     match socket {
+        // The raw half of an `upgradeTLS` pair shares the socket of its TLS half.
         SocketHandle::Tcp(this) => this.socket.get().release_held_flight(),
         SocketHandle::Tls(this) => this.socket.get().release_held_flight(),
-        SocketHandle::Other(_) => {}
+        SocketHandle::Ignored(_) => {}
     }
 }
 
+/// node:tls with the built-in `checkServerIdentity`: `server_identity` refuses a wrong name like Bun.connect's.
 pub(crate) fn check_server_identity_in_handshake(socket: SocketHandle<'_>, in_handshake: bool) {
     if let SocketHandle::Tls(this) = socket {
         this.update_flags(|f| f.set(Flags::DEFERS_SERVER_IDENTITY, !in_handshake));
     }
 }
 
+/// `tls.connect()`'s first 'connect' listener, where node sends the ClientHello.
 pub(crate) fn first_flight_before_fin(socket: SocketHandle<'_>) {
     if let SocketHandle::Tls(this) = socket {
         this.socket.get().set_first_flight_before_fin();
@@ -4987,7 +4991,7 @@ pub(crate) fn is_named_pipe_socket(socket: SocketHandle<'_>) -> bool {
     match socket {
         SocketHandle::Tcp(this) => this.socket.get().is_named_pipe(),
         SocketHandle::Tls(this) => this.socket.get().is_named_pipe(),
-        SocketHandle::Other(_) => false,
+        SocketHandle::Ignored(_) => false,
     }
 }
 
@@ -4995,7 +4999,7 @@ pub(crate) fn get_buffered_amount(socket: SocketHandle<'_>) -> usize {
     match socket {
         SocketHandle::Tcp(this) => this.buffered_data_for_node_net.get().len(),
         SocketHandle::Tls(this) => this.buffered_data_for_node_net.get().len(),
-        SocketHandle::Other(_) => 0,
+        SocketHandle::Ignored(_) => 0,
     }
 }
 

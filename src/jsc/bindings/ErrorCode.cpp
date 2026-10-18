@@ -600,7 +600,7 @@ static void appendOutOfRangeReceived(JSC::JSGlobalObject* globalObject, MessageB
             builder.append(addNumericalSeparator(input.toWTFString(globalObject)));
             return;
         }
-        if (d == 0 && std::signbit(d)) {
+        if (JSC::isNegativeZero(d)) {
             builder.append("-0"_s);
             return;
         }

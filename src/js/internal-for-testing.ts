@@ -279,7 +279,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   bytesOf: $bindgen("bindgen_test.bind.ts", "bytesOf"),
   bytesOfOrToString: $bindgen("bindgen_test.bind.ts", "bytesOfOrToString"),
   bytesOfString: $bindgen("bindgen_test.bind.ts", "bytesOfString"),
-  bytesOfStringNotObject: $bindgen("bindgen_test.bind.ts", "bytesOfStringNotObject"),
+  bytesOfRefusingStringObject: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingStringObject"),
   bytesOfBufferOrBlob: $bindgen("bindgen_test.bind.ts", "bytesOfBufferOrBlob"),
   bytesOfRefusingUndefined: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingUndefined"),
   bytesOfThen: $bindgen("bindgen_test.bind.ts", "bytesOfThen"),

@@ -134,8 +134,6 @@ const ONLY_ENUMERABLE = 2;
  * @returns `value` split on newlines (newline included at end), or `undefined`
  * if non-ascii UTF8/UTF16.
  *
- * Passing this a non-string will cause a panic.
- *
  * @type {(value: string) => string[] | undefined}
  */
 const extractedSplitNewLinesFastPathStringsOnly = $bindgen(

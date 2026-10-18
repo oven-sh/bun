@@ -46,7 +46,7 @@ template<bool allowShared> struct IDLHumanReadableName<Bindgen::IDLRawBufferSour
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer or ArrayBufferView");
 };
 
-template<typename JSClass, auto name> struct IDLHumanReadableName<Bindgen::IDLClassRef<JSClass, name>> : BaseIDLHumanReadableName {
+template<typename JSClass, auto name> struct IDLHumanReadableName<Bindgen::IDLWrappedInterface<JSClass, name>> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = name;
 };
 
@@ -191,9 +191,7 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawInterface<JSClass>> : Bun::Default
 };
 
 template<typename JSClass, auto name>
-struct WebCore::Converter<Bun::Bindgen::IDLClassRef<JSClass, name>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLClassRef<JSClass, name>> {
-    static constexpr bool conversionHasSideEffects = false;
-
+struct WebCore::Converter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> {
     template<Bun::IDLConversionContext Ctx>
     static std::optional<void*> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
     {
@@ -207,7 +205,7 @@ struct WebCore::Converter<Bun::Bindgen::IDLClassRef<JSClass, name>> : Bun::Defau
     template<Bun::IDLConversionContext Ctx>
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
-        ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, Bun::idlHumanReadableName<Bun::Bindgen::IDLClassRef<JSClass, name>>()));
+        ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, Bun::idlHumanReadableName<Bun::Bindgen::IDLWrappedInterface<JSClass, name>>()));
     }
 };
 

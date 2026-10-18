@@ -23,6 +23,13 @@ export const normalizeEncoding = b.fn({
   capability: "heap",
 });
 
+export const assertEncodingValid = b.fn({
+  args: { encoding: b.any },
+  capability: "js",
+  throws: true,
+  rustPath: "crate::node::types::assert_encoding_valid",
+});
+
 export const parseEnv = b.fn({
   args: { content: b.string.utf8 },
   returns: b.any,

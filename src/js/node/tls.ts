@@ -5,7 +5,7 @@ const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $bindgen("Listener.bind.ts", "addServerName");
 const setListenerSecureContext = $bindgen("Listener.bind.ts", "setSecureContext");
-const firstFlightBeforeFin = $bindgen("socket.bind.ts", "firstFlightBeforeFin");
+const firstFlightBeforeFin = $bindgen("socket_body.bind.ts", "firstFlightBeforeFin");
 const { throwNotImplemented } = require("internal/shared");
 const { idnaToASCII } = require("internal/url");
 const {

@@ -320,7 +320,6 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "Listener.bind.ts": null,
   "NodeModuleModule.bind.ts": null,
   "PasswordObject.bind.ts": "typeof Bun.password",
-  "Resolver.bind.ts": null,
   "SSLConfig.bind.ts": null,
   "SemverObject.bind.ts": "typeof Bun.semver",
   "SocketConfig.bind.ts": null,
@@ -333,6 +332,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "class_ref_test.bind.ts": null,
   "csrf_jsc.bind.ts": "typeof Bun.CSRF",
   "dns.bind.ts": "typeof Bun.dns",
+  "dns_internals.bind.ts": null,
   "fmt_jsc.bind.ts": null,
   "jest.bind.ts": null,
   "jsc_hooks.bind.ts": null,
@@ -344,8 +344,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "node_tls_binding.bind.ts": null,
   "node_util_binding.bind.ts": null,
   "node_zlib_binding.bind.ts": null,
-  "socket.bind.ts": null,
-  "types.bind.ts": null,
+  "socket_body.bind.ts": null,
   "udp_socket.bind.ts": null,
 };
 

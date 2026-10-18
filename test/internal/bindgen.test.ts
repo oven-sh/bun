@@ -91,11 +91,8 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.i32.loose.allowBigInt.validateInteger()).toThrow(".validateInteger() refuses a BigInt");
   expect(b.u16.allowBigInt.loose.idlType).toBe(b.u16.loose.allowBigInt.idlType);
   expect(() => b.string.utf8.owned.default("x")).toThrow("cannot have a default");
-  expect(() => b.string.owned.utf8).toThrow(".utf8 comes before .owned");
-  expect(b.string.owned.loose.isOwned).toBe(true);
-  expect(b.string.owned.allowStringObject.isOwned).toBe(true);
   const instance = b.classRef("SocketAddress");
-  for (const type of [instance, instance.nullable, b.union({ instance, other: b.any })]) {
+  for (const type of [instance, instance.nullable, b.union({ instance, ignored: b.any })]) {
     expect(() => b.dictionary({ type })).toThrow("b.classRef is only for an argument");
     expect(() => b.array(type)).toThrow("b.classRef is only for an argument");
   }
@@ -391,7 +388,6 @@ describe("strings", () => {
 
   it.each(texts)("round trips %j", text => {
     expect(bindgen.stringLength(text)).toBe(text.length);
-    expect(bindgen.stringLength(text, text)).toBe(text.length * 2);
     expect(bindgen.utf8Echo(text)).toBe(text);
     expect(bindgen.utf8EchoLoose(text)).toBe(text);
     expect(bindgen.utf8Optional(text)).toBe(text);
@@ -1265,11 +1261,6 @@ describe("a string or a buffer, as bytes", () => {
     for (const value of [...notBytes, bytes, bytes.buffer, blob]) {
       expect(() => bindgen.bytesOfString(value)).toThrow(refusal("a string"));
     }
-    expect(bindgen.bytesOfStringNotObject("abc")).toEqual(utf8("abc"));
-    expect(bindgen.bytesOfStringNotObject(bytes)).toEqual(eight);
-    for (const value of [...notBytes, new String("abc"), blob]) {
-      expect(() => bindgen.bytesOfStringNotObject(value)).toThrow(refusal("a string, ArrayBuffer or ArrayBufferView"));
-    }
     expect(bindgen.bytesOfBufferOrBlob(bytes)).toEqual(eight);
     expect(bindgen.bytesOfBufferOrBlob(bytes.buffer)).toEqual(eight);
     expect(bindgen.bytesOfBufferOrBlob(blob)).toEqual(eight);
@@ -1284,6 +1275,15 @@ describe("a string or a buffer, as bytes", () => {
     expect(() => f()).toThrow(refusal("a string, ArrayBuffer or ArrayBufferView"));
     expect(f(null)).toEqual(utf8("null"));
     expect(f(5)).toEqual(utf8("5"));
+  });
+
+  it('refuse: "stringObject" leaves only a string', () => {
+    const f = bindgen.bytesOfRefusingStringObject;
+    expect(f("abc")).toEqual(utf8("abc"));
+    expect(f(new Uint8Array(eight))).toEqual(eight);
+    for (const value of [...notBytes, new String("abc"), new Blob(["abc"])]) {
+      expect(() => f(value)).toThrow(refusal("a string, ArrayBuffer or ArrayBufferView"));
+    }
   });
 
   it('otherwise: "toString" is ToString of anything else', () => {

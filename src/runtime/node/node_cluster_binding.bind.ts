@@ -13,11 +13,8 @@ export const clusterValidateFd = b.fn({ args: { fd: b.f64 }, returns: b.i32 });
 export const clusterCloseHandle = b.fn({ args: { fd: b.f64 } });
 
 /** `process[kHandle]` of a `cluster.Worker`, which takes any object as its process. */
-export const WorkerProcess = b.union({
-  subprocess: b.classRef("Subprocess"),
-  other: b.any,
-});
+export const ProcessHandle = b.union({ subprocess: b.classRef("Subprocess"), ignored: b.any });
 export const onInternalMessagePrimary = b.fn({
-  args: { process: WorkerProcess, worker: b.any, callback: b.any },
+  args: { handle: ProcessHandle, worker: b.any, callback: b.any },
   capability: "js",
 });

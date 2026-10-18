@@ -22,6 +22,7 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
+use crate::generated_bindgen::listener::{ListenerContext, ServerHandle};
 use crate::socket::{
     Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
@@ -67,7 +68,6 @@ fn with_ssl_ctx_cache<R>(
 // embedded `group` is linked into the loop's intrusive list at its final
 // address before this call, so the `Box::new`-then-move that the `#[JsClass]`
 // `to_js(self)` impl does would invalidate that link).
-use crate::generated_bindgen::listener::{ServerContext, ServerHandle};
 use crate::generated_classes::js_Listener;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -783,24 +783,19 @@ impl Listener {
         this_socket
     }
 
-    pub(crate) fn add_server_name(
+    pub(crate) fn add_server_name<'a>(
+        cx: &mut JsScope<'a>,
         this: &Self,
-        global: &JSGlobalObject,
-        hostname: JSValue,
-        tls: JSValue,
-    ) -> JsResult<JSValue> {
+        server_name_bytes: &[u8],
+        tls: JsLocal<'a>,
+    ) -> JsResult<()> {
+        let global = cx.global();
+        let tls = tls.to_js();
         if !this.ssl {
             return Err(
                 global.throw_invalid_arguments(format_args!("addServerName requires SSL support"))
             );
         }
-        if !hostname.is_string() {
-            return Err(
-                global.throw_invalid_arguments(format_args!("hostname pattern expects a string"))
-            );
-        }
-        let host_str = hostname.to_utf8(global)?;
-        let server_name_bytes = host_str.slice();
         if server_name_bytes.is_empty() {
             return Err(
                 global.throw_invalid_arguments(format_args!("hostname pattern cannot be empty"))
@@ -808,13 +803,13 @@ impl Listener {
         }
         // No ClientHello can carry a NUL, so this pattern matches nothing, as in Node.
         if bun_core::strings::contains_char(server_name_bytes, 0) {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
         let server_name_z = bun_core::ZBox::from_bytes(server_name_bytes);
         let server_name = server_name_z.as_zstr().as_cstr();
 
         let ListenerType::Uws(ls) = this.listener.get() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         };
 
         // Both real callers (node:tls addContext, node:net) pass a native
@@ -847,7 +842,7 @@ impl Listener {
                 }
             }
         } else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         };
 
         super::socket_body::install_sni_alpn_selector(sni_ctx.as_ptr());
@@ -860,29 +855,7 @@ impl Listener {
             core::ptr::null_mut(),
         );
 
-        Ok(JSValue::UNDEFINED)
-    }
-
-    /// `tls.Server#setSecureContext()` while listening. Accepted sockets keep their context.
-    pub(crate) fn set_secure_context(this: &Self, secure_context: &SecureContext) -> JSValue {
-        if !this.ssl {
-            return JSValue::UNDEFINED;
-        }
-        let ctx = secure_context.ctx.clone();
-        match this.listener.get() {
-            ListenerType::Uws(ls) => {
-                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(ls).set_default_ssl_ctx(&ctx);
-                this.secure_ctx.set(Some(ctx));
-            }
-            #[cfg(windows)]
-            ListenerType::NamedPipe(pipe) => {
-                // SAFETY: the pipe context is live while `this.listener` holds it.
-                unsafe { pipe.as_ref() }.ctx.set(Some(ctx));
-            }
-            ListenerType::None => {}
-        }
-        JSValue::UNDEFINED
+        Ok(())
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1747,20 +1720,29 @@ fn connect_finish<const IS_SSL: bool>(
     Ok(promise_value)
 }
 
-pub(crate) fn add_server_name<'a>(
-    cx: &mut JsScope<'a>,
-    listener: &'a Listener,
-    hostname: JsLocal<'a>,
-    tls: JsLocal<'a>,
-) -> JsResult<JSValue> {
-    Listener::add_server_name(listener, cx.global(), hostname.to_js(), tls.to_js())
-}
-
-pub(crate) fn set_secure_context(listener: ServerHandle<'_>, secure_context: ServerContext<'_>) {
-    if let (ServerHandle::Listener(this), ServerContext::SecureContext(sc)) =
-        (listener, secure_context)
-    {
-        Listener::set_secure_context(this, sc);
+/// `tls.Server#setSecureContext()` while listening. Accepted sockets keep their context.
+pub(crate) fn set_secure_context(handle: ServerHandle<'_>, context: ListenerContext<'_>) {
+    let (ServerHandle::Listener(this), ListenerContext::SecureContext(secure_context)) =
+        (handle, context)
+    else {
+        return;
+    };
+    if !this.ssl {
+        return;
+    }
+    let ctx = secure_context.ctx.clone();
+    match this.listener.get() {
+        ListenerType::Uws(ls) => {
+            // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+            bun_opaque::opaque_deref_mut(ls).set_default_ssl_ctx(&ctx);
+            this.secure_ctx.set(Some(ctx));
+        }
+        #[cfg(windows)]
+        ListenerType::NamedPipe(pipe) => {
+            // SAFETY: the pipe context is live while `this.listener` holds it.
+            unsafe { pipe.as_ref() }.ctx.set(Some(ctx));
+        }
+        ListenerType::None => {}
     }
 }
 

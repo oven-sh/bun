@@ -188,7 +188,6 @@ any other: nothing looks at how many there are.
 | `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number that is an integer in range; see below               |
 | `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
 | `b.string`                                       | `&bun_core::String`              | a string; `.loose` is `ToString`                              |
-| `b.string.owned`                                 | `bun_core::String`               | as `b.string`                                                 |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
 | `b.bufferSource`                                 | `JsLocal<'a, BufferSource>`      | a typed array, `DataView` or `ArrayBuffer` that is not shared |
@@ -251,9 +250,9 @@ its `toString` runs.
 `bun_core::Utf8Bytes<'static>`, which shares the JS string's buffer when it is 8-bit
 and ASCII and is a transcoded copy otherwise.
 
-`b.string` shares the JS string's storage. As an argument it is a `&bun_core::String`;
-`b.string.owned` is the `bun_core::String` itself, for a body that keeps or returns it. Inside
-`.optional`, a union or an array, and as the value of a setter, it is held by value. It belongs to the
+`b.string` shares the JS string's storage. As an argument it is a `&bun_core::String`, which a
+body that keeps it clones. Inside `.optional`, a union or an array, and as the value of a setter,
+it is held by value. The string belongs to the
 JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
 one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
 

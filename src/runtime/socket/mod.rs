@@ -7,7 +7,7 @@
 // ─── submodules ──────────────────────────────────────────────────────────────
 
 #[path = "socket_body.rs"]
-mod socket_body;
+pub(crate) mod socket_body;
 
 #[path = "SocketAddress.rs"]
 pub(crate) mod socket_address;
@@ -61,8 +61,7 @@ pub(crate) mod ssl_wrapper {
 // the functions are actually used); a second top-level include here was only
 // there for type-check parity.
 
-#[path = "udp_socket.rs"]
-pub(crate) mod udp_socket_draft;
+pub(crate) mod udp_socket;
 
 #[path = "uws_dispatch.rs"]
 pub(crate) mod uws_dispatch;
@@ -97,12 +96,6 @@ pub(crate) use socket_body::{
 #[cfg(windows)]
 pub(crate) use windows_named_pipe_context::WindowsNamedPipeContext;
 
-/// LAYERING: `udp_socket.rs` is the canonical body. It is mounted as
-/// `udp_socket_draft` above (legacy name retained for existing callers); the
-/// public `udp_socket` module below is a thin re-export façade for `generated_classes.rs`.
-pub(crate) mod udp_socket {
-    pub(crate) use super::udp_socket_draft::*;
-}
 pub(crate) use udp_socket::UDPSocket;
 
 /// Codegen path alias.
@@ -114,9 +107,7 @@ pub(crate) use udp_socket::UDPSocket;
 /// the name the generator expects rather than special-casing the generator.
 pub(crate) mod socket {
     pub(crate) use super::socket_body::{
-        check_server_identity_in_handshake, first_flight_before_fin, get_buffered_amount,
-        is_named_pipe_socket, js_create_socket_pair, js_set_socket_options,
-        js_upgrade_duplex_to_tls, release_held_flight, testing_ap_is, upgrade_tls_deferred,
+        js_create_socket_pair, js_set_socket_options, js_upgrade_duplex_to_tls, testing_ap_is,
     };
 }
 

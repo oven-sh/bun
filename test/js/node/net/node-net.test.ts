@@ -3589,7 +3589,17 @@ it.skipIf(isWindows || isMusl).each([
 it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyAttemptTimeout }))(
   "net.%s() without an argument throws what it throws for undefined",
   (_, set) => {
+    const thrownBy = (call: () => void) => {
+      try {
+        call();
+      } catch (error: any) {
+        return { name: error.name, code: error.code, message: error.message };
+      }
+    };
     // @ts-expect-error
-    expect(() => set()).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }));
+    const thrown = thrownBy(() => set());
+    expect(thrown).toMatchObject({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
+    // @ts-expect-error
+    expect(thrown).toEqual(thrownBy(() => set(undefined)));
   },
 );

@@ -100,6 +100,12 @@ pub(crate) fn crc32(data: &[u8], value: u32) -> u32 {
     bun_zlib::crc32_bytes(value, data)
 }
 
+// ─── CompressionStream mixin trait ────────────────────────────────────────
+// Each `Native{Zlib,Brotli,Zstd}` implements this
+// trait to expose its fields + per-class codegen accessors.
+
+/// Backing-stream surface used by [`CompressionStream`] (zlib / brotli / zstd
+/// `Context` types).
 pub(crate) trait CompressionContext {
     fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>);
     fn set_flush(&mut self, flush: i32);

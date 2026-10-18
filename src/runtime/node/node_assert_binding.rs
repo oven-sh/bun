@@ -34,8 +34,7 @@ pub(crate) fn print_simple_myers_diff(
     expected: &BunString,
     colors: &Colors<'_>,
 ) -> JsResult<JSValue> {
-    let colors = owned(colors);
-    let output = node_assert::Output::Simple(&colors);
+    let output = node_assert::Output::Simple(colors);
     node_assert::myers_diff(cx.global(), actual, expected, &output)
 }
 
@@ -47,19 +46,9 @@ pub(crate) fn print_myers_diff(
     check_comma_disparity: bool,
     colors: &Colors<'_>,
 ) -> JsResult<JSValue> {
-    let colors = owned(colors);
     let output = node_assert::Output::Lines {
-        colors: &colors,
+        colors,
         check_comma_disparity,
     };
     node_assert::myers_diff(cx.global(), actual, expected, &output)
-}
-
-fn owned(colors: &Colors<'_>) -> node_assert::Colors {
-    node_assert::Colors {
-        green: colors.green.to_vec(),
-        red: colors.red.to_vec(),
-        white: colors.white.to_vec(),
-        blue: colors.blue.to_vec(),
-    }
 }

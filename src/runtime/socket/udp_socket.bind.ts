@@ -20,18 +20,15 @@ export const connect = b.fn({
   args: { socket: UDPSocket, host: b.string.loose, port: b.i32 },
   capability: "js",
   throws: true,
-  rustPath: "crate::socket::UDPSocket::connect_from_dgram",
 });
 export const disconnect = b.fn({
   args: { socket: UDPSocket },
   capability: "heap",
   throws: true,
-  rustPath: "crate::socket::UDPSocket::disconnect_from_dgram",
 });
 export const bufferSize = b.fn({
   args: { socket: UDPSocket, size: b.i32.wrap, isRecv: b.bool },
   returns: b.i32,
   throws: true,
-  rustPath: "crate::socket::UDPSocket::buffer_size",
 });
-export const getFd = b.fn({ args: { socket: UDPSocket }, returns: b.i32, rustPath: "crate::socket::UDPSocket::fd" });
+export const getFd = b.fn({ args: { socket: UDPSocket }, returns: b.i32 });

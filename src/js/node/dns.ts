@@ -77,7 +77,7 @@ function setServers(servers) {
   return setServersOn(servers, dns);
 }
 
-const getRuntimeDefaultResultOrderOption = $bindgen("Resolver.bind.ts", "getRuntimeDefaultResultOrderOption");
+const getRuntimeDefaultResultOrderOption = $bindgen("dns_internals.bind.ts", "getRuntimeDefaultResultOrderOption");
 
 function newResolver(options) {
   if (!newResolver.native) {

@@ -27,8 +27,8 @@ export const utf8Echo = b.fn({ args: { text: b.string.utf8 }, returns: b.string.
 export const utf8EchoLoose = b.fn({ args: { text: b.string.loose.utf8 }, returns: b.string.utf8 });
 export const utf8Optional = b.fn({ args: { text: b.string.utf8.nullable }, returns: b.string.utf8.nullable });
 export const utf8Owned = b.fn({ args: { text: b.string.utf8.owned }, returns: b.string.utf8 });
-export const stringEcho = b.fn({ args: { text: b.string.owned }, returns: b.string });
-export const stringLength = b.fn({ args: { text: b.string, other: b.string.default("") }, returns: b.usize });
+export const stringEcho = b.fn({ args: { text: b.string }, returns: b.string });
+export const stringLength = b.fn({ args: { text: b.string.default("absent") }, returns: b.usize });
 
 export const TestColor = b.enumeration(["red", ["green", "lime"], "blue"]);
 export const nextColor = b.fn({ args: { color: TestColor }, returns: TestColor });
@@ -96,14 +96,14 @@ export const sumBytesIfAny = b.fn({
   args: { bytes: b.bytes({ from: ["string", "buffer"] }).nullable, text: b.string.loose.utf8.default("") },
   returns: b.i32,
 });
-export const stringOrObjectEcho = b.fn({ args: { text: b.string.allowStringObject.owned }, returns: b.string });
+export const stringOrObjectEcho = b.fn({ args: { text: b.string.allowStringObject }, returns: b.string });
 
 type BytesOptions = Parameters<typeof b.bytes>[0];
 const bytesOfWith = (options: BytesOptions) =>
   b.fn({ args: { data: b.bytes(options) }, returns: b.array(b.u8), rustPath: "crate::bindgen_test::bytes_of" });
 export const bytesOf = bytesOfWith({ from: ["string", "buffer"] });
 export const bytesOfString = bytesOfWith({ from: ["string"] });
-export const bytesOfStringNotObject = bytesOfWith({ from: ["string", "buffer"], refuse: ["stringObject"] });
+export const bytesOfRefusingStringObject = bytesOfWith({ from: ["string", "buffer"], refuse: ["stringObject"] });
 export const bytesOfBufferOrBlob = bytesOfWith({ from: ["buffer", "blob"] });
 export const bytesOfOrToString = bytesOfWith({ from: ["string", "buffer", "blob"], otherwise: "toString" });
 export const bytesOfRefusingUndefined = bytesOfWith({

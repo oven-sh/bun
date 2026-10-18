@@ -3,11 +3,11 @@
 //! transport: `upgradeNodeHTTPResponseToWebSocket` / `sendWebSocketFrame`.
 
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
-use bun_jsc::{CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws_sys::Opcode;
 use bun_uws_sys::response::PerMessageDeflateParams;
 
-use crate::generated_bindgen::node_http_binding::{BunServer, PerMessageDeflate, UpgradeResponse};
+use crate::generated_bindgen::node_http_binding::{BunServer, DeflateParams, UpgradeResponse};
 use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, ServerWebSocket};
 
 pub(crate) fn get_bun_server_all_closed_promise(
@@ -56,11 +56,16 @@ pub(crate) fn get_bun_server_open_count(server: BunServer<'_>) -> f64 {
     match server {
         BunServer::Http(server) => open_count!(server),
         BunServer::Https(server) => open_count!(server),
-        BunServer::DebugHTTP(server) => open_count!(server),
-        BunServer::DebugHTTPS(server) => open_count!(server),
+        BunServer::DebugHttp(server) => open_count!(server),
+        BunServer::DebugHttps(server) => open_count!(server),
     }
 }
 
+/// `(response, websocket, handlers, handshake, maxPayload, flags, deflate)`: upgrades
+/// `response`'s connection to a WebSocket and writes `handshake` as the response head. `deflate` is
+/// the negotiated permessage-deflate parameters, or `undefined`. Returns the `ServerWebSocket`.
+/// Returns `undefined` without writing anything if `response` isn't a native response or can no
+/// longer be upgraded.
 pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
     cx: &mut JsScope<'a>,
     response: UpgradeResponse<'a>,
@@ -69,7 +74,7 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
     handshake: &[u8],
     max_payload: u32,
     flags: i32,
-    deflate: Option<PerMessageDeflate>,
+    deflate: Option<DeflateParams>,
 ) -> JsResult<JSValue> {
     const AUTO_PONG: i32 = 1 << 0;
     const SKIP_UTF8_VALIDATION: i32 = 1 << 1;
@@ -104,6 +109,8 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
         .unwrap_or(JSValue::UNDEFINED))
 }
 
+/// `(handle, data, opcode, fin, compress)`: sends one frame on a `ServerWebSocket`. `opcode` is
+/// 1 (text), 2 (binary) or 0 (continuation). Returns the same status as `ServerWebSocket.send`.
 pub(crate) fn send_web_socket_frame<'a>(
     cx: &mut JsScope<'a>,
     handle: &'a ServerWebSocket,
@@ -112,19 +119,7 @@ pub(crate) fn send_web_socket_frame<'a>(
     fin: bool,
     compress: bool,
 ) -> JsResult<JSValue> {
-    let global = cx.global();
-    if !(0..=2).contains(&opcode) {
-        return Err(global.throw_invalid_arguments(format_args!("opcode must be 0, 1 or 2")));
-    }
-    handle.send_frame(global, data.to_js(), Opcode(opcode), fin, compress)
-}
-
-pub(crate) fn get_max_http_header_size() -> usize {
-    bun_http::max_http_header_size()
-}
-
-pub(crate) fn get_insecure_http_parser() -> bool {
-    bun_http::insecure_http_parser()
+    handle.send_frame(cx.global(), data.to_js(), Opcode(opcode), fin, compress)
 }
 
 pub(crate) fn set_max_http_header_size<'a>(
@@ -133,10 +128,9 @@ pub(crate) fn set_max_http_header_size<'a>(
 ) -> bindgen::Result<'a, usize> {
     let num = value as i64;
     if num <= 0 {
-        return Err(heap.error_with_code(
-            ErrorCode::INVALID_ARG_TYPE,
-            format_args!("maxHeaderSize must be a positive integer"),
-        ));
+        return Err(
+            heap.invalid_arguments(format_args!("maxHeaderSize must be a positive integer"))
+        );
     }
     bun_http::set_max_http_header_size(num as usize);
     Ok(bun_http::max_http_header_size())

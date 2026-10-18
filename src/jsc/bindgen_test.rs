@@ -52,12 +52,12 @@ pub(crate) fn utf8_owned(text: bun_core::Utf8Bytes<'static>) -> bun_core::Utf8By
     text
 }
 
-pub(crate) fn string_echo(text: bun_core::String) -> bun_core::String {
-    text
+pub(crate) fn string_echo(text: &bun_core::String) -> bun_core::String {
+    text.clone()
 }
 
-pub(crate) fn string_length(text: &bun_core::String, other: &bun_core::String) -> usize {
-    text.length() + other.length()
+pub(crate) fn string_length(text: &bun_core::String) -> usize {
+    text.length()
 }
 
 pub(crate) fn next_color(color: TestColor) -> TestColor {
@@ -228,8 +228,8 @@ pub(crate) fn sum_bytes_if_any(bytes: Option<&[u8]>, _: &[u8]) -> i32 {
     bytes.map_or(-1, |bytes| sum(bytes) as i32)
 }
 
-pub(crate) fn string_or_object_echo(text: bun_core::String) -> bun_core::String {
-    text
+pub(crate) fn string_or_object_echo(text: &bun_core::String) -> bun_core::String {
+    text.clone()
 }
 
 pub(crate) fn sum_before_and_after_callback<'a>(

@@ -1777,13 +1777,7 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_fd(this: &Self, _: &JSGlobalObject) -> JSValue {
-        if this.closed.get() {
-            return JSValue::js_number(-1.0);
-        }
-        let Some(socket) = this.socket.get() else {
-            return JSValue::js_number(-1.0);
-        };
-        JSValue::js_number(uws::udp::Socket::opaque_mut(socket).fd() as f64)
+        JSValue::js_number(f64::from(get_fd(this)))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1905,106 +1899,9 @@ impl UDPSocket {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub(crate) fn connect_from_dgram(
-        cx: &mut JsScope<'_>,
-        this: &UDPSocket,
-        host: &BunString,
-        connect_port: i32,
-    ) -> JsResult<()> {
-        let global_this = cx.global();
-        if this.connect_info.get().is_some() {
-            return Err(global_this.throw(format_args!("Socket is already connected")));
-        }
-
-        if this.closed.get() {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        }
-
-        let connect_host = host.to_owned_slice_z();
-        if !bun_dns::is_valid_hostname(connect_host.as_bytes()) {
-            return Err(
-                global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
-                    global_this,
-                    connect_host.as_bytes(),
-                )),
-            );
-        }
-
-        let port: u16 = if connect_port < 1 || connect_port > 0xffff {
-            0
-        } else {
-            u16::try_from(connect_port).expect("int cast")
-        };
-
-        let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        if uws::udp::Socket::opaque_mut(socket).connect(connect_host.as_ptr(), port as u32) == -1 {
-            return Err(global_this.throw(format_args!("Failed to connect socket")));
-        }
-        this.connect_info.set(Some(ConnectInfo { port }));
-
-        if let Some(this_value) = this.this_value.get().try_get() {
-            js::address_set_cached(this_value, global_this, JSValue::ZERO);
-            js::remote_address_set_cached(this_value, global_this, JSValue::ZERO);
-        }
-
-        Ok(())
-    }
-
-    pub(crate) fn disconnect_from_dgram<'a>(
-        heap: &JsHeap<'a>,
-        this: &UDPSocket,
-    ) -> bindgen::Result<'a, ()> {
-        if this.connect_info.get().is_none() {
-            return Err(heap.error(format_args!("Socket is not connected")));
-        }
-
-        if this.closed.get() {
-            return Err(heap.error(format_args!("Socket is closed")));
-        }
-
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        if uws::udp::Socket::opaque_mut(this.socket.get().unwrap()).disconnect() == -1 {
-            return Err(heap.error(format_args!("Failed to disconnect socket")));
-        }
-        this.connect_info.set(None);
-
-        Ok(())
-    }
-
-    /// `(size, isRecv)` → resulting SO_RCVBUF/SO_SNDBUF value. `size == 0`
-    /// reads the current value, non-zero sets it. Backs node:dgram's
-    /// get/setRecvBufferSize and get/setSendBufferSize.
-    pub(crate) fn buffer_size(this: &UDPSocket, size: i32, is_recv: bool) -> bun_sys::Result<i32> {
-        let bad_fd =
-            || bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt);
-        if this.closed.get() {
-            return Err(bad_fd());
-        }
-        let Some(socket) = this.socket.get() else {
-            return Err(bad_fd());
-        };
-
-        let mut value: c_int = 0;
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).buffer_size(is_recv, size, &mut value);
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
-            return Err(err);
-        }
-
-        Ok(value)
-    }
-
     /// Underlying socket descriptor, or `None` once closed. IPC send dups/exports this for a `dgram.Socket` handle.
     pub(crate) fn native_fd(&self) -> Option<bun_sys::Fd> {
-        if self.closed.get() {
-            return None;
-        }
-        let socket = self.socket.get()?;
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let raw = uws::udp::Socket::opaque_mut(socket).fd();
+        let raw = get_fd(self);
         if raw < 0 {
             return None;
         }
@@ -2019,19 +1916,104 @@ impl UDPSocket {
             Some(bun_sys::Fd::from_native(raw))
         }
     }
+}
 
-    /// Underlying socket descriptor as a number, or -1 once closed. Backs
-    /// node:dgram's handle.fd.
-    pub(crate) fn fd(this: &UDPSocket) -> i32 {
-        if this.closed.get() {
-            return -1;
-        }
-        let Some(socket) = this.socket.get() else {
-            return -1;
-        };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        uws::udp::Socket::opaque_mut(socket).fd()
+pub(crate) fn connect(
+    cx: &mut JsScope<'_>,
+    this: &UDPSocket,
+    host: &BunString,
+    port: i32,
+) -> JsResult<()> {
+    let global_this = cx.global();
+    if this.connect_info.get().is_some() {
+        return Err(global_this.throw(format_args!("Socket is already connected")));
     }
+
+    if this.closed.get() {
+        return Err(global_this.throw(format_args!("Socket is closed")));
+    }
+
+    let connect_host = host.to_owned_slice_z();
+    if !bun_dns::is_valid_hostname(connect_host.as_bytes()) {
+        return Err(
+            global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                global_this,
+                connect_host.as_bytes(),
+            )),
+        );
+    }
+
+    let port = u16::try_from(port).unwrap_or(0);
+
+    let Some(socket) = this.socket.get() else {
+        return Err(global_this.throw(format_args!("Socket is closed")));
+    };
+    // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+    if uws::udp::Socket::opaque_mut(socket).connect(connect_host.as_ptr(), port as u32) == -1 {
+        return Err(global_this.throw(format_args!("Failed to connect socket")));
+    }
+    this.connect_info.set(Some(ConnectInfo { port }));
+
+    if let Some(this_value) = this.this_value.get().try_get() {
+        js::address_set_cached(this_value, global_this, JSValue::ZERO);
+        js::remote_address_set_cached(this_value, global_this, JSValue::ZERO);
+    }
+
+    Ok(())
+}
+
+pub(crate) fn disconnect<'a>(heap: &JsHeap<'a>, this: &UDPSocket) -> bindgen::Result<'a, ()> {
+    if this.connect_info.get().is_none() {
+        return Err(heap.error(format_args!("Socket is not connected")));
+    }
+
+    if this.closed.get() {
+        return Err(heap.error(format_args!("Socket is closed")));
+    }
+
+    // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+    if uws::udp::Socket::opaque_mut(this.socket.get().unwrap()).disconnect() == -1 {
+        return Err(heap.error(format_args!("Failed to disconnect socket")));
+    }
+    this.connect_info.set(None);
+
+    Ok(())
+}
+
+/// The resulting SO_RCVBUF/SO_SNDBUF value. `size == 0`
+/// reads the current value, non-zero sets it. Backs node:dgram's
+/// get/setRecvBufferSize and get/setSendBufferSize.
+pub(crate) fn buffer_size(this: &UDPSocket, size: i32, is_recv: bool) -> bun_sys::Result<i32> {
+    let bad_fd =
+        || bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt);
+    if this.closed.get() {
+        return Err(bad_fd());
+    }
+    let Some(socket) = this.socket.get() else {
+        return Err(bad_fd());
+    };
+
+    let mut value: c_int = 0;
+    // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+    let res = uws::udp::Socket::opaque_mut(socket).buffer_size(is_recv, size, &mut value);
+    if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
+        return Err(err);
+    }
+
+    Ok(value)
+}
+
+/// Underlying socket descriptor as a number, or -1 once closed. Backs
+/// node:dgram's handle.fd.
+pub(crate) fn get_fd(this: &UDPSocket) -> i32 {
+    if this.closed.get() {
+        return -1;
+    }
+    let Some(socket) = this.socket.get() else {
+        return -1;
+    };
+    // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+    uws::udp::Socket::opaque_mut(socket).fd()
 }
 
 // ─── Raw-descriptor helpers for node:dgram's internal UDP handle shim ────────
@@ -2203,10 +2185,14 @@ pub(crate) fn dgram_is_fd_adopted(fd: i32) -> bool {
 /// `(isIPv6, isStream)` → a fresh unbound SOCK_DGRAM (or SOCK_STREAM)
 /// descriptor (CLOEXEC + non-blocking + SO_NOSIGPIPE), created through
 /// bsd_create_socket so this doesn't fork its platform gate/EINTR loop.
-pub(crate) fn dgram_new_socket_fd(is_v6: bool, is_stream: bool) -> bun_sys::Result<i32> {
+pub(crate) fn dgram_new_socket_fd(is_ipv6: bool, is_stream: bool) -> bun_sys::Result<i32> {
     #[cfg(not(windows))]
     {
-        let domain = if is_v6 { libc::AF_INET6 } else { libc::AF_INET };
+        let domain = if is_ipv6 {
+            libc::AF_INET6
+        } else {
+            libc::AF_INET
+        };
         let sock_type = if is_stream {
             libc::SOCK_STREAM
         } else {
@@ -2224,7 +2210,7 @@ pub(crate) fn dgram_new_socket_fd(is_v6: bool, is_stream: bool) -> bun_sys::Resu
     }
     #[cfg(windows)]
     {
-        let _ = (is_v6, is_stream);
+        let _ = (is_ipv6, is_stream);
         Err(dgram_not_supported())
     }
 }

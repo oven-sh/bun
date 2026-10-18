@@ -5,9 +5,10 @@ export default b.module({ rustPath: "crate::node::node_net_binding" });
 export const getDefaultAutoSelectFamily = b.fn({ returns: b.bool });
 export const setDefaultAutoSelectFamily = b.fn({ args: { value: b.bool }, returns: b.bool });
 
+const INT32_MAX = 2 ** 31 - 1;
 export const getDefaultAutoSelectFamilyAttemptTimeout = b.fn({ returns: b.u32 });
 export const setDefaultAutoSelectFamilyAttemptTimeout = b.fn({
-  args: { value: b.u32.validateInteger(1, 2 ** 31 - 1) },
+  args: { value: b.u32.validateInteger(1, INT32_MAX) },
   returns: b.u32,
 });
 

@@ -106,7 +106,7 @@ struct BytesOptions {
     bool fromString { false };
     bool fromBuffer { false };
     bool fromBlob { false };
-    // `ToString` of anything else, except the two below. Without it, anything else is refused.
+    // `ToString` of anything else, except what `refuseUndefined` and `refuseNull` say. Without it, anything else is refused.
     bool toStringOtherwise { false };
     bool refuseUndefined { false };
     bool refuseNull { false };
@@ -140,7 +140,7 @@ struct IDLRawInterface : WebCore::IDLType<JSClass*> {
 
 // An instance of a class of a `.classes.ts` file, as what it wraps. The caller's frame keeps the cell alive.
 template<typename JSClass, auto name>
-struct IDLClassRef : WebCore::IDLType<void*> {
+struct IDLWrappedInterface : WebCore::IDLType<void*> {
     using SequenceStorageType = void;
     using NullableType = void*;
     using NullableInnerParameterType = void*;

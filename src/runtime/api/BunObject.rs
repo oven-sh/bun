@@ -111,7 +111,7 @@ mod static_adapters {
 
     pub(super) fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::udp_socket_draft::UDPSocket::udp_socket(&g.js_thread_of_caller(cf), opts)
+        crate::socket::udp_socket::UDPSocket::udp_socket(&g.js_thread_of_caller(cf), opts)
     }
 
     pub(super) fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
@@ -317,14 +317,14 @@ fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
 
 pub(crate) fn shell_escape<'a>(
     heap: &JsHeap<'a>,
-    input: BunString,
+    input: &BunString,
 ) -> bindgen::Result<'a, BunString> {
-    if !bun_shell_parser::needs_escape_bunstr(&input) {
-        return Ok(input);
+    if !bun_shell_parser::needs_escape_bunstr(input) {
+        return Ok(input.clone());
     }
 
     let mut outbuf: Vec<u8> = Vec::new();
-    if !bun_shell_parser::escape_bun_str::<true>(&input, &mut outbuf)? {
+    if !bun_shell_parser::escape_bun_str::<true>(input, &mut outbuf)? {
         return Err(heap.error(format_args!(
             "String has invalid utf-16: {}",
             bstr::BStr::new(input.byte_slice()),

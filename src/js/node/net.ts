@@ -274,12 +274,12 @@ const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 const addServerName = $bindgen("Listener.bind.ts", "addServerName");
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
 // tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
-const upgradeTLSDeferred = $bindgen("socket.bind.ts", "upgradeTLSDeferred");
-const checkServerIdentityInHandshake = $bindgen("socket.bind.ts", "checkServerIdentityInHandshake");
+const upgradeTLSDeferred = $bindgen("socket_body.bind.ts", "upgradeTLSDeferred");
+const checkServerIdentityInHandshake = $bindgen("socket_body.bind.ts", "checkServerIdentityInHandshake");
 // destroy() in the handshake callback: drops the handshake flight that the native layer holds.
-const releaseHeldFlight = $bindgen("socket.bind.ts", "releaseHeldFlight");
-const isNamedPipeSocket = $bindgen("socket.bind.ts", "isNamedPipeSocket");
-const getBufferedAmount = $bindgen("socket.bind.ts", "getBufferedAmount");
+const releaseHeldFlight = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
+const isNamedPipeSocket = $bindgen("socket_body.bind.ts", "isNamedPipeSocket");
+const getBufferedAmount = $bindgen("socket_body.bind.ts", "getBufferedAmount");
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");

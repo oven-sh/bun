@@ -10,7 +10,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
-use crate::generated_bindgen::node_cluster_binding::WorkerProcess;
+use crate::generated_bindgen::node_cluster_binding::ProcessHandle;
 
 // Struct lives in `crate::ipc` —
 // `SendQueue` stores one inline so it must live at that tier. Re-exported here so
@@ -186,13 +186,13 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
 
 pub(crate) fn on_internal_message_primary<'a>(
     cx: &mut JsScope<'a>,
-    process: WorkerProcess<'a>,
+    handle: ProcessHandle<'a>,
     worker: JsLocal<'a>,
     callback: JsLocal<'a>,
 ) {
     // Same guard as `send_helper_primary`: nothing to subscribe to when the
     // worker's process has no native child handle.
-    let WorkerProcess::Subprocess(subprocess) = process else {
+    let ProcessHandle::Subprocess(subprocess) = handle else {
         return;
     };
     let Some(ipc_data) = subprocess.ipc() else {

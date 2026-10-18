@@ -129,13 +129,14 @@ impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
 pub(crate) fn normalize_encoding<'a>(heap: &JsHeap<'a>, encoding: &BunString) -> JsLocal<'a> {
     // SAFETY: the name of an encoding is a string the VM already has.
     let global = unsafe { heap.global() };
-    if encoding.length() == 0 {
-        return JsLocal::new(heap, Encoding::Utf8.to_js(global));
-    }
-    match Encoding::from_bun_string(encoding) {
-        Some(enc) => JsLocal::new(heap, enc.to_js(global)),
-        None => JsLocal::UNDEFINED,
-    }
+    let found = if encoding.length() == 0 {
+        Some(Encoding::Utf8)
+    } else {
+        Encoding::from_bun_string(encoding)
+    };
+    found.map_or(JsLocal::UNDEFINED, |found| {
+        JsLocal::new(heap, found.to_js(global))
+    })
 }
 
 pub(crate) fn parse_env<'a>(heap: &JsHeap<'a>, content: &[u8]) -> bindgen::Result<'a, JsLocal<'a>> {

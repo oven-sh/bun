@@ -408,11 +408,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.instantiation_count = (self.instantiation_count).saturating_add(calls + variadic + 1);
     }
 
-    pub fn instantiate_all(
-        &mut self,
-        types: &[TypeId],
-        mapper: MapperId,
-    ) -> SmallVec<[TypeId; 8]> {
+    pub fn instantiate_all(&mut self, types: &[TypeId], mapper: MapperId) -> SmallVec<[TypeId; 8]> {
         types.iter().map(|&t| self.instantiate(t, mapper)).collect()
     }
 

@@ -2432,7 +2432,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getBaseSignature`: `sig` with each of its type parameters replaced by its base constraint.
     pub fn base_sig(&mut self, sig: SigId) -> SigId {
-        self.derived_sig(sig, super::relate::DerivedSig::Base, |c| c.derive_base_sig(sig))
+        self.derived_sig(sig, super::relate::DerivedSig::Base, |c| {
+            c.derive_base_sig(sig)
+        })
     }
 
     fn derive_base_sig(&mut self, sig: SigId) -> SigId {

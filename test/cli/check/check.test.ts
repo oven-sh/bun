@@ -798,7 +798,10 @@ export interface Loop extends Pick<Big & Pick<Loop, "own">, "b"> { own: 1 }
   // still has to report it when `user.ts` is checked first: `big.ts` and `user.ts` are larger, so two threads start with them.
   test("reports an error that another file first hits while printing a type in an error message", async () => {
     const filler = (prefix: string, lines: number) =>
-      Array.from({ length: lines }, (_, i) => `const ${prefix}${i} = [${i}, "${i}"].map(it => typeof it).join("");\n`).join("");
+      Array.from(
+        { length: lines },
+        (_, i) => `const ${prefix}${i} = [${i}, "${i}"].map(it => typeof it).join("");\n`,
+      ).join("");
     using dir = project({
       "big.ts": filler("b", 400) + "export {};\n",
       "dep.ts": `declare function takesNumber(n: number): number;

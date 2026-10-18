@@ -597,6 +597,17 @@ test("options.connection also gives what it inherits", () => {
   );
 });
 
+test("the traps of a Proxy are asked for no more than the options", () => {
+  const asked: string[] = [];
+  const trap = (name: string) => () => {
+    asked.push(name);
+    throw new Error(name);
+  };
+  const options = new Proxy({}, { getPrototypeOf: trap("getPrototypeOf"), getOwnPropertyDescriptor: trap("own") });
+  expect(optionsOf("postgres://db.example/app", Object.create(options)).hostname).toBe("db.example");
+  expect(asked).toEqual([]);
+});
+
 test.each(["postgres", "mysql", "sqlite"])("%s: what is on Object.prototype is not an option", async adapter => {
   using dir = tempDir("sql-options-prototype", {});
   const socket = path.join(String(dir), "evil.sock");
@@ -645,7 +656,8 @@ test.each(["postgres", "mysql", "sqlite"])("%s: what is on Object.prototype is n
       await using memory = new Bun.SQL(":memory:");
       const fromVariables = new Bun.SQL({ adapter: ${JSON.stringify(adapter)} }).options;
       const inherited = new Bun.SQL(args[0], Object.create({ adapter: ${JSON.stringify(adapter)}, username: "heir", readonly: true })).options;
-      return JSON.stringify([new Bun.SQL(...args).options, fromVariables, inherited, await memory\`select \${undefined} as a_b\`]);
+      return JSON.stringify([new Bun.SQL(...args).options, fromVariables, inherited,
+        new Bun.SQL(args[0], new Proxy({}, { getPrototypeOf: () => null })).options, await memory\`select \${undefined} as a_b\`]);
     };
     const clean = await observed();
     Object.assign(Object.prototype, {

@@ -231,8 +231,9 @@ const SERVER_OPTIONS = [
 
 /** What somebody put on `Object.prototype` is not the caller's. What the caller's own prototypes have is. */
 function isFromObjectPrototype(object: object | null, name: string): boolean {
-  while (object && !ObjectHasOwn(object, name)) object = ObjectGetPrototypeOf(object);
-  return object === ObjectPrototype;
+  if (!ObjectHasOwn(ObjectPrototype, name)) return false;
+  while (object && object !== ObjectPrototype && !ObjectHasOwn(object, name)) object = ObjectGetPrototypeOf(object);
+  return !object || object === ObjectPrototype;
 }
 
 /** `options` has the own keys of `source` already. Every key is read once: a getter is the caller's code. */

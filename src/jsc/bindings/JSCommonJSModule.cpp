@@ -1387,9 +1387,7 @@ const JSC::ClassInfo JSCommonJSModule::s_info = { "Module"_s, &Base::s_info, nul
 const JSC::ClassInfo RequireResolveFunctionPrototype::s_info = { "resolve"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireResolveFunctionPrototype) };
 const JSC::ClassInfo RequireFunctionPrototype::s_info = { "require"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireFunctionPrototype) };
 
-// A module failed to load. Takes `key` out of `requireMap`, so that the next require() loads the
-// file again, and throws the error again. `key` is the one the caller found or put the module
-// under. It is not read from the module: a module can assign `module.filename`.
+// `key` is the one the caller's lookup used. It is not read from the module, which can assign `module.filename`.
 static NEVER_INLINE void evictFromRequireMapAndRethrow(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSMap* requireMap, JSC::JSValue key)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1701,8 +1699,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
-                        // A module with no source is not this loader's to run or to remove: a `new Module()` that the
-                        // program put in require.cache, or one that a `Module._extensions` handler filled itself.
+                        // No source: the program or a `Module._extensions` handler made this module. It is exported as it is.
                         if (!moduleObject->hasEvaluated && !moduleObject->sourceCode.isNull()) {
                             evaluateCommonJSModuleOnce(
                                 vm,

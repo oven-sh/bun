@@ -203,6 +203,8 @@ describe("Bun.FetchSession", () => {
     expect(server.connections).toBe(2);
   });
 
+  // The 4 s wait leaves too little of the default test timeout for the
+  // requests around it on a slow build.
   test.concurrent(
     "keepAlive.idleTimeout replaces the 4 s window an origin without a Keep-Alive hint gets",
     async () => {
@@ -213,6 +215,7 @@ describe("Bun.FetchSession", () => {
       expect(await (await fetch(server.url, { session })).text()).toBe("ok");
       expect(server.connections).toBe(1);
     },
+    15_000,
   );
 
   // The socket timer sweeps every 4 seconds, so this takes two sweeps; it runs
@@ -243,7 +246,7 @@ describe("Bun.FetchSession", () => {
     }
     // The close crosses two threads after the collection; give it until a
     // deadline, and fail with a message instead of hanging.
-    for (const deadline = Date.now() + 5000; !done && Date.now() < deadline; ) {
+    for (const deadline = Date.now() + 5000; !done && Date.now() < deadline;) {
       await new Promise(resolve => setImmediate(resolve));
     }
     expect(done).toBe(true);

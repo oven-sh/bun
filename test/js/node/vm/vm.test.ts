@@ -2528,12 +2528,17 @@ describe("a vm timeout in a listener that native code called ends the script", (
             port: 0,
             fetch(request, server) {
               request.signal.addEventListener("abort", spin);
-              return server.upgrade(request) ? undefined : new Response("not a websocket");
+              if (server.upgrade(request)) return;
+              done.resolve("the request was not upgraded");
+              return new Response("not a websocket");
             },
             websocket,
           });
           const client = new WebSocket("ws://localhost:" + server.port);
           client.onopen = () => client.send("close me");
+          // The 'message' handler resolves first when the connection works. These name the stage that failed.
+          client.onerror = () => done.resolve("the client got an error");
+          client.onclose = event => done.resolve("the client closed before the message, code " + event.code);
           console.log((withCloseHandler ? "with" : "without") + " a close handler: " + (await done.promise));
           await server.stop(true);
         }

@@ -3635,18 +3635,6 @@ describe.each(["hoisted", "isolated"] as const)("an unresolved optional dependen
     expect(native(String(dir))).toBeEmpty();
     expect(await file(lockfilePath).text()).not.toContain('"cli-native": ["cli@1.0.0-native"');
 
-    // Still unpublished: the retry asks the registry and changes nothing.
-    registry.requests.length = 0;
-    const incomplete = await file(lockfilePath).text();
-    await installWithOwnCache(String(dir));
-    expect(registry.requests).toEqual(["/cli"]);
-    expect(await file(lockfilePath).text()).toBe(incomplete);
-    await installWithOwnCache(String(dir), "--lockfile-only");
-    expect(await file(lockfilePath).text()).toBe(incomplete);
-    registry.requests.length = 0;
-    await installWithOwnCache(String(dir), "--frozen-lockfile");
-    expect(registry.requests).toEqual([]);
-
     publishNative(published);
     registry.requests.length = 0;
     await installWithOwnCache(String(dir));
@@ -3660,6 +3648,29 @@ describe.each(["hoisted", "isolated"] as const)("an unresolved optional dependen
     await installWithOwnCache(String(dir));
     expect(registry.requests).toEqual([]);
     expect(await file(lockfilePath).text()).toBe(lockfile);
+  });
+
+  // The retry asks the registry and changes nothing. A frozen lockfile is not retried.
+  it.concurrent("while the version stays unpublished, nothing changes", async () => {
+    using registry = await serveRegistry(manifests(), latest);
+    using dir = tempDir("retry-unresolved-optional-still-", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { cli: "1.0.0" } }),
+      "bunfig.toml": bunfig(registry.url),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+
+    await installWithOwnCache(String(dir));
+    const incomplete = await file(lockfilePath).text();
+
+    registry.requests.length = 0;
+    await installWithOwnCache(String(dir));
+    expect(registry.requests).toEqual(["/cli"]);
+    expect(await file(lockfilePath).text()).toBe(incomplete);
+    await installWithOwnCache(String(dir), "--lockfile-only");
+    expect(await file(lockfilePath).text()).toBe(incomplete);
+    registry.requests.length = 0;
+    await installWithOwnCache(String(dir), "--frozen-lockfile");
+    expect(registry.requests).toEqual([]);
   });
 
   // `bun i -g cli@latest` resolves the parent again, to the package bun.lock has.
@@ -3739,13 +3750,15 @@ describe.each(["hoisted", "isolated"] as const)("an unresolved optional dependen
   });
 
   // `bun add <name>` scans only what it adds. What a retried row brings is new to the tree too.
-  it.concurrent("and the security scanner sees what the retry brings", async () => {
-    const published = manifests();
-    published.other = { "1.0.0": {} };
-    using registry = await serveRegistry(published, latest);
-    using dir = tempDir("retry-unresolved-optional-scanned-", {
-      "package.json": JSON.stringify({ name: "app", dependencies: { cli: "1.0.0" } }),
-      "scanner.ts": `export const scanner = {
+  it.concurrent(
+    "and the security scanner sees what the retry brings",
+    async () => {
+      const published = manifests();
+      published.other = { "1.0.0": {} };
+      using registry = await serveRegistry(published, latest);
+      using dir = tempDir("retry-unresolved-optional-scanned-", {
+        "package.json": JSON.stringify({ name: "app", dependencies: { cli: "1.0.0" } }),
+        "scanner.ts": `export const scanner = {
         version: "1",
         scan: async ({ packages }) => {
           console.log("scanned: " + packages.map(p => p.name + "@" + p.version).join(" "));
@@ -3754,31 +3767,34 @@ describe.each(["hoisted", "isolated"] as const)("an unresolved optional dependen
             .map(p => ({ package: p.name, description: "bad", level: "fatal", url: "https://example.com/" }));
         },
       };`,
-      "bunfig.toml": Bun.TOML.stringify({
-        install: { registry: registry.url, linker, security: { scanner: "./scanner.ts" } },
-      }),
-    });
-    const lockfilePath = join(String(dir), "bun.lock");
+        "bunfig.toml": Bun.TOML.stringify({
+          install: { registry: registry.url, linker, security: { scanner: "./scanner.ts" } },
+        }),
+      });
+      const lockfilePath = join(String(dir), "bun.lock");
 
-    await installWithOwnCache(String(dir));
-    const incomplete = await file(lockfilePath).text();
+      await installWithOwnCache(String(dir));
+      const incomplete = await file(lockfilePath).text();
 
-    publishNative(published);
-    await using proc = spawn({
-      cmd: [bunExe(), "add", "other"],
-      cwd: String(dir),
-      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(out).toContain("scanned: ");
-    expect(out).toContain("cli@1.0.0-native");
-    expect(out).toContain("Installation aborted due to fatal security advisories");
-    expect(native(String(dir))).toBeEmpty();
-    expect(await file(lockfilePath).text()).toBe(incomplete);
-    expect(exitCode).toBe(1);
-  });
+      publishNative(published);
+      await using proc = spawn({
+        cmd: [bunExe(), "add", "other"],
+        cwd: String(dir),
+        env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(out).toContain("scanned: ");
+      expect(out).toContain("cli@1.0.0-native");
+      expect(out).toContain("Installation aborted due to fatal security advisories");
+      expect(native(String(dir))).toBeEmpty();
+      expect(await file(lockfilePath).text()).toBe(incomplete);
+      expect(exitCode).toBe(1);
+      // The scanner is a second bun process inside the install.
+    },
+    20_000,
+  );
 
   // The row is in bun.lock's "unresolved" list, because the root has a package of its name. Bound to
   // that package now, it changes no placement, so only the list tells the lockfiles apart.

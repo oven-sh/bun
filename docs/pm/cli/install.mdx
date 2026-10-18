@@ -633,7 +633,7 @@ Command lines written for npm, Yarn or pnpm keep working. `bun install`, `bun ci
 
 `--name value` works like `--name=value`, and `--audit=false` like `--no-audit`. A flag that the table shows without a value is ignored if it has one, like `--legacy-peer-deps=true`. Bun still installs peer dependencies with `--legacy-peer-deps`; use `--omit=peer` to skip them.
 
-`bun remove` doesn't save any dependency, so it ignores the five `--save-*` flags. For `bun update`, `--dev`, `--production` and `--no-optional` choose what gets updated, so three rows differ:
+`bun remove` doesn't save any dependency, so it ignores the `--save-*` flags. For `bun update`, `--dev`, `--production` and `--no-optional` choose what gets updated, so three rows differ:
 
 - `--save-exact` is `--exact`. `--save-dev`, `--save-optional`, `--save-peer` and `--save-catalog` do nothing.
 - `--production=true` is an error.

@@ -3842,7 +3842,7 @@ describe("should move existing dependency when an explicit group flag is given",
     expect(await add(initial, ["--save-prod", "--only-missing", "BaR"])).toBe(pkgJson(initial));
   });
 
-  it.each(["remove", "update", "link"])("bun %s has no --save-prod flag", async command => {
+  it.each(["link"])("bun %s has no --save-prod flag", async command => {
     const initial = pkgJson({ ...root, devDependencies: { BaR: "^0.0.2" } });
     await writeFile(join(package_dir, "package.json"), initial);
     await using proc = spawn({

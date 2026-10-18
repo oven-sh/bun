@@ -491,12 +491,15 @@ impl<'a> Expr<'a> {
         match bound.parent_of_expr(id) {
             // The substitutions of a tagged template are in the template.
             Parent::Expr(parent) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
-                Some(hir::ExprKind::TaggedTemplate(call)) => match hir.calls.get(call.idx()) {
-                    Some(call) if call.callee != id && call.template != id => {
-                        Node::Expr(Expr::new(file, call.template))
+                Some(hir::ExprKind::TaggedTemplate(c)) => {
+                    let template = hir::template_in(hir.tagged_templates, c);
+                    match hir.calls.get(c.idx()) {
+                        Some(call) if call.callee != id && template != id => {
+                            Node::Expr(Expr::new(file, template))
+                        }
+                        _ => Node::Expr(Expr::new(file, parent)),
                     }
-                    _ => Node::Expr(Expr::new(file, parent)),
-                },
+                }
                 _ => Node::Expr(Expr::new(file, parent)),
             },
             parent => Node::of_parent(file, parent),
@@ -838,7 +841,7 @@ impl Parents {
                     hir::TypeNodeId::NONE,
                     hir.calls
                         .get(c.idx())
-                        .map_or(hir::IdList::EMPTY, |call| call.type_args),
+                        .map_or(hir::IdList::EMPTY, |call| hir.list_at(call.type_args)),
                 ),
                 K::Jsx(j) => (
                     hir::TypeNodeId::NONE,

@@ -776,6 +776,7 @@ impl<'s> Program<'s> {
             generic_relation_entries_not_published: 0,
             variances_cut_short: Default::default(),
             free_relaters: Vec::new(),
+            spare_inferences: Vec::new(),
             reliability: 0,
             in_variance_computation: false,
             is_marker_comparison: false,
@@ -1118,8 +1119,8 @@ struct ContextualInfo {
 struct InferenceContextInfo {
     file: FileId,
     node: ExprId,
-    /// `None`: `pushInferenceContext(node, nil)`.
-    context: Option<infer::Inference>,
+    /// `None`: `pushInferenceContext(node, nil)`. In a box: it goes to and fro between here and whoever works on it.
+    context: Option<Box<infer::Inference>>,
 }
 
 /// How an `enter` ended.
@@ -1513,7 +1514,9 @@ pub struct Checker<'p, 's> {
     /// published: see `relate::Key`.
     pub(super) generic_relation_entries_not_published: u64,
     variances_cut_short: FxHashMap<Sym, (u64, &'s [u8])>,
-    free_relaters: Vec<relate::Relater>,
+    free_relaters: Vec<Box<relate::Relater>>,
+    /// Each is as `Inference::for_params(&[], None)` makes it: to put in the place of one that is taken out.
+    spare_inferences: Vec<Box<infer::Inference>>,
     /// What the comparisons in progress found about the reliability of the variance being computed.
     reliability: u8,
     in_variance_computation: bool,

@@ -1442,17 +1442,26 @@ impl<'p, 's> Checker<'p, 's> {
         Some(result)
     }
 
-    fn take_inference_context(&mut self, level: usize) -> Option<Inference> {
+    fn take_inference_context(&mut self, level: usize) -> Option<Box<Inference>> {
+        self.inference_contexts[level].context.as_ref()?;
+        let mut placeholder = self.spare_inference();
         let context = self.inference_contexts[level].context.as_mut()?;
-        let mut placeholder = Inference::for_params(&[], None);
         placeholder.return_context = context.return_context.take();
         Some(std::mem::replace(context, placeholder))
     }
 
-    fn put_back_inference_context(&mut self, level: usize, mut context: Inference) {
+    fn put_back_inference_context(&mut self, level: usize, mut context: Box<Inference>) {
         let slot = &mut self.inference_contexts[level].context;
         context.return_context = (slot.as_mut()).and_then(|it| it.return_context.take());
-        *slot = Some(context);
+        if let Some(mut placeholder) = slot.replace(context) {
+            placeholder.become_empty();
+            self.spare_inferences.push(placeholder);
+        }
+    }
+
+    /// `Inference::for_params(&[], None)`
+    pub(super) fn spare_inference(&mut self) -> Box<Inference> {
+        (self.spare_inferences.pop()).unwrap_or_else(|| Box::new(Inference::for_params(&[], None)))
     }
 
     /// Takes the context of `returnMapper` out of the slot at `level` of `inference_contexts` while
@@ -1823,7 +1832,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         match hir[parent].kind {
             ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
-                if hir[c].callee == e || hir[c].template == e {
+                if hir[c].callee == e || hir.template_of(c) == e {
                     return None;
                 }
                 self.contextual_type_for_argument(file, parent, e)
@@ -2032,7 +2041,7 @@ impl<'p, 's> Checker<'p, 's> {
                             )
                     {
                         // An annotated variable provides the contextual types of its properties.
-                        let symbol = bound.expr_symbol[obj.idx()];
+                        let symbol = bound.symbol_of_expr(obj);
                         if symbol.is_some()
                             && let Some(pat) =
                                 bound.symbols[symbol.idx()]

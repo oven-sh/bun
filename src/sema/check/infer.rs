@@ -125,17 +125,9 @@ pub(super) struct Inference {
 
 impl Inference {
     pub(super) fn for_params(params: &[TypeId], sig: Option<SigId>) -> Inference {
-        let candidates = params
-            .iter()
-            .map(|_| Candidate {
-                priority: PRIORITY_MAX as u32,
-                top_level: true,
-                ..Default::default()
-            })
-            .collect();
-        Inference {
+        let mut inference = Inference {
             params: SmallVec::from_slice(params),
-            candidates,
+            candidates: SmallVec::new(),
             sig,
             contra: false,
             bivariant: false,
@@ -160,7 +152,61 @@ impl Inference {
             skipped_generic_function: false,
             inferred_type_params: Vec::new(),
             intra_expression_inference_sites: Vec::new(),
-        }
+        };
+        // In place: a list of two candidates is 232 bytes.
+        (inference.candidates).extend(params.iter().map(|_| Candidate {
+            priority: PRIORITY_MAX as u32,
+            top_level: true,
+            ..Default::default()
+        }));
+        inference
+    }
+
+    /// Afterwards it is as `for_params(&[], None)` makes it. Every field is named, so that a new one is a compile error.
+    pub(super) fn become_empty(&mut self) {
+        let Inference {
+            params,
+            candidates,
+            sig,
+            contra,
+            bivariant,
+            priority,
+            inference_priority,
+            visited,
+            visited_index,
+            source_stack,
+            target_stack,
+            expanding,
+            depth,
+            calls,
+            has_met_contextual_function,
+            original_target,
+            any_default,
+            around_source,
+            around,
+            propagated,
+            return_context,
+            outer_return_context,
+            no_default,
+            skipped_generic_function,
+            inferred_type_params,
+            intra_expression_inference_sites,
+        } = self;
+        params.clear();
+        candidates.clear();
+        visited.clear();
+        visited_index.clear();
+        source_stack.clear();
+        target_stack.clear();
+        inferred_type_params.clear();
+        intra_expression_inference_sites.clear();
+        (*sig, *propagated, *return_context, *outer_return_context) = (None, None, None, None);
+        (*contra, *bivariant, *has_met_contextual_function) = (false, false, false);
+        (*any_default, *no_default, *skipped_generic_function) = (false, false, false);
+        (*priority, *inference_priority) = (0, PRIORITY_MAX);
+        (*expanding, *depth, *calls) = (0, 0, 0);
+        *original_target = TypeId::NEVER;
+        (*around_source, *around) = (MapperId::IDENTITY, MapperId::IDENTITY);
     }
 
     /// `clearCachedInferences`

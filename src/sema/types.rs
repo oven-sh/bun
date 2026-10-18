@@ -916,6 +916,61 @@ pub struct Shape<'s> {
     pub mapper: MapperId,
 }
 
+/// The members of an object type once they are resolved. What else a `Shape` has tells one synthesized type from another,
+/// and is read from the type.
+#[derive(Debug)]
+#[repr(C)]
+pub struct Listed<'s> {
+    /// See `Shape`, for this field and the next five.
+    pub props: List<'s, Prop<'s>>,
+    pub call: List<'s, SigId>,
+    pub construct: List<'s, SigId>,
+    pub index: List<'s, IndexInfo>,
+    /// `TypeId::UNRESOLVED` for none.
+    properties_of: TypeId,
+    pub literal: Literalness,
+    /// `Shape::symbol_declared_at` is `Some`.
+    pub has_symbol_declared_at: bool,
+    /// The `Shape` had nothing but the four lists.
+    is_plain: bool,
+}
+
+impl<'s> From<Shape<'s>> for Listed<'s> {
+    fn from(shape: Shape<'s>) -> Listed<'s> {
+        Listed {
+            is_plain: shape.is_plain(),
+            props: shape.props.into(),
+            call: shape.call.into(),
+            construct: shape.construct.into(),
+            index: shape.index.into(),
+            properties_of: shape.properties_of.unwrap_or(TypeId::UNRESOLVED),
+            literal: shape.literal,
+            has_symbol_declared_at: shape.symbol_declared_at.is_some(),
+        }
+    }
+}
+
+impl<'s> Listed<'s> {
+    #[inline]
+    pub fn properties_of(&self) -> Option<TypeId> {
+        (self.properties_of != TypeId::UNRESOLVED).then_some(self.properties_of)
+    }
+
+    pub fn prop(&self, name: Atom) -> Option<&Prop<'s>> {
+        self.props.iter().find(|p| p.name == name)
+    }
+
+    /// Whether this was made of a `Shape` that is equal to `shape`, which has nothing but the four lists.
+    pub fn is_made_of(&self, shape: &Shape<'s>) -> bool {
+        debug_assert!(shape.is_plain());
+        self.is_plain
+            && self.props[..] == shape.props[..]
+            && self.call[..] == shape.call[..]
+            && self.construct[..] == shape.construct[..]
+            && self.index[..] == shape.index[..]
+    }
+}
+
 /// Whether a synthesized object type is still the type of an object literal expression, or which
 /// other distinguishing kind it was created as.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
@@ -1016,6 +1071,54 @@ impl<'s> Shape<'s> {
 
     pub fn prop(&self, name: Atom) -> Option<&Prop<'s>> {
         self.props.iter().find(|p| p.name == name)
+    }
+
+    /// Whether every field but the four lists is as `new_in` makes it. Every field is named, so that a new one is a
+    /// compile error.
+    fn is_plain(&self) -> bool {
+        let Shape {
+            symbol_declared_at,
+            symbol,
+            props: _,
+            call: _,
+            construct: _,
+            index: _,
+            literal,
+            is_regular,
+            contains_widening_type,
+            is_js_literal,
+            is_object_rest_type,
+            instantiation_expression,
+            instantiation_target,
+            default_of,
+            created_from,
+            spread_rank,
+            properties_of,
+            single_signature_arguments,
+            has_no_instantiable_symbol,
+            pattern_at,
+            mapper,
+        } = self;
+        let flags = [
+            is_regular,
+            contains_widening_type,
+            is_js_literal,
+            is_object_rest_type,
+            has_no_instantiable_symbol,
+        ];
+        symbol_declared_at.is_none()
+            && symbol.is_none()
+            && *literal == Literalness::No
+            && flags.iter().all(|&&flag| !flag)
+            && instantiation_expression.is_none()
+            && instantiation_target.is_none()
+            && default_of.is_none()
+            && created_from.is_none()
+            && *spread_rank == 0
+            && properties_of.is_none()
+            && single_signature_arguments.is_none()
+            && pattern_at.is_none()
+            && *mapper == MapperId::IDENTITY
     }
 }
 
@@ -4486,6 +4589,16 @@ follow_struct!(Shape<'_> {
     pattern_at,
     mapper
 });
+follow_struct!(Listed<'_> {
+    props,
+    call,
+    construct,
+    index,
+    properties_of,
+    literal,
+    has_symbol_declared_at,
+    is_plain
+});
 follow_struct!(SigParam {
     name,
     ty,
@@ -4751,6 +4864,16 @@ clone_in_struct!(Shape {
     has_no_instantiable_symbol,
     pattern_at,
     mapper
+});
+clone_in_struct!(Listed {
+    props,
+    call,
+    construct,
+    index,
+    properties_of,
+    literal,
+    has_symbol_declared_at,
+    is_plain
 });
 clone_in_enum!(SigData {
     Decl { file, func, mapper },

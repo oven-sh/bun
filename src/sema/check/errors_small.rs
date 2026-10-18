@@ -292,7 +292,7 @@ impl<'p> Checker<'p, '_> {
                 // `expr_symbol` has its `ExportSymbol`. A name found among the exports of an enclosing
                 // namespace, declared in another block of it, resolves to that symbol itself.
                 let bound = self.bound(file);
-                let recorded = bound.expr_symbol[e.idx()];
+                let recorded = bound.symbol_of_expr(e);
                 if recorded.is_some() {
                     let mut scope = self.enclosing_scope_of_expr(file, e);
                     while scope.is_some() {

@@ -503,7 +503,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let is_parenthesized = self.is_parenthesized(expression);
         match kind {
             ExprKind::TaggedTemplate(call) if !is_parenthesized => {
-                let template = self.f[call].template;
+                let template = self.f.template_of(call);
                 let from = self.f.exprs.get(template.idx()).map_or(pos, |it| it.pos);
                 self.error(1443, (from, end), &[]);
             }

@@ -3777,7 +3777,25 @@ fn compare_diagnostics(d1: &Diagnostic, d2: &Diagnostic) -> std::cmp::Ordering {
 
 /// `SortAndDeduplicateDiagnostics`
 fn sort_and_deduplicate(diagnostics: &mut Vec<Diagnostic>) {
-    diagnostics.shared_sort_by(compare_diagnostics);
+    // The path decides first. So the diagnostics of each file are sorted by themselves, and the files by their paths: of
+    // tens of thousands of diagnostics most comparisons would be of two long paths that begin alike.
+    let mut files: FxHashMap<&[u8], usize> = FxHashMap::default();
+    let file_of = diagnostics.iter().map(|d| {
+        let next = files.len();
+        *files.entry(typescript_path(&d.path)).or_insert(next)
+    });
+    let file_of: Vec<usize> = file_of.collect();
+    let mut by_file: Vec<Vec<Diagnostic>> = Vec::new();
+    by_file.resize_with(files.len(), Vec::new);
+    drop(files);
+    for (d, file) in diagnostics.drain(..).zip(file_of) {
+        by_file[file].push(d);
+    }
+    by_file.shared_sort_by(|a, b| typescript_path(&a[0].path).cmp(typescript_path(&b[0].path)));
+    for mut of_file in by_file {
+        of_file.shared_sort_by(compare_diagnostics);
+        diagnostics.append(&mut of_file);
+    }
     // `compactAndMergeRelatedInfos`
     diagnostics.dedup_by(|next, first| {
         let is_same = equal_diagnostics_no_related_info(first, next);

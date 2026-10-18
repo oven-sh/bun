@@ -1333,7 +1333,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// What the identifier `e` names, as the root of a reference or as a key.
     #[inline]
     fn root_of_identifier(&self, file: FileId, e: ExprId, name: Atom) -> Root {
-        let symbol = self.bound(file).expr_symbol[e.idx()];
+        let symbol = self.bound(file).symbol_of_expr(e);
         if symbol.is_none() {
             Root::Global(name)
         } else {
@@ -2012,7 +2012,7 @@ impl<'p, 's> Checker<'p, 's> {
         let file = reference.file;
         let hir = self.hir(file);
         let bound = self.bound(file);
-        let symbol = bound.expr_symbol[e.idx()];
+        let symbol = bound.symbol_of_expr(e);
         let pat = if symbol.is_some() {
             self.name_of_value_declaration(file, symbol)?
         } else {
@@ -2368,7 +2368,7 @@ impl<'p, 's> Checker<'p, 's> {
             return declared;
         }
         self.in_check_identifier.push((file, parent));
-        let flow = bound.expr_flow[e.idx()];
+        let flow = bound.flow_of_expr(e);
         let ty = 'checked: {
             let parent_ty = self.type_for_binding_element_parent(file, pat, parent);
             let parent_ty = self.map_type(parent_ty, Self::base_constraint_or_type);
@@ -2378,8 +2378,8 @@ impl<'p, 's> Checker<'p, 's> {
             let node = hir.node(parent);
             let reference =
                 Reference::synthetic(file, Root::Pattern(parent), SmallVec::new(), node);
-            let walk = Walk::new(reference, parent_ty, parent_ty, true);
-            let narrowed = self.get_flow_type_of_reference(walk, flow);
+            let mut walk = Walk::new(reference, parent_ty, parent_ty, true);
+            let narrowed = self.get_flow_type_of_reference(&mut walk, flow);
             if narrowed.is_never() {
                 break 'checked TypeId::NEVER;
             }
@@ -2408,7 +2408,7 @@ impl<'p, 's> Checker<'p, 's> {
         let params = hir[func].params;
         // A `this` parameter is one of the parameters that are counted.
         let count = params.len() + hir[func].this_param.is_some() as usize;
-        let flow = bound.expr_flow[e.idx()];
+        let flow = bound.flow_of_expr(e);
         // `isContextSensitiveFunctionOrObjectLiteralMethod`: a function with its own type
         // parameters takes nothing from its context.
         if count < 2
@@ -2451,8 +2451,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (root, node) = (Root::Params(func), hir.node(func));
         let reference = Reference::synthetic(file, root, SmallVec::new(), node);
-        let walk = Walk::new(reference, rest_ty, rest_ty, true);
-        let narrowed = self.get_flow_type_of_reference(walk, flow);
+        let mut walk = Walk::new(reference, rest_ty, rest_ty, true);
+        let narrowed = self.get_flow_type_of_reference(&mut walk, flow);
         // This is the result whether or not anything was narrowed: a parameter declared `x?` does
         // not include `undefined` because of that.
         let index = self.number_literal((p.0 - params.start) as f64, false);
@@ -2762,7 +2762,7 @@ impl<'p, 's> Checker<'p, 's> {
         match hir[e].kind {
             // `const ok = test; if (ok)`
             ExprKind::Ident(_) if level < 5 => {
-                let symbol = bound.expr_symbol[e.idx()];
+                let symbol = bound.symbol_of_expr(e);
                 if symbol.is_some()
                     && bound.symbols[symbol.idx()].flags.contains(SymFlags::CONST)
                     && let Some(pat) = self.name_of_value_declaration(file, symbol)
@@ -2859,7 +2859,7 @@ impl<'p, 's> Checker<'p, 's> {
         match hir[index].kind {
             ExprKind::Dot { .. } => true,
             ExprKind::Ident(_) => {
-                let symbol = bound.expr_symbol[index.idx()];
+                let symbol = bound.symbol_of_expr(index);
                 if symbol.is_none() {
                     return true;
                 }
@@ -2924,7 +2924,7 @@ impl<'p, 's> Checker<'p, 's> {
         loop {
             at = match hir[at].kind {
                 ExprKind::Ident(name) => {
-                    let symbol = bound.expr_symbol[at.idx()];
+                    let symbol = bound.symbol_of_expr(at);
                     if symbol.is_none() {
                         about.add(root_key(Root::Global(name)), first);
                         return;
@@ -3028,7 +3028,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && !self.matches(reference, e)
                 {
                     let bound = self.bound(file);
-                    let symbol = bound.expr_symbol[e.idx()];
+                    let symbol = bound.symbol_of_expr(e);
                     if symbol.is_some()
                         && bound.symbols[symbol.idx()].flags.contains(SymFlags::CONST)
                         && self.is_constant_name(file, symbol)
@@ -5493,7 +5493,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn may_resolve_key(&self, reference: &Reference, e: ExprId, highest: u32) -> bool {
         let (bound, memo) = (self.bound(reference.file), &self.flow_memo);
         let is_access = !reference.path.is_empty();
-        let mut lowest = memo.min_antecedent[bound.expr_flow[e.idx()].idx()];
+        let mut lowest = memo.min_antecedent[bound.flow_of_expr(e).idx()];
         // Only the walk for an access expression ends at the start of its function.
         if !is_access || bound.is_in_type_query(e) {
             while let Flow::Start { outer, .. } | Flow::StartInvoked { outer, .. } =
@@ -5537,7 +5537,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         let memo = &self.flow_memo;
-        let flow = bound.expr_flow[e.idx()];
+        let flow = bound.flow_of_expr(e);
         // Nothing matches `f()["a"]` or `a[i]`, and an assignment to `a` leaves `a[i]` as declared.
         let matches_nothing =
             |step: &Step| step.name.get() == AccessedName::None && step.variable == Root::Other;
@@ -5650,7 +5650,7 @@ impl<'p, 's> Checker<'p, 's> {
         declared: TypeId,
     ) -> Crossing {
         let bound = self.bound(file);
-        let s = bound.expr_symbol[e.idx()];
+        let s = bound.symbol_of_expr(e);
         if s.is_none() {
             // `isConstantVariable(localOrExportSymbol)`: nothing in the file binds the name, so
             // `declarationContainer` is none of the containers of `e`.
@@ -5752,7 +5752,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::ERROR;
         }
         let bound = self.bound(file);
-        let flow = bound.expr_flow[e.idx()];
+        let flow = bound.flow_of_expr(e);
         // `getTypeAtFlowNode`: an unreachable flow node has `convertAutoToAny(declaredType)`.
         if flow == UNREACHABLE {
             return self.convert_auto_to_any(declared);
@@ -5798,7 +5798,7 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             walk.start = start;
         }
-        let ty = self.get_flow_type_of_reference(walk, flow);
+        let ty = self.get_flow_type_of_reference(&mut walk, flow);
         // `checkIdentifier`, `isAutomaticTypeInNonNull`
         if is_automatic && self.is_operand_of_non_null(file, e) {
             return self.non_nullable(ty);
@@ -5814,14 +5814,14 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getFlowTypeOfReferenceEx`, once the `FlowState` is set up.
-    fn get_flow_type_of_reference(&mut self, mut walk: Walk, flow: FlowId) -> TypeId {
+    fn get_flow_type_of_reference(&mut self, walk: &mut Walk, flow: FlowId) -> TypeId {
         let (file, e, declared) = (walk.reference.file, walk.reference.at, walk.declared);
         if self.flow_analysis_disabled.contains(&file) {
             return TypeId::ERROR;
         }
         self.flow_invocation_count += 1;
         let outer = std::mem::replace(&mut self.walk_declared, declared);
-        let evolved = self.flow_type(&mut walk, flow);
+        let evolved = self.flow_type(walk, flow);
         self.walk_declared = outer;
         // The walk that completes a loop goes on with the entries that the back edges left in
         // `sharedFlows`. The next walk finds the loop in `flowLoopCache`, and may find another
@@ -5966,7 +5966,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return declared;
         }
-        let flow = self.bound(file).expr_flow[init.idx()];
+        let flow = self.bound(file).flow_of_expr(init);
         if flow == UNREACHABLE {
             return declared;
         }
@@ -5977,8 +5977,8 @@ impl<'p, 's> Checker<'p, 's> {
         // It does not occur in the source. Its parent is in the declaration or the assignment that
         // `init` is in.
         (reference.at, reference.node) = (ExprId::NONE, self.hir(file).node(init));
-        let walk = Walk::new(reference, declared, declared, false);
-        self.get_flow_type_of_reference(walk, flow)
+        let mut walk = Walk::new(reference, declared, declared, false);
+        self.get_flow_type_of_reference(&mut walk, flow)
     }
 
     /// Whether `this.name` or `this[k]`, declared as `declared`, has been assigned by the end of the
@@ -6007,8 +6007,8 @@ impl<'p, 's> Checker<'p, 's> {
         }];
         let constructor = self.hir(file).node(func);
         let reference = Reference::synthetic(file, Root::This, path, constructor);
-        let walk = Walk::new(reference, declared, initial, false);
-        let ty = self.get_flow_type_of_reference(walk, exit);
+        let mut walk = Walk::new(reference, declared, initial, false);
+        let ty = self.get_flow_type_of_reference(&mut walk, exit);
         !self.contains_undefined(ty)
     }
 
@@ -6032,8 +6032,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (path, parent) = (smallvec![Step::named(name)], self.hir(file).node(func));
         let reference = Reference::synthetic(file, Root::This, path, parent);
-        let walk = Walk::new(reference, TypeId::AUTO, initial, false);
-        let ty = self.get_flow_type_of_reference(walk, exit);
+        let mut walk = Walk::new(reference, TypeId::AUTO, initial, false);
+        let ty = self.get_flow_type_of_reference(&mut walk, exit);
         if self.p.files.options.no_implicit_any && self.is_automatic_type(ty) {
             let at = self.place_of_untyped_property(file, value_declaration);
             // `symbolToString`
@@ -6058,7 +6058,7 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         initial: TypeId,
     ) -> TypeId {
-        let flow = self.bound(file).expr_flow[e.idx()];
+        let flow = self.bound(file).flow_of_expr(e);
         // `getFlowNodeOfNode(reference) == nil`: `declaredType`. `expr_flow` has the unreachable
         // node for that too.
         if flow == UNREACHABLE
@@ -6068,8 +6068,8 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::AUTO;
         }
         let reference = self.reference_of(file, e);
-        let walk = Walk::new(reference, TypeId::AUTO, initial, false);
-        self.get_flow_type_of_reference(walk, flow)
+        let mut walk = Walk::new(reference, TypeId::AUTO, initial, false);
+        self.get_flow_type_of_reference(&mut walk, flow)
     }
 
     /// `t == c.autoType || t == c.autoArrayType`
@@ -8542,7 +8542,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // `checkIfExpressionRefinesParameter`: the flow node of the `return` applies to its
                 // direct operand. A parenthesized condition is treated as if nothing preceded it.
                 let is_on_its_own =
-                    is_parenthesized(hir, e) && bound.expr_flow[e.idx()] == UNREACHABLE;
+                    is_parenthesized(hir, e) && bound.flow_of_expr(e) == UNREACHABLE;
                 (
                     e,
                     if is_on_its_own {

@@ -272,7 +272,7 @@ impl Checker<'_, '_> {
         // examined once, however often it is used. 0: not computed yet. 1: nothing is reported.
         let mut inspected: Vec<u8> = Vec::new();
         for &(e, _) in &bound.alias_idents {
-            let local = bound.expr_symbol[e.idx()];
+            let local = bound.symbol_of_expr(e);
             if local.is_none() || bound.is_unchecked(e.idx()) {
                 continue;
             }

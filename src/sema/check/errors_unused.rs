@@ -242,7 +242,7 @@ impl Checker<'_, '_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for &e in index.of(ExprTag::Ident) {
             let i = e.idx();
-            let symbol = bound.expr_symbol[i];
+            let symbol = bound.symbol_of_expr(ExprId(i as u32));
             if symbol.is_none()
                 || u.referenced[symbol.idx()] & VALUE != 0
                 || bound.is_unchecked(i)
@@ -517,7 +517,7 @@ impl Checker<'_, '_> {
                 && is_property_access_entity_name_expression(hir, key)
                 && is_checked(u, e)
                 && !self.is_definite_assignment_target(file, e)
-                && compares_references(bound, bound.expr_flow[e.idx()], 0)
+                && compares_references(bound, bound.flow_of_expr(e), 0)
             {
                 self.note_qualified_name(file, u, key);
             }
@@ -525,7 +525,7 @@ impl Checker<'_, '_> {
         // `checkTemplateExpression`
         for &e in index.of(ExprTag::Template) {
             let is_tagged = matches!(bound.parent_of_expr(e), Parent::Expr(parent)
-                if matches!(hir[parent].kind, ExprKind::TaggedTemplate(call) if hir[call].template == e));
+                if matches!(hir[parent].kind, ExprKind::TaggedTemplate(call) if hir.template_of(call) == e));
             if !is_tagged && is_checked(u, e) {
                 self.note_evaluated(file, u, e, Location::Expr(file, e));
             }
@@ -1163,7 +1163,7 @@ impl Checker<'_, '_> {
             } => *class,
             _ => return false,
         };
-        let symbol = bound.expr_symbol[first.idx()];
+        let symbol = bound.symbol_of_expr(first);
         matches!(hir[first].kind, ExprKind::Ident(_))
             && symbol.is_some()
             && self.files().sym(file, symbol) == class

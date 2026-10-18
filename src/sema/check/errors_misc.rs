@@ -135,7 +135,7 @@ impl Checker<'_, '_> {
 
     fn is_undefined_itself(&self, file: FileId, e: ExprId) -> bool {
         matches!(self.hir(file)[e].kind, ExprKind::Ident(known::undefined))
-            && self.bound(file).expr_symbol[e.idx()].is_none()
+            && self.bound(file).symbol_of_expr(e).is_none()
     }
 
     /// `checkTruthinessOfType`

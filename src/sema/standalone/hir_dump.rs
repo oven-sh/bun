@@ -149,6 +149,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         lazy: _,
         keyword_identifier_positions: _,
         far_names: _,
+        tagged_templates: _,
     } = file;
     let mut d = Dump {
         file,
@@ -689,8 +690,8 @@ impl Dump<'_, '_> {
             type_args,
             close_pos,
             chain,
-            template,
         } = node!(self, depth, label, calls, id);
+        let (type_args, template) = (self.file.list_at(type_args), self.file.template_of(id));
         put!(
             self,
             depth,

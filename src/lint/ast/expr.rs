@@ -1546,7 +1546,7 @@ impl<'a> Call<'a> {
     #[inline]
     pub fn type_args(self) -> List<'a, TypeNode<'a>> {
         match self.raw() {
-            Some(call) => List::ids(self.file, call.type_args),
+            Some(call) => List::ids(self.file, self.file.hir.list_at(call.type_args)),
             None => List::empty(self.file),
         }
     }
@@ -1573,7 +1573,10 @@ impl<'a> Call<'a> {
     /// The template of a tagged template.
     #[inline]
     pub fn template(self) -> Option<Expr<'a>> {
-        Expr::some(self.file, self.raw()?.template)
+        Expr::some(
+            self.file,
+            hir::template_in(self.file.hir.tagged_templates, self.id),
+        )
     }
 }
 

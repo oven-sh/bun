@@ -288,7 +288,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
                 // `bindExpandoPropertyAssignment`
                 (file, Decl::Expando(first)) => {
                     let (bound, files) = (self.c.bound(file), self.c.files());
-                    let parent = bound.symbols[bound.expr_symbol[first.idx()].idx()].parent;
+                    let parent = bound.symbols[bound.symbol_of_expr(first).idx()].parent;
                     let owner = &bound.symbols[parent.idx()];
                     return match (owner.name, owner.decls[0]) {
                         (known::anonymous_function, Decl::Fn(function)) => {

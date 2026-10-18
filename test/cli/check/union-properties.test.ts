@@ -4653,6 +4653,88 @@ namespace N${n} {
 (168,13): error TS2310: Type 'B' recursively references itself as a base type.
 `,
   },
+  "a call that is reached again, through the type of a property, while it is resolved for the second time": {
+    sizes: [0],
+    program: () => {
+      const types = [
+        "{ a?: 1 } & Partial<T> & T",
+        "{ a?: 1 } & T & Partial<T> & Required<T>",
+        "T & Partial<T>",
+        "T & Partial<T> & Readonly<T>",
+        "T & { a?: 1 }",
+      ];
+      const bodies = [
+        (type: string) => `return register((x satisfies (${type}) | null | undefined)!);`,
+        () => "return register(x!);",
+        () => "return x!;",
+      ];
+      const programs = types
+        .flatMap(type => bodies.flatMap(body => [true, false].map(first => [type, body(type), first] as const)))
+        .map(([type, body, isFunctionFirst], n) => {
+          const load = `function load${n}<T extends Page${n} | Link${n}>(x: (${type}) | undefined) { ${body} }`;
+          const routes = `const routes${n} = { home: load${n}(given) };`;
+          return `
+${isFunctionFirst ? load : routes}
+${isFunctionFirst ? routes : load}
+interface Page${n} { id: string; title?: string }
+interface Link${n} { id: string; to?: keyof typeof routes${n} }`;
+        });
+      return `
+declare function register(entry: { id: string }): number;
+declare const given: { id: string; title?: string };${programs.join("")}\nexport {};\n`;
+    },
+    errors: `
+(29,31): error TS2345: Argument of type '{ id: string; title?: string | undefined; }' is not assignable to parameter of type '{ a?: 1 | undefined; } & { id: string; title?: string | undefined; } & Partial<{ id: string; title?: string | undefined; }> & Required<{ id: string; title?: string | undefined; }>'.
+  Type '{ id: string; title?: string | undefined; }' is not assignable to type 'Required<{ id: string; title?: string | undefined; }>'.
+    Types of property 'title' are incompatible.
+      Type 'string | undefined' is not assignable to type 'string'.
+        Type 'undefined' is not assignable to type 'string'.
+(32,31): error TS2345: Argument of type '{ id: string; title?: string | undefined; }' is not assignable to parameter of type '{ a?: 1 | undefined; } & { id: string; title?: string | undefined; } & Partial<{ id: string; title?: string | undefined; }> & Required<{ id: string; title?: string | undefined; }>'.
+  Type '{ id: string; title?: string | undefined; }' is not assignable to type 'Required<{ id: string; title?: string | undefined; }>'.
+    Types of property 'title' are incompatible.
+      Type 'string | undefined' is not assignable to type 'string'.
+        Type 'undefined' is not assignable to type 'string'.
+(37,31): error TS2345: Argument of type '{ id: string; title?: string | undefined; }' is not assignable to parameter of type '{ a?: 1 | undefined; } & { id: string; title?: string | undefined; } & Partial<{ id: string; title?: string | undefined; }> & Required<{ id: string; title?: string | undefined; }>'.
+  Type '{ id: string; title?: string | undefined; }' is not assignable to type 'Required<{ id: string; title?: string | undefined; }>'.
+    Types of property 'title' are incompatible.
+      Type 'string | undefined' is not assignable to type 'string'.
+        Type 'undefined' is not assignable to type 'string'.
+(40,31): error TS2345: Argument of type '{ id: string; title?: string | undefined; }' is not assignable to parameter of type '{ a?: 1 | undefined; } & { id: string; title?: string | undefined; } & Partial<{ id: string; title?: string | undefined; }> & Required<{ id: string; title?: string | undefined; }>'.
+  Type '{ id: string; title?: string | undefined; }' is not assignable to type 'Required<{ id: string; title?: string | undefined; }>'.
+    Types of property 'title' are incompatible.
+      Type 'string | undefined' is not assignable to type 'string'.
+        Type 'undefined' is not assignable to type 'string'.
+(45,33): error TS2345: Argument of type '{ id: string; title?: string | undefined; }' is not assignable to parameter of type '{ a?: 1 | undefined; } & { id: string; title?: string | undefined; } & Partial<{ id: string; title?: string | undefined; }> & Required<{ id: string; title?: string | undefined; }>'.
+  Type '{ id: string; title?: string | undefined; }' is not assignable to type 'Required<{ id: string; title?: string | undefined; }>'.
+    Types of property 'title' are incompatible.
+      Type 'string | undefined' is not assignable to type 'string'.
+        Type 'undefined' is not assignable to type 'string'.
+(48,7): error TS7022: 'routes11' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(48,33): error TS2345: Argument of type '{ id: string; title?: string | undefined; }' is not assignable to parameter of type '{ a?: 1 | undefined; } & { id: string; title?: string | undefined; } & Partial<{ id: string; title?: string | undefined; }> & Required<{ id: string; title?: string | undefined; }>'.
+  Type '{ id: string; title?: string | undefined; }' is not assignable to type 'Required<{ id: string; title?: string | undefined; }>'.
+    Types of property 'title' are incompatible.
+      Type 'string | undefined' is not assignable to type 'string'.
+        Type 'undefined' is not assignable to type 'string'.
+(51,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(72,7): error TS7022: 'routes17' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(75,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(76,10): error TS7023: 'load18' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(77,7): error TS7022: 'routes18' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(79,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(80,7): error TS7022: 'routes19' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(81,10): error TS7023: 'load19' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(83,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(85,7): error TS7022: 'routes20' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(87,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(88,7): error TS7022: 'routes21' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(89,10): error TS7023: 'load21' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(91,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(93,7): error TS7022: 'routes22' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(95,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(96,7): error TS7022: 'routes23' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(99,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+`,
+  },
 };
 
 const bySize = { ...members, ...reduced };
@@ -4766,6 +4848,40 @@ export const routes = { home: load(page) };
     }
   },
 );
+
+// An imported file comes before the file that imports it, so the table is checked first here: there the cycle is an error.
+test.concurrent("a cycle through three files is reported alike in 1 and in 60 folders of one project", async () => {
+  const files = {
+    "a.ts": `import type { Entry } from "./c";
+declare function register(entry: { id: string }): number;
+export function load<T extends Entry>(x: (T & Partial<T>) | undefined) { return x!; }
+`,
+    "b.ts": `import { load } from "./a";
+declare const given: any;
+export const routes = { home: load(given) };
+`,
+    "c.ts": `import type { routes } from "./b";
+export interface Page { id: string; title?: string }
+export interface Link { id: string; to?: keyof typeof routes }
+export type Entry = Page | Link;
+`,
+  };
+  for (const count of [1, 60]) {
+    const folders = Array.from({ length: count }, (_, i) => `k${i}`);
+    using dir = tempDir("bun-check-folders", {
+      "tsconfig.json": tsconfig,
+      ...Object.fromEntries(
+        folders.flatMap(folder => Object.entries(files).map(([name, text]) => [`${folder}/${name}`, text])),
+      ),
+    });
+    const root = String(dir);
+    const lines = await linesOf([bunExe(), "check", "--threads", "1"], root, root);
+    const errors = lines.flatMap(
+      line => /^(k\d+)[\\/](\w+\.ts)\(\d+,\d+\): error (TS\d+)/.exec(line)?.slice(1, 4).join(" ") ?? [],
+    );
+    expect(errors.sort()).toEqual(folders.flatMap(folder => [`${folder} b.ts TS7022`, `${folder} c.ts TS2502`]).sort());
+  }
+});
 
 // A new union or intersection takes its flags from its constituents, of which a type holds up to 7 itself. Here they are of
 // another file or of the file that asks, object types, mapped types with and without a type variable, intersections that

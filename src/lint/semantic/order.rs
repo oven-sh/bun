@@ -127,7 +127,10 @@ impl Moves<'_, '_> {
             && let Some(call) = hir.calls.get(call.idx())
             && !call.type_args.is_empty()
         {
-            let types = hir.ids.get(call.type_args.range()).unwrap_or_default();
+            let types = hir
+                .ids
+                .get(hir.list_at(call.type_args).range())
+                .unwrap_or_default();
             let mut types = types.iter().filter_map(|&it| hir.types.get(it as usize));
             if let Some(first) = types.next() {
                 self.swap(first.pos, types.next_back().unwrap_or(first).end, end);

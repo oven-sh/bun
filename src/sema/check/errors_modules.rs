@@ -820,7 +820,7 @@ impl Checker<'_, '_> {
         };
         // `checkGrammarModuleElementContext` stops the check of any other.
         let is_checked = |s: StmtId| is_in_appropriate_context(bound, s);
-        bound.expr_symbol.iter().zip(0..).zip(hir.exprs.iter()).any(|((&s, id), e)| s.is_some() && files.sym(cx.file, s) == sym && !matches!(bound.parent_of_expr(ExprId(id)), Parent::None) && !self.is_never_checked(e.pos))
+        (0..).map(ExprId).zip(hir.exprs.iter()).any(|(id, e)| bound.symbol_of_expr(id).is_some() && files.sym(cx.file, bound.symbol_of_expr(id)) == sym && !matches!(bound.parent_of_expr(id), Parent::None) && !self.is_never_checked(e.pos))
             || hir.types.iter().enumerate().any(|(t, node)| match node.kind {
                 TypeNodeKind::Ref { name, .. } | TypeNodeKind::Typeof { name, .. } => !name.is_empty() && !self.is_never_checked(node.pos) && means_it(bound.type_scope[t], hir[name.at(0)].text),
                 _ => false,
@@ -1227,7 +1227,7 @@ impl Checker<'_, '_> {
             || bound.alias_idents.iter().any(|&(e, _)| {
                 !bound.is_unchecked(e.idx())
                     && !bound.is_in_type_query(e)
-                    && bound.symbols[bound.expr_symbol[e.idx()].idx()]
+                    && bound.symbols[bound.symbol_of_expr(e).idx()]
                         .decls
                         .contains(&Decl::ImportEquals(i))
             });

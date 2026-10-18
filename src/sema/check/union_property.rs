@@ -418,7 +418,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.flags(current) & tf::OBJECT != 0
             && facts.apparent_type == current
             && facts.reduced_apparent_type == current
-            && shape.properties_of.is_none()
+            && shape.properties_of().is_none()
             && shape.index.is_empty()
     }
 
@@ -788,7 +788,7 @@ impl<'p, 's> Checker<'p, 's> {
             members.mapper == MapperId::IDENTITY
                 || self.types().instantiation_class(ty) == InstantiationClass::Unchanged
         };
-        let is_the_same_for_every_name = shape.properties_of.is_none()
+        let is_the_same_for_every_name = shape.properties_of().is_none()
             && !matches!(self.data(apparent), TypeData::Tuple { .. })
             && (shape.index.iter())
                 .all(|info| info.key == TypeId::STRING && is_unchanged(info.value));

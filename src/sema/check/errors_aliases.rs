@@ -282,7 +282,7 @@ impl Checker<'_, '_> {
     /// (`isParameterOfContextSensitiveSignature`).
     fn unassigned_parameter_read_by(&mut self, file: FileId, e: ExprId) -> Option<(FnId, PatId)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let symbol = bound.expr_symbol[e.idx()];
+        let symbol = bound.symbol_of_expr(e);
         if symbol.is_none() {
             return None;
         }

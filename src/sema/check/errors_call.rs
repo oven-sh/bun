@@ -798,7 +798,7 @@ impl Checker<'_, '_> {
         let (file, node, type_args) = (s.file, s.node, s.type_args);
         let hir = self.hir(file);
         let type_argument_list = match node {
-            CallLike::Call(c) => Some(hir[c].type_args),
+            CallLike::Call(c) => Some(hir.list_at(hir[c].type_args)),
             CallLike::Jsx(j) if hir[j].tag.is_some() => Some(hir[j].type_args),
             _ => None,
         };

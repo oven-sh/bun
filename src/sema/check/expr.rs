@@ -1769,7 +1769,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // `IsTaggedTemplateExpression(node.Parent)`: neither the tag nor the template of a
                 // tagged template is evaluated.
                 let is_tag = matches!(self.bound(file).parent_of_expr(e), Parent::Expr(p)
-                    if matches!(hir[p].kind, ExprKind::TaggedTemplate(c) if hir[c].callee == e || hir[c].template == e))
+                    if matches!(hir[p].kind, ExprKind::TaggedTemplate(c) if hir[c].callee == e || hir.template_of(c) == e))
                     && !is_parenthesized(hir, e);
                 if !is_tag && let Some(EnumValue::String(text)) = self.constant_value(file, e) {
                     return self.string_literal(text, true);
@@ -2132,7 +2132,7 @@ impl<'p, 's> Checker<'p, 's> {
         ignore_errors: bool,
     ) -> Result<Option<Sym>, u32> {
         let (files, bound) = (self.files(), self.bound(file));
-        let local = bound.expr_symbol[e.idx()];
+        let local = bound.symbol_of_expr(e);
         if local.is_some() {
             let sym = files.sym(file, local);
             // `getSymbol`: an alias that does not resolve to a value does not match the value
@@ -2439,7 +2439,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `checkThisBeforeSuper`
     fn check_this_before_super(&mut self, file: FileId, e: ExprId, container: FnId, code: u32) {
-        let (hir, flow) = (self.hir(file), self.bound(file).expr_flow[e.idx()]);
+        let (hir, flow) = (self.hir(file), self.bound(file).flow_of_expr(e));
         if let Some((class, _)) = self.class_of_member_fn(file, container)
             && hir[class].extends.is_some()
             && !self.class_declaration_extends_null(self.class_sym(file, class))
@@ -3184,7 +3184,7 @@ impl<'p, 's> Checker<'p, 's> {
             || self.inference_contexts.is_empty()
                 && self
                     .members(kept)
-                    .is_some_and(|members| *members.shape() == shape)
+                    .is_some_and(|members| members.shape().is_made_of(&shape))
         {
             return kept;
         }
@@ -3610,7 +3610,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !hir.is_js {
             return false;
         }
-        let symbol = bound.expr_symbol[literal.idx()];
+        let symbol = bound.symbol_of_expr(literal);
         if symbol.is_some()
             && matches!(hir[literal].kind, ExprKind::Object(props) if props.is_empty())
             && !bound.table(bound.symbols[symbol.idx()].exports).is_empty()
@@ -4978,12 +4978,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // FOR SPEED: in any other literal every member is the first declaration of its symbol. The binder adds a declaration to the
         // symbol of that name where it can, and so does `bindThisPropertyAssignment`.
-        if has_repeated_name || hir.is_js && self.bound(file).expr_symbol[e.idx()].is_some() {
+        if has_repeated_name || hir.is_js && self.bound(file).symbol_of_expr(e).is_some() {
             self.get_named_members(&mut shape.props, |_| true, &[]);
         }
         shape.index = self.index_infos_of_object_literal(file, props, context.in_const_context);
         // "Expando object literals have empty properties but filled exports"
-        let owner = self.bound(file).expr_symbol[e.idx()];
+        let owner = self.bound(file).symbol_of_expr(e);
         self.with_expandos(shape, file, owner)
     }
 

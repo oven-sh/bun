@@ -120,6 +120,7 @@ slices! {
         parens: (hir::ExprId, u32, u32),
         non_null_ends: (hir::ExprId, u32),
         far_names: (hir::ExprId, u32),
+        tagged_templates: (hir::CallId, hir::ExprId),
         jsx_expressions: (hir::ExprId, u32, u32),
         body_starts: (hir::FnId, u32),
         modifiers_of_params: hir::Span<hir::ModifierId>,

@@ -58,13 +58,13 @@ const FEW: usize = 8;
 
 impl<'s> Names<ArenaBox<'s, [u32]>> {
     /// The flag: `add_all`. `true` for a list that has no index.
-    fn of(props: &ArenaVec<'s, Prop<'s>>) -> (Self, bool) {
+    fn of(props: &[Prop<'s>], arena: &'s Arena) -> (Self, bool) {
         if props.len() <= FEW {
             return (Names::default(), true);
         }
         let places = std::iter::repeat_n(0, (props.len() * 2).next_power_of_two());
         let mut names = Self {
-            places: ArenaBox::from_iter_in(places, props.allocator()),
+            places: ArenaBox::from_iter_in(places, arena),
         };
         let are_distinct = names.add_all(props);
         (names, are_distinct)
@@ -124,11 +124,13 @@ impl<P: std::ops::DerefMut<Target = [u32]>> Names<P> {
     }
 }
 
+/// Two cache lines. What a search for a name reads is in the first.
+#[repr(C, align(64))]
 pub struct Resolved<'s> {
-    pub shape: Shape<'s>,
     names: Names<ArenaBox<'s, [u32]>>,
     /// A 256-bit filter of the names of the properties: a name whose bit is clear is not one of them.
     name_filter: [u64; 4],
+    pub shape: Listed<'s>,
     /// `isWeakType` of an object type that has these members: properties, all of them optional, and nothing else.
     is_weak: bool,
     /// With more than `FEW` properties: no two of them have one name.
@@ -172,11 +174,17 @@ impl crate::types::Follow for Resolved<'_> {
 
 impl<'s> Resolved<'s> {
     fn new(shape: Shape<'s>) -> Resolved<'s> {
-        let (names, has_distinct_names) = Names::of(&shape.props);
+        let arena: &'s Arena = shape.props.allocator();
+        Resolved::of(shape.into(), arena)
+    }
+
+    fn of(shape: Listed<'s>, arena: &'s Arena) -> Resolved<'s> {
+        let (names, has_distinct_names) = Names::of(&shape.props, arena);
+        let is_weak = Resolved::is_weak_shape(&shape);
         Resolved {
             names,
             name_filter: Resolved::name_filter_of(&shape.props),
-            is_weak: Resolved::is_weak_shape(&shape),
+            is_weak,
             has_distinct_names,
             shape,
         }
@@ -191,7 +199,7 @@ impl<'s> Resolved<'s> {
         (1..props.len()).all(|at| !props[..at].iter().any(|it| it.name == props[at].name))
     }
 
-    pub(super) fn is_weak_shape(shape: &Shape) -> bool {
+    pub(super) fn is_weak_shape(shape: &Listed) -> bool {
         let is_optional = |prop: &Prop| prop.flags.contains(PropFlags::OPTIONAL);
         !shape.props.is_empty()
             && shape.call.is_empty()
@@ -276,26 +284,26 @@ pub struct Members<'p> {
 
 impl<'p> Members<'p> {
     #[inline]
-    pub fn shape(&self) -> &'p Shape<'p> {
+    pub fn shape(&self) -> &'p Listed<'p> {
         &self.resolved.shape
     }
 
     /// Not for the `members` of an intersection, nor are the next two: see `structured`.
     #[inline]
     pub fn index_infos(&self) -> &'p [IndexInfo] {
-        debug_assert!(self.shape().properties_of.is_none());
+        debug_assert!(self.shape().properties_of().is_none());
         &self.shape().index
     }
 
     #[inline]
     pub fn call_signatures(&self) -> &'p [SigId] {
-        debug_assert!(self.shape().properties_of.is_none());
+        debug_assert!(self.shape().properties_of().is_none());
         &self.shape().call
     }
 
     #[inline]
     pub fn construct_signatures(&self) -> &'p [SigId] {
-        debug_assert!(self.shape().properties_of.is_none());
+        debug_assert!(self.shape().properties_of().is_none());
         &self.shape().construct
     }
 
@@ -316,8 +324,8 @@ impl<'p> Members<'p> {
 
     /// The shape, for all the members of a type that is not an intersection.
     #[inline]
-    pub fn whole_shape(&self) -> &'p Shape<'p> {
-        debug_assert!(self.shape().properties_of.is_none());
+    pub fn whole_shape(&self) -> &'p Listed<'p> {
+        debug_assert!(self.shape().properties_of().is_none());
         self.shape()
     }
 
@@ -1022,7 +1030,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// A shape that is not final. It lives until `release_provisional_shapes`.
     fn provisional_shape(&mut self, shape: Shape<'s>) -> Built<'p> {
-        let at = self.provisional_shapes.push(Resolved::new(shape));
+        self.provisional_members(Resolved::new(shape))
+    }
+
+    fn provisional_members(&mut self, shape: Resolved<'s>) -> Built<'p> {
+        let at = self.provisional_shapes.push(shape);
         let resolved = self.provisional_shapes.get(at);
         // SAFETY: the elements of a `LocalVec` do not move, and they are dropped by
         // `release_provisional_shapes`, which is only called where no `Members` is live: between
@@ -1850,16 +1862,16 @@ impl<'p, 's> Checker<'p, 's> {
         for (info, value) in shape.index.iter_mut().zip(values) {
             info.value = value;
         }
+        let own = Resolved::of(shape, self.arena);
         let built = match self.end_scope(scope) {
             Ok(stored) if target.kept.is_some() => {
-                let own = Resolved::new(shape);
                 let (kept, resolved) = (self.p.shapes).insert_ref(&self.task, ty, own, stored);
                 Built {
                     resolved,
                     kept: Some(kept),
                 }
             }
-            _ => self.provisional_shape(shape),
+            _ => self.provisional_members(own),
         };
         (built, MapperId::IDENTITY)
     }
@@ -1925,7 +1937,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let hir = self.hir(file);
                 if let ExprKind::Dot { obj, name, .. } = hir[e].kind
                     && matches!(hir[obj].kind, ExprKind::Ident(known::Symbol))
-                    && self.bound(file).expr_symbol[obj.idx()].is_none()
+                    && self.bound(file).symbol_of_expr(obj).is_none()
                     && let Some(global) = self.files().global(known::Symbol, SymFlags::VALUE)
                 {
                     let constructor = self.type_of_symbol(global);
@@ -4930,7 +4942,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `structured_members` of the type that `members` are the members of.
     #[inline]
     pub fn structured(&mut self, members: Members<'p>) -> Members<'p> {
-        match members.shape().properties_of {
+        match members.shape().properties_of() {
             Some(intersection) => self.structured_members(intersection).unwrap_or(members),
             None => members,
         }
@@ -6269,7 +6281,7 @@ impl<'p, 's> Checker<'p, 's> {
         use crate::bind::{JsDeclarationKind, assignment_declaration_kind};
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         // The parent of an export is the file.
-        let Some(symbol) = bound.symbols.get(bound.expr_symbol[node.idx()].idx()) else {
+        let Some(symbol) = bound.symbols.get(bound.symbol_of_expr(node).idx()) else {
             return false;
         };
         // `symbol.Parent.ValueDeclaration`

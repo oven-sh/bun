@@ -1565,7 +1565,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return;
                 };
                 let bound = self.bound(file);
-                let symbol = bound.expr_symbol[root.idx()];
+                let symbol = bound.symbol_of_expr(root);
                 // Nothing in the file declares it: its declaration has no enclosing type parameter.
                 if symbol.is_none() {
                     return;

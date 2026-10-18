@@ -72,6 +72,7 @@ lists! {
     props: Prop,
     var_decls: VarDecl,
     calls: Call,
+    tagged_templates: (CallId, ExprId),
     cases: Case,
     jsx: Jsx,
     imports: Import,
@@ -1502,7 +1503,7 @@ impl Walk<'_, '_> {
         let (x, y) = both!(self, calls, a, b, "a call is missing");
         self.check(x.chain == y.chain, "the `?.` of a call")?;
         self.expr(x.callee, y.callee)?;
-        self.type_list(x.type_args, y.type_args)?;
+        self.type_list(x.type_args.of(self.a.ids), y.type_args.of(self.b.ids))?;
         // Allowed: `new A` is `new A()`.
         self.expr_list(x.args, y.args)
     }
@@ -1594,12 +1595,13 @@ impl Walk<'_, '_> {
             (BigInt(x), BigInt(y)) => self.bigint(x, y),
             (Regex, Regex) => self.regex(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)),
             (Template { exprs: p }, Template { exprs: q }) => self.template((a, x, p), (y, q)),
-            (TaggedTemplate(x), TaggedTemplate(y)) => {
-                let (x, y) = both!(self, calls, x, y, "a call is missing");
+            (TaggedTemplate(a), TaggedTemplate(b)) => {
+                let (x, y) = both!(self, calls, a, b, "a call is missing");
                 self.expr(x.callee, y.callee)?;
-                self.type_list(x.type_args, y.type_args)?;
+                self.type_list(x.type_args.of(self.a.ids), y.type_args.of(self.b.ids))?;
                 // Its substitutions are the arguments.
-                self.expr(x.template, y.template)
+                let a = template_in(self.a.tagged_templates, a);
+                self.expr(a, template_in(self.b.tagged_templates, b))
             }
             (Array(x), Array(y)) => {
                 self.has_stack_left()?;

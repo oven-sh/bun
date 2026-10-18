@@ -170,7 +170,7 @@ pub struct Branches {
     pub no: ExprId,
 }
 
-/// An `IdList` whose start and length are in [`File::ids`]: [`FileIn::list_at`].
+/// An `IdList` whose start and length are in [`File::ids`], unless it is empty: [`FileIn::list_at`].
 pub struct ListAt<T> {
     at: u32,
     _of: PhantomData<T>,
@@ -207,9 +207,22 @@ impl BranchesAt {
 }
 
 impl<T> ListAt<T> {
+    pub const EMPTY: Self = ListAt {
+        at: u32::MAX,
+        _of: PhantomData,
+    };
+
+    #[inline]
+    pub fn is_empty(self) -> bool {
+        self.at == u32::MAX
+    }
+
     /// `ids`: [`File::ids`].
     #[inline]
     pub fn of(self, ids: &[u32]) -> IdList<T> {
+        if self.is_empty() {
+            return IdList::EMPTY;
+        }
         let at = self.at as usize;
         IdList::new(ids[at], ids[at + 1])
     }
@@ -681,6 +694,12 @@ pub enum ExprKind {
 /// `name_before_end` of a `Dot` whose name is in [`FileIn::far_names`].
 pub const FAR: u16 = u16::MAX;
 
+/// [`FileIn::template_of`], given the list of the file.
+pub fn template_in(tagged_templates: &[(CallId, ExprId)], call: CallId) -> ExprId {
+    let found = tagged_templates.binary_search_by_key(&call, |it| it.0);
+    found.map_or(ExprId::NONE, |at| tagged_templates[at].1)
+}
+
 /// [`FileIn::name_pos`], given the lists of the file.
 #[inline]
 pub fn name_pos_in(exprs: &[Expr], far_names: &[(ExprId, u32)], e: ExprId) -> u32 {
@@ -936,13 +955,11 @@ impl ExprsByKind {
 pub struct Call {
     pub callee: ExprId,
     pub args: IdList<ExprId>,
-    pub type_args: IdList<TypeNodeId>,
+    pub type_args: ListAt<TypeNodeId>,
     /// Position of the `)`. `u32::MAX` for `new C`. A tagged template has `u32::MAX` or
     /// [`INCOMPLETE_TEMPLATE`].
     pub close_pos: u32,
     pub chain: Chain,
-    /// `TaggedTemplateExpression.Template`. Its substitutions are `args`.
-    pub template: ExprId,
 }
 
 /// [`Call::close_pos`] of a tagged template whose last piece of text is missing or unterminated (`callIsIncomplete`).
@@ -2263,6 +2280,8 @@ pub struct FileIn<S: Storage> {
     pub non_null_ends: S::Few<(ExprId, u32)>,
     /// The `Dot`s whose name does not start within 65,534 bytes before their end, and where it starts. Ordered by expression.
     pub far_names: S::Few<(ExprId, u32)>,
+    /// `TaggedTemplateExpression.Template` of each tagged template, whose substitutions are the `args` of the call. Ordered by call.
+    pub tagged_templates: S::Few<(CallId, ExprId)>,
     /// `JsxExpression`: the inner expression, the start and the end of the braces. Ordered by
     /// expression.
     pub jsx_expressions: S::Nodes<(ExprId, u32, u32)>,
@@ -2622,6 +2641,11 @@ impl<S: Storage> FileIn<S> {
         list.of(&self.ids)
     }
 
+    /// `TaggedTemplateExpression.Template`. `NONE`: `call` is no tagged template.
+    pub fn template_of(&self, call: CallId) -> ExprId {
+        template_in(&self.tagged_templates, call)
+    }
+
     /// Where the name of the `Dot` `e` starts.
     #[inline]
     pub fn name_pos(&self, e: ExprId) -> u32 {
@@ -2683,6 +2707,9 @@ impl FileBuilder {
         BranchesAt(at)
     }
     pub fn place_of_list<T>(&mut self, list: IdList<T>) -> ListAt<T> {
+        if list.is_empty() {
+            return ListAt::EMPTY;
+        }
         let at = self.ids.len() as u32;
         self.ids.extend([list.start, list.len]);
         ListAt {
@@ -2805,6 +2832,7 @@ macro_rules! file_in_arena {
             parens: $long!($this.parens),
             non_null_ends: $few!($this.non_null_ends),
             far_names: $few!($this.far_names),
+            tagged_templates: $few!($this.tagged_templates),
             jsx_expressions: $long!($this.jsx_expressions),
             jsx_pragmas: $this.jsx_pragmas,
             jsdoc_comments: $few!($this.jsdoc_comments),

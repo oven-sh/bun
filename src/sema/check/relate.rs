@@ -714,6 +714,21 @@ impl<'p, 's> Checker<'p, 's> {
             && shape.index.is_empty()
     }
 
+    /// `is_any_function_shape` of the shape that `listed` is made of.
+    fn is_any_function_listed(listed: &Listed) -> bool {
+        listed.literal == Literalness::Partial
+            && !listed.has_symbol_declared_at
+            && Self::lists_nothing(listed)
+    }
+
+    /// `has_no_members`, likewise.
+    fn lists_nothing(listed: &Listed) -> bool {
+        listed.props.is_empty()
+            && listed.call.is_empty()
+            && listed.construct.is_empty()
+            && listed.index.is_empty()
+    }
+
     /// `t.symbol != nil` for a synthesized object type. Not exact for the type of a signature, see
     /// `Shape::has_no_instantiable_symbol`.
     pub(super) fn shape_has_symbol(shape: &Shape) -> bool {
@@ -731,7 +746,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isEmptyResolvedType` of the resolved members of `ty`.
     fn is_empty_resolved_type(&mut self, ty: TypeId) -> bool {
         !self.is_any_function_type(ty)
-            && (self.members(ty)).is_some_and(|m| Self::has_no_members(m.whole_shape()))
+            && (self.members(ty)).is_some_and(|m| Self::lists_nothing(m.whole_shape()))
     }
 
     /// `isEmptyObjectType`
@@ -782,7 +797,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.is_empty_resolved_type(ty);
         }
         match self.resolved_members(ty) {
-            Some(members) => Self::has_no_members(members.whole_shape()),
+            Some(members) => Self::lists_nothing(members.whole_shape()),
             None => self.has_no_members_in_place(ty),
         }
     }
@@ -887,10 +902,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    pub(super) fn inherited_of(&self, shape: &Shape) -> Inherited<'p> {
+    pub(super) fn inherited_of(&self, shape: &Listed) -> Inherited<'p> {
         let mut globals = [known::Object; 3];
         let mut count = 0;
-        if Self::is_any_function_shape(shape) {
+        if Self::is_any_function_listed(shape) {
             // `anyFunctionType` has the properties of `Function`.
             globals[0] = known::Function;
             count = 1;
@@ -952,7 +967,7 @@ impl<'p, 's> Checker<'p, 's> {
             let part = self.reduced_apparent_type(part);
             // A union has properties and no signature.
             let of_part = if self.is_union(part) {
-                self.inherited_of(&Shape::new_in(self.arena))
+                self.inherited_of(&Shape::new_in(self.arena).into())
             } else {
                 let Some(members) = self.members(part) else {
                     continue;
@@ -1170,7 +1185,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut r = self
             .free_relaters
             .pop()
-            .unwrap_or_else(|| Relater::new(relation, self.cycles));
+            .unwrap_or_else(|| Box::new(Relater::new(relation, self.cycles)));
         r.relation = relation;
         r.top_source = source;
         r.top_target = target;

@@ -1011,14 +1011,14 @@ impl Checker<'_, '_> {
     /// `let` or `const` of this file: the binding name, and the declaration that contains it.
     fn value_declaration_of_variable(&self, file: FileId, e: ExprId) -> Option<(PatId, VarDeclId)> {
         let bound = self.bound(file);
-        let s = bound.symbols.get(bound.expr_symbol[e.idx()].idx())?;
+        let s = bound.symbols.get(bound.symbol_of_expr(e).idx())?;
         // `isParameter`, `isAlias`
         if !s.flags.intersects(SymFlags::VARIABLE)
             || s.flags.intersects(SymFlags::PARAMETER | SymFlags::ALIAS)
         {
             return None;
         }
-        let sym = self.files().sym(file, bound.expr_symbol[e.idx()]);
+        let sym = self.files().sym(file, bound.symbol_of_expr(e));
         // In another file it is ambient, or an outer variable: initialized either way.
         let Some((of, Decl::Var(pat))) = self.files().value_declaration(sym) else {
             return None;
@@ -1123,7 +1123,7 @@ impl Checker<'_, '_> {
             && decl.init.is_none()
             && !decl.flags.contains(Flags::DEFINITE)
             && self.is_mutable_local_variable_declaration(file, d)
-            && !self.is_symbol_assigned_definitely(file, bound.expr_symbol[e.idx()])
+            && !self.is_symbol_assigned_definitely(file, bound.symbol_of_expr(e))
     }
 
     /// `isMutableLocalVariableDeclaration`

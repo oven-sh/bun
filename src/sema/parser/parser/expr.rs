@@ -1777,13 +1777,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         self.expected(T::OpenParen);
         let (args, close_pos) = self.rest_of_argument_list();
+        let type_args = self.f.place_of_list(type_args);
         let call = self.f.add_call(Call {
             callee,
             args,
             type_args,
             close_pos,
             chain: Chain::Start,
-            template: ExprId::NONE,
         });
         self.finish_expr(ExprKind::Call(call), start)
     }
@@ -1890,13 +1890,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.call_specifier(argument, SpecifierKind::RequireCall);
             }
         }
+        let type_args = self.f.place_of_list(type_args);
         let call = self.f.add_call(Call {
             callee,
             args,
             type_args,
             close_pos,
             chain,
-            template: ExprId::NONE,
         });
         self.finish_expr(ExprKind::Call(call), start)
     }
@@ -2253,6 +2253,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             false => ExprKind::Template { exprs },
         };
         let template = self.finish_expr(kind, backtick);
+        let type_args = self.f.place_of_list(type_args);
         let call = self.f.add_call(Call {
             callee,
             args: exprs,
@@ -2262,8 +2263,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 false => u32::MAX,
             },
             chain: Chain::No,
-            template,
         });
+        self.f.tagged_templates.push((call, template));
         self.finish_expr(ExprKind::TaggedTemplate(call), start)
     }
 
@@ -2329,13 +2330,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             _ => (IdList::EMPTY, u32::MAX),
         };
+        let type_args = self.f.place_of_list(type_args);
         let call = self.f.add_call(Call {
             callee,
             args,
             type_args,
             close_pos,
             chain: Chain::No,
-            template: ExprId::NONE,
         });
         if is_import_call && self.is_for_oxc() {
             let at = (callee_start, self.prev_end());

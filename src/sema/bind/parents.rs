@@ -308,14 +308,17 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
                 link!(chain);
                 operands!(obj, index);
             }
-            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
-                if let Some(call) = f.calls.get(call.idx()) {
+            ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
+                if let Some(call) = f.calls.get(c.idx()) {
                     if let ExprKind::Call(_) = e.kind {
                         link!(call.chain);
                     }
-                    operands!(call.callee, call.template);
+                    operands!(call.callee);
+                    if let ExprKind::TaggedTemplate(_) = e.kind {
+                        operands!(f.template_of(c));
+                    }
                     list!(call.args);
-                    tys!(call.type_args);
+                    tys!(f.list_at(call.type_args));
                 }
             }
             ExprKind::Template { exprs, .. } => list!(exprs),

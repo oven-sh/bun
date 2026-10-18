@@ -565,7 +565,7 @@ impl Checker<'_, '_> {
         e: ExprId,
         signature: SigId,
         check_mode: CheckMode,
-        context: &mut Inference,
+        context: &mut Box<Inference>,
     ) -> MapperId {
         let param_type = self.jsx_effective_first_argument(file, e, signature);
         let check_attr_type = self.check_jsx_attributes_with_contextual_type(
@@ -587,7 +587,7 @@ impl Checker<'_, '_> {
         file: FileId,
         e: ExprId,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
         is_checked_once: bool,
     ) -> TypeId {

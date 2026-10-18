@@ -4664,9 +4664,9 @@ impl<'f, 's> Binder<'f, 's> {
             ExprKind::TaggedTemplate(c) => {
                 let call = self.f[c];
                 self.expr(call.callee, me);
-                self.tys(call.type_args);
+                self.tys(self.f.list_at(call.type_args));
                 self.exprs(call.args, me);
-                self.b.expr_parent[call.template.idx()] = me.into();
+                self.b.expr_parent[self.f.template_of(c).idx()] = me.into();
             }
             ExprKind::Array(items) => {
                 self.in_assignment_pattern = in_pattern;
@@ -4710,7 +4710,7 @@ impl<'f, 's> Binder<'f, 's> {
                 // The control flow seen by an immediately invoked function includes the evaluation
                 // of the arguments.
                 if matches!(self.f[call.callee].kind, ExprKind::Fn(_)) {
-                    self.tys(call.type_args);
+                    self.tys(self.f.list_at(call.type_args));
                     self.exprs(call.args, me);
                     self.expr(call.callee, me);
                 } else {
@@ -4718,7 +4718,7 @@ impl<'f, 's> Binder<'f, 's> {
                     // `resolveCall` neither uses nor checks the type arguments of a `super` call.
                     let around = self.is_unchecked;
                     self.is_unchecked |= matches!(self.f[call.callee].kind, ExprKind::Super);
-                    self.tys(call.type_args);
+                    self.tys(self.f.list_at(call.type_args));
                     self.is_unchecked = around;
                     self.exprs(call.args, me);
                 }
@@ -4739,7 +4739,7 @@ impl<'f, 's> Binder<'f, 's> {
             ExprKind::New(c) => {
                 let call = &self.f[c];
                 self.expr(call.callee, me);
-                self.tys(call.type_args);
+                self.tys(self.f.list_at(call.type_args));
                 self.exprs(call.args, me);
             }
             ExprKind::Unary { op, operand } => match op {
@@ -5152,7 +5152,7 @@ impl<'f, 's> Binder<'f, 's> {
             ExprKind::Index { index, .. } => self.expr(index, me),
             ExprKind::Call(c) => {
                 let call = self.f[c];
-                self.tys(call.type_args);
+                self.tys(self.f.list_at(call.type_args));
                 self.exprs(call.args, me);
             }
             _ => {}

@@ -401,8 +401,12 @@ impl<'p, 's> Checker<'p, 's> {
         let is_in_progress = in_progress_at.is_some();
         let resolution_start = self.resolution_start;
         // There is no re-entrancy guard. A call that a back edge of a loop reaches while it is
-        // being resolved is resolved again, any number of times: see `recheck_in_flow_loop`.
-        if in_progress_at.is_some_and(|at| self.flow_loop_pushed_since(at).is_some()) {
+        // being resolved is resolved again, any number of times: see `recheck_in_flow_loop`. So is one that is reached
+        // through a resolution: that one is the guard.
+        if in_progress_at.is_some_and(|at| {
+            self.flow_loop_pushed_since(at).is_some()
+                || self.stack[at..].iter().any(|&q| self.is_resolution(q))
+        }) {
             self.resolution_start = self.stack.len();
         }
         let entered = self.enter(Query::Call(file, call));
@@ -546,15 +550,15 @@ impl<'p, 's> Checker<'p, 's> {
     fn effective_args(&mut self, file: FileId, args: IdList<ExprId>) -> Args {
         let hir = self.hir(file);
         let mut out = Args::new();
-        if !hir
+        if hir
             .ids(args)
             .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
         {
+            for a in hir.ids(args) {
+                self.each_effective_arg(file, a, |arg| out.push(arg));
+            }
+        } else {
             out.extend(hir.ids(args).map(Arg::Expr));
-            return out;
-        }
-        for a in hir.ids(args) {
-            self.each_effective_arg(file, a, |arg| out.push(arg));
         }
         out
     }
@@ -817,6 +821,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.resolve_error_call(file, exprs)
                 };
             }
+            let type_args = hir.list_at(type_args);
             self.look_at_type_nodes(file, type_args);
             let type_args = self.types_from_nodes(file, type_args);
             let node = CallLike::Call(c);
@@ -1020,9 +1025,9 @@ impl<'p, 's> Checker<'p, 's> {
             };
         }
         if !matches!(hir[data.callee].kind, ExprKind::Super) {
-            self.look_at_type_nodes(file, data.type_args);
+            self.look_at_type_nodes(file, hir.list_at(data.type_args));
         }
-        let type_args = self.types_from_nodes(file, data.type_args);
+        let type_args = self.types_from_nodes(file, hir.list_at(data.type_args));
         let args = self.effective_args(file, data.args);
         let node = CallLike::Call(id);
         let this_arg = self.this_argument_of_call(file, call, node);
@@ -1372,7 +1377,8 @@ impl<'p, 's> Checker<'p, 's> {
                     let mapper = self.mapper_from(&type_params, &filled);
                     check_candidate = self.instantiate_sig(candidate, mapper);
                 } else {
-                    let mut context = Inference::for_params(&type_params, Some(candidate));
+                    let mut context =
+                        Box::new(Inference::for_params(&type_params, Some(candidate)));
                     context.any_default = self.hir(s.file).is_js;
                     let check_mode = s.arg_check_mode | CheckMode::SKIP_GENERIC_FUNCTIONS;
                     let mapper = self.infer_type_arguments(s, candidate, check_mode, &mut context);
@@ -1441,7 +1447,7 @@ impl<'p, 's> Checker<'p, 's> {
         s: &CallState<'_>,
         signature: SigId,
         check_mode: CheckMode,
-        context: &mut Inference,
+        context: &mut Box<Inference>,
     ) -> MapperId {
         let (file, call, args) = (s.file, s.call, s.args);
         if let CallLike::Jsx(j) = s.node
@@ -1618,7 +1624,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `checkIdentifier` returns the declared type of a variable that is assigned. A
             // declaration that precedes has been checked, so that type is resolved.
             ExprKind::Ident(_) => {
-                let symbol = bound.expr_symbol[e.idx()];
+                let symbol = bound.symbol_of_expr(e);
                 symbol.is_some() && self.target_kind(file, e).definite && {
                     let declarations = &bound.symbols[symbol.idx()].decls;
                     !declarations.is_empty()
@@ -1672,7 +1678,7 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         arg: Arg,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
     ) -> TypeId {
         let (ty, node) = match arg {
@@ -1884,7 +1890,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if matches!(hir[call].kind, ExprKind::TaggedTemplate(_)) {
                     let strings = self.global_ref_checked(known::TemplateStringsArray, &[]);
                     let no_label = LabeledDeclaration::NONE;
-                    args.insert(0, Arg::Type(strings, no_label, hir[id].template));
+                    args.insert(0, Arg::Type(strings, no_label, hir.template_of(id)));
                 }
                 args
             }
@@ -1976,7 +1982,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.instantiate_sig(candidate, mapper);
         }
         // `inferSignatureInstantiationForOverloadFailure`
-        let mut context = Inference::for_params(&type_params, Some(candidate));
+        let mut context = Box::new(Inference::for_params(&type_params, Some(candidate)));
         context.any_default = self.hir(s.file).is_js;
         let check_mode = CheckMode::SKIP_CONTEXT_SENSITIVE | CheckMode::SKIP_GENERIC_FUNCTIONS;
         let mapper = self.infer_type_arguments(s, candidate, check_mode, &mut context);
@@ -2547,7 +2553,7 @@ impl<'p, 's> Checker<'p, 's> {
         args: &[Arg],
         index: usize,
         rest: TypeId,
-        mut context: Option<&mut Inference>,
+        mut context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
     ) -> TypeId {
         let is_const = self.is_const_type_variable(rest, 0);
@@ -2822,7 +2828,7 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         e: ExprId,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
     ) -> TypeId {
         self.push_contextual_type(file, e, Some(contextual_type), false);
@@ -2844,7 +2850,7 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         e: ExprId,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
         check: impl FnOnce(&mut Self, CheckMode) -> TypeId,
     ) -> TypeId {
@@ -2862,11 +2868,11 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         file: FileId,
         e: ExprId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
     ) -> (CheckMode, OutsideInferenceContext) {
-        let context = inference_context
-            .map(|inference| std::mem::replace(inference, Inference::for_params(&[], None)));
+        let context =
+            inference_context.map(|inference| std::mem::replace(inference, self.spare_inference()));
         let mut check_mode = check_mode | CheckMode::CONTEXTUAL;
         if context.is_some() {
             check_mode |= CheckMode::INFERENTIAL;
@@ -2895,7 +2901,7 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         e: ExprId,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         outside: OutsideInferenceContext,
         ty: TypeId,
     ) -> TypeId {
@@ -2916,7 +2922,9 @@ impl<'p, 's> Checker<'p, 's> {
         let lent = self.inference_contexts.pop().and_then(|info| info.context);
         if let (Some(inference), Some(mut lent)) = (inference_context, lent) {
             lent.intra_expression_inference_sites.clear();
-            *inference = lent;
+            // Nothing has seen what was in its place.
+            self.spare_inferences
+                .push(std::mem::replace(inference, lent));
         }
         ty
     }

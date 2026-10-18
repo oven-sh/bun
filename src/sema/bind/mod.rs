@@ -1507,6 +1507,19 @@ impl<S: Storage> BoundIn<S> {
         parent.unwrap_or_default().get()
     }
 
+    /// See `expr_symbol`. `NONE` for what is not an expression of the file.
+    #[inline]
+    pub fn symbol_of_expr(&self, e: ExprId) -> SymbolId {
+        self.expr_symbol.get(e.idx()).copied().unwrap_or_default()
+    }
+
+    /// See `expr_flow`. `UNREACHABLE` for what is not an expression of the file.
+    #[inline]
+    pub fn flow_of_expr(&self, e: ExprId) -> FlowId {
+        let flow = self.expr_flow.get(e.idx()).copied();
+        flow.unwrap_or(UNREACHABLE)
+    }
+
     /// The class at whose position the decorator with this parent is evaluated.
     pub fn class_of_decorator(&self, parent: Parent) -> ClassId {
         let member = match parent {
@@ -2002,7 +2015,7 @@ impl Bound<'_> {
             Decl::Module(it) => self.module_symbol[it.idx()],
             Decl::TypeParam(it) => self.type_param_symbol[it.idx()],
             Decl::Expando(it) | Decl::ObjectLiteral(it) | Decl::ThisProperty(it) => {
-                self.expr_symbol[it.idx()]
+                self.symbol_of_expr(it)
             }
             Decl::Member(it) => self.member_symbol[it.idx()],
             Decl::ParameterProperty(_) | Decl::Property(_) => {

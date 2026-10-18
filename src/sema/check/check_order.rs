@@ -254,9 +254,9 @@ impl Checker<'_, '_> {
                 }
             }
             // `getTypeOfSymbol`
-            Identifier if expression.is_some() && bound.expr_symbol[expression.idx()].is_some() => {
+            Identifier if expression.is_some() && bound.symbol_of_expr(expression).is_some() => {
                 let files = self.files();
-                let symbol = files.sym(file, bound.expr_symbol[expression.idx()]);
+                let symbol = files.sym(file, bound.symbol_of_expr(expression));
                 let target = if order.follows_later_files && files.is_non_local_alias(symbol) {
                     files.resolve_alias(symbol)
                 } else {

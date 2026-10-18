@@ -3642,7 +3642,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // `isNullOrUndefined`
                 None | Some(ExprKind::Null) if !is_constant => return TypeId::AUTO,
                 Some(ExprKind::Ident(known::undefined))
-                    if !is_constant && self.bound(file).expr_symbol[decl.init.idx()].is_none() =>
+                    if !is_constant && self.bound(file).symbol_of_expr(decl.init).is_none() =>
                 {
                     return TypeId::AUTO;
                 }

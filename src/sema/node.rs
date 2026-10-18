@@ -820,7 +820,9 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
 
     fn call(&mut self, c: CallId) -> bool {
         let call = &self.file[c];
-        self.one(call.callee) || self.list(call.type_args) || self.list(call.args)
+        self.one(call.callee)
+            || self.list(self.file.list_at(call.type_args))
+            || self.list(call.args)
     }
 
     fn expr(&mut self, e: ExprId, node: Node) -> bool {
@@ -849,7 +851,9 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             }
             ExprKind::TaggedTemplate(c) => {
                 let call = &file[c];
-                self.one(call.callee) || self.list(call.type_args) || self.one(call.template)
+                self.one(call.callee)
+                    || self.list(file.list_at(call.type_args))
+                    || self.one(file.template_of(c))
             }
             ExprKind::Array(elements) => self.list(elements),
             ExprKind::Object(properties) => self.span(properties),
@@ -2974,7 +2978,7 @@ impl File<'_> {
             CallExpression | NewExpression | TaggedTemplateExpression => match self.data(parent) {
                 NodeData::Expr(e) => match self[e].kind {
                     ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => self
-                        .ids(self[c].type_args)
+                        .ids(self.list_at(self[c].type_args))
                         .any(|argument| self.node(argument) == node),
                     _ => false,
                 },

@@ -15,7 +15,7 @@ impl Checker<'_, '_> {
         // accepts a use after that position, so most uses cost one comparison. 0: not computed yet.
         let mut declared_by = vec![0u32; bound.symbols.len()];
         for &e in index.of(ExprTag::Ident) {
-            let local = bound.expr_symbol[e.idx()];
+            let local = bound.symbol_of_expr(e);
             if local.is_none() {
                 continue;
             }

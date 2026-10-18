@@ -1873,13 +1873,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let base = self.s.ids.len();
         self.s.ids.push(braces.0);
         let args = self.take_ids(base);
+        let type_args = self.f.place_of_list(type_args);
         let call = self.f.add_call(Call {
             callee: head,
             args,
             type_args,
             close_pos: u32::MAX,
             chain: Chain::No,
-            template: ExprId::NONE,
         });
         self.finish_expr(ExprKind::New(call), start)
     }

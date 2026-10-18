@@ -303,9 +303,9 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        shape.call = combined.shape.call.clone_in(arena);
-        shape.construct = combined.shape.construct.clone_in(arena);
-        shape.properties_of = combined.shape.properties_of;
+        shape.call.extend_from_slice(&combined.shape.call);
+        shape.construct.extend_from_slice(&combined.shape.construct);
+        shape.properties_of = combined.shape.properties_of();
         shape
     }
 

@@ -1945,7 +1945,7 @@ impl<'s> Checker<'_, 's> {
                 let callee = hir[c].callee;
                 self.check_expression(file, callee);
                 if callee.is_none() || !matches!(hir[callee].kind, ExprKind::Super) {
-                    self.check_type_nodes(file, hir[c].type_args);
+                    self.check_type_nodes(file, hir.list_at(hir[c].type_args));
                 }
                 // `getCandidateForOverloadFailure` begins with `checkNodeDeferred(node)`.
                 if (self.p.call_diagnostics)

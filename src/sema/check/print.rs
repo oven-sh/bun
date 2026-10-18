@@ -5157,7 +5157,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             }
             ExprKind::Template { .. } => self.cloned_template_text(file, e)?,
             ExprKind::TaggedTemplate(call) if hir[call].type_args.is_empty() => {
-                let template = self.cloned_template_text(file, hir[call].template)?;
+                let template = self.cloned_template_text(file, hir.template_of(call))?;
                 cat!(emit(hir[call].callee, P::Member)?, b" ", template)
             }
             ExprKind::Dot {

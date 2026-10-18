@@ -489,7 +489,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 continue;
             };
             // `GetReferencedMemberValueDeclaration`
-            let symbol = bound.expr_symbol[e.idx()];
+            let symbol = bound.symbol_of_expr(e);
             // `HasDynamicName`: an identifier is not `IsSimpleInlineableExpression`, so `this[name] = e` declares nothing here.
             let name = match hir[target].kind {
                 ExprKind::Dot { name, .. } => Some(name),
@@ -589,7 +589,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let (hir, files) = (self.c.hir(file), self.c.files());
         let name = match assignment_declaration_kind(hir, e) {
             JsDeclarationKind::ThisProperty => {
-                let symbol = self.c.bound(file).expr_symbol[e.idx()];
+                let symbol = self.c.bound(file).symbol_of_expr(e);
                 return symbol
                     .is_some()
                     .then(|| self.c.type_of_symbol(files.sym(file, symbol)));

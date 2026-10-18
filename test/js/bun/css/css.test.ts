@@ -2781,6 +2781,71 @@ describe("css tests", () => {
     minify_test(".foo { aspect-ratio: 2 / 3 auto }", ".foo{aspect-ratio:auto 2/3}");
   });
 
+  // caniuse lists some versions as one entry ("15.2-15.3") and lists no patch release. A prefix range covers them too.
+  describe("prefix ranges between listed versions", () => {
+    const gradient = "background-image: linear-gradient(red, #00f)";
+    for (const [name, targets, source, expected] of [
+      [
+        "safari-15-3",
+        { safari: (15 << 16) | (3 << 8) },
+        "transition: mask-image 1s",
+        "transition: -webkit-mask-image 1s, mask-image 1s",
+      ],
+      [
+        "safari-15-3-1",
+        { safari: (15 << 16) | (3 << 8) | 1 },
+        "transition: mask-image 1s",
+        "transition: -webkit-mask-image 1s, mask-image 1s",
+      ],
+      ["safari-15-4", { safari: (15 << 16) | (4 << 8) }, "transition: mask-image 1s", "transition: mask-image 1s"],
+      [
+        "ios-8-4",
+        { ios_saf: (8 << 16) | (4 << 8) },
+        "transform: rotate(1deg)",
+        "-webkit-transform: rotate(1deg); transform: rotate(1deg)",
+      ],
+      ["ios-9", { ios_saf: 9 << 16 }, "transform: rotate(1deg)", "transform: rotate(1deg)"],
+      [
+        "safari-13-1",
+        { safari: (13 << 16) | (1 << 8) },
+        "background-clip: text",
+        "-webkit-background-clip: text; background-clip: text",
+      ],
+      [
+        "ios-13-7",
+        { ios_saf: (13 << 16) | (7 << 8) },
+        "background-clip: text",
+        "-webkit-background-clip: text; background-clip: text",
+      ],
+      ["ios-14", { ios_saf: 14 << 16 }, "background-clip: text", "background-clip: text"],
+      [
+        "ios-6-1",
+        { ios_saf: (6 << 16) | (1 << 8) },
+        "flex-direction: row",
+        "-webkit-box-orient: horizontal; -webkit-box-direction: normal; -webkit-flex-direction: row; flex-direction: row",
+      ],
+      ["ios-7", { ios_saf: 7 << 16 }, "flex-direction: row", "-webkit-flex-direction: row; flex-direction: row"],
+      [
+        "ios-6-1",
+        { ios_saf: (6 << 16) | (1 << 8) },
+        "background-image: linear-gradient(red, blue)",
+        `background-image: -webkit-gradient(linear, 0 0, 0 100%, from(red), to(#00f)); background-image: -webkit-linear-gradient(red, #00f); ${gradient}`,
+      ],
+      ["ios-7", { ios_saf: 7 << 16 }, "background-image: linear-gradient(red, blue)", gradient],
+    ] as const) {
+      prefix_test(`.${name} { ${source} }`, `.${name} { ${expected}; }`, targets);
+    }
+
+    for (const [name, targets, prefixed] of [
+      ["safari-13-1", { safari: (13 << 16) | (1 << 8) }, true],
+      ["safari-13-1-2", { safari: (13 << 16) | (1 << 8) | 2 }, true],
+      ["safari-14", { safari: 14 << 16 }, false],
+    ] as const) {
+      const rule = (pseudo: string) => `.${name}:${pseudo}(.b, .c) { color: red; }`;
+      prefix_test(rule("is"), (prefixed ? rule("-webkit-any") : "") + rule("is"), targets);
+    }
+  });
+
   describe("background", () => {
     cssTest(
       `

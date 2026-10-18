@@ -4,7 +4,7 @@
 
 // const { execSync } = require("child_process");
 const prefixes = require("autoprefixer/data/prefixes");
-// Two caniuse-lite copies never agree on the newest browser: read the copy that autoprefixer built `prefixes` from.
+// Read the caniuse-lite copy that autoprefixer built `prefixes` from. Another copy lists other versions.
 const requireFromAutoprefixer = require("module").createRequire(require.resolve("autoprefixer/data/prefixes"));
 const caniuse = requireFromAutoprefixer("caniuse-lite");
 const browsers = caniuse.agents;
@@ -44,15 +44,10 @@ const MDN_BROWSER_MAPPING = {
   oculus: null,
 };
 
-const latestBrowserVersions = {};
+// The numbered versions that caniuse lists for each browser, oldest first.
+const listed = {};
 for (let b in browsers) {
-  let versions = browsers[b].versions.slice(-10);
-  for (let i = versions.length - 1; i >= 0; i--) {
-    if (versions[i] != null && versions[i] != "all" && versions[i] != "TP") {
-      latestBrowserVersions[b] = versions[i];
-      break;
-    }
-  }
+  listed[b] = browsers[b].versions.filter(v => v != null && v != "all" && v != "TP");
 }
 
 // Caniuse data for clip-path is incorrect.
@@ -65,6 +60,8 @@ prefixes["clip-path"].browsers = prefixes["clip-path"].browsers.filter(b => {
   );
 });
 
+// MDN has both ends of `:-webkit-any()` and `:-moz-any()`: the first version with it, and the first with `:is()`.
+const anyPseudoUntil = {};
 prefixes["any-pseudo"] = {
   browsers: Object.entries(mdn.css.selectors.is.__compat.support).flatMap(([key, value]) => {
     if (Array.isArray(value)) {
@@ -72,20 +69,23 @@ prefixes["any-pseudo"] = {
       let any = value.find(v => v.alternative_name?.includes("-any"))?.version_added;
       let supported = value.find(x => x.version_added && !x.alternative_name)?.version_added;
       if (any && supported) {
-        let parts = supported.split(".");
-        parts[0]--;
-        supported = parts.join(".");
-        return [`${key} ${any}}`, `${key} ${supported}`];
+        anyPseudoUntil[key] = Math.max(anyPseudoUntil[key] ?? 0, parseVersion(supported));
+        return [`${key} ${any}`];
       }
     }
 
     return [];
   }),
+  until: anyPseudoUntil,
 };
 
-// Safari 4-13 supports background-clip: text with a prefix.
-prefixes["background-clip"].browsers.push("safari 13");
-prefixes["background-clip"].browsers.push("ios_saf 4", "ios_saf 13");
+// caniuse no longer marks `background-clip: text` as prefixed in Safari. MDN has the version that dropped the prefix.
+const backgroundClipText = mdn.css.properties["background-clip"].text.__compat.support;
+prefixes["background-clip"].browsers.push("ios_saf 4");
+prefixes["background-clip"].until = {
+  safari: parseVersion(backgroundClipText.safari.find(v => v.version_removed).version_removed),
+  ios_saf: parseVersion(backgroundClipText.safari_ios.find(v => v.version_removed).version_removed),
+};
 
 let flexSpec = {};
 let oldGradient = {};
@@ -105,62 +105,90 @@ for (let prop in prefixes) {
     }
 
     let origName = name;
-    let isCurrentVersion = version === latestBrowserVersions[name];
     name = BROWSER_MAPPING[name] || name;
     let v = parseVersion(version);
     if (v == null) {
       console.log("BAD VERSION", prop, name, version);
       continue;
     }
-    if (browserMap[name]?.[prefix] == null) {
-      browserMap[name] = browserMap[name] || {};
-      browserMap[name][prefix] =
-        prefixes[prop].browsers.filter(b => b.startsWith(origName) || b.startsWith(name)).length === 1
-          ? isCurrentVersion
-            ? [null, null]
-            : [null, v]
-          : isCurrentVersion
-            ? [v, null]
-            : [v, v];
-    } else {
-      if (v < browserMap[name][prefix][0]) {
-        browserMap[name][prefix][0] = v;
-      }
-
-      if (isCurrentVersion && browserMap[name][prefix][0] != null) {
-        browserMap[name][prefix][1] = null;
-      } else if (v > browserMap[name][prefix][1] && browserMap[name][prefix][1] != null) {
-        browserMap[name][prefix][1] = v;
-      }
+    let until = prefixes[prop].until?.[name];
+    if (until == null && !listed[origName].includes(version)) {
+      throw new Error(
+        `build-prefixes.js: "${origName} ${version}" in the ${prop} list is not a version that caniuse-lite lists. Give prefixes["${prop}"].until an entry for ${name}.`,
+      );
     }
+    browserMap[name] ??= {};
+    if (browserMap[name][prefix] == null) {
+      let single = prefixes[prop].browsers.filter(b => b.startsWith(origName) || b.startsWith(name)).length === 1;
+      browserMap[name][prefix] = newRange(single && until == null ? null : v);
+    }
+    addVersion(browserMap[name][prefix], origName, version);
 
     if (variant === "2009") {
-      if (flexSpec[name] == null) {
-        flexSpec[name] = [v, v];
-      } else {
-        if (v < flexSpec[name][0]) {
-          flexSpec[name][0] = v;
-        }
-
-        if (v > flexSpec[name][1]) {
-          flexSpec[name][1] = v;
-        }
-      }
+      addVersion((flexSpec[name] ??= newRange(v)), origName, version);
     } else if (variant === "old" && prop.includes("gradient")) {
-      if (oldGradient[name] == null) {
-        oldGradient[name] = [v, v];
-      } else {
-        if (v < oldGradient[name][0]) {
-          oldGradient[name][0] = v;
-        }
-
-        if (v > oldGradient[name][1]) {
-          oldGradient[name][1] = v;
-        }
-      }
+      addVersion((oldGradient[name] ??= newRange(v)), origName, version);
+    }
+  }
+  for (let name in browserMap) {
+    for (let prefix in browserMap[name]) {
+      browserMap[name][prefix] = finishRange(name, browserMap[name][prefix], prefixes[prop].until?.[name]);
     }
   }
   addValue(p, browserMap, prop);
+}
+for (let name in flexSpec) {
+  flexSpec[name] = finishRange(name, flexSpec[name]);
+}
+for (let name in oldGradient) {
+  oldGradient[name] = finishRange(name, oldGradient[name]);
+}
+
+// `from` is null when the range has no lower bound. `newest` is, per caniuse browser, the index in `listed` of its newest version.
+function newRange(from) {
+  return { from, to: 0, plain: true, newest: {} };
+}
+
+function addVersion(range, origName, version) {
+  let v = parseVersion(version);
+  if (range.from != null && v < range.from) {
+    range.from = v;
+  }
+  range.to = Math.max(range.to, v);
+  range.plain &&= !version.includes("-");
+  range.newest[origName] = Math.max(range.newest[origName] ?? -1, listed[origName].indexOf(version));
+}
+
+// Bun targets name exact versions. A range ends before the next version caniuse lists, so it covers "15.2-15.3" and patch releases.
+function rangeEnd(name, range) {
+  let end = 0;
+  for (let origName in range.newest) {
+    let versions = listed[origName];
+    let newest = versions[range.newest[origName]];
+    let next = versions[range.newest[origName] + 1];
+    if (next != null && origName !== name) {
+      // and_chr, and_ff, op_mob and ie_mob list few versions: take the next version of the browser they count as.
+      next = listed[name].find(version => parseVersion(version) > parseVersion(newest));
+    }
+    if (next == null) {
+      return null;
+    }
+    end = Math.max(end, parseVersion(next));
+  }
+  // caniuse lists Android up to 4.4.4, then only the newest WebView (Chrome's version, 37 or later): end after the last entry.
+  if (name === "android" && end >= 37 << 16) {
+    return range.to + 1;
+  }
+  return end;
+}
+
+function finishRange(name, range, until) {
+  if (until != null) {
+    return { from: range.from, until, exact: false };
+  }
+  until = rangeEnd(name, range);
+  // A range of one plain version keeps its equality test: two comparisons make the flex arm too large to inline.
+  return { from: range.from, until, exact: until != null && range.from === range.to && range.plain };
 }
 
 function addValue(map, value, prop) {
@@ -517,6 +545,13 @@ let enumify = f =>
 
 const prefixConst = { webkit: "WEBKIT", moz: "MOZ", ms: "MS", o: "O" };
 
+// The Rust test for one range of versions, or null when every version is in the range.
+function condition({ from, until, exact }) {
+  if (exact) return `version == ${from}`;
+  if (from == null) return until == null ? null : `version < ${until}`;
+  return until == null ? `version >= ${from}` : `version >= ${from} && version < ${until}`;
+}
+
 // `cargo fmt` formats with the workspace edition. A bare rustfmt uses 2015 and sorts the imports differently.
 async function rustfmt(path) {
   await Bun.$`rustfmt --edition 2024 ${path}`;
@@ -575,18 +610,14 @@ if (wants("prefixes")) {
     for (const [name, pfx] of Object.entries(versions)) {
       const inner = [];
       let needsVersion = false;
-      for (const [prefix, [min, max]] of Object.entries(pfx)) {
+      for (const [prefix, range] of Object.entries(pfx)) {
         if (!prefixConst[prefix]) throw new Error("Missing prefix " + prefix);
         const add = `prefixes |= VendorPrefix::${prefixConst[prefix]};`;
-        if (min == null && max == null) {
+        const cond = condition(range);
+        if (cond == null) {
           inner.push(`                    ${add}`);
         } else {
           needsVersion = true;
-          let cond;
-          if (min == null) cond = `version <= ${max}`;
-          else if (max == null) cond = `version >= ${min}`;
-          else if (min === max) cond = `version == ${min}`;
-          else cond = `version >= ${min} && version <= ${max}`;
           inner.push(`                    if ${cond} {\n                        ${add}\n                    }`);
         }
       }
@@ -596,18 +627,15 @@ if (wants("prefixes")) {
     arms.push(`            ${pats} => {\n${body.join("\n")}\n            }`);
   }
 
-  const flex = Object.entries(flexSpec)
-    .map(
-      ([name, [min, max]]) =>
-        `        if let Some(version) = browsers.${name} {\n            if version >= ${min} && version <= ${max} {\n                return true;\n            }\n        }`,
-    )
-    .join("\n");
-  const grad = Object.entries(oldGradient)
-    .map(
-      ([name, [min, max]]) =>
-        `        if let Some(version) = browsers.${name} {\n            if version >= ${min} && version <= ${max} {\n                return true;\n            }\n        }`,
-    )
-    .join("\n");
+  const anyBrowser = spec =>
+    Object.entries(spec)
+      .map(
+        ([name, range]) =>
+          `        if let Some(version) = browsers.${name} {\n            if ${condition(range)} {\n                return true;\n            }\n        }`,
+      )
+      .join("\n");
+  const flex = anyBrowser(flexSpec);
+  const grad = anyBrowser(oldGradient);
 
   const out = `// Autogenerated by build-prefixes.js. DO NOT EDIT!
 // Data: ${dataVersions}.

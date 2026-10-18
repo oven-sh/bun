@@ -2414,7 +2414,8 @@ describe("a vm timeout in a listener that native code called ends the script", (
         `
         const vm = require("node:vm");
         // Long enough for the timeout to land in it. It ends by itself, so a timeout that is lost fails the test and does not hang it.
-        const spin = () => { const end = performance.now() + 3000; while (performance.now() < end); };
+        // The inner loop keeps the thread in script: a loop that only calls performance.now() is slow to interrupt once the JIT optimized it.
+        const spin = () => { const end = performance.now() + 3000; while (performance.now() < end) for (let i = 0; i < 1e4; i++); };
         const ran = [];
         ${setup}
         let outcome;
@@ -2506,7 +2507,7 @@ describe("a vm timeout in a listener that native code called ends the script", (
         "-e",
         `
         const vm = require("node:vm");
-        const spin = () => { const end = performance.now() + 3000; while (performance.now() < end); };
+        const spin = () => { const end = performance.now() + 3000; while (performance.now() < end) for (let i = 0; i < 1e4; i++); };
         for (const withCloseHandler of [true, false]) {
           const done = Promise.withResolvers();
           const websocket = {

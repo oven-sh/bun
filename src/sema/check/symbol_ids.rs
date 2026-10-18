@@ -53,19 +53,6 @@ impl SymbolIds {
 }
 
 impl Checker<'_, '_> {
-    /// From now on this checker hands out symbol ids. It is the only checker of the program, and
-    /// has not checked anything yet.
-    pub fn hand_out_symbol_ids(&mut self) {
-        let mut handed_out = SymbolIds::default();
-        // `BindSourceFiles`: a `singleThreadedWorkGroup` runs what was queued last first.
-        for &file in self.files().order.iter().rev() {
-            for &class in self.bound(file).classes_of_private_names.iter() {
-                handed_out.get(self.key_of_symbol(self.class_sym(file, class)));
-            }
-        }
-        self.symbol_ids = Some(std::cell::RefCell::new(handed_out));
-    }
-
     #[inline]
     pub(super) fn hands_out_symbol_ids(&self) -> bool {
         self.symbol_ids.is_some()

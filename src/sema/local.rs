@@ -383,20 +383,6 @@ impl Pages {
         &mut self.pool[page as usize][at % PAGE]
     }
 
-    /// Passes the cells that are not 0 to `visit`, in ascending order, each with its number.
-    fn for_each(&self, directory: &[u32], mut visit: impl FnMut(usize, u32)) {
-        for (i, &list) in directory.iter().enumerate().filter(|it| *it.1 != 0) {
-            let pages = self.pool[list as usize].iter().enumerate();
-            for (j, &page) in pages.filter(|it| *it.1 != 0) {
-                for (k, &raw) in self.pool[page as usize].iter().enumerate() {
-                    if raw != 0 {
-                        visit((i * PAGE + j) * PAGE + k, raw);
-                    }
-                }
-            }
-        }
-    }
-
     /// `for_each` for the cells in `range`, which are 0 afterwards.
     fn take_range(
         &mut self,
@@ -655,17 +641,6 @@ impl<'s> Half<'s> {
     }
 }
 
-/// Where `Buffer::take_node_cells` has found an entry.
-#[derive(Copy, Clone)]
-pub(crate) enum Kept {
-    /// In a row: the node, as `node_word`. A row also has what `Buffer::seed` has put there.
-    InRow(u64),
-    /// In a page: the number of the node among the nodes of all files.
-    InPage(usize),
-    /// `Buffer::shadow`: the node, as `node_word`.
-    Shadowed(u64),
-}
-
 /// Under which keys a task has stored since its last commit, in that order. The values are where the lookups of the task
 /// find them: a commit stores what a key has by then. See `crate::check::commit`.
 #[derive(Default)]
@@ -871,17 +846,6 @@ impl<'s> Buffer<'s> {
     #[inline]
     pub(crate) fn store_own_id(&mut self, slot: u32, number: u32, raw: u32) {
         *cell_mut(&mut self.half_mut(slot).dense, number) = raw;
-    }
-
-    /// The entries of the table at `slot`, which has none afterwards: those under published ids, by number, then those under
-    /// task-local ids, by number. Each is an id and a packed value.
-    pub(crate) fn take_id_cells(&mut self, slot: u32, mut take: impl FnMut(u32, u32)) {
-        let half = &mut self.halves[slot as usize];
-        (self.pages).for_each(&half.directory, |number, raw| take(number as u32, raw));
-        for (number, &raw) in half.dense.iter().enumerate().filter(|it| *it.1 != 0) {
-            take(number as u32 | LOCAL, raw);
-        }
-        half.clear_cells();
     }
 
     #[inline]
@@ -1092,22 +1056,6 @@ impl<'s> Buffer<'s> {
             Some(half) if !half.sparse.is_empty() => half.sparse_cell(node_word(file, index)),
             _ => 0,
         }
-    }
-
-    /// The entries of the table at `slot`, which has none afterwards.
-    pub(crate) fn take_node_cells(&mut self, slot: u32, mut take: impl FnMut(Kept, u32)) {
-        let half = &mut self.halves[slot as usize];
-        let earlier = half.earlier.iter().map(|(file, cells)| (*file, &cells[..]));
-        for (file, cells) in earlier.chain([(half.file, &half.dense[..])]) {
-            for (index, &raw) in cells.iter().enumerate().filter(|it| *it.1 != 0) {
-                take(Kept::InRow(node_word(file, index as u32)), raw);
-            }
-        }
-        (self.pages).for_each(&half.directory, |at, raw| take(Kept::InPage(at), raw));
-        for (word, raw) in half.sparse.take() {
-            take(Kept::Shadowed(word), raw);
-        }
-        half.clear_cells();
     }
 }
 

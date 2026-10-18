@@ -162,13 +162,6 @@ impl Follow for Key {
         visitor.plain(&flags);
     }
 
-    fn follow(&mut self, link: &Link) {
-        if self.2 & GENERIC_KEY == 0 {
-            self.0.follow(link);
-            self.1.follow(link);
-        }
-    }
-
     fn is_bound(&self, own: &OwnStore) -> bool {
         if self.2 & GENERIC_KEY == 0 {
             (self.0, self.1).is_bound(own)

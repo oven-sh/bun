@@ -217,9 +217,6 @@ pub struct Program<'s> {
     serial_listings: Guarded<FxHashMap<Sym, (bool, bool)>>,
     /// See `commit`.
     commits: commit::Commits<'s>,
-    /// A round of retries left every invalid task invalid: `Finished::listings` are not compared
-    /// for the rest of the step (`Program::stop_comparing_listings`).
-    listings_are_not_compared: Guarded<bool>,
     /// `Checker::referenced_properties` of all tasks. The task that checks the file of a
     /// declaration does not see what another one has marked, so `finish_file` takes back what it
     /// has reported. A union: it does not depend on which task comes first.
@@ -511,7 +508,6 @@ impl crate::types::Follow for Reported {
     fn visit<V: crate::types::Visitor>(&self, visitor: &mut V) {
         visitor.plain(&(self.file.0, self.start, self.end, self.code));
     }
-    fn follow(&mut self, _: &crate::types::Link) {}
 }
 
 impl crate::types::Follow for decl::Predicate {
@@ -525,10 +521,6 @@ impl crate::types::Follow for decl::Predicate {
         visitor.plain(&(param, asserts));
         name.visit(visitor);
         ty.visit(visitor);
-    }
-    fn follow(&mut self, link: &crate::types::Link) {
-        self.name.follow(link);
-        self.ty.follow(link);
     }
 }
 
@@ -589,7 +581,6 @@ impl<'s> Program<'s> {
             serial_variances: Guarded::default(),
             serial_listings: Guarded::default(),
             commits: commit::Commits::new_in(session.arena()),
-            listings_are_not_compared: Guarded::new(false),
             properties_referenced_before: Default::default(),
             emit_helper_errors_of_earlier_files: Default::default(),
             auto_array_type,

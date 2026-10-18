@@ -331,9 +331,6 @@ impl<T, L: Length, A: Allocator + Clone> Drop for Stable<T, L, A> {
 /// A vector that several threads fill at a barrier. One thread reserves a range of elements, then
 /// each reserved element is written exactly once, by any thread.
 pub(crate) trait Fill<T> {
-    /// See `Stable::get`.
-    fn get(&self, index: u32) -> &T;
-
     /// # Safety
     /// See `Stable::reserve`.
     unsafe fn reserve(&self, count: u32) -> u32;
@@ -344,11 +341,6 @@ pub(crate) trait Fill<T> {
 }
 
 impl<T, L: Length, A: Allocator + Clone> Fill<T> for Stable<T, L, A> {
-    #[inline]
-    fn get(&self, index: u32) -> &T {
-        Stable::get(self, index)
-    }
-
     unsafe fn reserve(&self, count: u32) -> u32 {
         // SAFETY: the caller upholds the contract of `Stable::reserve`.
         unsafe { Stable::reserve(self, count) }
@@ -568,11 +560,6 @@ impl<T, L: Length, A: Allocator + Clone> Drop for Segmented<'_, T, L, A> {
 }
 
 impl<T, L: Length, A: Allocator + Clone> Fill<T> for Segmented<'_, T, L, A> {
-    #[inline]
-    fn get(&self, index: u32) -> &T {
-        Segmented::get(self, index)
-    }
-
     unsafe fn reserve(&self, count: u32) -> u32 {
         self.len.add(count)
     }

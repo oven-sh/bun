@@ -12,11 +12,8 @@ use super::errors_operators::{
 };
 use super::errors_statements::is_with_statement;
 use super::sink::MAX_SERIALIZATION_LEVEL;
-use super::task::{Finished, Published};
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
-use crate::types::LinkCounts;
-use crate::util::InParallel;
 use crate::util::SharedSort;
 use smallvec::SmallVec;
 
@@ -30,101 +27,6 @@ const TASK_STACK: usize = 3 << 20;
 
 /// The barrier after a step. `finished`: the tasks of that step, in task order. No task is running.
 impl<'s> Program<'s> {
-    /// Optimistic concurrency control: validation, before link and publish. `getVariancesWorker`
-    /// returns an empty list for a symbol whose variances are being computed and caches whatever
-    /// results from that, so the variances of mutually recursive types depend on which type of the
-    /// cycle is queried first. The serial order is step order, then program order within a step,
-    /// which is task order. (Not quite program order: the warm-up steps are a sample of the
-    /// program. Deferring what their tasks publish until all earlier files are checked makes a
-    /// check 17% slower.) A task is invalid if it computed a different value than an earlier task
-    /// or step did and a result of the task depends on the difference (`OrderDependent`). The
-    /// caller aborts an invalid task: it discards the task's output and retries its files, which
-    /// then read `serial_variances`. The first task to compute the variances of a symbol is valid
-    /// with respect to that symbol. Returns whether each task is invalid.
-    ///
-    /// Likewise for `markNodeAssignments`: what it has found about a variable depends on which of
-    /// the functions around the assignments was walked first
-    /// (`has_order_dependent_assignment_marks`). A task is invalid if it walked a function of a
-    /// file it was visiting that is inside or around one that an earlier task of the step walked,
-    /// on demand. Retried, it finds those walks published, with what was evaluated along with them.
-    ///
-    /// Likewise for the list of properties that an intersection keeps (`Finished::listings`). A
-    /// retried task finds the list in the tables that the valid tasks published.
-    /// `is_published`: whether the tasks of this round publish their tables. If not, a retried
-    /// task could not find the list of a valid one: the tasks that noted a list of an
-    /// intersection that an invalid task noted are invalid too, and what the round noted is
-    /// forgotten. A round of retries publishes.
-    pub fn validate(&self, finished: &[Finished<'s>], is_published: bool) -> Vec<bool> {
-        let mut serial = self.serial_variances.lock();
-        let mut listings = self.serial_listings.lock();
-        let compares_listings = !*self.listings_are_not_compared.lock();
-        let mut walked: Vec<(FileId, Node)> = Vec::new();
-        let mut invalid: Vec<bool> = (finished.iter())
-            .map(|finished| {
-                let is_invalid = (finished.order_dependent_variances.iter()).any(|it| {
-                    serial
-                        .get(&it.sym)
-                        .is_some_and(|first| it.conflicts_with(first))
-                });
-                // A task before it in the serial order assigned the other list: this one would
-                // have found that.
-                let has_another_list = compares_listings
-                    && (finished.listings.iter())
-                        .any(|it| listings.get(&it.0).is_some_and(|first| first.0 != it.1));
-                if is_invalid
-                    || has_another_list
-                    || self.has_walked_across_earlier_walk(&finished.assignments_walked, &walked)
-                {
-                    return true;
-                }
-                for it in &finished.listings {
-                    listings.entry(it.0).or_insert((it.1, is_published));
-                }
-                for it in &finished.order_dependent_variances {
-                    serial.entry(it.sym).or_insert(it.variances);
-                }
-                walked.extend(finished.assignments_walked.iter().map(|it| (it.0, it.1)));
-                false
-            })
-            .collect();
-        if !is_published {
-            // Of the intersections that an invalid task noted, and so on from the tasks that this
-            // makes invalid.
-            let mut noted_by_invalid: Vec<Sym> = Vec::new();
-            let mut has_grown = compares_listings;
-            while has_grown {
-                has_grown = false;
-                for (finished, is_invalid) in finished.iter().zip(&mut invalid) {
-                    let of = |it: &(Sym, bool)| noted_by_invalid.contains(&it.0);
-                    if !*is_invalid && finished.listings.iter().any(of) {
-                        (*is_invalid, has_grown) = (true, true);
-                    }
-                    if *is_invalid {
-                        for it in &finished.listings {
-                            if !noted_by_invalid.contains(&it.0) {
-                                noted_by_invalid.push(it.0);
-                                has_grown = true;
-                            }
-                        }
-                    }
-                }
-            }
-            listings.retain(|_, first| first.1);
-        }
-        invalid
-    }
-
-    /// The guarantee that the retries of a step end: called when a round of retries left every
-    /// invalid task invalid.
-    pub fn stop_comparing_listings(&self) {
-        *self.listings_are_not_compared.lock() = true;
-    }
-
-    /// At the start of a step.
-    pub fn compare_listings(&self) {
-        *self.listings_are_not_compared.lock() = false;
-    }
-
     /// True if a walk that the task made while visiting the file contains an earlier walk or is
     /// nested in one. `walked` is the task's `Finished::assignments_walked`. `earlier` lists the
     /// walks of the valid tasks before it.
@@ -142,43 +44,6 @@ impl<'s> Program<'s> {
                     of == file && other != node && (is_in(node, other) || is_in(other, node))
                 })
         })
-    }
-
-    /// The first half. Of the types, signatures, mappers and component lists that several tasks
-    /// have created, the copy of the lowest task is kept. Each task gets its `Link`, through which
-    /// `publish` rewrites its keys and values.
-    pub fn link(&self, finished: &mut [Finished<'s>], in_parallel: InParallel<'_>) -> LinkCounts {
-        let own = finished.iter_mut().map(|it| std::mem::take(&mut it.own));
-        // For a union whose member order depended on task-local ids. Few steps have one.
-        let checker = std::cell::OnceCell::new();
-        let (links, counts) =
-            (self.types).link(&self.files.atoms, own.collect(), in_parallel, &|types| {
-                checker.get_or_init(|| self.checker()).sort_types(types)
-            });
-        for (finished, link) in finished.iter_mut().zip(links) {
-            finished.link = link;
-        }
-        counts
-    }
-
-    /// The second half. The buffered entries are moved to the published state, and the first entry
-    /// for a key wins. Then the diagnostics: the first task to report under a query is the one that
-    /// reports, so this is called for the steps in plan order, on one thread.
-    /// `with_digest`: `Published::digest` is computed.
-    pub fn publish(
-        &self,
-        finished: &mut [Finished<'s>],
-        in_parallel: InParallel<'_>,
-        with_digest: bool,
-    ) -> Published {
-        let published = task::publish(self, finished, in_parallel, with_digest);
-        if finished.iter().any(|finished| finished.closed_a_cycle) {
-            (self.closed_a_cycle).store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        for finished in finished {
-            self.publish_diagnostics(finished);
-        }
-        published
     }
 }
 
@@ -207,12 +72,6 @@ impl<'s> Checker<'_, 's> {
         self.order_dependent_filter = 0;
         self.constraints_of_this_task.clear();
         self.relations_of_this_task.clear();
-    }
-
-    /// Called on the thread of the task, after everything else this checker does.
-    pub fn end_task(&mut self) -> Finished<'s> {
-        let diagnostics = self.take_diagnostics();
-        self.task.finish(self.p, diagnostics)
     }
 
     /// After `check_file`: whether the native stack ran out in that file. A task checks several files.
@@ -336,63 +195,6 @@ impl<'s> Checker<'_, 's> {
         if func.is_some() && !has_body(&self.hir(file)[func]) {
             self.checked_with_contextual_type.push((file, initializer));
         }
-    }
-
-    /// `checkSourceElement` for the statements of `file`, a declaration file, that begin in the
-    /// range `from..to` of its text (`PlanOptions::split_files`). The only work of its task.
-    ///
-    /// The task does not visit `file`. So every query is evaluated on demand, as a task evaluates
-    /// what it needs of any other file, and what goes to the barrier is what any task may publish
-    /// about `file`: an entry whose evaluation has a side effect that `check_file` reads is not
-    /// stored. The task of `file` runs in the next step and finds the entries.
-    ///
-    /// A diagnostic that belongs to a query goes to the barrier with the entry. One that belongs to
-    /// the task is dropped: `check_file` reports it.
-    ///
-    /// `publishes_everything`: otherwise `Task::withhold_tables_of_records`.
-    ///
-    /// Returns the obstacles to publishing, as a bit set. Each is an event after which a stored
-    /// result can depend on what was evaluated before, so the task of `file`, which begins at the
-    /// first statement, might have stored another one.
-    /// - 1: a query has re-entered itself.
-    /// - 2: an instantiation limit was reached, or the native stack ran low.
-    /// - 4: a comparison was cut short because both types were deeply nested.
-    /// - 8: `check_file` does not check the statements of `file`. Or the range assigned a list of
-    ///   properties to an intersection (`Finished::listings`): its tables of records are
-    ///   withheld, so the task of `file` could not find the list.
-    pub fn check_statements_ahead(
-        &mut self,
-        file: FileId,
-        (from, to): (u32, u32),
-        publishes_everything: bool,
-    ) -> u8 {
-        if self.expected != Requested::All || !self.reports_semantic_errors(file) {
-            return 8;
-        }
-        self.task.store_densely(file);
-        if !publishes_everything {
-            self.task.withhold_tables_of_records();
-        }
-        self.has_ambient_context = true;
-        self.save_deferred_diagnostics = true;
-        let hir = self.hir(file);
-        for s in hir.ids(hir.body) {
-            if (from..to).contains(&hir[s].start) {
-                self.check_source_element(file, s);
-            }
-        }
-        self.produce_type_not_iterable_errors(0);
-        self.reported.clear();
-        self.task.diagnostics.retain(|(owner, _)| owner.is_some());
-        let is_cut_short = self.ran_out_of_stack.replace(false)
-            || self.cuts() != 0
-            || self.instantiation_limit_hits != 0;
-        let has_listed = !self.task.listings.is_empty();
-        self.task.listings.clear();
-        u8::from(self.task.closed_a_cycle)
-            | u8::from(is_cut_short) << 1
-            | u8::from(self.comparisons_of_deeply_nested_types != 0) << 2
-            | u8::from(has_listed) << 3
     }
 
     /// `checkSourceElements`

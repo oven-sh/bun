@@ -301,17 +301,6 @@ impl<'a, T> IntoIterator for &'a List<'_, T> {
 /// `in_parallel(count, work)` runs `work(i)` exactly once for every `i` below `count`, on the pool, and returns when all have returned.
 pub type InParallel<'a> = &'a dyn Fn(usize, &(dyn Fn(usize) + Sync));
 
-/// Runs `work(&mut items[i])` for every item, on the pool. The first items are started first.
-pub fn for_each_mut<T: Send>(
-    items: &mut [T],
-    in_parallel: InParallel<'_>,
-    work: &(dyn Fn(&mut T) + Sync),
-) {
-    // `in_parallel` passes every index to exactly one call, so no lock is contended.
-    let items: Vec<Guarded<&mut T>> = items.iter_mut().map(Guarded::new).collect();
-    in_parallel(items.len(), &|i| work(&mut **items[i].lock()));
-}
-
 const MAP_SHARDS: usize = 256;
 
 /// Mixes a hash into all of its bits: the top bits select the shard, the low half is the tag, which
@@ -520,30 +509,6 @@ impl<A: Allocator + Clone, const N: usize> GrowingPlaces<A, N> {
         self.places.find(spread, Ordering::Relaxed, is_it)
     }
 
-    /// Adds `count` (hash, index) pairs, none of which may be present already. Runs at a barrier,
-    /// on the one thread that fills `shard`. Locks once and resizes at most once for the whole
-    /// batch.
-    pub(crate) fn extend(
-        &self,
-        shard: usize,
-        count: usize,
-        added: impl Iterator<Item = (u64, u32)>,
-    ) {
-        if count == 0 {
-            return;
-        }
-        let mut len = self.lens[shard].lock();
-        self.places.add(shard, *len, count, added);
-        *len += count;
-    }
-
-    /// Makes room for `more` entries in `shard`, with at most one resize. Runs at a barrier, on the
-    /// one thread that fills `shard`. The replaced slots stay allocated.
-    pub(crate) fn reserve(&self, shard: usize, more: usize) {
-        let len = self.lens[shard].lock();
-        self.places.reserve(shard, *len, more);
-    }
-
     /// The entry that `is_it` accepts, or else the one that `make` adds.
     pub(crate) fn find_or_add(
         &self,
@@ -647,13 +612,6 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone, const N: usize> ShardedMa
         (self.places)
             .find(spread, |i| list.get(i).0 == *key)
             .map(|i| &list.get(i).1)
-    }
-
-    /// Runs at a barrier, on the one thread that fills `shards`: room for `more` entries in each.
-    pub(crate) fn reserve(&self, shards: std::ops::Range<usize>, more: usize) {
-        for shard in shards {
-            self.places.reserve(shard, more);
-        }
     }
 
     /// Inserts `value` unless `key` already has a value. Returns true if `value` was inserted.

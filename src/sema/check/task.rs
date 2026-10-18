@@ -20,16 +20,14 @@ use super::commit::View;
 use super::self_check::DifferingEntries;
 use super::sink::Reported;
 use super::{Program, Query};
-use crate::atom::Intern;
 use crate::jitter::Place;
 use crate::local::{Buffer, FileLocalTables, SlotNumber};
 use crate::node::Node;
 use crate::program::{FileId, Sym};
 use crate::session::Arena;
-use crate::table::{Applied, Entries, Finishing, Handle, Payload, Publish, Share};
-use crate::types::{Link, Marks, OwnRecords, OwnStore, Sharing, TypeStore};
+use crate::table::Publish;
+use crate::types::{OwnStore, Sharing, TypeStore};
 use crate::util::SharedSort;
-use crate::util::{InParallel, for_each_mut};
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::time::Duration;
 
@@ -465,23 +463,6 @@ impl<'s> Task<'s> {
         }
     }
 
-    /// The entries keyed by the nodes of `file` are stored densely from now on, as after
-    /// `begin_file`. The task does not visit `file`: see `Checker::check_statements_ahead`.
-    pub(super) fn store_densely(&mut self, file: FileId) {
-        self.file_local.get_mut().begin_file(file.0);
-        self.buffer.get_mut().begin_file(file.0, true);
-    }
-
-    /// `finish` passes no entry of `TABLES_OF_RECORDS` to the barrier.
-    pub(super) fn withhold_tables_of_records(&mut self) {
-        for (slot, name) in table_names().into_iter().enumerate() {
-            if TABLES_OF_RECORDS.contains(&name) {
-                self.withheld |= 1 << slot;
-            }
-        }
-        debug_assert_eq!(self.withheld.count_ones() as usize, TABLES_OF_RECORDS.len());
-    }
-
     fn drop_everything(&mut self) {
         (self.place, self.is_read_later, self.file) = (None, true, None);
         self.files_in_doubt.clear();
@@ -532,68 +513,6 @@ impl<'s> Task<'s> {
         // SAFETY: as in `buffer`.
         unsafe { &mut *self.file_local.get() }
     }
-
-    /// Ends a task in the plan, on its own thread. The result holds everything that goes to the
-    /// barrier: the entries whose key and value are not bound, by table, and the task-local records
-    /// that they mention. Everything else is freed here.
-    /// `diagnostics`: from `Checker::take_diagnostics`.
-    pub(super) fn finish(
-        &mut self,
-        program: &Program<'s>,
-        diagnostics: Vec<(Option<Query>, Reported)>,
-    ) -> Finished<'s> {
-        program.types.take_back_ids(&self.own);
-        self.finish_tables(&tables_of(program), diagnostics)
-    }
-
-    /// `tables`: by slot.
-    fn finish_tables(
-        &mut self,
-        tables: &[&dyn Publish<'s>],
-        diagnostics: Vec<(Option<Query>, Reported)>,
-    ) -> Finished<'s> {
-        let (step, index) = self
-            .place
-            .expect("a task outside the plan goes to no barrier");
-        let mut marks = Marks::new(&self.own);
-        let buffer = self.buffer.get_mut();
-        let mut finishing = Finishing::new(&self.own, &mut marks);
-        let mut published = Vec::new();
-        // Entries that nothing reads later are not inspected. They are dropped below.
-        if self.is_read_later {
-            for table in tables {
-                if (self.withheld >> table.slot()) & 1 != 0 {
-                    published.push(None);
-                    continue;
-                }
-                published.push(table.finish(buffer, &mut finishing));
-            }
-        }
-        let buffered = (published.iter().flatten())
-            .map(|it| u64::from(it.len))
-            .sum();
-
-        let own = self.own.finish(marks);
-        let (closed_a_cycle, foreign_evaluations) = (self.closed_a_cycle, self.foreign_evaluations);
-        let order_dependent_variances = std::mem::take(&mut self.order_dependent_variances);
-        let listings = std::mem::take(&mut self.listings);
-        let assignments_walked = self.assignments_walked.take();
-        self.drop_everything();
-        Finished {
-            step,
-            index,
-            diagnostics,
-            closed_a_cycle,
-            foreign_evaluations,
-            order_dependent_variances,
-            listings,
-            assignments_walked,
-            own,
-            link: Link::default(),
-            tables: published,
-            buffered,
-        }
-    }
 }
 
 /// What is left of a task that has committed what it had to publish, for `--timing`.
@@ -608,93 +527,6 @@ pub struct Ended {
     pub lost_because_of: Option<&'static str>,
     pub foreign_evaluations: [u32; 14],
     pub differing: DifferingEntries,
-}
-
-/// The result a task passes to the barrier.
-pub struct Finished<'s> {
-    pub step: u32,
-    pub index: u32,
-    /// `Some(q)`: the diagnostic belongs to the query `q`. `None`: it belongs to the task.
-    pub(super) diagnostics: Vec<(Option<Query>, Reported)>,
-    pub closed_a_cycle: bool,
-    pub foreign_evaluations: [u32; 14],
-    /// See `Program::validate`.
-    pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
-    /// The lists of properties that the task assigned to intersections, by the type alias that
-    /// names the intersection: whether the members of a mapped type among its constituents were
-    /// in place, so that the list lacks them (`Program::listed_properties`), or it has them all.
-    /// Which of the two a checker keeps depends on which statement gets there first. See
-    /// `Program::validate`.
-    pub(super) listings: Vec<(Sym, bool)>,
-    /// The functions and source files that `markNodeAssignments` has walked in the task
-    /// (`Program::assignments_marked`), and whether the task was visiting the file. See
-    /// `Program::validate`.
-    pub(super) assignments_walked: Vec<(FileId, Node, bool)>,
-    /// The task-local records that the entries mention, in creation order.
-    pub own: OwnRecords<'s>,
-    /// `Program::link` fills it in, `publish` follows it.
-    pub link: Link,
-    /// By slot.
-    tables: Vec<Option<Entries<'s>>>,
-    /// The number of entries in `tables`.
-    buffered: u64,
-}
-
-impl Finished<'_> {
-    /// Everything another task could notice about this task if its tables were never published, provided that is only
-    /// variances. `None`: the task also reported a diagnostic, or left something else that `Program::validate` compares.
-    ///
-    /// The tables are caches. Nothing is published after the last step of a plan, which is where most files are checked, so
-    /// no result may depend on them.
-    pub fn only_variances(&self) -> Option<impl Iterator<Item = (Sym, &[u8])>> {
-        // No `..`: whoever adds a field has to decide here whether another task can notice it.
-        let Finished {
-            step: _,
-            index: _,
-            diagnostics,
-            // Nothing reads `Program::closed_a_cycle`.
-            closed_a_cycle: _,
-            // A statistic.
-            foreign_evaluations: _,
-            order_dependent_variances,
-            listings,
-            assignments_walked,
-            // The tables, and the records their entries refer to.
-            own: _,
-            link: _,
-            tables: _,
-            buffered: _,
-        } = self;
-        (diagnostics.is_empty() && listings.is_empty() && assignments_walked.is_empty()).then(
-            || {
-                order_dependent_variances
-                    .iter()
-                    .map(|it| (it.sym, it.variances))
-            },
-        )
-    }
-
-    /// Whether `Program::validate` can find the task invalid.
-    pub fn can_be_invalid(&self) -> bool {
-        let mut measured = self.order_dependent_variances.iter();
-        measured.any(|it| it.compared | it.failed | it.inferred != 0)
-            || self.assignments_walked.iter().any(|it| it.2)
-            || !self.listings.is_empty()
-    }
-}
-
-impl<'s> Program<'s> {
-    /// Call before the first task. Behaves as if an earlier task had left these variances in `Finished::only_variances`.
-    pub fn assume_variances(&self, sym: Sym, variances: &[u8]) {
-        let variances = self.session.arena().alloc_slice_copy(variances);
-        self.serial_variances.lock().entry(sym).or_insert(variances);
-    }
-
-    /// Whether some task so far wrote to one of the two sets that tasks write to directly, not through their `Finished`.
-    pub fn has_notes_outside_finished(&self) -> bool {
-        !self.properties_referenced_before.lock().is_empty()
-            || !self.emit_helper_errors_of_earlier_files.lock().is_empty()
-    }
 }
 
 /// Variances that a task computed during a cycle (`variances_worker` was re-entered for a symbol in progress), so their value depends on
@@ -854,169 +686,6 @@ pub(super) fn number_tables(program: &mut Program) {
     super::buffered_fields!(each);
     super::file_local_fields!(each);
     (program.members).hold_handles_of(&mut program.shapes, super::shape::CachedMembers::shape_mut);
-}
-
-/// The entries of all tasks for one table, or for one part of it.
-struct Stage<'a, 's> {
-    table: &'a dyn Publish<'s>,
-    part: usize,
-    /// In task order.
-    shares: Vec<Share<'a, 's>>,
-    /// Set afterwards: the number of entries that were stored.
-    published: u64,
-}
-
-/// The work of one thread: it applies a table or a part of one, then the tables whose values hold
-/// its handles.
-struct Chain<'a, 's> {
-    stages: Vec<Stage<'a, 's>>,
-    len: u64,
-    applied: Applied<'a>,
-}
-
-/// Runs at the barrier, after the link step. `finished`: the tasks of one step, in task order. No
-/// task is running.
-///
-/// 1. Follow, parallel over tasks and tables: every key and value is rewritten through the link of
-///    its task.
-/// 2. Apply, parallel over tables and parts of tables: one thread applies all tasks' entries of one
-///    table or part, in task order, and the first entry for a key wins. Two threads never touch one
-///    key, so the outcome does not depend on timing.
-pub fn publish<'s>(
-    program: &Program<'s>,
-    finished: &mut [Finished<'s>],
-    in_parallel: InParallel<'_>,
-    with_digest: bool,
-) -> Published {
-    let atoms = with_digest.then_some(&program.files.atoms as &dyn Intern);
-    publish_tables(&tables_of(program), finished, in_parallel, atoms)
-}
-
-/// A barrier with fewer entries than this does not use the pool.
-const FEW_ENTRIES: u64 = 4096;
-
-/// `tables`: indexed by slot. `atoms`: `Some` if the digest is requested, which treats an atom as
-/// its text.
-fn publish_tables<'s>(
-    tables: &[&dyn Publish<'s>],
-    finished: &mut [Finished<'s>],
-    in_parallel: InParallel<'_>,
-    atoms: Option<&dyn Intern>,
-) -> Published {
-    let mut followed: Vec<(usize, Entries<'s>)> = Vec::new();
-    for (task, finished) in finished.iter_mut().enumerate() {
-        followed.extend((finished.tables.drain(..).flatten()).map(|entries| (task, entries)));
-    }
-    let mut by_table = vec![(0, 0); tables.len()];
-    if followed.is_empty() {
-        return Published {
-            by_table,
-            ..Published::default()
-        };
-    }
-    let buffered: u64 = finished.iter().map(|it| it.buffered).sum();
-    // Dispatching to the pool costs more than applying a few entries. The stages are the same, so
-    // the outcome is too.
-    let inline = |count: usize, work: &(dyn Fn(usize) + Sync)| (0..count).for_each(work);
-    let in_parallel: InParallel<'_> = if buffered < FEW_ENTRIES {
-        &inline
-    } else {
-        in_parallel
-    };
-    for (_, entries) in &followed {
-        by_table[entries.slot as usize].0 += u64::from(entries.len);
-    }
-    {
-        // The largest first, so that no thread begins it when the others are nearly done.
-        let mut by_size: Vec<&mut (usize, Entries<'s>)> = followed.iter_mut().collect();
-        by_size.shared_sort_by_key(|it| std::cmp::Reverse(it.1.len));
-        let links: Vec<&Link> = finished.iter().map(|it| &it.link).collect();
-        for_each_mut(&mut by_size, in_parallel, &|(task, entries)| {
-            tables[entries.slot as usize].follow(entries, links[*task]);
-        });
-    }
-
-    // `followed` is in task order, so the shares of every stage are.
-    let mut stages: Vec<Vec<Stage<'_, 's>>> = (tables.iter())
-        .map(|&table| {
-            let stage = |part| Stage {
-                table,
-                part,
-                shares: Vec::new(),
-                published: 0,
-            };
-            (0..table.parts()).map(stage).collect()
-        })
-        .collect();
-    for (task, entries) in &mut followed {
-        let (task, len) = (*task as u32, entries.len);
-        match &mut stages[entries.slot as usize][..] {
-            [whole] => whole
-                .shares
-                .push(Share::new(task, len, Payload::Whole(entries))),
-            parts => {
-                let entries = &*entries;
-                for part in parts {
-                    (part.shares).push(Share::new(task, len, Payload::Part(entries)));
-                }
-            }
-        }
-    }
-    let mut chains: Vec<Chain<'_, 's>> = Vec::new();
-    // By slot: the chain that the table is in.
-    let mut chain_of: Vec<usize> = Vec::new();
-    for (table, stages) in tables.iter().zip(stages) {
-        chain_of.push(chains.len());
-        let parts = stages.len() as u64;
-        for stage in stages {
-            let len =
-                (stage.shares.iter().map(|it| u64::from(it.len)).sum::<u64>()).div_ceil(parts);
-            match table.holds_handles_of() {
-                Some(held) => {
-                    let chain = &mut chains[chain_of[held as usize]];
-                    chain.stages.push(stage);
-                    chain.len += len;
-                    *chain_of.last_mut().unwrap() = chain_of[held as usize];
-                }
-                None => chains.push(Chain {
-                    stages: vec![stage],
-                    len,
-                    applied: Applied::new(atoms),
-                }),
-            }
-        }
-    }
-    chains.retain(|chain| chain.len != 0);
-    chains.shared_sort_by_key(|chain| std::cmp::Reverse(chain.len));
-    let tasks = finished.len();
-    for_each_mut(&mut chains, in_parallel, &|chain| {
-        // By task: the published handles of the entries of the previous stage, indexed by their
-        // positions among the task's entries.
-        let has_handles = chain.stages.len() > 1;
-        let mut handles: Vec<Vec<Handle>> = vec![Vec::new(); if has_handles { tasks } else { 0 }];
-        for stage in &mut chain.stages {
-            let (shares, applied) = (&mut stage.shares, &mut chain.applied);
-            let before = applied.published;
-            stage.table.apply(stage.part, shares, &mut handles, applied);
-            stage.published = applied.published - before;
-        }
-    });
-
-    let (mut published, mut digest) = (0, 0u64);
-    for chain in chains {
-        published += chain.applied.published;
-        digest = digest.wrapping_add(chain.applied.digest);
-        for stage in chain.stages {
-            by_table[stage.table.slot() as usize].1 += stage.published;
-        }
-    }
-    Published {
-        buffered,
-        published,
-        lost: buffered - published,
-        digest,
-        by_table,
-    }
 }
 
 #[cfg(test)]

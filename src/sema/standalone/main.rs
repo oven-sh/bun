@@ -238,7 +238,7 @@ fn run(args: &[String]) {
             type AfterFile<'a> = &'a (
                     dyn Fn(&mut bun_sema::check::Checker<'_, '_>, bun_sema::program::FileId) + Sync
                 );
-            // `--file-instructions`, with `--threads=1 --checkers=1`: the instructions since the
+            // `--file-instructions`, with `--threads=1`: the instructions since the
             // previous file was checked, for each file. One checker in program order charges what
             // several files need to the first of them, as typescript-go's `--singleThreaded` does.
             let instructions_so_far = std::sync::atomic::AtomicU64::new(0);
@@ -268,45 +268,16 @@ fn run(args: &[String]) {
                 );
                 write_file_to_look_at(&path, text);
             };
-            // For tuning the constants of the plan without rebuilding. To be removed once the
-            // constants are chosen.
             let number = |name: &str, default: usize| {
                 let actual = args.iter().find_map(|a| a.strip_prefix(name));
                 actual.map_or(default, |n| n.parse().expect(name))
             };
             let defaults = bun_sema_driver::PlanOptions::default();
             let plan_options = bun_sema_driver::PlanOptions {
-                step_growth: number("--step-growth=", defaults.step_growth),
-                warm_up_files: number("--warm-up-files=", defaults.warm_up_files),
-                warm_up_max_bytes: number("--warm-up-max-bytes=", defaults.warm_up_max_bytes),
-                chunk_bytes: number("--chunk-bytes=", defaults.chunk_bytes),
-                min_tasks: number("--min-tasks=", defaults.min_tasks),
-                tasks_on_one_thread: has("--tasks-on-one-thread"),
-                one_thread_task_cost: number(
-                    "--one-thread-task-cost=",
-                    defaults.one_thread_task_cost,
-                ),
-                one_thread_max_cost: number("--one-thread-max-cost=", defaults.one_thread_max_cost),
-                type_node_cost: number("--type-node-cost=", defaults.type_node_cost),
-                split_files: number("--split-files=", defaults.split_files as usize) as u32,
-                split_tolerates: number("--split-tolerates=", 0) as u8,
-                split_publishes_everything: has("--split-publishes-everything"),
-                checkers: number("--checkers=", defaults.checkers),
-                reproduces_symbol_ids: defaults.reproduces_symbol_ids,
-                orders_types_by_content: defaults.orders_types_by_content || has("--content-order"),
-                shares_at_once: defaults.shares_at_once
-                    || has("--share-at-once")
-                    || has("--no-steps"),
-                has_no_steps: defaults.has_no_steps || has("--no-steps"),
-                runs_per_thread: number("--runs-per-thread=", defaults.runs_per_thread),
                 commit_policy: bun_sema::check::commit::CommitPolicy {
-                    entries: number("--commit-entries=", defaults.commit_policy.entries),
-                    microseconds: number(
-                        "--commit-microseconds=",
-                        defaults.commit_policy.microseconds as usize,
-                    ) as u64,
                     holds_everything_back: has("--hold-everything-back"),
                     compares_lost: has("--compare-lost"),
+                    ..defaults.commit_policy
                 },
                 // `--jitter=<seed>` makes threads pause around changes to shared state. `--jitter-places=<bits>` limits
                 // the pauses to those entries of `Place::NAMES`. `--jitter-stretch=<microseconds>` makes one commit in
@@ -320,18 +291,7 @@ fn run(args: &[String]) {
                     ignores_stamps: has("--ignore-stamps"),
                 },
                 projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
-                after_file_is_for_checked_files: defaults.after_file_is_for_checked_files,
-                checks_only_named: defaults.checks_only_named,
-                reads_sources_of_references: defaults.reads_sources_of_references,
-                current_directory_is_of_the_project: defaults.current_directory_is_of_the_project,
-                project_is_for_the_rest: defaults.project_is_for_the_rest,
-                reports_nothing_about_files: defaults.reports_nothing_about_files,
-                only_in_a_project_that_includes: defaults.only_in_a_project_that_includes,
-                refuses_broken_configurations: defaults.refuses_broken_configurations,
-                prefers_the_library_of_the_project: defaults.prefers_the_library_of_the_project,
-                shares_every_file: defaults.shares_every_file,
-                only_the_globals: defaults.only_the_globals,
-                memory: defaults.memory,
+                ..defaults
             };
             let request = bun_sema_driver::Request {
                 compiler_options: &command_line.compiler_options,
@@ -493,15 +453,6 @@ fn run(args: &[String]) {
                     let count = |of: fn(&bun_sema_driver::StepReport) -> u64| {
                         report.steps.iter().map(of).sum::<u64>()
                     };
-                    // Printed so that runs can be compared. The counts are deterministic for a given program.
-                    error_line!(
-                        "plan options: step growth {}, warm-up files {}, warm-up max bytes {}, chunk bytes {}, min tasks {}",
-                        plan_options.step_growth,
-                        plan_options.warm_up_files,
-                        plan_options.warm_up_max_bytes,
-                        plan_options.chunk_bytes,
-                        plan_options.min_tasks
-                    );
                     error_line!("steps: {}", report.steps.len());
                     error_line!("tasks: {}", count(|step| step.tasks as u64));
                     error_line!("seconds in steps: {:.3}", seconds(|step| step.in_tasks));

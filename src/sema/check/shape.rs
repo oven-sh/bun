@@ -149,27 +149,6 @@ impl crate::types::Follow for Resolved<'_> {
         } = self;
         shape.visit(visitor);
     }
-    fn follow(&mut self, link: &crate::types::Link) {
-        let Resolved {
-            shape,
-            names,
-            name_filter,
-            // No id has a part in it.
-            is_weak: _,
-            // Two names stay two names.
-            has_distinct_names: _,
-        } = self;
-        let has_own_names = shape.props.iter().any(|prop| prop.name.is_own());
-        shape.follow(link);
-        // The slots are indexed by a hash of the atom ids, which have changed.
-        if has_own_names && shape.props.len() > FEW {
-            names.places.fill(0);
-            names.add_all(&shape.props);
-        }
-        if has_own_names {
-            *name_filter = Resolved::name_filter_of(&shape.props);
-        }
-    }
 }
 
 impl<'s> Resolved<'s> {

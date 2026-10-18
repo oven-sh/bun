@@ -1363,14 +1363,6 @@ pub struct Setup<'a> {
     pub declarations: bool,
     /// Whether the `.trace.json` baselines are compared.
     pub traces: bool,
-    /// See `PlanOptions::orders_types_by_content`.
-    pub orders_types_by_content: bool,
-    /// See `PlanOptions::shares_at_once`.
-    pub shares_at_once: bool,
-    /// See `PlanOptions::has_no_steps`.
-    pub has_no_steps: bool,
-    /// See `CommitPolicy::entries`.
-    pub commit_entries: usize,
     pub threads: usize,
     /// Only every n-th test, in the order of their paths. 1: all of them.
     pub every: usize,
@@ -1811,20 +1803,7 @@ fn run_one(
             order: 1,
             digests: false,
             task_clock: None,
-            plan_options: bun_sema_driver::PlanOptions {
-                reproduces_symbol_ids: false,
-                // The tests run side by side, each on one thread. The plan of several threads is the
-                // one with steps, publishing and validation.
-                tasks_on_one_thread: true,
-                orders_types_by_content: setup.orders_types_by_content,
-                shares_at_once: setup.shares_at_once,
-                has_no_steps: setup.has_no_steps,
-                commit_policy: bun_sema::check::commit::CommitPolicy {
-                    entries: setup.commit_entries,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
+            plan_options: bun_sema_driver::PlanOptions::default(),
             retains_everything: false,
             script_kinds: &[],
             script_kinds_by_extension: &[],
@@ -2394,15 +2373,6 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         types_and_symbols: args.iter().any(|it| it == "--types-and-symbols"),
         declarations: args.iter().any(|it| it == "--declarations"),
         traces: args.iter().any(|it| it == "--traces"),
-        orders_types_by_content: bun_sema_driver::PlanOptions::default().orders_types_by_content
-            || args.iter().any(|it| it == "--content-order"),
-        shares_at_once: bun_sema_driver::PlanOptions::default().shares_at_once
-            || args
-                .iter()
-                .any(|it| it == "--share-at-once" || it == "--no-steps"),
-        has_no_steps: bun_sema_driver::PlanOptions::default().has_no_steps
-            || args.iter().any(|it| it == "--no-steps"),
-        commit_entries: number("commit-entries").unwrap_or(0),
         threads: number("threads").unwrap_or(8),
         every: number("every").unwrap_or(1),
         first: number("first").unwrap_or(0),

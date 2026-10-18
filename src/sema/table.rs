@@ -10,20 +10,19 @@
 //! The third type parameter of a table determines who writes an entry and when it becomes visible
 //! to whom: `Frozen`, `Buffered`, `FileLocal`. See `Policy`.
 
-use crate::atom::{Atom, Intern};
 use crate::check::self_check::{Mention, Mentions, is_same_value, note_differing};
 use crate::check::task::{Stored, Task};
 use crate::local::{
-    Buffer, HashedInTask, InTask, Kept, LOCAL, ListInTask, MaybeLocal, Slot, SlotNumber, Typed,
-    is_local_number, node_word,
+    Buffer, HashedInTask, LOCAL, ListInTask, MaybeLocal, Slot, SlotNumber, is_local_number,
+    node_word,
 };
 use crate::program::{FileId, Sym};
 use crate::session::Session;
-use crate::types::{ComponentsId, Follow, Link, MapperId, Marks, OwnStore, SigId, TypeId, Visitor};
+use crate::types::{Follow, OwnStore, Visitor};
 use crate::util::memory::{Cells, FixedCells, Zeroed};
-use crate::util::{AppendVec, FxHasher, ShardedMap, shard_among, spread_hash};
+use crate::util::{AppendVec, ShardedMap, spread_hash};
 use std::alloc::{Allocator, Global};
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -353,13 +352,6 @@ impl<A: Alloc> Bases<A> {
         let (end, start) = (self.0[file.idx() + 1], self.0[file.idx()]);
         start as usize..end as usize
     }
-
-    /// The node at `at` in the concatenation, as `node_word`.
-    fn word_at(&self, at: usize) -> u64 {
-        // The last file that starts there or before: those before it that start there have no nodes.
-        let file = self.0.partition_point(|&start| start as usize <= at) - 1;
-        node_word(file as u32, (at - self.0[file] as usize) as u32)
-    }
 }
 
 /// A node or a symbol: a file and an index within it.
@@ -636,8 +628,6 @@ impl Follow for Handle {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         visitor.handle(self.0);
     }
-    #[inline]
-    fn follow(&mut self, _: &Link) {}
 }
 
 /// A value too large for a cell, for some of the nodes of one kind. It is stored out of line and
@@ -1558,265 +1548,10 @@ where
 pub(crate) trait Publish<'s>: Sync {
     fn slot(&self) -> u32;
 
-    /// The slot of the table whose handles the values of this one hold.
-    fn holds_handles_of(&self) -> Option<u32> {
-        None
-    }
-
-    /// How many threads can apply entries concurrently.
-    fn parts(&self) -> usize {
-        1
-    }
-
-    /// Runs on the task's own thread. Drains the task-local part of the table. Returns the entries
-    /// whose key and value are not bound, and marks the records they reference. The rest is
-    /// dropped.
-    fn finish(
-        &self,
-        buffer: &mut Buffer<'s>,
-        finishing: &mut Finishing<'_, '_>,
-    ) -> Option<Entries<'s>>;
-
-    /// Runs at the barrier, on any thread. Remaps every key and value of one task through that
-    /// task's `link`.
-    fn follow(&self, entries: &mut Entries<'s>, link: &Link);
-
-    /// Runs at the barrier, on the one thread that owns this part of the table. `shares`: in task
-    /// order. The first entry for a key wins.
-    /// `handles`, indexed by task: see `Holding`.
-    fn apply(
-        &self,
-        part: usize,
-        shares: &mut [Share<'_, 's>],
-        handles: &mut [Vec<Handle>],
-        applied: &mut Applied<'_>,
-    );
-
     /// Runs in a commit of `task`, on its thread, under the mutex of the commits, while other tasks read the table.
     /// `key`: from the `Log` of the task. `number`: of the commit. Stores the entry that the task has under `key` in the
     /// shared part, unless it is bound or there is one. Returns whether it has. The task keeps its entry.
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool;
-}
-
-/// The state `Task::finish` lends to the tables.
-pub(crate) struct Finishing<'a, 's> {
-    own: &'a OwnStore<'s>,
-    marks: &'a mut Marks,
-    /// For each table whose handles another table holds, keyed by slot: for each task-local handle,
-    /// 1 + the index of its entry among the entries passed to the barrier. 0: the entry is dropped.
-    held: Vec<(u32, Vec<u32>)>,
-}
-
-impl<'a, 's> Finishing<'a, 's> {
-    pub(crate) fn new(own: &'a OwnStore<'s>, marks: &'a mut Marks) -> Finishing<'a, 's> {
-        Finishing {
-            own,
-            marks,
-            held: Vec::new(),
-        }
-    }
-
-    /// Whether `key -> value` is passed to the barrier. If it is, the records it references are
-    /// marked: the entries are the roots.
-    #[inline]
-    fn is_published(&mut self, key: &impl Follow, value: &impl Follow) -> bool {
-        if key.is_bound(self.own) || value.is_bound(self.own) {
-            return false;
-        }
-        key.mark(self.marks);
-        value.mark(self.marks);
-        true
-    }
-}
-
-/// What a table with a `Slot<S>` passes to the barrier.
-trait Handing: InTask {
-    type Handed: Send + Sync;
-}
-
-impl<T: Send + Sync> Handing for IndirectInTask<T> {
-    /// A key and a value, in insertion order.
-    type Handed = Vec<(u32, T)>;
-}
-
-impl<K: Eq + Send + Sync, V: Send + Sync> Handing for HashedInTask<K, V> {
-    type Handed = Keyed<K, V>;
-}
-
-/// The entries one task passes to the barrier for one table.
-pub(crate) struct Entries<'s> {
-    pub(crate) slot: u32,
-    pub(crate) len: u32,
-    handed: Handed<'s>,
-}
-
-enum Handed<'s> {
-    /// Of a table whose values fit in a cell: a key and a packed value.
-    Cells(Vec<(u32, u32)>),
-    /// `S::Handed` of the table's `Slot<S>`.
-    Typed(Box<dyn Typed + Send + Sync + 's>),
-}
-
-impl<'s> Entries<'s> {
-    /// `None`: there are none.
-    fn of_cells(slot: u32, cells: Vec<(u32, u32)>) -> Option<Entries<'s>> {
-        (!cells.is_empty()).then(|| Entries {
-            slot,
-            len: cells.len() as u32,
-            handed: Handed::Cells(cells),
-        })
-    }
-
-    fn cells(&mut self) -> &mut Vec<(u32, u32)> {
-        match &mut self.handed {
-            Handed::Cells(cells) => cells,
-            Handed::Typed(_) => unreachable!(),
-        }
-    }
-
-    /// `None`: there are none.
-    fn new<S: Handing>(slot: &Slot<S>, len: usize, handed: S::Handed) -> Option<Entries<'s>>
-    where
-        S::Handed: 's,
-    {
-        (len != 0).then(|| Entries {
-            slot: slot.number(),
-            len: len as u32,
-            handed: Handed::Typed(Box::new(handed)),
-        })
-    }
-
-    fn typed<S: Handing>(&self, slot: &Slot<S>) -> &S::Handed {
-        assert!(self.slot == slot.number());
-        let Handed::Typed(handed) = &self.handed else {
-            unreachable!()
-        };
-        debug_assert_eq!((**handed).name(), std::any::type_name::<S::Handed>());
-        // SAFETY: only `new` stores one, with the number of a `Slot`, and all slots with that number
-        // have the type `S`: see `SlotNumber::new`.
-        unsafe { &*std::ptr::from_ref(&**handed).cast::<S::Handed>() }
-    }
-
-    fn typed_mut<S: Handing>(&mut self, slot: &Slot<S>) -> &mut S::Handed {
-        assert!(self.slot == slot.number());
-        let Handed::Typed(handed) = &mut self.handed else {
-            unreachable!()
-        };
-        debug_assert_eq!((**handed).name(), std::any::type_name::<S::Handed>());
-        // SAFETY: as in `typed`.
-        unsafe { &mut *std::ptr::from_mut(&mut **handed).cast::<S::Handed>() }
-    }
-}
-
-pub(crate) enum Payload<'a, 's> {
-    /// The table has one part.
-    Whole(&'a mut Entries<'s>),
-    /// Every part gets the same reference and reads only its own entries.
-    Part(&'a Entries<'s>),
-}
-
-/// The entries of one task in a `Stage` of `publish`.
-pub(crate) struct Share<'a, 's> {
-    pub(crate) task: u32,
-    pub(crate) len: u32,
-    payload: Payload<'a, 's>,
-}
-
-impl<'a, 's> Share<'a, 's> {
-    pub(crate) fn new(task: u32, len: u32, payload: Payload<'a, 's>) -> Share<'a, 's> {
-        Share { task, len, payload }
-    }
-
-    fn whole(&mut self) -> &mut Entries<'s> {
-        match &mut self.payload {
-            Payload::Whole(entries) => entries,
-            Payload::Part(_) => unreachable!(),
-        }
-    }
-}
-
-/// Summary of the entries one thread has applied.
-pub(crate) struct Applied<'a> {
-    pub(crate) published: u64,
-    /// The sum of the hashes of (slot, key, value) of the stored entries, if requested.
-    /// Deterministic for a given program: keys and values hold only published ids, which are
-    /// assigned in (step, task, index) order, an atom is hashed as its text, and a sum does not
-    /// depend on how the entries are partitioned among the threads.
-    pub(crate) digest: u64,
-    /// `Some`: the digest is requested.
-    atoms: Option<&'a dyn Intern>,
-}
-
-impl<'a> Applied<'a> {
-    pub(crate) fn new(atoms: Option<&'a dyn Intern>) -> Applied<'a> {
-        Applied {
-            published: 0,
-            digest: 0,
-            atoms,
-        }
-    }
-
-    /// `key -> value` has been stored, or is about to be.
-    #[inline]
-    fn store(&mut self, slot: u32, key: &impl Follow, value: &impl Follow) {
-        self.published += 1;
-        if let Some(atoms) = self.atoms {
-            self.add_to_digest(atoms, slot, key, value);
-        }
-    }
-
-    #[cold]
-    fn add_to_digest(
-        &mut self,
-        atoms: &dyn Intern,
-        slot: u32,
-        key: &impl Follow,
-        value: &impl Follow,
-    ) {
-        let mut hash = HashOfEntry(FxHasher::default(), atoms);
-        hash.0.write_u32(slot);
-        key.visit(&mut hash);
-        value.visit(&mut hash);
-        // A sum of hashes with weak low bits is itself weak.
-        let hash = hash.0.finish();
-        self.digest =
-            (self.digest).wrapping_add((hash ^ hash >> 32).wrapping_mul(0x9E37_79B9_7F4A_7C15));
-    }
-}
-
-struct HashOfEntry<'a>(FxHasher, &'a dyn Intern);
-
-impl Visitor for HashOfEntry<'_> {
-    /// Hashes the text, not the id: the parser threads number the atoms in the order they encounter
-    /// them, which differs between runs. Passing an atom, or a number derived from one, to `plain`
-    /// makes the digest depend on timing.
-    fn atom(&mut self, atom: Atom) {
-        let text = if atom.is_none() {
-            &[][..]
-        } else {
-            self.1.bytes(atom)
-        };
-        self.0.write_u64(6 << 32 | text.len() as u64);
-        self.0.write(text);
-    }
-    fn components(&mut self, id: ComponentsId) {
-        self.0.write_u64(1 << 32 | u64::from(id.0));
-    }
-    fn mapper(&mut self, id: MapperId) {
-        self.0.write_u64(2 << 32 | u64::from(id.0));
-    }
-    fn sig(&mut self, id: SigId) {
-        self.0.write_u64(3 << 32 | u64::from(id.0));
-    }
-    fn ty(&mut self, id: TypeId) {
-        self.0.write_u64(4 << 32 | u64::from(id.0));
-    }
-    fn file(&mut self, file: FileId) {
-        self.0.write_u64(5 << 32 | u64::from(file.0));
-    }
-    fn plain<T: Hash + ?Sized>(&mut self, value: &T) {
-        value.hash(&mut self.0);
-    }
 }
 
 /// The shared part of a table with one cell per key, as used at the end of a task and at the
@@ -1826,19 +1561,7 @@ pub(crate) trait Dense: Sync {
     type Value: Packed<Cell = AtomicU32>;
     /// The type that a key passed to the barrier represents, for the digest.
     type Key: Follow;
-    fn key(key: u32) -> Self::Key;
     fn table_slot(&self) -> u32;
-    /// Passes the entries of the task to `take`, each as a key and a packed value, in no particular order. A key is a
-    /// `node_word`, or an id. The task has none afterwards.
-    fn take_cells(&self, buffer: &mut Buffer<'_>, take: impl FnMut(u64, u32));
-    /// `None`: `key -> value` is bound. `key`: in the encoding of the task-local part.
-    fn hand_over(
-        &self,
-        key: u64,
-        value: &impl Follow,
-        finishing: &mut Finishing<'_, '_>,
-    ) -> Option<u32>;
-    fn follow_key(key: u32, link: &Link) -> u32;
     /// 0: nothing.
     fn load(&self, key: u32) -> u32;
     /// Precondition: the cell is empty, and the caller is the only thread that writes to the table.
@@ -1861,46 +1584,8 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
     /// The numbering of files and nodes is deterministic for a given program.
     type Key = u32;
 
-    #[inline]
-    fn key(key: u32) -> u32 {
-        key
-    }
-
     fn table_slot(&self) -> u32 {
         self.slot
-    }
-
-    fn take_cells(&self, buffer: &mut Buffer<'_>, mut take: impl FnMut(u64, u32)) {
-        buffer.take_node_cells(self.slot, |kept, raw| {
-            let word = match kept {
-                Kept::InRow(word) | Kept::Shadowed(word) => word,
-                Kept::InPage(at) => self.bases.word_at(at),
-            };
-            // What `adopt` has put into the row is not the task's.
-            let at = self.bases.at(FileId((word >> 32) as u32), word as u32);
-            let is_seed =
-                matches!(kept, Kept::InRow(_)) && at.is_some_and(|at| self.published_at(at) != 0);
-            if !is_seed {
-                take(word, raw);
-            }
-        });
-    }
-
-    #[inline]
-    fn hand_over(
-        &self,
-        key: u64,
-        value: &impl Follow,
-        finishing: &mut Finishing<'_, '_>,
-    ) -> Option<u32> {
-        let file = FileId((key >> 32) as u32);
-        let at = self.bases.at(file, key as u32)?;
-        finishing.is_published(&file, value).then_some(at as u32)
-    }
-
-    #[inline]
-    fn follow_key(key: u32, _: &Link) -> u32 {
-        key
     }
 
     #[inline]
@@ -1958,35 +1643,8 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
     type Value = V;
     type Key = I;
 
-    #[inline]
-    fn key(key: u32) -> I {
-        I::from_number(key)
-    }
-
     fn table_slot(&self) -> u32 {
         self.slot
-    }
-
-    fn take_cells(&self, buffer: &mut Buffer<'_>, mut take: impl FnMut(u64, u32)) {
-        buffer.take_id_cells(self.slot, |id, raw| take(u64::from(id), raw));
-    }
-
-    #[inline]
-    fn hand_over(
-        &self,
-        key: u64,
-        value: &impl Follow,
-        finishing: &mut Finishing<'_, '_>,
-    ) -> Option<u32> {
-        (finishing.is_published(&I::from_number(key as u32), value)).then_some(key as u32)
-    }
-
-    #[inline]
-    fn follow_key(key: u32, link: &Link) -> u32 {
-        let mut key = I::from_number(key);
-        key.follow(link);
-        debug_assert!(key.local_number().is_none());
-        key.number()
     }
 
     #[inline]
@@ -2081,45 +1739,6 @@ impl<'s, D: Dense<Value: Follow>> Publish<'s> for D {
         self.table_slot()
     }
 
-    fn finish(
-        &self,
-        buffer: &mut Buffer<'s>,
-        finishing: &mut Finishing<'_, '_>,
-    ) -> Option<Entries<'s>> {
-        let mut entries = Vec::new();
-        self.take_cells(buffer, |key, raw| {
-            if let Some(key) = self.hand_over(key, &D::Value::unpack(raw), finishing) {
-                entries.push((key, raw));
-            }
-        });
-        Entries::of_cells(self.table_slot(), entries)
-    }
-
-    fn follow(&self, entries: &mut Entries<'s>, link: &Link) {
-        for (key, raw) in entries.cells() {
-            let mut value = D::Value::unpack(*raw);
-            value.follow(link);
-            (*key, *raw) = (D::follow_key(*key, link), value.pack());
-        }
-    }
-
-    fn apply(
-        &self,
-        _: usize,
-        shares: &mut [Share<'_, 's>],
-        _: &mut [Vec<Handle>],
-        applied: &mut Applied<'_>,
-    ) {
-        for share in shares {
-            for &mut (key, raw) in share.whole().cells() {
-                if self.load(key) == 0 {
-                    self.store(key, raw);
-                    applied.store(self.table_slot(), &D::key(key), &D::Value::unpack(raw));
-                }
-            }
-        }
-    }
-
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool {
         store_logged_cell(self, task, key, number)
     }
@@ -2147,130 +1766,11 @@ impl<T> Default for Holding<T> {
     }
 }
 
-/// The entries of an indirect table passed to the barrier: `Vec<(u32, T)>`, a key and a value, in
-/// insertion order.
-fn finish_indirect<'s, D: Dense<Value = Handle>, T: Follow + Send + Sync + 's>(
-    (handles, slot): (&D, &Slot<IndirectInTask<T>>),
-    holding: &Holding<T>,
-    buffer: &mut Buffer<'s>,
-    finishing: &mut Finishing<'_, '_>,
-) -> Option<Entries<'s>> {
-    // Every handle in a cell refers to one of the values below.
-    buffer.half_mut(slot.number()).clear_cells();
-    let kept = buffer.typed_mut(slot)?;
-    let mut entries = Vec::new();
-    let held = if holding.is_held { kept.len() } else { 0 };
-    let mut places = vec![0; held as usize];
-    kept.drain(|handle, (key, mut value)| {
-        if let Some((held, field)) = holding.holds
-            && let field = field(&mut value)
-            && let Some(number) = field.local_number()
-        {
-            let places = &finishing.held.iter().find(|it| it.0 == held).unwrap().1;
-            match places[number as usize] {
-                0 => return,
-                place => *field = Handle((place - 1) | LOCAL),
-            }
-        }
-        if let Some(key) = handles.hand_over(key, &value, finishing) {
-            entries.push((key, value));
-            if holding.is_held {
-                places[handle as usize] = entries.len() as u32;
-            }
-        }
-    });
-    if holding.is_held {
-        finishing.held.push((handles.table_slot(), places));
-    }
-    Entries::new(slot, entries.len(), entries)
-}
-
-fn follow_indirect<D: Dense, T: Follow + Send + Sync>(
-    slot: &Slot<IndirectInTask<T>>,
-    entries: &mut Entries<'_>,
-    link: &Link,
-) {
-    for (key, value) in entries.typed_mut(slot) {
-        *key = D::follow_key(*key, link);
-        value.follow(link);
-    }
-}
-
-/// A value is pushed when its entry wins. A losing value is dropped.
-fn apply_indirect<'s, D: Dense<Value = Handle>, T: Follow + Send + Sync, A: Alloc>(
-    (handles, slot): (&D, &Slot<IndirectInTask<T>>),
-    kept: &AppendVec<T, A>,
-    holding: &Holding<T>,
-    shares: &mut [Share<'_, 's>],
-    links: &mut [Vec<Handle>],
-    applied: &mut Applied<'_>,
-) {
-    for share in shares {
-        let task = share.task as usize;
-        let values = std::mem::take(share.whole().typed_mut(slot));
-        let mut own_link = Vec::with_capacity(if holding.is_held { values.len() } else { 0 });
-        for (key, mut value) in values {
-            let handle = match handles.load(key) {
-                0 => {
-                    if let Some((_, field)) = holding.holds
-                        && let field = field(&mut value)
-                        && let Some(place) = field.local_number()
-                    {
-                        *field = links[task][place as usize];
-                    }
-                    applied.store(handles.table_slot(), &D::key(key), &value);
-                    let handle = Handle(kept.push(value));
-                    handles.store(key, handle.pack());
-                    handle
-                }
-                winner => Handle::unpack(winner),
-            };
-            if holding.is_held {
-                own_link.push(handle);
-            }
-        }
-        if holding.is_held {
-            links[task] = own_link;
-        }
-    }
-}
-
 impl<'s, K: NodeKey, T: Follow + Send + Sync + 's, W: Location, A: Alloc> Publish<'s>
     for ByNodeIndirect<K, T, Buffered<W>, A>
 {
     fn slot(&self) -> u32 {
         self.handles.slot
-    }
-
-    fn finish(
-        &self,
-        buffer: &mut Buffer<'s>,
-        finishing: &mut Finishing<'_, '_>,
-    ) -> Option<Entries<'s>> {
-        let table = (&self.handles, &self.in_task);
-        finish_indirect(table, &Holding::<T>::default(), buffer, finishing)
-    }
-
-    fn follow(&self, entries: &mut Entries<'s>, link: &Link) {
-        follow_indirect::<ByNode<K, Handle, Buffered<W>, A>, T>(&self.in_task, entries, link);
-    }
-
-    fn apply(
-        &self,
-        _: usize,
-        shares: &mut [Share<'_, 's>],
-        handles: &mut [Vec<Handle>],
-        applied: &mut Applied<'_>,
-    ) {
-        let holding = Holding::default();
-        apply_indirect(
-            (&self.handles, &self.in_task),
-            &self.kept,
-            &holding,
-            shares,
-            handles,
-            applied,
-        );
     }
 
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool {
@@ -2285,34 +1785,6 @@ impl<'s, I: Id + Follow, T: Follow + Send + Sync + 's, W: Location, A: Alloc> Pu
         self.handles.slot
     }
 
-    fn holds_handles_of(&self) -> Option<u32> {
-        Some(self.holding.holds?.0)
-    }
-
-    fn finish(
-        &self,
-        buffer: &mut Buffer<'s>,
-        finishing: &mut Finishing<'_, '_>,
-    ) -> Option<Entries<'s>> {
-        let table = (&self.handles, &self.in_task);
-        finish_indirect(table, &self.holding, buffer, finishing)
-    }
-
-    fn follow(&self, entries: &mut Entries<'s>, link: &Link) {
-        follow_indirect::<ById<I, Handle, Buffered<W>, A>, T>(&self.in_task, entries, link);
-    }
-
-    fn apply(
-        &self,
-        _: usize,
-        shares: &mut [Share<'_, 's>],
-        handles: &mut [Vec<Handle>],
-        applied: &mut Applied<'_>,
-    ) {
-        let (table, holding) = ((&self.handles, &self.in_task), &self.holding);
-        apply_indirect(table, &self.kept, holding, shares, handles, applied);
-    }
-
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool {
         store_logged_handle((&self.handles, &self.kept), task, key, number)
     }
@@ -2325,24 +1797,6 @@ const PARTS: usize = 8;
 /// the lock of a shard.
 const PUBLISHED_SHARDS: usize = 8 * PARTS;
 
-#[inline]
-fn part_of(spread: u64) -> usize {
-    shard_among(spread, PUBLISHED_SHARDS) / (PUBLISHED_SHARDS / PARTS)
-}
-
-/// The entries of a `ByKey` passed to the barrier.
-struct Keyed<K, V> {
-    /// In insertion order.
-    entries: Vec<(K, V)>,
-    // The shard of a key is known only after the merge, so `follow` fills in the remaining fields.
-    /// The hash of each key.
-    spreads: Vec<u64>,
-    /// The indices of the entries of part 0, in order, then those of part 1, and so on.
-    by_part: Vec<u32>,
-    /// The start of each part in `by_part`. A final entry is the end of the last part.
-    starts: [u32; PARTS + 1],
-}
-
 impl<'s, K, V, W: Location, A: Alloc> Publish<'s> for ByKey<K, V, Buffered<W>, A>
 where
     K: std::hash::Hash + Eq + Clone + Follow + Send + Sync + 's,
@@ -2350,92 +1804,6 @@ where
 {
     fn slot(&self) -> u32 {
         self.slot.number()
-    }
-
-    fn parts(&self) -> usize {
-        PARTS
-    }
-
-    fn finish(
-        &self,
-        buffer: &mut Buffer<'s>,
-        finishing: &mut Finishing<'_, '_>,
-    ) -> Option<Entries<'s>> {
-        let all = buffer.typed_mut(&self.slot)?.take().into_iter();
-        let mut entries: Vec<(K, V)> =
-            (all.filter(|(key, value)| finishing.is_published(key, value))).collect();
-        entries.shrink_to_fit();
-        let len = entries.len();
-        let keyed = Keyed {
-            entries,
-            spreads: Vec::new(),
-            by_part: Vec::new(),
-            starts: [0; PARTS + 1],
-        };
-        Entries::new(&self.slot, len, keyed)
-    }
-
-    fn follow(&self, entries: &mut Entries<'s>, link: &Link) {
-        let keyed = entries.typed_mut(&self.slot);
-        let mut counts = [0u32; PARTS];
-        keyed.spreads = (keyed.entries.iter_mut())
-            .map(|(key, value)| {
-                key.follow(link);
-                value.follow(link);
-                let spread = spread_hash(key);
-                counts[part_of(spread)] += 1;
-                spread
-            })
-            .collect();
-        for part in 0..PARTS {
-            keyed.starts[part + 1] = keyed.starts[part] + counts[part];
-        }
-        let mut next = keyed.starts;
-        keyed.by_part = vec![0; keyed.entries.len()];
-        for (place, &spread) in keyed.spreads.iter().enumerate() {
-            let at = &mut next[part_of(spread)];
-            keyed.by_part[*at as usize] = place as u32;
-            *at += 1;
-        }
-    }
-
-    fn apply(
-        &self,
-        part: usize,
-        shares: &mut [Share<'_, 's>],
-        _: &mut [Vec<Handle>],
-        applied: &mut Applied<'_>,
-    ) {
-        // A task has no key twice, so about this many entries are added at least. The hash spreads
-        // them evenly over the shards of the part.
-        let of_largest_share = (shares.iter())
-            .map(|share| {
-                let Payload::Part(entries) = share.payload else {
-                    unreachable!()
-                };
-                let keyed = entries.typed(&self.slot);
-                (keyed.starts[part + 1] - keyed.starts[part]) as usize
-            })
-            .max()
-            .unwrap_or(0);
-        let shards = PUBLISHED_SHARDS / PARTS;
-        (self.published).reserve(
-            part * shards..(part + 1) * shards,
-            of_largest_share / shards,
-        );
-        for share in shares {
-            let Payload::Part(entries) = share.payload else {
-                unreachable!()
-            };
-            let keyed = entries.typed(&self.slot);
-            let (from, to) = (keyed.starts[part] as usize, keyed.starts[part + 1] as usize);
-            for &place in &keyed.by_part[from..to] {
-                let (key, value) = &keyed.entries[place as usize];
-                if (self.published).add_if_absent(keyed.spreads[place as usize], key, *value) {
-                    applied.store(self.slot.number(), key, value);
-                }
-            }
-        }
     }
 
     /// `key`: the place of the entry in the `Hashed` of the task.

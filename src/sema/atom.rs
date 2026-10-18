@@ -747,13 +747,6 @@ impl<'s> Interner<'s> {
         }
     }
 
-    /// For the merge at the barrier. It writes without synchronization, so the tables must not be shared. The last value is
-    /// the number of the first text.
-    pub(crate) fn halves(&self) -> (&GrowingPlaces<Global, SHARDS>, &Texts, u32) {
-        assert!(!self.tables.is_in_common);
-        (&self.tables.places, &self.tables.texts, self.first)
-    }
-
     pub fn session(&self) -> &'s Session {
         self.session
     }
@@ -809,11 +802,6 @@ impl<'s> Interner<'s> {
             self.first + index
         };
         Atom(places.find_or_add(spread, is_it, add))
-    }
-
-    /// Stores the class of `text`. The merge at the barrier calls this right before it adds `text` as `atom`'s text.
-    pub(crate) fn set_class(&self, atom: Atom, text: &[u8]) {
-        self.tables.set_class(atom.0 - self.first, text);
     }
 
     /// Returns the stored class of `atom`'s text.

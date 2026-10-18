@@ -35,7 +35,6 @@
 //! the end of its task, and `finish_file` reads no HIR.
 
 use super::explain::NOWHERE;
-use super::task::Finished;
 use super::*;
 use crate::util::SharedSort;
 use bun_threading::Guarded;
@@ -305,13 +304,6 @@ fn is_same_in_every_task(q: Query) -> bool {
 }
 
 impl super::Program<'_> {
-    /// At the barrier, tasks in plan order. A diagnostic that belongs to a query is reported iff no
-    /// earlier task has reported under that query.
-    pub(super) fn publish_diagnostics(&self, finished: &mut Finished) {
-        let task = u64::from(finished.step) << 32 | u64::from(finished.index);
-        self.publish_reported(task, std::mem::take(&mut finished.diagnostics));
-    }
-
     /// `publish_diagnostics`, also for a commit. `task`: `Task::number`.
     pub(super) fn publish_reported(&self, task: u64, reported: Logged) {
         let mut owners = self.sink.owners.lock();
@@ -830,11 +822,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// After `begin_task`. The task is one of `count` checkers of `checkerPool`.
-    pub fn set_checker_count(&mut self, count: u32) {
-        self.task.checker_count = count;
-    }
-
     /// `getBindAndCheckDiagnosticsWithChecker`: the diagnostics of a file are those that its own
     /// checker has for it right after `checkSourceFile`. Returns whether that has not happened yet
     /// for `file`.
@@ -931,19 +918,6 @@ impl Checker<'_, '_> {
             && self.task.file != Some(file)
             && self.reports_semantic_errors(file)
             && !self.is_asked_by_check_in_time(owner, &self.stack, file)
-    }
-
-    /// At the end of the task, on its own thread, for `Task::finish`. A query with a task-local key
-    /// does not go to the barrier: the diagnostics reported under it belong to the task.
-    pub(super) fn take_diagnostics(&mut self) -> Vec<(Option<Query>, Reported)> {
-        let diagnostics = std::mem::take(&mut self.task.diagnostics);
-        let mut directives = Default::default();
-        (diagnostics.into_iter())
-            .filter_map(|(owner, diagnostic)| {
-                let diagnostic = self.settled(diagnostic, &mut directives)?;
-                Some((owner.filter(|&q| is_task_independent(q)), diagnostic))
-            })
-            .collect()
     }
 
     /// `take_diagnostics` for a commit. What belongs to a query goes with the entry of the query, which the commit stores.

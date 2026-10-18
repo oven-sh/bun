@@ -10,15 +10,11 @@ use crate::local::{Found, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
 use crate::session::{Arena, ArenaVec, Session};
 use crate::table::{ById, Frozen};
-use crate::util::memory::{Fill, OWN, Placeholder, Placeholders, Segmented};
-use crate::util::{
-    FxHashMap, FxHasher, GrowingPlaces, InParallel, LocalVec, SharedSort, for_each_mut,
-    shard_among, spread_hash,
-};
+use crate::util::memory::{OWN, Placeholder, Placeholders, Segmented};
+use crate::util::{FxHashMap, FxHasher, GrowingPlaces, LocalVec, SharedSort, spread_hash};
 use bun_alloc::{ArenaBox, vec_from_iter_in};
 use bun_threading::Guarded;
 use smallvec::SmallVec;
-use std::alloc::Allocator;
 use std::cell::{Cell, RefCell};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering};
@@ -2084,17 +2080,6 @@ impl<'s, V: Record> Interned<'s, V> {
     fn place(&self, spread: u64, id: Placeholder<'s>, record: V) -> u32 {
         let (id, placed) = (id.index(), self.items.replace(id, record));
         (self.index).find_or_add(spread, |other| placed.is_same(self.get(other)), || id)
-    }
-
-    /// For `put`.
-    fn halves(
-        &self,
-    ) -> (
-        &GrowingPlaces<&'s Session, INDEX_SHARDS>,
-        &Shared<'s, V>,
-        u32,
-    ) {
-        (&self.index, self.items, 0)
     }
 
     /// Assigns the next id to `item`, which must not be present yet. `spread`: its lookup hash.
@@ -4215,10 +4200,6 @@ pub trait Visitor {
 pub trait Follow {
     fn visit<V: Visitor>(&self, visitor: &mut V);
 
-    /// Replaces every task-local id (`LOCAL`) with the published id that the merge step assigned to
-    /// its record. Runs at the barrier, on any thread.
-    fn follow(&mut self, link: &Link);
-
     /// True if it references a node or symbol of a file the task has visited, or a record published by this task that
     /// does.
     fn is_of_visited_file(&self, own: &OwnStore) -> bool {
@@ -4268,8 +4249,6 @@ macro_rules! has_no_references {
             fn visit<V: $crate::types::Visitor>(&self, visitor: &mut V) {
                 visitor.plain(self);
             }
-            #[inline]
-            fn follow(&mut self, _: &$crate::types::Link) {}
         }
     )*};
 }
@@ -4281,10 +4260,6 @@ macro_rules! follow_struct {
             fn visit<V: $crate::types::Visitor>(&self, visitor: &mut V) {
                 let $name { $($field),* } = self;
                 $($crate::types::Follow::visit($field, visitor);)*
-            }
-            fn follow(&mut self, link: &$crate::types::Link) {
-                let $name { $($field),* } = self;
-                $($crate::types::Follow::follow($field, link);)*
             }
         }
     };
@@ -4303,43 +4278,27 @@ macro_rules! follow_enum {
                     })*
                 }
             }
-            fn follow(&mut self, link: &$crate::types::Link) {
-                // No variant may have a field.
-                let _ = link;
-                match self {
-                    $($pattern => {
-                        $($crate::types::Follow::follow($field, link);)*
-                    })*
-                }
-            }
         }
     };
 }
 
 macro_rules! follow_id {
-    ($($name:ident: $visit:ident, $links:ident;)*) => {$(
+    ($($name:ident: $visit:ident;)*) => {$(
         impl Follow for $name {
             #[inline]
             fn visit<V: Visitor>(&self, visitor: &mut V) {
                 visitor.$visit(*self);
-            }
-            #[inline]
-            fn follow(&mut self, link: &Link) {
-                if self.is_local() {
-                    self.0 = link.$links[(self.0 & !LOCAL) as usize];
-                    debug_assert!(self.0 != u32::MAX, "it was not marked");
-                }
             }
         }
     )*};
 }
 
 follow_id! {
-    Atom: atom, atoms;
-    ComponentsId: components, components;
-    MapperId: mapper, mappers;
-    SigId: sig, sigs;
-    TypeId: ty, types;
+    Atom: atom;
+    ComponentsId: components;
+    MapperId: mapper;
+    SigId: sig;
+    TypeId: ty;
 }
 
 impl Follow for FileId {
@@ -4347,8 +4306,6 @@ impl Follow for FileId {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         visitor.file(*self);
     }
-    #[inline]
-    fn follow(&mut self, _: &Link) {}
 }
 
 impl Follow for Sym {
@@ -4357,8 +4314,6 @@ impl Follow for Sym {
         visitor.file(self.file);
         visitor.plain(&self.id);
     }
-    #[inline]
-    fn follow(&mut self, _: &Link) {}
 }
 
 impl<T: Follow> Follow for Option<T> {
@@ -4368,19 +4323,11 @@ impl<T: Follow> Follow for Option<T> {
             it.visit(visitor);
         }
     }
-    fn follow(&mut self, link: &Link) {
-        if let Some(it) = self {
-            it.follow(link);
-        }
-    }
 }
 
 impl<T: Follow> Follow for Box<T> {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         (**self).visit(visitor);
-    }
-    fn follow(&mut self, link: &Link) {
-        (**self).follow(link);
     }
 }
 
@@ -4391,19 +4338,11 @@ impl<T: Follow> Follow for [T] {
             it.visit(visitor);
         }
     }
-    fn follow(&mut self, link: &Link) {
-        for it in self {
-            it.follow(link);
-        }
-    }
 }
 
 impl<T: Follow + ?Sized> Follow for ArenaBox<'_, T> {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         (**self).visit(visitor);
-    }
-    fn follow(&mut self, link: &Link) {
-        (**self).follow(link);
     }
 }
 
@@ -4411,17 +4350,11 @@ impl<T: Follow> Follow for ArenaVec<'_, T> {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         self[..].visit(visitor);
     }
-    fn follow(&mut self, link: &Link) {
-        self[..].follow(link);
-    }
 }
 
 impl<T: Follow, const N: usize, L: std::ops::DerefMut<Target = [T]>> Follow for ShortList<T, N, L> {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         (**self).visit(visitor);
-    }
-    fn follow(&mut self, link: &Link) {
-        (**self).follow(link);
     }
 }
 
@@ -4429,17 +4362,11 @@ impl<T: Follow> Follow for Box<[T]> {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         self[..].visit(visitor);
     }
-    fn follow(&mut self, link: &Link) {
-        self[..].follow(link);
-    }
 }
 
 impl<T: Follow> Follow for Vec<T> {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         self[..].visit(visitor);
-    }
-    fn follow(&mut self, link: &Link) {
-        self[..].follow(link);
     }
 }
 
@@ -4448,7 +4375,6 @@ impl Follow for &[u8] {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         self[..].visit(visitor);
     }
-    fn follow(&mut self, _: &Link) {}
 }
 
 impl<K: Follow + Hash + Eq, T: Follow> Follow for FxHashMap<K, T> {
@@ -4472,15 +4398,6 @@ impl<K: Follow + Hash + Eq, T: Follow> Follow for FxHashMap<K, T> {
             value.visit(visitor);
         }
     }
-    fn follow(&mut self, link: &Link) {
-        *self = (std::mem::take(self).into_iter())
-            .map(|(mut key, mut value)| {
-                key.follow(link);
-                value.follow(link);
-                (key, value)
-            })
-            .collect();
-    }
 }
 
 macro_rules! follow_tuple {
@@ -4489,10 +4406,6 @@ macro_rules! follow_tuple {
             #[inline]
             fn visit<V: Visitor>(&self, visitor: &mut V) {
                 $(self.$index.visit(visitor);)*
-            }
-            #[inline]
-            fn follow(&mut self, link: &Link) {
-                $(self.$index.follow(link);)*
             }
         }
     )*};
@@ -4540,8 +4453,6 @@ impl Follow for ElemFlags {
             visitor.plain(&label.pos);
         }
     }
-    #[inline]
-    fn follow(&mut self, _: &Link) {}
 }
 
 follow_enum!(EnumValue {
@@ -5182,101 +5093,10 @@ impl Hasher for Lanes {
     }
 }
 
-/// Computes the content hash of one record. A published id is hashed as its number, a task-local id
-/// as the content hash of its record.
-struct Content<'a> {
-    lanes: Lanes,
-    /// Indexed by kind and index. The records a record references are older, so their hashes are
-    /// already computed.
-    of: &'a [Vec<ContentHash>; 5],
-}
-
-impl<'a> Content<'a> {
-    fn new(of: &'a [Vec<ContentHash>; 5], kind: Kind) -> Content<'a> {
-        let mut lanes = Lanes::START;
-        lanes.add(kind as u64);
-        Content { lanes, of }
-    }
-
-    #[inline]
-    fn id(&mut self, kind: Kind, id: u32) {
-        if id & LOCAL == 0 {
-            self.lanes.add(u64::from(id));
-        } else {
-            let [a, b] = self.of[kind as usize][(id & !LOCAL) as usize];
-            // No number of a published id has the high half set.
-            self.lanes.add(a | 1 << 63);
-            self.lanes.add(b);
-        }
-    }
-}
-
 /// A visitor that hashes everything it visits.
 trait Hashing: Visitor {
     /// Hashes `items` as a set, so the result doesn't depend on their order.
     fn unordered<T: Follow>(&mut self, items: &[T]);
-}
-
-impl Hashing for Content<'_> {
-    fn unordered<T: Follow>(&mut self, items: &[T]) {
-        let mut sum = [0u64; 2];
-        for item in items {
-            let mut one = Content {
-                lanes: Lanes::START,
-                of: self.of,
-            };
-            item.visit(&mut one);
-            sum[0] = sum[0].wrapping_add(one.lanes.0[0]);
-            sum[1] = sum[1].wrapping_add(one.lanes.0[1]);
-        }
-        self.lanes.add(items.len() as u64);
-        self.lanes.add(sum[0]);
-        self.lanes.add(sum[1]);
-    }
-}
-
-impl Visitor for Content<'_> {
-    #[inline]
-    fn atom(&mut self, atom: Atom) {
-        if atom.is_own() {
-            self.id(Kind::Atom, atom.0);
-        } else {
-            self.lanes.add(u64::from(atom.0));
-        }
-    }
-    #[inline]
-    fn components(&mut self, id: ComponentsId) {
-        self.id(Kind::Components, id.0);
-    }
-    #[inline]
-    fn mapper(&mut self, id: MapperId) {
-        self.id(Kind::Mapper, id.0);
-    }
-    #[inline]
-    fn sig(&mut self, id: SigId) {
-        self.id(Kind::Sig, id.0);
-    }
-    #[inline]
-    fn ty(&mut self, id: TypeId) {
-        self.id(Kind::Type, id.0);
-    }
-    #[inline]
-    fn file(&mut self, file: FileId) {
-        self.lanes.add(u64::from(file.0));
-    }
-    #[inline]
-    fn plain<T: Hash + ?Sized>(&mut self, value: &T) {
-        value.hash(&mut self.lanes);
-    }
-}
-
-/// The content hash of a type. A union is hashed as a set, and so is an origin that is a union: two
-/// tasks may have sorted members that tie in `compare_types` differently. See
-/// `Types::mark_ordered_by_id`.
-fn content_of_type(created: &Made, of: &[Vec<ContentHash>; 5]) -> ContentHash {
-    let mut content = Content::new(of, Kind::Type);
-    visit_type_as_content(created, &mut content);
-    content.lanes.0
 }
 
 /// See `content_of_type`.
@@ -5474,96 +5294,6 @@ impl Visitor for Saying<'_, '_> {
     }
 }
 
-/// The number of parts into which the merge step partitions the records by content hash. One thread
-/// groups the records of one part.
-const HASH_PARTS: usize = 64;
-
-/// A step that publishes fewer records than this is merged on one thread.
-const FEW_RECORDS: usize = 4096;
-
-/// The published records of one kind and one task.
-struct Taken<V> {
-    /// The number of records of the kind the task had, which is the length of its `Link` array.
-    len: usize,
-    /// The index in the task's store, the content hash, the record. In creation order.
-    records: Vec<(u32, ContentHash, V)>,
-    /// The positions in `records`, grouped by hash part, in order within a part.
-    positions: Vec<u32>,
-    /// The start of each part in `positions`, and the end of the last.
-    parts: [u32; HASH_PARTS + 1],
-    /// In a debug build, after `number`: the records that were merged with another record, each
-    /// with the id of that record. See `check_joined`.
-    joined: Vec<(u32, V)>,
-}
-
-impl<V> Taken<V> {
-    fn map<U>(self, mut of: impl FnMut(V) -> U) -> Taken<U> {
-        let records = self.records.into_iter();
-        let joined = self.joined.into_iter();
-        Taken {
-            len: self.len,
-            records: records
-                .map(|(index, hash, record)| (index, hash, of(record)))
-                .collect(),
-            positions: self.positions,
-            parts: self.parts,
-            joined: joined.map(|(id, record)| (id, of(record))).collect(),
-        }
-    }
-}
-
-impl<V> Default for Taken<V> {
-    fn default() -> Self {
-        Taken {
-            len: 0,
-            records: Vec::new(),
-            positions: Vec::new(),
-            parts: [0; HASH_PARTS + 1],
-            joined: Vec::new(),
-        }
-    }
-}
-
-/// The task-local records that one task publishes. A field of `Finished`.
-#[derive(Default)]
-pub struct OwnRecords<'s> {
-    atoms: Taken<List<'s, u8>>,
-    components: Taken<List<'s, IndexComponent>>,
-    mappers: Taken<MapperRecord<'s>>,
-    sigs: Taken<SigData<'s>>,
-    types: Taken<TypeRecord<'s>>,
-}
-
-fn take<V>(own: &mut Own<'_, V>, marks: &Bits, hashes: &[ContentHash]) -> Taken<V> {
-    let mut taken = Taken {
-        len: own.records.len() as usize,
-        ..Taken::default()
-    };
-    own.records.drain(|index, record| {
-        if marks.has(index as usize) {
-            taken.records.push((index, hashes[index as usize], record));
-        }
-    });
-    own.found.clear();
-    own.bound.clear();
-    // A counting sort by the part.
-    let part = |record: &(u32, ContentHash, V)| (record.1[0] >> (64 - HASH_PARTS.ilog2())) as usize;
-    for record in &taken.records {
-        taken.parts[part(record) + 1] += 1;
-    }
-    for i in 0..HASH_PARTS {
-        taken.parts[i + 1] += taken.parts[i];
-    }
-    let mut next = taken.parts;
-    taken.positions = vec![0; taken.records.len()];
-    for (position, record) in taken.records.iter().enumerate() {
-        let at = &mut next[part(record)];
-        taken.positions[*at as usize] = position as u32;
-        *at += 1;
-    }
-    taken
-}
-
 impl<'s> OwnStore<'s> {
     /// The number of records of each kind, in the order of `KINDS`.
     pub(crate) fn lengths(&self) -> [usize; 5] {
@@ -5586,86 +5316,9 @@ impl<'s> OwnStore<'s> {
         }
         created
     }
-
-    /// Runs at the end of the task. `marks`: the records referenced by the entries that the task
-    /// publishes. Three passes over the creation log. A record that is not published costs only a
-    /// test.
-    pub fn finish(&mut self, mut marks: Marks) -> OwnRecords<'s> {
-        let stores = self;
-        let entry = |at: u32| {
-            let entry = *stores.log.get(at);
-            let index = entry & ((1 << KIND_SHIFT) - 1);
-            (KINDS[(entry >> KIND_SHIFT) as usize], index)
-        };
-        // Backwards: the records a record references are older than it.
-        for at in (0..stores.log.len()).rev() {
-            let (kind, index) = entry(at);
-            if !marks.0[kind as usize].has(index as usize) {
-                continue;
-            }
-            match kind {
-                Kind::Atom => {}
-                Kind::Components => stores.components.records.get(index).visit(&mut marks),
-                Kind::Mapper => stores.mappers.records.get(index).0.visit(&mut marks),
-                Kind::Sig => stores.sigs.records.get(index).visit(&mut marks),
-                Kind::Type => stores.types.records.get(index).created.visit(&mut marks),
-            }
-        }
-        // Forwards: the records a record references already have their hashes.
-        let mut hashes: [Vec<ContentHash>; 5] = stores.lengths().map(|len| vec![[0; 2]; len]);
-        for at in 0..stores.log.len() {
-            let (kind, index) = entry(at);
-            if !marks.0[kind as usize].has(index as usize) {
-                continue;
-            }
-            let mut content = Content::new(&hashes, kind);
-            let hash = match kind {
-                Kind::Atom => {
-                    content.plain(&**stores.atoms.records.get(index));
-                    content.lanes.0
-                }
-                Kind::Components => {
-                    stores.components.records.get(index).visit(&mut content);
-                    content.lanes.0
-                }
-                // The pairs are in the order of the ids of the type parameters, which two tasks may have created in different orders.
-                Kind::Mapper => {
-                    content.unordered(&stores.mappers.records.get(index).0);
-                    content.lanes.0
-                }
-                Kind::Sig => {
-                    stores.sigs.records.get(index).visit(&mut content);
-                    content.lanes.0
-                }
-                Kind::Type => content_of_type(&stores.types.records.get(index).created, &hashes),
-            };
-            hashes[kind as usize][index as usize] = hash;
-        }
-        stores.log.clear();
-        stores.unimported_files.0.clear();
-        let [atoms, components, mappers, sigs, types] = &marks.0;
-        OwnRecords {
-            atoms: take(&mut stores.atoms, atoms, &hashes[0]),
-            components: take(&mut stores.components, components, &hashes[1]),
-            mappers: take(&mut stores.mappers, mappers, &hashes[2]),
-            sigs: take(&mut stores.sigs, sigs, &hashes[3]),
-            types: take(&mut stores.types, types, &hashes[4]),
-        }
-    }
 }
 
 // ───────────────────────────── the merge step ─────────────────────────────
-
-/// For one task: the published id of each of its task-local records, by index. `u32::MAX`: the
-/// record is not published.
-#[derive(Default)]
-pub struct Link {
-    atoms: Box<[u32]>,
-    components: Box<[u32]>,
-    mappers: Box<[u32]>,
-    sigs: Box<[u32]>,
-    types: Box<[u32]>,
-}
 
 /// Statistics of one merge step, by kind.
 #[derive(Copy, Clone, Default)]
@@ -5679,383 +5332,6 @@ pub struct LinkCounts {
 impl LinkCounts {
     pub const NAMES: [&str; KINDS.len()] =
         ["atoms", "components", "mappers", "signatures", "types"];
-}
-
-/// GROUP, NUMBER, LINK, for one kind. `tasks` is in task order. Among the records with the same
-/// content hash the one with the lowest (task, index) survives, and the survivors are numbered from
-/// `first_free` on, in that order. Returns the `Link` array of each task for the kind. Afterwards
-/// `records` holds the survivors, with the new id in place of the index.
-/// No stage depends on timing: each hash part, or each task, is processed by exactly one thread.
-fn number<V: Send + Sync>(
-    tasks: &mut [&mut Taken<V>],
-    first_free: u32,
-    in_parallel: InParallel<'_>,
-) -> Vec<Box<[u32]>> {
-    // Nothing that is published references a task-local record of the kind.
-    if tasks.iter().all(|task| task.records.is_empty()) {
-        return tasks.iter().map(|_| Box::default()).collect();
-    }
-    let place = |task: usize, position: usize| (task as u64) << 32 | position as u64;
-    // GROUP: for each record, the `place` of the first record with the same hash.
-    let firsts: Vec<Vec<AtomicU64>> = (tasks.iter())
-        .map(|task| (0..task.records.len()).map(|_| AtomicU64::new(0)).collect())
-        .collect();
-    {
-        let tasks: &[&mut Taken<V>] = tasks;
-        in_parallel(HASH_PARTS, &|part| {
-            let mut first: FxHashMap<ContentHash, u64> = FxHashMap::default();
-            for (t, task) in tasks.iter().enumerate() {
-                let (from, to) = (task.parts[part] as usize, task.parts[part + 1] as usize);
-                for &position in &task.positions[from..to] {
-                    let position = position as usize;
-                    let hash = task.records[position].1;
-                    let first = *first.entry(hash).or_insert_with(|| place(t, position));
-                    firsts[t][position].store(first, Ordering::Relaxed);
-                }
-            }
-        });
-    }
-    // NUMBER: the rank of each surviving record among those of its task, then the first id of each
-    // task.
-    struct Ranks {
-        task: usize,
-        ranks: Vec<u32>,
-        count: u32,
-    }
-    let mut ranks: Vec<Ranks> = (0..tasks.len())
-        .map(|task| Ranks {
-            task,
-            ranks: Vec::new(),
-            count: 0,
-        })
-        .collect();
-    for_each_mut(&mut ranks, in_parallel, &|it| {
-        let (task, mut count) = (it.task, 0);
-        it.ranks = (firsts[task].iter().enumerate())
-            .map(|(position, first)| {
-                let rank = count;
-                count += u32::from(first.load(Ordering::Relaxed) == place(task, position));
-                rank
-            })
-            .collect();
-        it.count = count;
-    });
-    let mut next = first_free;
-    let begins: Vec<u32> = (ranks.iter())
-        .map(|it| {
-            next += it.count;
-            next - it.count
-        })
-        .collect();
-    // LINK
-    let mut links: Vec<(usize, &mut Taken<V>, Box<[u32]>)> = (tasks.iter_mut().enumerate())
-        .map(|(t, task)| (t, &mut **task, Box::default()))
-        .collect();
-    for_each_mut(&mut links, in_parallel, &|(t, task, link)| {
-        let mut ids = vec![u32::MAX; task.len].into_boxed_slice();
-        let mut stay = Vec::with_capacity(ranks[*t].count as usize);
-        let records = std::mem::take(&mut task.records);
-        for (position, mut record) in records.into_iter().enumerate() {
-            let first = firsts[*t][position].load(Ordering::Relaxed);
-            let (of, at) = ((first >> 32) as usize, first as u32 as usize);
-            let id = begins[of] + ranks[of].ranks[at];
-            ids[record.0 as usize] = id;
-            record.0 = id;
-            if first == place(*t, position) {
-                stay.push(record);
-            } else if cfg!(debug_assertions) {
-                task.joined.push((id, record.2));
-            }
-        }
-        task.records = stay;
-        *link = ids;
-    });
-    links.into_iter().map(|it| it.2).collect()
-}
-
-/// What `put` must do with a record, after `follow` has been applied to it.
-enum Placed<V> {
-    /// It is indexed under this hash.
-    Indexed(V, u64),
-    /// It is not in the hash index: it is looked up some other way.
-    NotIndexed(V),
-    /// It cannot be completed until the other records are stored.
-    Later(V),
-}
-
-/// FOLLOW, for one kind: writes the surviving records into the shared store, at their ids. Returns
-/// those that are `Later`, in id order: the caller writes them. Also returns, for `check_joined`,
-/// the merged records, remapped. `first` is the id of the first element of `items`.
-fn put<V: Send + Sync, A: Allocator + Clone + Sync, I: Fill<V> + Sync, const N: usize>(
-    (index, items, first): (&GrowingPlaces<A, N>, &I, u32),
-    tasks: Vec<(Taken<V>, &Link)>,
-    in_parallel: InParallel<'_>,
-    settle: &(dyn Fn(V, &Link, u32) -> Placed<V> + Sync),
-) -> (Vec<(u32, V)>, Vec<(u32, V)>) {
-    struct Work<'a, V> {
-        task: Taken<V>,
-        link: &'a Link,
-        /// The entries to add to the index, by shard.
-        added: Vec<Vec<(u64, u32)>>,
-        later: Vec<(u32, V)>,
-    }
-    let count: usize = tasks.iter().map(|(task, _)| task.records.len()).sum();
-    if count == 0 {
-        return (Vec::new(), Vec::new());
-    }
-    // SAFETY: every id that `number` assigned is written below, or by the caller if it is `Later`.
-    unsafe { items.reserve(count as u32) };
-    let mut work: Vec<Work<'_, V>> = (tasks.into_iter())
-        .map(|(task, link)| Work {
-            task,
-            link,
-            added: vec![Vec::new(); N],
-            later: Vec::new(),
-        })
-        .collect();
-    for_each_mut(&mut work, in_parallel, &|it| {
-        for (id, _, record) in std::mem::take(&mut it.task.records) {
-            let record = match settle(record, it.link, id) {
-                Placed::Indexed(record, spread) => {
-                    it.added[shard_among(spread, N)].push((spread, id));
-                    record
-                }
-                Placed::NotIndexed(record) => record,
-                Placed::Later(record) => {
-                    it.later.push((id, record));
-                    continue;
-                }
-            };
-            // SAFETY: the id is in the range that was reserved, and no other record has it.
-            unsafe { items.write(id - first, record) };
-        }
-    });
-    {
-        let work = &work;
-        in_parallel(N, &|shard| {
-            let count = work.iter().map(|it| it.added[shard].len()).sum();
-            let added = work.iter().flat_map(|it| it.added[shard].iter().copied());
-            index.extend(shard, count, added);
-        });
-    }
-    let mut joined = Vec::new();
-    for it in &mut work {
-        for (id, record) in std::mem::take(&mut it.task.joined) {
-            if let Placed::Indexed(record, _) | Placed::NotIndexed(record) =
-                settle(record, it.link, id)
-            {
-                joined.push((id, record));
-            }
-        }
-    }
-    (work.into_iter().flat_map(|it| it.later).collect(), joined)
-}
-
-/// In a debug build: a record that was merged with another must equal it. Otherwise two different
-/// contents have the same content hash.
-fn check_joined<V, A: Allocator + Clone, I: Fill<V>, const N: usize>(
-    (_, items, first): (&GrowingPlaces<A, N>, &I, u32),
-    joined: Vec<(u32, V)>,
-    is_same: impl Fn(&V, &V) -> bool,
-) {
-    for (id, record) in joined {
-        assert!(
-            is_same(&record, items.get(id - first)),
-            "two records with one content hash differ"
-        );
-    }
-}
-
-impl<'s> TypeStore<'s> {
-    /// Runs at the barrier, before the tables are published. `tasks`: the records the tasks of the
-    /// step publish, in task order. Assigns every record its published id, writes the records into
-    /// the shared stores, and returns the `Link` of each task, for `Follow::follow`, and counts.
-    /// `sort`: `Checker::sort_types`, for a union whose order depended on task-local ids.
-    pub fn link(
-        &self,
-        atoms: &Interner<'s>,
-        mut tasks: Vec<OwnRecords<'s>>,
-        in_parallel: InParallel<'_>,
-        sort: &dyn Fn(&mut [TypeId]),
-    ) -> (Vec<Link>, LinkCounts) {
-        fn of<'a, 's, V>(
-            tasks: &'a mut [OwnRecords<'s>],
-            kind: for<'x> fn(&'x mut OwnRecords<'s>) -> &'x mut Taken<V>,
-        ) -> Vec<&'a mut Taken<V>> {
-            tasks.iter_mut().map(kind).collect()
-        }
-        let count = |tasks: &[OwnRecords]| {
-            let sum = |of: fn(&OwnRecords) -> usize| tasks.iter().map(of).sum::<usize>();
-            [
-                sum(|it| it.atoms.records.len()),
-                sum(|it| it.components.records.len()),
-                sum(|it| it.mappers.records.len()),
-                sum(|it| it.sigs.records.len()),
-                sum(|it| it.types.records.len()),
-            ]
-        };
-        let linked = count(&tasks);
-        let all: usize = linked.iter().sum();
-        if all == 0 {
-            let links = tasks.iter().map(|_| Link::default()).collect();
-            return (links, LinkCounts::default());
-        }
-        debug_assert!(
-            !self.shares_records(),
-            "what is not published at once is bound"
-        );
-        // Dispatching a stage to the pool costs more than the stage itself. The ids are the same:
-        // no stage depends on which thread runs it.
-        let on_this_thread: InParallel<'_> = &|count, work| (0..count).for_each(work);
-        let in_parallel = if all < FEW_RECORDS {
-            on_this_thread
-        } else {
-            in_parallel
-        };
-        let mut links = [
-            number(
-                &mut of(&mut tasks, |it| &mut it.atoms),
-                atoms.halves().2 + atoms.halves().1.len(),
-                in_parallel,
-            ),
-            number(
-                &mut of(&mut tasks, |it| &mut it.components),
-                self.components.items.len(),
-                in_parallel,
-            ),
-            number(
-                &mut of(&mut tasks, |it| &mut it.mappers),
-                self.mappers.items.len(),
-                in_parallel,
-            ),
-            number(
-                &mut of(&mut tasks, |it| &mut it.sigs),
-                self.sigs.items.len(),
-                in_parallel,
-            ),
-            number(
-                &mut of(&mut tasks, |it| &mut it.types),
-                self.types.items.len(),
-                in_parallel,
-            ),
-        ]
-        .map(Vec::into_iter);
-        // `number` has left only the surviving records.
-        let stay = count(&tasks);
-        let counts = LinkCounts {
-            linked,
-            joined: std::array::from_fn(|kind| linked[kind] - stay[kind]),
-        };
-        let links: Vec<Link> = (0..tasks.len())
-            .map(|_| {
-                let [atoms, components, mappers, sigs, types] = &mut links;
-                Link {
-                    atoms: atoms.next().unwrap(),
-                    components: components.next().unwrap(),
-                    mappers: mappers.next().unwrap(),
-                    sigs: sigs.next().unwrap(),
-                    types: types.next().unwrap(),
-                }
-            })
-            .collect();
-        let (mut texts, mut components, mut mappers, mut sigs, mut types) =
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        for (task, link) in tasks.into_iter().zip(&links) {
-            // The texts of the interner are not in an arena: see `atom::Tables`.
-            texts.push((task.atoms.map(|text| crate::atom::Text::from(&*text)), link));
-            components.push((task.components, link));
-            mappers.push((task.mappers, link));
-            sigs.push((task.sigs, link));
-            types.push((task.types, link));
-        }
-        let (_, joined) = put(atoms.halves(), texts, in_parallel, &|text, _, id| {
-            atoms.set_class(Atom(id), &text);
-            let spread = crate::atom::hash_of(&text);
-            Placed::Indexed(text, spread)
-        });
-        check_joined(atoms.halves(), joined, |a, b| **a == **b);
-        let (_, joined) = put(
-            self.components.halves(),
-            components,
-            in_parallel,
-            &|mut list, link, _| {
-                list.follow(link);
-                let spread = spread_hash(&list);
-                Placed::Indexed(list, spread)
-            },
-        );
-        check_joined(self.components.halves(), joined, |a, b| a == b);
-        let (_, joined) = put(
-            self.mappers.halves(),
-            mappers,
-            in_parallel,
-            &|(mut pairs, flags), link, _| {
-                pairs.follow(link);
-                pairs.sort_unstable_by_key(|pair| pair.0.arrival_order());
-                let spread = spread_hash(&Pairs(&pairs));
-                Placed::Indexed((pairs, flags), spread)
-            },
-        );
-        check_joined(self.mappers.halves(), joined, |a, b| a == b);
-        let (_, joined) = put(
-            self.sigs.halves(),
-            sigs,
-            in_parallel,
-            &|mut data, link, _| {
-                data.follow(link);
-                let spread = spread_hash(&data);
-                Placed::Indexed(data, spread)
-            },
-        );
-        check_joined(self.sigs.halves(), joined, |a, b| a == b);
-        let (later, joined) = put(
-            self.types.halves(),
-            types,
-            in_parallel,
-            &|mut record, link, id| {
-                record.created.follow(link);
-                record.id = TypeId(id);
-                if matches!(record.created.0, TypeData::UnresolvedName { .. }) {
-                    self.has_unresolved_names.store(true, Ordering::Relaxed);
-                }
-                if *record.is_ordered_by_id.get_mut() {
-                    return Placed::Later(record);
-                }
-                match record.created {
-                    (TypeData::StringLit { value, fresh }, None) => {
-                        self.string_literals[usize::from(fresh)].insert(value, TypeId(id));
-                        Placed::NotIndexed(record)
-                    }
-                    _ => {
-                        let spread = spread_hash(&record.created);
-                        Placed::Indexed(record, spread)
-                    }
-                }
-            },
-        );
-        // On one thread, in ascending id order: the constituents of such a union are already
-        // stored, and `sort` reads them.
-        for (id, mut record) in later {
-            self.summarize_types(id);
-            *record.is_ordered_by_id.get_mut() = false;
-            if let TypeData::Union(members) = &mut record.created.0 {
-                sort(members);
-            }
-            if let Some(provenance) = &mut record.created.1
-                && let UnionOrigin::Union(types) = &mut provenance.origin
-            {
-                sort(types);
-            }
-            let spread = spread_hash(&record.created);
-            // SAFETY: `put` has reserved the id and left it to be written here.
-            unsafe { self.types.items.write(id, record) };
-            let shard = shard_among(spread, INDEX_SHARDS);
-            (self.types.index).extend(shard, 1, std::iter::once((spread, id)));
-        }
-        check_joined(self.types.halves(), joined, |a, b| a.created == b.created);
-        self.summarize_types(self.types.items.len());
-        (links, counts)
-    }
 }
 
 /// Skipped under Miri, which can't run mimalloc (foreign code).
@@ -6420,31 +5696,6 @@ mod tests {
         let [a, b, c] = [TypeId::STRING, TypeId::NUMBER, TypeId::NULL];
         assert_eq!(rank_of([a, b, c]), rank_of([c, a, b]));
         assert_ne!(rank_of([a, b, c]), rank_of([a, b, TypeId::UNDEFINED]));
-    }
-
-    #[test]
-    fn a_published_type_keeps_its_rank() {
-        let session = Session::new();
-        let atoms = Interner::new_in(&session);
-        let store = TypeStore::ordered_by_content_in(&session, atoms);
-        let mut own = OwnStore::new_in(session.arena(), &store);
-        let types = Types::new(&store, &own);
-        let inner = types.intern(TypeData::Keyof(TypeId::STRING));
-        let outer = types.intern(TypeData::Keyof(inner));
-        let ranks = [inner, outer].map(|ty| (types.rank(ty).height, types.rank(ty).content));
-        let mut marks = Marks::new(&own);
-        outer.visit(&mut marks);
-        let taken = own.finish(marks);
-        let on_this_thread: InParallel<'_> = &|count, work| (0..count).for_each(work);
-        let (links, _) = store.link(&atoms, vec![taken], on_this_thread, &|_| {});
-        let (mut inner, mut outer) = (inner, outer);
-        inner.follow(&links[0]);
-        outer.follow(&links[0]);
-        assert!(!inner.is_local() && !outer.is_local());
-        let own = OwnStore::new_in(session.arena(), &store);
-        let types = Types::new(&store, &own);
-        let published = [inner, outer].map(|ty| (types.rank(ty).height, types.rank(ty).content));
-        assert_eq!(published, ranks);
     }
 
     fn sharing_store<'s>(session: &'s Session, atoms: Interner<'s>) -> TypeStore<'s> {

@@ -568,6 +568,24 @@ describe("bundler", async () => {
     },
   });
 
+  // A write through a define counts as a write to the binding it names, so
+  // the dev server exports the binding as a getter.
+  itBundled("bake-dev/define-assignment-is-a-live-binding", {
+    format: "internal_bake_dev",
+    define: { "j.k": "five" },
+    files: {
+      "/entry.js": /* js */ `
+        export let five = 5;
+        export function set() { j.k = 11; }
+      `,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      expect(output).toContain("five = 11;");
+      expect(output).toContain("get five() {");
+    },
+  });
+
   describe("internal_bake_dev lazy exports", () => {
     itBundled("bake-dev/loader-json-default-import", {
       format: "internal_bake_dev",

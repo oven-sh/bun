@@ -7112,6 +7112,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     unsafe { bun_collections::detach_lifetime(original_name) };
                 let result = self.find_symbol(loc, original_name).expect("unreachable");
                 id.ref_ = result.r#ref.with_user_bits_from(id.ref_);
+                if assign_target != js_ast::AssignTarget::None {
+                    self.record_assignment(result.r#ref);
+                }
                 return self.handle_identifier(
                     loc,
                     id,

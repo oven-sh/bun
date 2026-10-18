@@ -2101,6 +2101,24 @@ describe.concurrent("--react-compiler", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("a data: URL that is longer than a path can be is not compiled", async () => {
+    const result = await compiled(
+      {
+        "compiled.test.tsx": `
+          import { test } from "bun:test";
+          test("which are compiled", async () => {
+            const hook = "export function useDoubled(items) { return { doubled: items.map(item => item * 2) }; }";
+            const all = await import("data:text/javascript," + hook + "/*" + "-".repeat(70_000) + "*/");
+            ${printCompiled}
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    expect(result.compiled).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
+
   test.each([
     `reactCompiler = 1`,
     `reactCompiler = [1]`,

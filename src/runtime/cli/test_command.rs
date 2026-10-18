@@ -1038,6 +1038,10 @@ fn react_compiler_filter(
     };
     let (include, exclude) = (entries(&scope.include), entries(&scope.exclude));
     Box::leak(Box::new(move |path: &[u8]| {
+        // A `data:` URL is in no folder, and can be longer than the buffers `relative()` uses.
+        if !bun_paths::is_absolute(path) {
+            return false;
+        }
         // The original of a mocked module is loaded as "file.ts?actual".
         let path = &path[..strings::index_of_char(path, b'?').map_or(path.len(), |at| at as usize)];
         let name = bun_paths::basename(path);

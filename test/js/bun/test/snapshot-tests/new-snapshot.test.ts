@@ -162,6 +162,7 @@ describe("--bail", () => {
     });
     expect(stderr).toContain("Bailed out after 1 failure");
     expect(exitCode).toBe(1);
+    return stderr;
   }
 
   test.concurrent("writes the snapshots recorded in the file that bailed", async () => {
@@ -198,7 +199,8 @@ describe("--bail", () => {
       "__snapshots__": {},
     });
     expect(Bun.spawnSync({ cmd: ["mkfifo", `${dir}/__snapshots__/a.test.ts.snap`] }).exitCode).toBe(0);
-    await runUntilBail(dir, "--update-snapshots", "./a.test.ts", "./b.test.ts");
+    const stderr = await runUntilBail(dir, "--update-snapshots", "./a.test.ts", "./b.test.ts");
+    expect(stderr).toContain("Failed to write snapshot file");
   });
 
   test.concurrent("keeps the snapshots of an earlier file when a later file fails to load", async () => {

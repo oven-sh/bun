@@ -1,7 +1,7 @@
 import { $ } from "bun";
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 
-test("child_process ipc", async () => {
+test.concurrent("child_process ipc", async () => {
   const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc_fixture.js`.text();
   // node (v23.4.0) has identical output
   expect(output).toMatchInlineSnapshot(`
@@ -10,6 +10,44 @@ test("child_process ipc", async () => {
     send returned false
     uncaughtException ERR_IPC_CHANNEL_CLOSED
     cb ERR_IPC_CHANNEL_CLOSED
+    "
+  `);
+});
+
+test.concurrent("a message that arrives before there is a 'message' listener is kept for it", async () => {
+  const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc-pending-messages-fixture.mjs`.env(bunEnv).text();
+  // node (v26.7.0) has identical output
+  expect(output).toMatchInlineSnapshot(`
+    "child, a late listener: ["first","second","end"]
+    child, a handle: [["first","Server"],"second","end"]
+    child, a listener that throws: ["first","first","end"]
+    child, a listener that throws, added before another: ["end"]
+    child, a listener that throws, then a listener for another event: ["first","first","first","end"]
+    child, once: ["first","end"]
+    child, added and removed in one tick: ["first","second","end"]
+    child, disconnect() in the tick that adds it: []
+    child, removeAllListeners('newListener'): ["end"]
+    child, on() down to the stack limit: ["RangeError","first","second","end"]
+    child, nobody listens and listenerCount() returns 1 as they arrive: ["end"]
+    child, nobody listens and listenerCount() returns 1 in the tick: ["end"]
+    child, the listenerCount() of node:events: ["first","second","end"]
+    child, nobody listens and listenerCount() throws: ["RangeError","RangeError","end"]
+    child, nobody listens and listenerCount is 5: ["TypeError","TypeError","end"]
+    parent, a late listener: ["first","second","end"]
+    parent, a handle: [["first","Server"],"second","end"]
+    parent, a listener that throws: ["first","first","end"]
+    parent, a listener that throws, added before another: ["end"]
+    parent, a listener that throws, then a listener for another event: ["first","first","first","end"]
+    parent, once: ["first","end"]
+    parent, added and removed in one tick: ["first","second","end"]
+    parent, disconnect() in the tick that adds it: []
+    parent, removeAllListeners('newListener'): ["end"]
+    parent, on() down to the stack limit: ["RangeError","first","second","end"]
+    parent, nobody listens and listenerCount() returns 1 as they arrive: ["end"]
+    parent, nobody listens and listenerCount() returns 1 in the tick: ["end"]
+    parent, the listenerCount() of node:events: ["first","second","end"]
+    parent, nobody listens and listenerCount() throws: ["RangeError","RangeError","end"]
+    parent, nobody listens and listenerCount is 5: ["TypeError","TypeError","end"]
     "
   `);
 });

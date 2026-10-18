@@ -1144,6 +1144,7 @@ class ChildProcess extends EventEmitter {
   #handle;
   #closesNeeded = 1;
   #closesGot = 0;
+  #pendingMessages = [];
 
   declare send?: (message, handle?, options?, callback?) => boolean;
   declare disconnect?: () => void;
@@ -1512,6 +1513,9 @@ class ChildProcess extends EventEmitter {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
         this.channel = new Control();
+        this.on("newListener", () => {
+          process.nextTick(() => this.#emitPendingMessages());
+        });
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1563,8 +1567,21 @@ class ChildProcess extends EventEmitter {
     }
   }
 
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L954-L964
   #emitIpcMessage(message, _, handle) {
-    this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
+    if (isInternalIpcMessage(message)) this.emit("internalMessage", message, handle);
+    else if (this.listenerCount("message")) this.emit("message", message, handle);
+    else ArrayPrototypePush.$call(this.#pendingMessages, [message, handle]);
+  }
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L726-L742
+  #emitPendingMessages() {
+    if (!this.channel || !this.listenerCount("message")) return;
+    const messages = this.#pendingMessages;
+    const { length } = messages;
+    if (!length) return;
+    for (let i = 0; i < length; i++) this.emit("message", messages[i][0], messages[i][1]);
+    this.#pendingMessages = [];
   }
 
   #send(message, handle, options, callback) {
@@ -1618,6 +1635,7 @@ class ChildProcess extends EventEmitter {
       return;
     }
     $assert(!this.connected);
+    this.#pendingMessages = [];
     process.nextTick(() => this.emit("disconnect"));
     process.nextTick(() => this.#maybeClose());
   }

@@ -1581,6 +1581,78 @@ extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
 extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
 extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
 
+// Node's `target.listenerCount('message')`. The native list is first: the listenerCount() of node:events does not see it.
+static bool hasMessageListener(Zig::GlobalObject* global)
+{
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* process = global->processObject();
+    if (process->wrapped().hasEventListeners(vm.propertyNames->message))
+        return true;
+    JSValue listenerCount = process->get(global, Identifier::fromString(vm, "listenerCount"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    JSC::MarkedArgumentBuffer args;
+    args.append(jsString(vm, vm.propertyNames->message.string()));
+    JSValue count = JSC::call(global, listenerCount, process, args, "process.listenerCount is not a function"_s);
+    RETURN_IF_EXCEPTION(scope, false);
+    return count.toBoolean(global);
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L726-L742
+JSC_DEFINE_HOST_FUNCTION(Process_functionEmitPendingMessages, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+{
+    auto* global = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* process = global->processObject();
+    if (!Bun__GlobalObject__connectedIPC(global))
+        return JSValue::encode(jsUndefined());
+    bool hasListener = hasMessageListener(global);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* pending = process->m_pendingMessages.get();
+    if (!hasListener || !pending)
+        return JSValue::encode(jsUndefined());
+
+    for (unsigned i = 0, length = pending->length(); i < length; i += 2) {
+        JSC::MarkedArgumentBuffer args;
+        args.append(pending->getIndex(global, i));
+        RETURN_IF_EXCEPTION(scope, {});
+        args.append(pending->getIndex(global, i + 1));
+        RETURN_IF_EXCEPTION(scope, {});
+        bool listenerThrew = false;
+        process->wrapped().emit(vm.propertyNames->message, args, &listenerThrew);
+        // In Node the exception leaves the loop, and the next listener gets all of them again.
+        if (listenerThrew)
+            return JSValue::encode(jsUndefined());
+    }
+    process->m_pendingMessages.clear();
+    return JSValue::encode(jsUndefined());
+}
+
+static void queueEmitPendingMessages(Zig::GlobalObject* global)
+{
+    auto* process = global->processObject();
+    if (process->m_pendingMessages)
+        process->queueNextTick(global, process->m_emitPendingMessagesFunction.getInitializedOnMainThread(process));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionOnNewListener, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+{
+    queueEmitPendingMessages(defaultGlobalObject(lexicalGlobalObject));
+    return JSValue::encode(jsUndefined());
+}
+
+// The 'newListener' listener of Node's setupChannel. Native, so that process.on() does not enter the VM for it.
+void Process::installPendingMessagesListener(JSC::VM& vm)
+{
+    auto* globalObject = defaultGlobalObject(this->globalObject());
+    if (!Bun__GlobalObject__hasIPC(globalObject))
+        return;
+    auto* onNewListener = JSFunction::create(vm, globalObject, 0, ""_s, Process_functionOnNewListener, ImplementationVisibility::Public);
+    wrapped().addListener(Identifier::fromString(vm, "newListener"_s), WebCore::NativeEventListener::create(*onNewListener, [globalObject] { queueEmitPendingMessages(globalObject); }), false, false);
+    vm.writeBarrier(this, onNewListener);
+}
+
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (Bun__isMainThreadVM()) {
@@ -3777,6 +3849,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
     visitor.append(thisObject->m_onWarning);
+    visitor.append(thisObject->m_pendingMessages);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);
@@ -3784,6 +3857,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_bindingUV.visit(visitor);
     thisObject->m_bindingNatives.visit(visitor);
     thisObject->m_emitHelperFunction.visit(visitor);
+    thisObject->m_emitPendingMessagesFunction.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Process);
@@ -4948,10 +5022,39 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitHelper, (JSGlobalObject * globalObj
 
 static constexpr auto kInternalIpcPrefix = "NODE_"_s;
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L954-L964
+static void emitOrHoldMessage(Zig::GlobalObject* global, JSValue message, JSValue handle)
+{
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* process = global->processObject();
+    bool hasListener = hasMessageListener(global);
+    RETURN_IF_EXCEPTION(scope, );
+    if (hasListener) {
+        JSC::MarkedArgumentBuffer args;
+        args.append(message);
+        args.append(handle);
+        process->wrapped().emit(vm.propertyNames->message, args);
+        return;
+    }
+    if (!Bun__GlobalObject__connectedIPC(global))
+        return;
+    auto* pending = process->m_pendingMessages.get();
+    if (!pending) {
+        pending = JSC::constructEmptyArray(global, nullptr);
+        RETURN_IF_EXCEPTION(scope, );
+        process->m_pendingMessages.set(vm, process, pending);
+    }
+    pending->push(global, message);
+    RETURN_IF_EXCEPTION(scope, );
+    RELEASE_AND_RETURN(scope, pending->push(global, handle));
+}
+
 extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value, EncodedJSValue handle)
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto& names = WebCore::builtinNames(vm);
     auto ident = vm.propertyNames->message;
@@ -4966,7 +5069,13 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
         }
     }
 
-    if (process->wrapped().hasEventListeners(ident)) {
+    if (ident == vm.propertyNames->message) {
+        emitOrHoldMessage(global, message, JSValue::decode(handle));
+        if (auto* exception = scope.exception()) {
+            CLEAR_IF_EXCEPTION(scope);
+            Bun__reportUnhandledError(global, JSValue::encode(exception));
+        }
+    } else if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
         args.append(message);
         args.append(JSValue::decode(handle));
@@ -4978,6 +5087,7 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
+    process->m_pendingMessages.clear();
     auto ident = Identifier::fromString(vm, "disconnect"_s);
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
@@ -5111,6 +5221,7 @@ void Process::finishCreation(JSC::VM& vm)
 
     // Before the hook below: onDidChangeListeners loads the signal tables on any add.
     installDefaultWarningListener(vm);
+    installPendingMessagesListener(vm);
     wrapped().onDidChangeListener = &onDidChangeListeners;
 
     m_cpuUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {
@@ -5130,6 +5241,9 @@ void Process::finishCreation(JSC::VM& vm)
     });
     m_bindingNatives.initLater([](const JSC::LazyProperty<Process, JSC::JSObject>::Initializer& init) {
         init.set(Bun::ProcessBindingNatives::create(init.vm, ProcessBindingNatives::createStructure(init.vm, init.owner->globalObject())));
+    });
+    m_emitPendingMessagesFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
+        init.set(JSFunction::create(init.vm, init.owner->globalObject(), 0, ""_s, Process_functionEmitPendingMessages, ImplementationVisibility::Private));
     });
     m_emitHelperFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
         init.set(JSFunction::create(init.vm, init.owner->globalObject(), 2, "emit"_s, Process_functionEmitHelper, ImplementationVisibility::Private));

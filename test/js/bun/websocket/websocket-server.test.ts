@@ -98,6 +98,8 @@ afterEach(() => {
 it.concurrent("pending rejects matcher keeps a valid WebSocket open (#45805)", async () => {
   const ready = Promise.withResolvers<void>();
   const reply = Promise.withResolvers<void>();
+  const followUp = Promise.withResolvers<void>();
+  void followUp.promise.catch(() => {});
   using server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -115,12 +117,19 @@ it.concurrent("pending rejects matcher keeps a valid WebSocket open (#45805)", a
   ws.onopen = () => ws.send("ready");
   ws.onmessage = ({ data }) => {
     if (data === "denied") reply.reject(Object.assign(new Error("denied"), { code: "DENIED" }));
+    if (data === "follow-up") followUp.resolve();
   };
-  ws.onclose = ({ code, reason }) => reply.reject(new Error(`${code}: ${reason}`));
+  ws.onclose = ({ code, reason }) => {
+    const error = new Error(`${code}: ${reason}`);
+    reply.reject(error);
+    followUp.reject(error);
+  };
   try {
     await ready.promise;
     ws.send("denied");
     await expect(reply.promise).rejects.toMatchObject({ code: "DENIED" });
+    ws.send("follow-up");
+    await followUp.promise;
   } finally {
     ws.close();
     await server.stop(true);

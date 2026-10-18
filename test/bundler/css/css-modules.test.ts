@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { itBundled } from "../expectBundled";
+import { join } from "node:path";
 
 describe("css", () => {
   itBundled("css-module/GlobalPseudoFunction", {
@@ -653,4 +654,21 @@ test("css-module/NoBundleHashesByRelativePath", async () => {
   expect(hashA).toBeDefined();
   expect(hashB).toBeDefined();
   expect(hashA).not.toBe(hashB);
+});
+
+test("a resolve error in CSS covers the whole url() and composes path", async () => {
+  using dir = tempDir("css-resolve-error-range", {
+    "a.module.css": [
+      "@font-face { src: url('/fonts/missing.woff2') format('woff2'); }",
+      '.a { background: url("./missing.png"); }',
+      ".b { composes: x from   './missing.css'; }",
+    ].join("\n"),
+  });
+  const result = await Bun.build({ entrypoints: [join(String(dir), "a.module.css")], throw: false });
+
+  // `column` is 1-based.
+  const ranges = result.logs.map(({ position }) =>
+    position!.lineText.slice(position!.column - 1, position!.column - 1 + position!.length),
+  );
+  expect(ranges).toEqual([`url('/fonts/missing.woff2')`, `url("./missing.png")`, `'./missing.css'`]);
 });

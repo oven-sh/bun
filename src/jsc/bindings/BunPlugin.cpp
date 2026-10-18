@@ -3458,8 +3458,9 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
         } else if (auto* mock = registeredModuleMock(globalObject, key); mock && mock->state == JSModuleMock::State::Settled && !mock->importsOriginal) {
             // What is being fetched is the mock's own module, which imports nothing.
             return;
-        } else if (auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key)); entry && isBeingFetchedWithoutFactory(globalObject, entry)) {
+        } else if (auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key)); entry && isBeingFetchedWithoutFactory(globalObject, entry) && (!isInNodeModules(key) || isInNodeModules(target))) {
             // Another load is fetching it, and it may import the mock. In the chain it would get the original, for that load too, so treat it as waiting.
+            // A package doesn't import the project's modules. A copy of it would only run its side effects a second time.
             running.waitingModules.add(key);
             waiting.append(key);
             return;
@@ -4125,6 +4126,10 @@ __attribute__((minsize)) static bool haveUnfinishedImporterInCommon(Zig::GlobalO
 
 __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
 {
+    // It imports nothing, so it waits for no mock, and only its own key is served.
+    if (Zig::isModuleMockEvaluatorKey(key))
+        return key;
+
     // A fetch in flight for a mock that has since been replaced still waits for the old factory.
     // A new import of that module, or of one that waits for it, ends the wait, and everyone gets what the module is now.
     // Once vi.resetModules() has dropped that fetch, no module waits for the factory. If it never settles, it would otherwise

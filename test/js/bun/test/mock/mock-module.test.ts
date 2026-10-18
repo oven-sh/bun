@@ -1728,6 +1728,36 @@ describe.concurrent("two factories in one file that run at the same time", () =>
   });
 });
 
+test.concurrent("a factory can load a partly mocked module while another one is being loaded", async () => {
+  await expectFixturesToPass(
+    {
+      "one.ts": `export const name = "real one"; export const kept = "kept one";`,
+      "two.ts": `export const name = "real two"; export const kept = "kept two";`,
+      "three.ts": `export const name = "real three";`,
+      "plain.ts": `export const plain = 1;`,
+      "inner.ts": `import * as one from "./one"; import * as two from "./two"; export const inner = [one.name, one.kept, two.name, two.kept];`,
+      "outer.ts": `import "./plain"; import { name } from "./three"; import { inner } from "./inner"; export const names = [name, ...inner];`,
+      "page.ts": `export { names } from "./outer";`,
+      // With the sources in memory, the modules of the next file load in another order.
+      "a-first.test.ts": `
+        import { expect, test } from "vitest";
+        import { names } from "./page";
+        test("real", () => expect(names).toEqual(["real three", "real one", "kept one", "real two", "kept two"]));
+      `,
+      "b-second.test.ts": `
+        import { expect, test, vi } from "vitest";
+        vi.mock("./one", async importOriginal => ({ ...(await importOriginal()), name: "one" }));
+        vi.mock("./two", async importOriginal => ({ ...(await importOriginal()), name: "two" }));
+        vi.mock("./three", async () => ({ name: "three with " + (await import("./two")).name }));
+        import { names } from "./page";
+        test("mocked", () => expect(names).toEqual(["three with two", "one", "kept one", "two", "kept two"]));
+      `,
+    },
+    2,
+    ["--isolate"],
+  );
+});
+
 test.concurrent(
   "a relative path is resolved beside the file of the call, also in an arrow that ends in the call",
   async () => {
@@ -5568,6 +5598,42 @@ describe.concurrent(
             });
             expect((await import("./k.js")).x).toBe("mock, made with real");
             expect([(await other).seen, fetches]).toEqual(["mock, made with real", 2]);
+          });
+        `,
+        },
+        1,
+      );
+    });
+
+    test("but shares a package, which can't import the mocked module and would register itself twice", async () => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "node_modules/registers/package.json": JSON.stringify({
+            name: "registers",
+            type: "module",
+            main: "./index.js",
+          }),
+          "node_modules/registers/index.js": `export const evaluations = (globalThis.evaluations = (globalThis.evaluations ?? 0) + 1);`,
+          "other.js": `export { evaluations } from "registers";`,
+          "package.test.js": `
+          import { expect, test, vi } from "bun:test";
+          const started = Promise.withResolvers(), gate = Promise.withResolvers();
+          Bun.plugin({
+            name: "held",
+            setup(build) {
+              build.onLoad({ filter: /registers.index\\.js/ }, async () => (started.resolve(), await gate.promise, undefined));
+            },
+          });
+          test("it is evaluated once", async () => {
+            const other = import("./other.js");
+            await started.promise;
+            vi.doMock("./k.js", async () => {
+              const registers = import("registers");
+              gate.resolve();
+              return { x: (await registers).evaluations };
+            });
+            expect([(await import("./k.js")).x, (await other).evaluations, globalThis.evaluations]).toEqual([1, 1, 1]);
           });
         `,
         },

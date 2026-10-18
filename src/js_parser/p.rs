@@ -235,10 +235,7 @@ pub enum ReactRefreshExportKind {
     Default,
 }
 
-/// Uses of one symbol that stay in its `use_count_estimate` while the visit
-/// answers for them another way. A reader compares `total` with that count.
-/// A part the visit leaves empty takes its uses back from the count, so it
-/// takes its notes back from `total` too (`revert_dead_part`).
+/// Notes beside a symbol's `use_count_estimate`. A part left empty takes its own back (`revert_dead_part`).
 #[derive(Default, Clone, Copy)]
 pub(crate) struct AccountedUses {
     pub(crate) total: u32,
@@ -394,8 +391,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Per namespace ref, how many of its `use_count_estimate` uses were an
     /// accounted-for read (`ns.a`, a destructure, a truthiness test). Kept
     /// beside the real count rather than decremented from it so the minifier's
-    /// single-use substitution still sees every use. The synthetic ref of an
-    /// `import()` has no use count: a note there says its consumer was tracked.
+    /// single-use substitution still sees every use.
     pub(crate) namespace_tracked_uses: HashMap<Ref, AccountedUses>,
     pub(crate) unwrap_all_requires: bool,
 
@@ -1846,12 +1842,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.deoptimize_common_js_named_exports();
     }
 
-    /// The visit left the current part without a statement. Take back what it
-    /// recorded, so the file's counts read as if the part was never there:
-    /// its uses from `use_count_estimate`, and its notes from the counts that
-    /// are compared with it. A symbol the part declared keeps the uses other
-    /// parts have of it: an unwrapped `const x = require()` leaves its part
-    /// empty and `x` is still the import's namespace.
+    /// The visit left the current part empty: takes back the uses and the notes it recorded.
     fn revert_dead_part(&mut self) {
         let part_generation = self.part_generation;
         let live = u64::from(part_generation) << 32;
@@ -1863,10 +1854,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .use_count_estimate
                     .saturating_sub(use_.count_estimate());
             }
-            // A note on a namespace local follows a use of it in the same
-            // part, so the local is listed here, also once `ignore_usage`
-            // forgot the entry. An `import()`'s synthetic ref has no use, and
-            // its notes stay.
+            // For a forgotten entry too: `ignore_usage` drops the entry, not the note.
             if !self.namespace_tracked_uses.is_empty()
                 && let Some(tracked) = self.namespace_tracked_uses.get_mut(&ref_)
             {
@@ -6209,8 +6197,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             debug_assert!(!self.runtime_imports.__require.is_empty());
             let r = self.runtime_identifier_ref(b"__require");
             self.ignore_usage(r);
-            // `const r = require; typeof r` folds on the revisit that follows
-            // the substitution. The first visit recorded that use of `require`.
             if !self.is_control_flow_dead {
                 self.ignore_recorded_usage(self.require_ref);
             }
@@ -6822,7 +6808,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the value is ignored because that's what the TypeScript compiler does.
     }
 
-    /// Takes one use of `ref` back from its count and from the current part.
+    /// `ignore_usage` for a use the first visit recorded: a fold on the revisit takes it back too.
     #[inline]
     fn ignore_recorded_usage(&mut self, r#ref: Ref) {
         debug_assert!((r#ref.inner_index() as usize) < self.symbols.len());

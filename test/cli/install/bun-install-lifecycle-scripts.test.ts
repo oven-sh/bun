@@ -3633,8 +3633,24 @@ describe.concurrent("scripts of a link: folder that did not finish (isolated)", 
 
   // `w` waits in its own postinstall, which starts once bun has left out `opt`. The link of `w` to
   // `opt` goes only at the end of an install.
+  const optional = {
+    "package.json": { name: "foo", workspaces: ["packages/*"], trustedDependencies: ["opt"] },
+    "packages/w/package.json": {
+      name: "w",
+      version: "1.0.0",
+      optionalDependencies: { opt: "link:../../opt" },
+      scripts: gated.scripts,
+    },
+    "packages/b/package.json": { name: "b", version: "1.0.0", optionalDependencies: { opt: "link:../../opt" } },
+    "opt/package.json": {
+      name: "opt",
+      version: "1.0.0",
+      scripts: { postinstall: 'echo opt >> "$INIT_CWD/opt-runs.txt" && test -z "$OPT_FAIL"' },
+    },
+  };
+  const optRuns = (ctx: Project) => readFileSync(join(ctx.packageDir, "opt-runs.txt"), "utf8");
+
   test.skipIf(isWindows)("an optional folder whose script failed before the install was killed", async () => {
-    const optRuns = (ctx: Project) => readFileSync(join(ctx.packageDir, "opt-runs.txt"), "utf8");
     await whileInstalling(
       async ({ ctx, kill, bun }) => {
         await kill();
@@ -3646,25 +3662,27 @@ describe.concurrent("scripts of a link: folder that did not finish (isolated)", 
         expect(await bun("install")).toMatchObject({ errors: [], exitCode: 0 });
         expect(optRuns(ctx)).toBe("opt\nopt\n");
       },
-      {
-        files: {
-          "package.json": { name: "foo", workspaces: ["packages/*"], trustedDependencies: ["opt"] },
-          "packages/w/package.json": {
-            name: "w",
-            version: "1.0.0",
-            optionalDependencies: { opt: "link:../../opt" },
-            scripts: gated.scripts,
-          },
-          "opt/package.json": {
-            name: "opt",
-            version: "1.0.0",
-            scripts: { postinstall: 'echo opt >> "$INIT_CWD/opt-runs.txt" && test -z "$OPT_FAIL"' },
-          },
-        },
-        env: { OPT_FAIL: "1" },
-      },
+      { files: optional, env: { OPT_FAIL: "1" } },
     );
   });
+
+  // The first install left the folder out and goes on. It does not keep the scripts to itself.
+  test.skipIf(isWindows)(
+    "an optional folder whose script failed is free for an install that runs meanwhile",
+    async () => {
+      await whileInstalling(
+        async ({ ctx, proc, release, bun }) => {
+          ctx.env.OPT_FAIL = "";
+          expect(await bun("install", "--filter", "b")).toMatchObject({ errors: [], exitCode: 0 });
+          expect(optRuns(ctx)).toBe("opt\nopt\n");
+
+          release("go");
+          expect(await proc.exited).toBe(0);
+        },
+        { files: optional, env: { OPT_FAIL: "1" }, args: ["--filter", "w"] },
+      );
+    },
+  );
 
   test.skipIf(isWindows)("an install that runs meanwhile leaves them to the first one", async () => {
     await whileInstalling(async ({ proc, release, bun }) => {
@@ -3676,18 +3694,57 @@ describe.concurrent("scripts of a link: folder that did not finish (isolated)", 
     });
   });
 
+  // Without the file these installs ran the scripts next to the first one. They still do.
+  test.skipIf(isWindows).each([
+    { title: "--force", files: {}, first: [], meanwhile: ["--force"] },
+    {
+      title: "an install of a workspace that does not link the folder yet",
+      files: { "package.json": workspaces, ...member("a"), ...member("b") },
+      first: ["--filter", "a"],
+      meanwhile: ["--filter", "b"],
+    },
+  ])("$title, while the first install runs them, runs them too", async ({ files, first, meanwhile }) => {
+    await whileInstalling(
+      async ({ proc, release, bun }) => {
+        expect(await bun("install", ...meanwhile)).toEqual(ranAndBuilt);
+
+        release("go");
+        expect(await proc.exited).toBe(0);
+        expect(await bun("install")).toEqual(nothingRan);
+      },
+      { files, args: first },
+    );
+  });
+
+  test.skipIf(isWindows)("bun ci runs them after an install that was killed", async () => {
+    await whileInstalling(
+      async ({ kill, bun }) => {
+        await kill();
+
+        expect(await bun("ci")).toEqual(ranAndBuilt);
+        expect(await bun("ci")).toEqual(nothingRan);
+      },
+      {
+        async before(ctx) {
+          expect((await ctx.bun("install", "--lockfile-only")).exitCode).toBe(0);
+        },
+      },
+    );
+  });
+
   // Appends a line to $RUNS and exits with $EXIT. The shell that runs scripts on Windows knows both.
   const counted = { name: "held", version: "1.0.0", scripts: { postinstall: 'echo held >> "$RUNS" && exit $EXIT' } };
-  async function install(ctx: Project, args: string[] = [], exit = 0) {
+  async function run(ctx: Project, args: string[], exit = 0) {
     const runs = join(ctx.packageDir, "runs.txt");
     Object.assign(ctx.env, { RUNS: runs, EXIT: String(exit) });
-    const { err, exitCode } = await ctx.bun("install", ...args);
+    const { err, exitCode } = await ctx.bun(...args);
     return {
-      errors: splitErrLines(err).filter(line => line.startsWith("error:")),
+      errors: splitErrLines(err).filter(line => /^(error|warn):/.test(line)),
       runs: existsSync(runs) ? readFileSync(runs, "utf8").split(/\s+/).filter(Boolean).length : 0,
       exitCode,
     };
   }
+  const install = (ctx: Project, args: string[] = [], exit = 0) => run(ctx, ["install", ...args], exit);
 
   // The failed install takes away the link of `a` only: `b` is not one of its workspaces.
   test("a script that fails under --force --filter is run again for every workspace", async () => {
@@ -3720,14 +3777,44 @@ describe.concurrent("scripts of a link: folder that did not finish (isolated)", 
     expect(await install(ctx)).toEqual({ errors: [], runs: 1, exitCode: 0 });
   });
 
+  // A frozen install runs no script of a package that is in place, also when its name is trusted
+  // only now. The plain install after it does, once.
+  test.each([
+    { title: "bun ci", frozen: ["ci"] },
+    { title: "--frozen-lockfile", frozen: ["install", "--frozen-lockfile"] },
+    { title: "--production", frozen: ["install", "--production"] },
+  ])(
+    "a folder that is trusted after it was linked: $title leaves its scripts to a plain install",
+    async ({ frozen }) => {
+      using ctx = await project({ "package.json": untrusted, "held/package.json": counted });
+      expect(await install(ctx)).toEqual({ errors: [], runs: 0, exitCode: 0 });
+
+      await writeFile(ctx.packageJson, JSON.stringify(root));
+      expect(await run(ctx, frozen)).toEqual({ errors: [], runs: 0, exitCode: 0 });
+      expect(await install(ctx)).toEqual({ errors: [], runs: 1, exitCode: 0 });
+      expect(await install(ctx)).toEqual({ errors: [], runs: 1, exitCode: 0 });
+    },
+  );
+
   // A node_modules of a version that did not write the file has the links and nothing else.
-  test("a linked folder without the file: its scripts run once", async () => {
+  test("a linked folder without the file: a plain install runs its scripts once", async () => {
     using ctx = await project({ "package.json": root, "held/package.json": counted });
     expect(await install(ctx)).toEqual({ errors: [], runs: 1, exitCode: 0 });
     expect(await readdirSorted(records(ctx))).toHaveLength(1);
 
     await rm(records(ctx), { recursive: true });
+    expect(await install(ctx, ["--frozen-lockfile"])).toEqual({ errors: [], runs: 1, exitCode: 0 });
     expect(await install(ctx)).toEqual({ errors: [], runs: 2, exitCode: 0 });
+    expect(await install(ctx)).toEqual({ errors: [], runs: 2, exitCode: 0 });
+  });
+
+  test("--force --ignore-scripts over the links does not say that the scripts finished", async () => {
+    using ctx = await project({ "package.json": root, "held/package.json": counted });
+    expect(await install(ctx)).toEqual({ errors: [], runs: 1, exitCode: 0 });
+
+    await rm(records(ctx), { recursive: true });
+    expect(await install(ctx, ["--force", "--ignore-scripts"])).toEqual({ errors: [], runs: 1, exitCode: 0 });
+    expect(existsSync(records(ctx))).toBe(false);
     expect(await install(ctx)).toEqual({ errors: [], runs: 2, exitCode: 0 });
   });
 
@@ -3737,45 +3824,67 @@ describe.concurrent("scripts of a link: folder that did not finish (isolated)", 
     expect(existsSync(records(ctx))).toBe(false);
   });
 
-  // A file is where the directory of the files belongs, so none can be made.
-  test("a file that cannot be written: a warning, and every install runs them", async () => {
-    using ctx = await project({ "package.json": root, "held/package.json": counted });
-    expect(await install(ctx)).toEqual({ errors: [], runs: 1, exitCode: 0 });
-    await rm(records(ctx), { recursive: true });
-    await writeFile(records(ctx), "");
+  test("bun pm trust in a project of the hoisted linker makes no file", async () => {
+    using ctx = await setupScriptPackages("hoisted", {});
+    await write(ctx.packageJson, JSON.stringify(untrusted));
+    await write(join(ctx.packageDir, "held", "package.json"), JSON.stringify(counted));
+    expect(await install(ctx)).toEqual({ errors: [], runs: 0, exitCode: 0 });
 
-    for (const runs of [2, 3]) {
-      Object.assign(ctx.env, { RUNS: join(ctx.packageDir, "runs.txt"), EXIT: "0" });
-      const { err, exitCode } = await ctx.bun("install");
-      expect(splitErrLines(err).filter(line => line.startsWith("warn:"))).toEqual([
-        expect.stringMatching(
-          /^warn: the lifecycle scripts of held cannot be recorded as finished, so the next install runs them again: /,
-        ),
-      ]);
-      expect(readFileSync(join(ctx.packageDir, "runs.txt"), "utf8").split(/\s+/).filter(Boolean)).toHaveLength(runs);
-      expect(exitCode).toBe(0);
-    }
+    expect(await run(ctx, ["pm", "trust", "held"])).toEqual({ errors: [], runs: 1, exitCode: 0 });
+    expect(existsSync(ctx.installed(".bun"))).toBe(false);
+    expect(await install(ctx)).toEqual({ errors: [], runs: 1, exitCode: 0 });
   });
 
-  // While the file says that they finished, they do not run again. Root can write to any file.
-  test.skipIf(isWindows || process.getuid?.() === 0)(
-    "a file that cannot be emptied: --force fails and runs nothing",
-    async () => {
-      using ctx = await project({ "package.json": root, "held/package.json": counted });
-      expect(await install(ctx)).toEqual({ errors: [], runs: 1, exitCode: 0 });
-      const [name] = await readdirSorted(records(ctx));
-      chmodSync(join(records(ctx), name), 0o444);
+  // The name of the file does not grow with the name of the package.
+  test("a package name and a link: path of 290 bytes together", async () => {
+    const name = `@${Buffer.alloc(90, "s")}/${Buffer.alloc(95, "n")}`;
+    const folder = Buffer.alloc(100, "d").toString();
+    using ctx = await project({
+      "package.json": { name: "foo", dependencies: { [name]: `link:./${folder}` }, trustedDependencies: [name] },
+      [`${folder}/package.json`]: { ...counted, name },
+    });
+    expect(await install(ctx)).toEqual({ errors: [], runs: 1, exitCode: 0 });
+    expect(await install(ctx)).toEqual({ errors: [], runs: 1, exitCode: 0 });
+  });
 
-      const { err, exitCode } = await ctx.bun("install", "--force");
-      expect(err).toContain("EACCES");
-      expect(err).toContain("failed to link package: held@link:./held");
-      expect(readFileSync(join(ctx.packageDir, "runs.txt"), "utf8")).toBe("held\n");
-      expect(exitCode).toBe(1);
-    },
-  );
+  // Where no file can be made, a link says that the scripts ran, as it did before there was a file.
+  test("a file in the place of the directory: the links decide", async () => {
+    using ctx = await project({ "package.json": root, "held/package.json": counted });
+    expect(await install(ctx)).toEqual({ errors: [], runs: 1, exitCode: 0 });
+    await rm(records(ctx), { recursive: true, force: true });
+    await writeFile(records(ctx), "");
+
+    expect(await install(ctx)).toEqual({ errors: [], runs: 1, exitCode: 0 });
+    await rm(ctx.installed("held"));
+    expect(await install(ctx)).toEqual({ errors: [], runs: 2, exitCode: 0 });
+    expect(await install(ctx)).toEqual({ errors: [], runs: 2, exitCode: 0 });
+  });
+
+  // A link in `node_modules/.bun` came with the project. Nothing is written through it.
+  test.skipIf(isWindows)("a link in the place of the directory, or of the file, is replaced", async () => {
+    using ctx = await project({ "package.json": root, "held/package.json": counted });
+    expect(await install(ctx)).toEqual({ errors: [], runs: 1, exitCode: 0 });
+    const [name] = await readdirSorted(records(ctx));
+    const [outside, other] = [join(ctx.packageDir, "outside"), join(ctx.packageDir, "other.txt")];
+    await mkdir(outside);
+    await writeFile(other, "not a file of bun\n");
+
+    await rm(records(ctx), { recursive: true });
+    await symlink(outside, records(ctx));
+    expect(await install(ctx)).toEqual({ errors: [], runs: 2, exitCode: 0 });
+    expect(await readdirSorted(outside)).toEqual([]);
+    expect(await readdirSorted(records(ctx))).toEqual([name]);
+
+    await rm(join(records(ctx), name));
+    await symlink(other, join(records(ctx), name));
+    expect(await install(ctx)).toEqual({ errors: [], runs: 3, exitCode: 0 });
+    expect(await install(ctx, ["--force"])).toEqual({ errors: [], runs: 4, exitCode: 0 });
+    expect(lstatSync(join(records(ctx), name)).isFile()).toBe(true);
+    expect(readFileSync(other, "utf8")).toBe("not a file of bun\n");
+  });
 
   // PATH_MAX is 4096 on Linux. The folder and the link to it fit, the file does not.
-  test.skipIf(!isLinux)("a project so deep that the file has no room: a warning, and they run", async () => {
+  test.skipIf(!isLinux)("a project so deep that the file has no room: the links decide", async () => {
     using ctx = await setupScriptPackages("isolated", {});
     const projectBytes = 4096 - 45;
     let project = ctx.packageDir;
@@ -3786,32 +3895,38 @@ describe.concurrent("scripts of a link: folder that did not finish (isolated)", 
     await write(join(project, "held", "package.json"), JSON.stringify(counted));
 
     const runs = join(ctx.packageDir, "runs.txt");
-    await using proc = spawn({
-      cmd: [bunExe(), "install", "--linker=isolated"],
-      cwd: project,
-      env: { ...ctx.env, RUNS: runs, EXIT: "0" },
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(splitErrLines(err).filter(line => /^(warn|error):/.test(line))).toEqual([
-      expect.stringMatching(/^warn: the lifecycle scripts of held cannot be recorded as finished, .*ENAMETOOLONG/),
-    ]);
-    expect(readFileSync(runs, "utf8")).toBe("held\n");
-    expect(exitCode).toBe(0);
+    for (const _ of [1, 2]) {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--linker=isolated"],
+        cwd: project,
+        env: { ...ctx.env, RUNS: runs, EXIT: "0" },
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(splitErrLines(err).filter(line => /^(warn|error):/.test(line))).toEqual([]);
+      expect(readFileSync(runs, "utf8")).toBe("held\n");
+      expect(exitCode).toBe(0);
+    }
   });
 
-  // The script finds its own run unfinished. Three levels down it fails.
-  test.skipIf(isWindows)("a script that runs bun install in the project is not started again", async () => {
+  // The script finds its own run unfinished, and the lock taken. Three levels down it fails.
+  test("a script that runs bun install in the project is not started again", async () => {
     using ctx = await project({
       "package.json": root,
-      "held/package.json": {
-        ...counted,
-        scripts: {
-          postinstall: 'echo held >> "$RUNS" && test $(wc -l < "$RUNS") -lt 4 && cd "$INIT_CWD" && "$NESTED" install',
-        },
-      },
+      "held/package.json": { ...counted, scripts: { postinstall: '"$NESTED" nested.js' } },
+      "held/nested.js": `
+        const { appendFileSync, readFileSync } = require("fs");
+        appendFileSync(process.env.RUNS, "held\\n");
+        if (readFileSync(process.env.RUNS, "utf8").split("\\n").length > 4) process.exit(1);
+        const nested = Bun.spawnSync({
+          cmd: [process.execPath, "install"],
+          cwd: process.env.INIT_CWD,
+          stdio: ["ignore", "ignore", "ignore"],
+        });
+        process.exit(nested.exitCode);
+      `,
     });
     ctx.env.NESTED = bunExe();
     expect(await install(ctx)).toEqual({ errors: [], runs: 1, exitCode: 0 });

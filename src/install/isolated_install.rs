@@ -1654,14 +1654,14 @@ fn move_or_delete(from: &bun_core::ZStr, to: &bun_core::ZStr) -> sys::Result<()>
     Err(err)
 }
 
-/// The stat of `path`, links followed. Fails unless that is a directory.
-fn stat_directory(path: &bun_core::ZStr) -> sys::Result<sys::Stat> {
+/// Fails unless `path`, links followed, is a directory. Returns its stat where the check makes one.
+fn expect_directory(path: &bun_core::ZStr) -> sys::Result<Option<sys::Stat>> {
     // `exists_at_type` reports a junction itself, so a dangling one would pass.
     #[cfg(windows)]
     {
         use bun_sys::FdExt as _;
         sys::openat(Fd::cwd(), path, sys::O::RDONLY | sys::O::DIRECTORY, 0).map(|fd| fd.close())?;
-        sys::stat(path)
+        Ok(None)
     }
     #[cfg(not(windows))]
     {
@@ -1669,20 +1669,19 @@ fn stat_directory(path: &bun_core::ZStr) -> sys::Result<sys::Stat> {
         if !sys::S::ISDIR(stat.st_mode as _) {
             return Err(sys::Error::from_code(sys::E::ENOTDIR, sys::Tag::fstatat));
         }
-        Ok(stat)
+        Ok(Some(stat))
     }
 }
 
-/// `bun pm trust` ran the lifecycle scripts of the `link:` package `pkg_id`: an install with the
-/// isolated linker does not owe them any more.
+/// `bun pm trust` ran the lifecycle scripts of the `link:` package `pkg_id` in a project of the
+/// isolated linker: an install does not owe them any more.
 pub fn link_scripts_finished(lockfile: &Lockfile, pkg_id: PackageID) {
-    match installer::LinkScripts::of(lockfile, pkg_id).create(0) {
-        // Without `node_modules/.bun`, the project is the other linker's.
-        Err(err) if err.get_errno() != sys::E::ENOENT => {
-            let name = lockfile.str(&lockfile.packages.items_name()[pkg_id as usize]);
-            installer::LinkScripts::warn_unrecorded(name, &err);
-        }
-        _ => {}
+    // No install looked at `node_modules/.bun` here. Nothing is written through a link to it.
+    let mut store = AbsPath::init_top_level_dir();
+    store.append(b"node_modules/.bun").assume_ok();
+    if installer::is_link(store.slice_z()) == Some(false) {
+        let _ =
+            installer::LinkScripts::of(lockfile, pkg_id).create(lockfile, pkg_id, sys::O::TRUNC);
     }
 }
 
@@ -2342,8 +2341,12 @@ pub(crate) fn install_isolated_packages(
                     // Same target check as the hoisted linker's `install_from_link`.
                     let mut link_target = bun_paths::AutoAbsPath::init_top_level_dir();
                     installer.append_store_path(&mut link_target, entry_id);
-                    match stat_directory(link_target.slice_z()) {
-                        Ok(target) => installer.start_link_task(entry_id, &target),
+                    match expect_directory(link_target.slice_z()) {
+                        Ok(stat) => installer.start_link_task(
+                            entry_id,
+                            link_target.slice_z(),
+                            stat.as_ref(),
+                        ),
                         Err(err) => installer.on_task_fail(entry_id, &TaskError::LinkPackage(err)),
                     }
                 }

@@ -106,7 +106,7 @@ In the name and the resolution, `/`, `\`, `:`, `#` and `?` become `+`:
 - A tarball's directory ends in the first 16 hex digits of the hash that `bun.lock` records for it, so another build at the same path or URL gets another directory.
 - Credentials and the query string of a URL are left out. 16 hex digits derived from the full URL take their place.
 - The root package, workspace packages and `link:` dependencies have no store directory. Dependents link to their folders.
-- A `link:` dependency in `trustedDependencies` has a file in `node_modules/.bun/.link-scripts`. Bun writes to it after the last lifecycle script of the linked directory. While the file is empty or missing, the next install runs those scripts.
+- A `link:` dependency in `trustedDependencies` has a file in `node_modules/.bun/.link-scripts`. The install that runs the lifecycle scripts of the linked directory writes to it after the last one. An empty file means that an install did not finish them: the next install that runs scripts runs them again.
 
 This describes the current layout. It can change between Bun versions.
 

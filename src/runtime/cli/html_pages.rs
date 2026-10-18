@@ -46,15 +46,11 @@ fn names_file(cwd: &[u8], text: &[u8]) -> bool {
         return false;
     }
     let mut buf = bun_paths::path_buffer_pool::get();
-    let room = buf.len() - 1;
     let Some(path) =
-        resolve_path::join_abs_string_buf_checked::<Auto>(cwd, &mut buf[..room], &[text])
+        resolve_path::join_abs_string_buf_z_checked::<Auto>(cwd, &mut buf[..], &[text])
     else {
         return false;
     };
-    let len = path.len();
-    buf[len] = 0;
-    let path = bun_core::ZStr::from_buf(&buf[..], len);
     matches!(
         bun_sys::exists_at_type(bun_sys::Fd::cwd(), path),
         Ok(bun_sys::ExistsAtType::File)

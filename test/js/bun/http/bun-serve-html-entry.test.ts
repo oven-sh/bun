@@ -1,8 +1,8 @@
 import type { Subprocess } from "bun";
 import { htmlPagesOf } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { symlinkSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir } from "harness";
+import { chmodSync, symlinkSync } from "node:fs";
 import { join, relative } from "node:path";
 
 async function getServerUrl(process: Subprocess<any, "pipe", any>) {
@@ -745,7 +745,7 @@ async function pagesServed(root: string, cwd: string, how: string[], args: strin
   const pages: string[] = stdout ? JSON.parse(stdout) : [];
   return {
     pages: pages.map(page => relative(root, page).replaceAll("\\", "/")).sort(),
-    error: /Cannot find module|Module not found|ENOENT/.exec(stderr)?.[0],
+    error: /Cannot find module|Module not found|ENOENT|EACCES/.exec(stderr)?.[0],
     exitCode,
   };
 }
@@ -852,6 +852,24 @@ test.concurrent.skipIf(isWindows)("bun './pages/*.html' beside a page named *.ht
   });
   const result = await pagesServed(String(root), ".", [], ["./pages/*.html"]);
   expect(result).toEqual({ pages: ["pages/*.html", "pages/a.html", "pages/b.html"], error: undefined, exitCode: 0 });
+});
+
+// The error of a search ends the run. The page that the search found before it is not served. The superuser can read
+// every directory.
+test.concurrent.skipIf(isWindows || isRoot)("bun './**/*.html' with a directory that cannot be read", async () => {
+  using root = tempDir("html-entry-locked", {
+    "print-pages.js": printPages,
+    "index.html": page("index"),
+    "locked/other.html": page("other"),
+  });
+  const locked = join(String(root), "locked");
+  chmodSync(locked, 0o000);
+  try {
+    const result = await pagesServed(String(root), ".", [], ["./**/*.html"]);
+    expect(result).toEqual({ pages: [], error: "EACCES", exitCode: 1 });
+  } finally {
+    chmodSync(locked, 0o755);
+  }
 });
 
 // The working directory and the path of the page each take more than half of the longest path that Linux has.

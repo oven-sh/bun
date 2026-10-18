@@ -13,7 +13,7 @@ const {
   printBannerAndHandleShortcuts,
 } = require("internal/serve_cli");
 
-// `undefined` if `arg` is the path of a page, else the pages that match it. `pages_of` in check_command.rs asks too.
+// `undefined` if `arg` is the path of a page, else the pages that match it.
 const pagesOf = $bindgen("html_pages.bind.ts", "pagesOf");
 
 const env = Bun.env;

@@ -206,9 +206,7 @@ pub trait PathUnit: crate::PathChar {
     fn buffer_as_mut_slice(buf: &mut Self::Buffer) -> &mut [Self];
     fn buffer_as_slice(buf: &Self::Buffer) -> &[Self];
 
-    /// `bun.windows.long_path_prefix{,_u8}` lifted into the unit trait so
-    /// `crate::windows::long_path_prefix_for::<U>()` can pick the right width without a runtime
-    /// switch.
+    /// `\\?\` in this unit.
     const LONG_PATH_PREFIX: &'static [Self];
 
     // ── identity downcasts ────────────────────────────────────────────────
@@ -422,18 +420,6 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     }
 }
 
-/// Width-generic `bun.strings.basename`.
-/// Platform-split: POSIX recognizes only `/`; Windows recognizes `/`, `\`, and
-/// the `X:` drive designator at index 1.
-#[inline]
-fn basename_generic<U: PathUnit>(path: &[U]) -> &[U] {
-    if cfg!(windows) {
-        bun_core::strings::basename_windows(path)
-    } else {
-        bun_core::strings::basename_posix(path)
-    }
-}
-
 /// Width-generic `bun.Dirname.dirname`.
 /// Platform-split: POSIX considers only `/`; Windows adds
 /// disk-designator handling.
@@ -644,20 +630,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         this
     }
 
-    pub fn init_top_level_dir_long_path() -> Self {
-        let trimmed = Self::trimmed_top_level_dir();
-        let mut this = Self::init();
-
-        #[cfg(windows)]
-        {
-            this.buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
-        }
-
-        this.buf_append_input(trimmed, false);
-
-        this
-    }
-
     pub fn init_fd_path(fd: Fd) -> crate::Result<Self> {
         match Kind::from_u8(KIND) {
             Kind::Abs => {}
@@ -768,18 +740,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         Ok(trimmed)
     }
 
-    pub fn from_long_path<C: PathUnit>(input: &[C]) -> options::Result<Self> {
-        let trimmed = Self::trim_input_for_kind(input)?;
-        let mut this = Self::init();
-        #[cfg(windows)]
-        {
-            this.buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
-        }
-
-        this.buf_append_input(trimmed, false);
-        Ok(this)
-    }
-
     pub fn from<C: PathUnit>(input: &[C]) -> options::Result<Self> {
         let trimmed = Self::trim_input_for_kind(input)?;
         let mut this = Self::init();
@@ -797,58 +757,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         }
     }
 
-    pub fn basename(&self) -> &[U] {
-        basename_generic(self.slice())
-    }
-
-    pub fn dirname(&self) -> Option<&[U]> {
-        dirname_generic(self.slice())
-    }
-
     pub fn slice(&self) -> &[U] {
         // match BufType::Pool
         &U::buffer_as_slice(&self._buf.pooled)[..self._buf.len]
-    }
-
-    /// Reinterpret this path under a different `SEP_OPT` const parameter.
-    /// All `SEP_OPT` instantiations are
-    /// structurally identical at runtime — the option only affects how
-    /// `append`/`append_join` normalize separators going forward — so
-    /// passing a built path to a callee typed with a different `sep`
-    /// option is sound. Rust's const-generic monomorphization makes them
-    /// nominally distinct, hence this explicit conversion.
-    #[inline]
-    pub fn into_sep<const NEW_SEP: u8>(self) -> Path<U, KIND, NEW_SEP, CHECK> {
-        self.reinterpret()
-    }
-
-    /// [`Self::into_sep`] for `CHECK`: from here on over-long input is `Err(MaxPathExceeded)`.
-    #[inline]
-    pub fn into_checked(self) -> Path<U, KIND, SEP_OPT, { CheckLength::CHECK }> {
-        self.reinterpret()
-    }
-
-    #[inline]
-    fn reinterpret<const NEW_SEP: u8, const NEW_CHECK: u8>(
-        self,
-    ) -> Path<U, KIND, NEW_SEP, NEW_CHECK> {
-        // Explicit field move (not `transmute`): `Path`/`Buf` are `repr(Rust)`, so
-        // Rust gives no layout-compat guarantee between distinct const-generic
-        // instantiations. Rebuilding field-by-field is layout-agnostic and
-        // optimizes to the same no-op move.
-        let mut this = ManuallyDrop::new(self);
-        let len = this._buf.len;
-        // SAFETY: `pooled` was initialized in `init()` and is taken exactly once
-        // here; `this` is wrapped in `ManuallyDrop` so `Path::drop` will not run
-        // and observe the now-uninitialized field.
-        let pooled = unsafe { ManuallyDrop::take(&mut this._buf.pooled) };
-        Path {
-            _buf: Buf {
-                pooled: ManuallyDrop::new(pooled),
-                len,
-            },
-            _unit: PhantomData,
-        }
     }
 
     pub fn slice_z(&mut self) -> &U::ZSlice {
@@ -858,11 +769,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         buf[len] = U::from_u8(0);
         // SAFETY: buf[len] == 0 written above; buf outlives the returned borrow.
         unsafe { U::zslice_from_raw(buf.as_ptr(), len) }
-    }
-
-    pub fn buf(&mut self) -> &mut [U] {
-        // match BufType::Pool
-        U::buffer_as_mut_slice(&mut self._buf.pooled)
     }
 
     pub fn set_length(&mut self, new_length: usize) {
@@ -897,11 +803,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             .copy_from_slice(&U::buffer_as_slice(&self._buf.pooled)[..len]);
         cloned._buf.len = len;
         cloned
-    }
-
-    #[inline]
-    pub(crate) fn clear(&mut self) {
-        self._buf.set_length(0);
     }
 
     pub fn append<C: PathUnit>(&mut self, input: &[C]) -> options::Result<()> {
@@ -1079,155 +980,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             self._buf.len = trimmed.len();
         }
         Ok(())
-    }
-
-    pub fn append_join<C: PathUnit>(&mut self, part: &[C]) -> options::Result<()> {
-        self.assert_joinable();
-
-        if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath
-            && self.len() + 1 + part.len() >= U::MAX_PATH
-        {
-            return Err(PathError::MaxPathExceeded);
-        }
-
-        // The four (C, U) arms are dispatched below via TypeId checks, which
-        // const-fold to a single arm per monomorphization.
-        use core::any::TypeId;
-        let c_is_u8 = TypeId::of::<C>() == TypeId::of::<u8>();
-        let u_is_u8 = TypeId::of::<U>() == TypeId::of::<u8>();
-
-        match (c_is_u8, u_is_u8) {
-            (true, true) => {
-                // part: &[u8], unit: u8
-                let mut cwd_path_buf = crate::path_buffer_pool::get();
-                // RAII guard puts back on Drop.
-                let current_slice: &[u8] = U::id_u8(self.slice());
-                let cwd_path = &mut cwd_path_buf[..current_slice.len()];
-                cwd_path.copy_from_slice(current_slice);
-
-                let pooled: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
-                let part_u8: &[u8] = C::id_u8(part);
-                let joined = sep_dispatch!(join_string_buf(pooled, &[cwd_path, part_u8]));
-
-                let trimmed = trim_input(TrimInputKind::Abs, joined);
-                self._buf.len = trimmed.len();
-            }
-            (true, false) => {
-                // part: &[u8], unit: u16 → transcode then recurse
-                let mut path_buf = crate::w_path_buffer_pool::get();
-                let part_u8: &[u8] = C::id_u8(part);
-                let converted =
-                    strings::convert_utf8_to_utf16_in_buffer(&mut path_buf[..], part_u8);
-                return self.append_join::<u16>(converted);
-            }
-            (false, false) => {
-                // part: &[u16], unit: u16
-                let mut cwd_path_buf = crate::w_path_buffer_pool::get();
-                let current_slice: &[u16] = U::id_u16(self.slice());
-                let cwd_path = &mut cwd_path_buf[..current_slice.len()];
-                cwd_path.copy_from_slice(current_slice);
-
-                let pooled: &mut [u16] =
-                    U::id_u16_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
-                let part_u16: &[u16] = C::id_u16(part);
-                let joined = sep_dispatch!(join_string_buf_w_same(pooled, &[cwd_path, part_u16]));
-                let trimmed = trim_input(TrimInputKind::Abs, joined);
-                self._buf.len = trimmed.len();
-            }
-            (false, true) => {
-                // part: &[u16], unit: u8 → transcode then recurse
-                let mut path_buf = crate::path_buffer_pool::get();
-                let part_u16: &[u16] = C::id_u16(part);
-                let converted =
-                    strings::convert_utf16_to_utf8_in_buffer(&mut path_buf[..], part_u16);
-                return self.append_join::<u8>(converted);
-            }
-        }
-        Ok(())
-    }
-
-    pub fn relative<const K2: u8>(
-        &self,
-        to: &Path<U, K2, SEP_OPT, CHECK>,
-    ) -> RelPath<U, SEP_OPT, CHECK> {
-        // `resolve_path::relative_buf_z` is `&[u8]`-only, so we
-        // TypeId-dispatch: u8 → identity-cast and call; u16 → transcode through
-        // temp u8 buffers and back.
-        use core::any::TypeId;
-        let mut output: RelPath<U, SEP_OPT, CHECK> = Path::init();
-
-        if TypeId::of::<U>() == TypeId::of::<u8>() {
-            let pooled: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut output._buf.pooled));
-            let from_u8: &[u8] = U::id_u8(self.slice());
-            let to_u8: &[u8] = U::id_u8(to.slice());
-            let rel = path::relative_buf_z(pooled, from_u8, to_u8);
-            let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
-            output._buf.len = trimmed.len();
-        } else {
-            // U == u16: transcode from/to → u8 scratch buffers, compute the
-            // relative path in u8-space, then transcode back into the u16
-            // output buffer. Mirrors the cross-width arms in `append_join`.
-            // Three pooled buffers + two transcodes — only ever reached on
-            // Windows wide-path callers.
-            let from_u16: &[u16] = U::id_u16(self.slice());
-            let to_u16: &[u16] = U::id_u16(to.slice());
-
-            let mut from_buf = crate::path_buffer_pool::get();
-            let mut to_buf = crate::path_buffer_pool::get();
-            let mut rel_buf = crate::path_buffer_pool::get();
-
-            let from_u8 = strings::convert_utf16_to_utf8_in_buffer(&mut from_buf[..], from_u16);
-            let to_u8 = strings::convert_utf16_to_utf8_in_buffer(&mut to_buf[..], to_u16);
-
-            let rel = path::relative_buf_z(&mut rel_buf[..], from_u8, to_u8);
-            let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
-
-            let pooled: &mut [u16] = U::id_u16_mut(U::buffer_as_mut_slice(&mut output._buf.pooled));
-            let converted = strings::convert_utf8_to_utf16_in_buffer(pooled, trimmed);
-            output._buf.len = converted.len();
-        }
-        output
-    }
-
-    pub fn undo(&mut self, n_components: usize) {
-        let min_len = match Kind::from_u8(KIND) {
-            Kind::Abs => root_len(self.slice()).unwrap_or(0),
-            Kind::Rel => 0,
-            Kind::Any => {
-                if self.is_absolute() {
-                    root_len(self.slice()).unwrap_or(0)
-                } else {
-                    0
-                }
-            }
-        };
-
-        let mut i: usize = 0;
-        while i < n_components {
-            let slash = match PathSeparators::from_u8(SEP_OPT) {
-                PathSeparators::Any => self
-                    .slice()
-                    .iter()
-                    .rposition(|c| c.eq_ascii(SEP_POSIX) || c.eq_ascii(SEP_WINDOWS)),
-                PathSeparators::Auto => self.slice().iter().rposition(|c| c.eq_ascii(SEP)),
-                PathSeparators::Posix => self.slice().iter().rposition(|c| c.eq_ascii(SEP_POSIX)),
-                PathSeparators::Windows => {
-                    self.slice().iter().rposition(|c| c.eq_ascii(SEP_WINDOWS))
-                }
-            };
-            let Some(slash) = slash else {
-                self._buf.set_length(min_len);
-                return;
-            };
-
-            if slash < min_len {
-                self._buf.set_length(min_len);
-                return;
-            }
-
-            self._buf.set_length(slash);
-            i += 1;
-        }
     }
 
     pub fn save(&mut self) -> ResetScope<'_, U, KIND, SEP_OPT, CHECK> {

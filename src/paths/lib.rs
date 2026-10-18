@@ -366,38 +366,6 @@ pub use path::{
     options as path_options,
 };
 
-/// Generic surface for the `buf` parameter on path-builder helpers
-/// (`appendStorePath`, `appendGlobalStoreEntryPath`, etc.). Callers pass
-/// `Path<U, KIND, SEP, CHECK>` for arbitrary const params, so expose the
-/// three operations the helpers need behind a trait and blanket-impl it for
-/// every monomorphisation.
-pub trait PathLike {
-    fn clear(&mut self);
-    fn append(&mut self, bytes: &[u8]);
-    fn append_fmt(&mut self, args: core::fmt::Arguments<'_>);
-}
-// Bound to `CheckLength::ASSUME` only. This prevents check-mode callers from
-// silently swallowing `MaxPathExceeded` through the duck-typed surface; they
-// must use `Path::append`/`?` directly.
-impl<U: PathUnit, const KIND: u8, const SEP: u8> PathLike
-    for path::Path<U, KIND, SEP, { path::options::CheckLength::ASSUME }>
-{
-    #[inline]
-    fn clear(&mut self) {
-        path::Path::clear(self)
-    }
-    #[inline]
-    fn append(&mut self, bytes: &[u8]) {
-        use path::options::AssumeOk as _;
-        path::Path::append(self, bytes).assume_ok()
-    }
-    #[inline]
-    fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) {
-        use path::options::AssumeOk as _;
-        path::Path::append_fmt(self, args).assume_ok()
-    }
-}
-
 /// Width-generic dirname
 /// (POSIX `/` on Unix, disk-designator-aware on Windows). Backed by
 /// `path::dirname_generic`.
@@ -464,13 +432,6 @@ pub mod windows {
     pub(crate) const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";
     /// `\\?\` — Win32 long-path prefix (UTF-8/ASCII).
     pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
-
-    /// Per-width long-path prefix so `Path::<U, ..>::from_long_path` stays width-generic.
-    #[inline]
-    #[cfg(windows)]
-    pub(crate) fn long_path_prefix_for<U: crate::path::PathUnit>() -> &'static [U] {
-        U::LONG_PATH_PREFIX
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

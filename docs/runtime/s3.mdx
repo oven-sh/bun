@@ -578,7 +578,7 @@ await client.deleteBucket("tenant-42");
 
 `bucketExists` resolves to `true` on success and `false` when the bucket does not exist. It rejects on any other answer, with the S3 error code, for example `AccessDenied` for the bucket of another account.
 
-`createBucket` sends the `region` of the request as the `LocationConstraint` of the new bucket, as the AWS SDK does. It sends no constraint for `us-east-1`, which S3 refuses as a constraint, or for an endpoint that is not S3. The `acl` option is sent only when the call sets it: the ACL of the client is for its objects. With `virtualHostedStyle` and an `endpoint`, the bucket is part of the hostname, so the `name` argument is ignored.
+`createBucket` sends the `region` of the request as the `LocationConstraint` of the new bucket, as the AWS SDK does. It sends no constraint for `us-east-1`, which S3 refuses as a constraint, or for an endpoint that is not S3. The `acl` option is sent only when the call sets it: the ACL of the client is for its objects. With `virtualHostedStyle` and an `endpoint`, the bucket is the hostname, so a `name` for another bucket throws. A name with a slash throws too.
 
 The static forms take the credentials as the second argument: `S3Client.bucketExists(name, credentials)`, `S3Client.createBucket(name, credentials)`, and `S3Client.deleteBucket(name, credentials)`.
 

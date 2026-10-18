@@ -7099,24 +7099,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // real Expr.Data by contract.
         let value = define_data.value;
         match value {
-            js_ast::ExprData::EIdentifier(id) => {
-                // Identifier defines always carry a name. Match the
-                // contract so `handle_identifier`'s trailing `find_symbol`
-                // rebind runs against the *resolved* scope ref, not the
-                // define-time ref silently passed through with `None`.
+            js_ast::ExprData::EIdentifier(mut id) => {
+                // The define holds no ref, only a name. Resolve it here so
+                // `handle_identifier` checks the real symbol, not symbol 0.
                 let original_name: &[u8] = define_data
                     .original_name()
                     .expect("identifier define must have original_name");
                 // SAFETY: `define_data` borrows `p.define: &'a Define`; the
                 // backing `original_name` bytes live for `'a`. Erase the local
-                // borrow lifetime to satisfy `handle_identifier`'s
-                // `Option<&'a [u8]>` param.
+                // borrow lifetime to satisfy `find_symbol`'s `&'a [u8]` param.
                 let original_name: &'a [u8] =
                     unsafe { bun_collections::detach_lifetime(original_name) };
+                let result = self.find_symbol(loc, original_name).expect("unreachable");
+                id.ref_ = result.r#ref.with_user_bits_from(id.ref_);
                 return self.handle_identifier(
                     loc,
                     id,
-                    Some(original_name),
+                    None,
                     IdentifierOpts::new()
                         .with_assign_target(assign_target)
                         .with_is_delete_target(is_delete_target)

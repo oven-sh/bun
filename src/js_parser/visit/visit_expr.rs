@@ -253,14 +253,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Substitute user-specified defines for unbound symbols
         if p.symbols[e_.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
             && !result.is_inside_with_scope
-            && !is_delete_target
         {
             // `p.define: &'a Define` is `Copy`; hoist so the returned
             // `&DefineData` is tied to `'a`, not `&*p`, and `&mut self`
             // helpers (`value_for_define`) below need no lifetime laundering.
             let defines = p.define;
             if let Some(def) = defines.for_identifier(name) {
-                if !def.valueless() {
+                // `delete ident` is a strict mode error, `delete dot.chain` is not.
+                if !def.valueless() && (!is_delete_target || def.is_property_reference()) {
                     let newvalue: Expr =
                         p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
 
@@ -1340,11 +1340,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         in_.assign_target == js_ast::AssignTarget::None && !is_delete_target;
                     // Substitute user-specified defines. An identifier is a valid
                     // assignment target, a value is not. `delete ident` is a strict mode error.
-                    if !define.data.valueless()
-                        && (is_read
-                            || (!is_delete_target
-                                && matches!(define.data.value, Data::EIdentifier(_))))
-                    {
+                    let is_reference = matches!(define.data.value, Data::EIdentifier(_))
+                        && (!is_delete_target || define.data.is_property_reference());
+                    if !define.data.valueless() && (is_read || is_reference) {
                         *e = p.value_for_define(
                             expr.loc,
                             in_.assign_target,

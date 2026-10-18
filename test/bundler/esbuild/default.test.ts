@@ -4693,7 +4693,10 @@ describe.concurrent("bundler", () => {
   // `null = 0` is a syntax error. esbuild also logs an "assign-to-define"
   // warning there, bun does not. A define whose value is an identifier
   // (`d`, `e.f`, `g`, `h.i`) is substituted in both positions. A delete
-  // target is never substituted: `delete ident` is a strict mode error.
+  // target is substituted only for a property reference (`g`, `h.i`):
+  // `delete ident` is a strict mode error. The namespace import is the first
+  // symbol of write.js, so the substituted identifier must be resolved before
+  // the "Cannot assign to import" check runs.
   itBundled("default/DefineAssignWarning", {
     files: {
       "/read.js": /* js */ `
@@ -4704,7 +4707,10 @@ describe.concurrent("bundler", () => {
         capture(g);
         capture(h.i);
       `,
+      "/ns.js": /* js */ `export const k = 0;`,
       "/write.js": /* js */ `
+        import * as ns from "./ns.js";
+        capture(ns.k);
         capture(a = 1);
         capture(a += 1);
         capture(a++);
@@ -4720,8 +4726,10 @@ describe.concurrent("bundler", () => {
         capture(e.f = 8);
         capture(delete e.f);
         capture(g = 9);
+        capture(delete g);
         capture(h.i = 10);
-        console.log(a, globalThis.a, globalThis.ident, globalThis.b.c, globalThis.ident2);
+        capture(delete h.i);
+        console.log(a, globalThis.a, globalThis.ident, globalThis.b.c, globalThis.ident2, "chain" in globalThis.dot);
       `,
     },
     entryPoints: ["/read.js", "/write.js"],
@@ -4749,6 +4757,7 @@ describe.concurrent("bundler", () => {
     onAfterBundle(api) {
       expect(api.captureFile("/out/read.js")).toEqual(["null", "null", "ident", "ident2", "dot.chain", "dot.chain2"]);
       expect(api.captureFile("/out/write.js")).toEqual([
+        "k",
         "a = 1",
         "a += 1",
         "a++",
@@ -4762,7 +4771,9 @@ describe.concurrent("bundler", () => {
         "ident2 = 8",
         "delete e.f",
         "dot.chain = 9",
+        "delete dot.chain",
         "dot.chain2 = 10",
+        "delete dot.chain2",
       ]);
       const write = api.readFile("/out/write.js");
       expect(write).toContain("for (a in { 5: 0 })");
@@ -4772,7 +4783,7 @@ describe.concurrent("bundler", () => {
       file: "/test.js",
       // The reads of `a` and `b.c` are replaced with the define, the writes
       // went to the real globals.
-      stdout: "null 6 7 undefined 8",
+      stdout: "null 6 7 undefined 8 false",
     },
   });
   itBundled("default/KeepNamesTreeShaking", {

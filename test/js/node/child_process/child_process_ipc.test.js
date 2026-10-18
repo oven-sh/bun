@@ -90,21 +90,19 @@ test.concurrent("a child held only by process.channel.ref() leaves when the pare
 });
 
 test.concurrent.each([
-  [`process.on("message", () => {});`, true],
-  [`process.channel.ref();`, false],
-  [`process.channel.unref();`, false],
-])(
-  "a channel that could not be opened does not hold the event loop after %s, which warns: %p",
-  async (script, warns) => {
-    await using child = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, NODE_CHANNEL_FD: "99", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
-      stderr: "pipe",
-    });
-    expect((await child.stderr.text()).includes("Unable to start IPC")).toBe(warns);
-    expect(await child.exited).toBe(0);
-  },
-);
+  [`process.on("message", () => {});`, { stdout: "false undefined\n", warned: true, exitCode: 0 }],
+  [`process.channel.ref();`, { stdout: "true function\n", warned: false, exitCode: 0 }],
+  [`process.channel.unref();`, { stdout: "true function\n", warned: false, exitCode: 0 }],
+  [`process.channel.unref(); process.disconnect();`, { stdout: "false function\n", warned: true, exitCode: 0 }],
+])("a channel that could not be opened does not hold the event loop after %s", async (script, expected) => {
+  await using child = Bun.spawn({
+    cmd: [bunExe(), "-e", `${script} console.log(process.connected, typeof process.disconnect);`],
+    env: { ...bunEnv, NODE_CHANNEL_FD: "99", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  expect({ stdout, warned: stderr.includes("Unable to start IPC"), exitCode }).toEqual(expected);
+});
 
 test.concurrent("a message that arrives before there is a 'message' listener is kept for it", async () => {
   const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc-pending-messages-fixture.mjs`.env(bunEnv).text();

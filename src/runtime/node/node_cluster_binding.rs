@@ -269,22 +269,22 @@ pub(crate) fn handle_internal_message_primary(
 //
 
 /// The channel of `subprocess`, or without one this process's own, which is opened if it was not yet.
-fn with_channel(subprocess: Option<&Subprocess<'_>>, f: impl FnOnce(&SendQueue)) {
+fn with_channel(subprocess: Option<&Subprocess<'_>>, warn: bool, f: impl FnOnce(&SendQueue)) {
     if let Some(subprocess) = subprocess {
         if let Some(channel) = subprocess.ipc() {
             f(channel);
         }
     } else if let Some(instance) =
-        crate::ipc_host::get_ipc_instance_quietly(VirtualMachine::get().as_mut())
+        crate::ipc_host::get_ipc_instance(VirtualMachine::get().as_mut(), warn)
     {
-        // SAFETY: `get_ipc_instance_quietly` returns the live boxed instance that `CHANNEL` holds.
+        // SAFETY: `get_ipc_instance` returns the live boxed instance that `CHANNEL` holds.
         f(unsafe { (*instance).data() });
     }
 }
 
-/// The four methods of `Control`.
+/// The four methods of `Control`, which say nothing in Node where the channel cannot be opened.
 pub(crate) fn set_channel_ref(enabled: bool, counted: bool, subprocess: Option<&Subprocess<'_>>) {
-    with_channel(subprocess, |channel| {
+    with_channel(subprocess, false, |channel| {
         if counted {
             channel.ref_counted(if enabled { 1 } else { -1 });
         } else {
@@ -295,15 +295,12 @@ pub(crate) fn set_channel_ref(enabled: bool, counted: bool, subprocess: Option<&
 
 /// Node's `Pipe` has a ref from the start, which only the child drops: https://github.com/nodejs/node/blob/v26.3.0/lib/child_process.js#L181
 pub(crate) fn start_channel_with_ref(subprocess: &Subprocess<'_>) {
-    with_channel(Some(subprocess), SendQueue::start_with_ref);
+    with_channel(Some(subprocess), false, SendQueue::start_with_ref);
 }
 
 // HOST_EXPORT(Bun__setChannelListenerCount, c)
 pub(crate) fn set_channel_listener_count(count: i32) {
-    if let Some(instance) = crate::ipc_host::get_ipc_instance(VirtualMachine::get().as_mut()) {
-        // SAFETY: `get_ipc_instance` returns the live boxed instance that `CHANNEL` holds.
-        unsafe { (*instance).data() }.set_listener_count(count);
-    }
+    with_channel(None, true, |channel| channel.set_listener_count(count));
 }
 
 pub(crate) fn channel_ignore_one_disconnect_event_listener() {

@@ -802,10 +802,8 @@ impl DirEntry {
         if listed.st_dev == queried.st_dev && listed.st_ino == queried.st_ino {
             return CaseVerdict::Folds;
         }
-        // Either `query` is a distinct file the listing does not hold yet, or
-        // the mount folds case but hands every name its own inode (cifs
-        // `noserverino`, FUSE without `use_ino`). A third spelling that the
-        // listing does not hold tells them apart: only a folding mount opens it.
+        // Distinct inodes: a stale listing, or a folding mount that gives every
+        // name its own inode (cifs `noserverino`). Only the latter opens a third spelling.
         let mut buf = bun_paths::path_buffer_pool::get();
         let Some(third) = self.unlisted_spelling(query, listed_name, &mut buf[..]) else {
             return CaseVerdict::Exact;
@@ -817,9 +815,8 @@ impl DirEntry {
         }
     }
 
-    /// A spelling of `query` that differs from both `query` and `listed` and
-    /// is not in the listing: every letter flipped, else every letter upper,
-    /// else lower. A name with fewer than two letters has no such spelling.
+    /// A spelling of `query` that is neither `query`, `listed`, nor in the
+    /// listing. `None` for a name with fewer than two letters.
     #[cfg(not(windows))]
     fn unlisted_spelling<'b>(
         &self,

@@ -241,7 +241,8 @@ These are results only:
 | `b.record(T)`    | anything that is `IntoIterator` of `(key, T)` | an object with an own property for each pair; a key is UTF-8 and one that comes again takes the new value, `T` holds no JS value, and it is not a member or an alternative           |
 
 A body that returns `b.any` makes the value with what the generated code calls:
-`bindgen::to_js::record`, `to_js::array`, `to_js::utf8` and the others of that module.
+`bindgen::to_js::record`, `to_js::array`, `to_js::utf8` and the others of that module. An empty
+object is `heap.create_empty_object()`.
 
 ### Numbers
 

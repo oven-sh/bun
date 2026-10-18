@@ -1349,9 +1349,6 @@ export class RecordResultType extends ResultType {
   get tsType(): string {
     return `Record<string, ${this.value.tsType}>`;
   }
-  get rustIsCopy(): boolean {
-    return false;
-  }
   get dependencies(): readonly Type[] {
     return [this.value];
   }
@@ -1759,8 +1756,7 @@ export class Signature {
       `length: ${this.length} is not a count`,
     );
     for (const { name, type } of this.args) {
-      const result = resultTypeIn(type);
-      assert(!result, `${name}: ${result?.refusal}`);
+      refuseResultType(name, type);
       assert(
         !type.borrowsHeap || this.capability !== "js",
         `${name}: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read`,
@@ -1791,6 +1787,11 @@ function resultTypeIn(type: Type): ResultType | undefined {
     const found = resultTypeIn(dependency);
     if (found) return found;
   }
+}
+
+function refuseResultType(name: string, type: Type): void {
+  const result = resultTypeIn(type);
+  assert(!result, `${name}: ${result?.refusal}`);
 }
 
 /** Call a signature, or look at the kind of one more argument. */
@@ -1944,7 +1945,7 @@ export class Getter {
     this.throws = options.throws ?? false;
     this.hasSetter = options.setter ?? false;
     assert(!(options.cache && options.setter), `${name}: a cached getter has no setter`);
-    assert(!this.hasSetter || !resultTypeIn(this.type), `${name}: ${resultTypeIn(this.type)?.refusal}`);
+    if (this.hasSetter) refuseResultType(name, this.type);
     assert(!(isStatic && (options.cache || options.setter)), `${name}: a static getter has no cache and no setter`);
     assert(
       !this.type.holdsJSValue || this.capability !== "none",

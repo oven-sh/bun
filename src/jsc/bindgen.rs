@@ -87,16 +87,16 @@ impl<'a> JsHeap<'a> {
         ))
     }
 
-    /// An object as `{}` makes it.
-    #[inline]
-    pub fn create_empty_object(&self) -> JsLocal<'a, JSObject> {
-        JsLocal::from_raw(JSValue::create_empty_object(self.global_object(), 0))
-    }
-
     /// One of the strings every global object has.
     #[inline]
     pub fn common_string(&self, string: CommonString) -> JsLocal<'a, JSString> {
         JsLocal::from_raw(string.to_js(self.global_object()))
+    }
+
+    /// An object as `{}` makes it.
+    #[inline]
+    pub fn create_empty_object(&self) -> JsLocal<'a, JSObject> {
+        JsLocal::from_raw(JSValue::create_empty_object(self.global_object(), 0))
     }
 
     /// A `Uint8Array` whose bytes are whatever the allocator left there.

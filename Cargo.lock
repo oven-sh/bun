@@ -1439,21 +1439,16 @@ name = "bun_router"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_alloc",
  "bun_ast",
  "bun_collections",
  "bun_core",
- "bun_errno",
  "bun_http_types",
  "bun_paths",
  "bun_ptr",
- "bun_resolver",
  "bun_sys",
  "bun_url",
  "bun_wyhash",
- "scopeguard",
  "strum",
- "thiserror",
 ]
 
 [[package]]

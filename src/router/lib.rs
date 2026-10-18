@@ -1,8 +1,5 @@
 #![warn(unused_must_use)]
 
-pub mod error;
-pub use error::{Error, Result};
-
 // This is a Next.js-compatible file-system router.
 // It uses the filesystem to infer entry points.
 // Despite being Next.js-compatible, it's not tied to Next.js.
@@ -10,37 +7,22 @@ pub use error::{Error, Result};
 // All it does is resolve URL paths to the appropriate entry point and parse URL params/query.
 use core::cmp::Ordering;
 use core::ptr::NonNull;
-use std::cell::RefCell;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
-use bun_core::strings;
-use bun_paths::{self, PathBuffer, SEP, SEP_STR};
+use bun_core::{ZStr, strings};
+use bun_paths::SEP;
+use bun_ptr::RawSlice;
 
 use bun_http_types::URLPath::URLPath;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Cross-crate name aliases. These are pure re-exports of real lower-tier types
-// (no shadow structs); kept as a private module so the aliased paths
-// (`bun_ast::Log`, `Fs::Entry`) read naturally.
-// ──────────────────────────────────────────────────────────────────────────
 // Wyhash with seed 0. NOT Wyhash11 (different algo).
 #[inline]
 fn wyhash(input: &[u8]) -> u64 {
     bun_wyhash::hash(input)
 }
 
-// `bun.fs` namespace — `bun_router` depends on `bun_resolver` directly, so
-// name the real `FileSystem` / `Entry` / `DirEntry` / `DirnameStore` types.
-use bun_resolver::DirInfo;
-use bun_resolver::DirInfoRef;
-use bun_resolver::fs as Fs;
-use bun_resolver::fs::FileSystem;
-
-type CoreError = crate::Error;
-
 use bun_collections::index_sort;
 use bun_core::HashedString;
-use bun_ptr::Interned;
 
 // ──────────────────────────────────────────────────────────────────────────
 // cross-tier decoupling
@@ -51,10 +33,6 @@ use bun_ptr::Interned;
 #[derive(Debug, Clone, Default)]
 pub struct RouteConfig {
     pub dir: Box<[u8]>,
-
-    /// Frameworks like Next.js (and others) use a special prefix for bundled/transpiled assets.
-    /// This is combined with "origin" when printing import paths.
-    pub asset_prefix_path: Box<[u8]>,
 
     // TODO: do we need a separate list for data-only extensions?
     // e.g. /foo.json just to get the data for the route, without rendering the html
@@ -70,7 +48,7 @@ const INDEX_ROUTE_HASH: u32 =
     bun_wyhash::hash_const(0, b"$$/index-route$$-!(@*@#&*%-901823098123") as u32;
 
 // Param/List are lifetime-parameterized: `name` borrows the route name
-// (DirnameStore-backed) and `value` borrows the *request URL buffer*, so the
+// (owned by `Routes`) and `value` borrows the *request URL buffer*, so the
 // correct representation is a borrowed `&'a [u8]`, not a forged `'static`.
 //
 // `bun_url::route_param::Param<'a>` is now lifetime-generic (TYPE_ONLY
@@ -79,59 +57,7 @@ const INDEX_ROUTE_HASH: u32 =
 pub use bun_url::route_param;
 pub use route_param::Param;
 
-pub struct Router {
-    pub routes: Routes,
-    pub(crate) loaded_routes: bool,
-    pub config: RouteConfig,
-}
-
-impl Router {
-    pub fn init(config: RouteConfig) -> Result<Router, CoreError> {
-        Ok(Router {
-            routes: Routes {
-                static_: StringHashMap::new(),
-                ..Routes::default()
-            },
-            loaded_routes: false,
-            config,
-        })
-    }
-
-    pub fn get_entry_points(&self) -> &[&'static [u8]] {
-        self.routes.list.items_filepath()
-    }
-
-    pub fn get_names(&self) -> &[&'static [u8]] {
-        self.routes.list.items_name()
-    }
-
-    // This loads routes recursively, in depth-first order.
-    // it does not currently handle duplicate exact route matches. that's undefined behavior, for now.
-    pub fn load_routes<R: ResolverLike>(
-        &mut self,
-        log: &mut bun_ast::Log,
-        root_dir_info: &DirInfo,
-        resolver: &mut R,
-        base_dir: &[u8],
-    ) -> Result<(), CoreError> {
-        if self.loaded_routes {
-            return Ok(());
-        }
-        self.routes =
-            RouteLoader::load_all(self.config.clone(), log, resolver, root_dir_info, base_dir);
-        self.loaded_routes = true;
-        Ok(())
-    }
-}
-
-pub const BANNED_DIRS: [&[u8]; 1] = [b"node_modules"];
-
-struct RouteIndex {
-    route: Box<Route>,
-    name: &'static [u8],
-    match_name: &'static [u8],
-    filepath: &'static [u8],
-}
+const BANNED_DIRS: [&[u8]; 1] = [b"node_modules"];
 
 // TODO(b2-blocked): bun_collections::MultiArrayElement derive — proc-macro not
 // yet landed, so MultiArrayList<RouteIndex> can't expose per-field column
@@ -139,28 +65,30 @@ struct RouteIndex {
 #[derive(Default)]
 struct RouteIndexList {
     // The `Box` is load-bearing: `Routes::index` / `Routes::static_` hold
-    // `NonNull<Route>` / `*const Route` into the box interiors; unboxing
-    // would dangle them on `Vec` realloc.
+    // `NonNull<Route>` / `*const Route` into the box interiors, and the three
+    // columns below hold slices of each route's own strings; unboxing would
+    // dangle them on `Vec` realloc.
     #[expect(clippy::vec_box)]
     route: Vec<Box<Route>>,
-    name: Vec<&'static [u8]>,
-    match_name: Vec<&'static [u8]>,
-    filepath: Vec<&'static [u8]>,
+    name: Vec<RawSlice<u8>>,
+    match_name: Vec<RawSlice<u8>>,
+    filepath: Vec<RawSlice<u8>>,
 }
 
 impl RouteIndexList {
-    pub(crate) fn set_capacity(&mut self, cap: usize) -> Result<(), CoreError> {
-        self.route.reserve_exact(cap);
-        self.name.reserve_exact(cap);
-        self.match_name.reserve_exact(cap);
-        self.filepath.reserve_exact(cap);
-        Ok(())
+    fn with_capacity(cap: usize) -> Self {
+        Self {
+            route: Vec::with_capacity(cap),
+            name: Vec::with_capacity(cap),
+            match_name: Vec::with_capacity(cap),
+            filepath: Vec::with_capacity(cap),
+        }
     }
-    fn push(&mut self, item: RouteIndex) {
-        self.route.push(item.route);
-        self.name.push(item.name);
-        self.match_name.push(item.match_name);
-        self.filepath.push(item.filepath);
+    fn push(&mut self, route: Box<Route>) {
+        self.name.push(RawSlice::new(route.name()));
+        self.match_name.push(RawSlice::new(route.match_name()));
+        self.filepath.push(RawSlice::new(route.abs_path()));
+        self.route.push(route);
     }
     #[inline]
     pub(crate) fn len(&self) -> usize {
@@ -171,19 +99,20 @@ impl RouteIndexList {
         &self.route
     }
     #[inline]
-    pub(crate) fn items_name(&self) -> &[&'static [u8]] {
+    pub(crate) fn items_name(&self) -> &[RawSlice<u8>] {
         &self.name
     }
     #[inline]
-    pub(crate) fn items_match_name(&self) -> &[&'static [u8]] {
+    pub(crate) fn items_match_name(&self) -> &[RawSlice<u8>] {
         &self.match_name
     }
     #[inline]
-    pub(crate) fn items_filepath(&self) -> &[&'static [u8]] {
+    pub(crate) fn items_filepath(&self) -> &[RawSlice<u8>] {
         &self.filepath
     }
 }
 
+/// The routes of one scan. Nothing changes them afterwards: `reload()` scans into a new `Routes`.
 pub struct Routes {
     pub(crate) list: RouteIndexList,
     /// Index into `list`'s columns where dynamic routes begin (sorted after
@@ -204,23 +133,68 @@ pub struct Routes {
     /// `list.route`). Stored as `NonNull` (not `&'a Route`) so `Routes` claims
     /// no borrow it doesn't actually take; matches `static_` above.
     pub(crate) index: Option<NonNull<Route>>,
-}
 
-impl Default for Routes {
-    fn default() -> Self {
-        Self {
-            list: RouteIndexList::default(),
-            dynamic_start: None,
-            dynamic_len: 0,
-            static_: StringHashMap::new(),
-            index: None,
-        }
-    }
+    /// Real path of the routes directory, with a trailing separator.
+    dir: Box<[u8]>,
 }
 
 impl Routes {
+    /// Reads the tree below `dir` from disk, never from a cache. Leaves out a directory it cannot read.
+    pub fn scan(
+        dir: bun_sys::Dir,
+        extensions: &[Box<[u8]>],
+        log: &mut bun_ast::Log,
+    ) -> bun_sys::Result<Routes> {
+        let mut real_path = bun_paths::path_buffer_pool::get();
+        let mut root: Vec<u8> = dir.get_fd_path(&mut real_path)?.to_vec();
+        drop(real_path);
+        let listing = RouteLoader::list(dir, &root)?;
+
+        let mut loader = RouteLoader {
+            extensions,
+            log,
+            public_dir: Vec::new(),
+            path: Vec::new(),
+            dedupe_dynamic: ArrayHashMap::new(),
+            index: None,
+            static_list: StringHashMap::new(),
+            all_routes: Vec::new(),
+        };
+        loader.load(
+            &listing,
+            &WalkedDir {
+                real_path: &root,
+                parent: None,
+            },
+        );
+
+        if root.last() != Some(&SEP) {
+            root.push(SEP);
+        }
+        Ok(loader.finish(root.into_boxed_slice()))
+    }
+
+    #[inline]
+    pub fn dir(&self) -> &[u8] {
+        &self.dir
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.list.len()
+    }
+
+    /// The name of each route and the absolute path of its file.
+    pub fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+        self.list
+            .items_name()
+            .iter()
+            .zip(self.list.items_filepath())
+            .map(|(name, file_path)| (name.slice(), file_path.slice()))
+    }
+
     pub fn match_page_with_allocator<'p>(
-        &mut self,
+        &'p self,
         _: &[u8],
         url_path: &URLPath,
         params: &'p mut route_param::List<'p>,
@@ -267,9 +241,9 @@ impl Routes {
                 let index = unsafe { index_ptr.as_ref() };
                 return Some(Match {
                     params: std::ptr::from_mut(params),
-                    name: index.name,
+                    name: index.name(),
                     pathname: url_path.pathname,
-                    file_path: index.abs_path.as_bytes(),
+                    file_path: index.abs_path(),
                     query_string: url_path.query_string,
                 });
             }
@@ -283,9 +257,9 @@ impl Routes {
             let route = unsafe { &*route_ptr };
             return Some(Match {
                 params: std::ptr::from_mut(params),
-                name: route.name,
+                name: route.name(),
                 pathname: url_path.pathname,
-                file_path: route.abs_path.as_bytes(),
+                file_path: route.abs_path(),
                 query_string: url_path.query_string,
             });
         }
@@ -294,7 +268,7 @@ impl Routes {
     }
 
     fn match_dynamic<'p>(
-        &self,
+        &'p self,
         path: &'p [u8],
         params: &mut route_param::List<'p>,
     ) -> Option<*const Route> {
@@ -318,7 +292,7 @@ impl Routes {
     }
 
     fn match_<'p>(
-        &self,
+        &'p self,
         pathname_: &'p [u8],
         params: &mut route_param::List<'p>,
     ) -> Option<*const Route> {
@@ -335,14 +309,35 @@ impl Routes {
     }
 }
 
-struct RouteLoader<'a> {
-    // allocator dropped — global mimalloc
-    fs: &'static FileSystem,
-    config: RouteConfig,
-    route_dirname_len: u16,
+/// A directory the walk is inside of, and the one that led to it.
+struct WalkedDir<'a> {
+    real_path: &'a [u8],
+    parent: Option<&'a WalkedDir<'a>>,
+}
 
-    dedupe_dynamic: ArrayHashMap<u32, &'static [u8]>,
+impl WalkedDir<'_> {
+    fn is_inside(&self, real_path: &[u8]) -> bool {
+        let mut dir = Some(self);
+        while let Some(walked) = dir {
+            if walked.real_path == real_path {
+                return true;
+            }
+            dir = walked.parent;
+        }
+        false
+    }
+}
+
+struct RouteLoader<'a> {
+    extensions: &'a [Box<[u8]>],
     log: &'a mut bun_ast::Log,
+
+    /// The directory being read, below the routes directory: empty, or `/blog/[slug]`.
+    public_dir: Vec<u8>,
+    path: Vec<u8>,
+
+    /// Hash of a dynamic route to its index in `all_routes`.
+    dedupe_dynamic: ArrayHashMap<u32, usize>,
     // NOTE: raw NonNull (not &'a Route) because it points into self.all_routes
     // (self-referential); `Routes` co-owns it with `list`.
     index: Option<NonNull<Route>>,
@@ -359,6 +354,10 @@ impl<'a> RouteLoader<'a> {
 
         // /index.js
         if route.full_hash == INDEX_ROUTE_HASH {
+            // Of several index files, the first in byte order is the index route.
+            if self.index.is_some() {
+                return;
+            }
             // Derived from a `&mut`, not a `&*` downgrade: `NonNull::from(&T)`
             // yields a frozen tag. Today `index` is only read through (`match_`
             // takes `as_ref()`), so the old spelling was not live UB, but it was
@@ -368,23 +367,23 @@ impl<'a> RouteLoader<'a> {
             self.all_routes.push(Box::new(route));
             let parked = self.all_routes.last_mut().expect("just pushed");
             // Box contents have a stable address; never removed from
-            // `all_routes` until consumed by `load_all`.
+            // `all_routes` until consumed by `finish`.
             self.index = Some(NonNull::from(&mut **parked));
             return;
         }
 
         // static route
         if route.param_count == 0 {
-            if let Some(existing) = self.static_list.get(route.match_name.as_bytes()) {
-                let source = bun_ast::Source::init_empty_file(route.abs_path.as_bytes());
+            if let Some(existing) = self.static_list.get(route.match_name()) {
+                let source = bun_ast::Source::init_empty_file(route.abs_path());
                 self.log.add_error_fmt(
                     Some(&source),
                     bun_ast::Loc::EMPTY,
                     format_args!(
                         "Route \"{}\" is already defined by {}",
-                        bstr::BStr::new(route.name),
+                        bstr::BStr::new(route.name()),
                         // SAFETY: *existing aliases a Box<Route> in self.all_routes
-                        bstr::BStr::new(unsafe { &**existing }.abs_path.as_bytes()),
+                        bstr::BStr::new(unsafe { &**existing }.abs_path()),
                     ),
                 );
                 return;
@@ -401,16 +400,16 @@ impl<'a> RouteLoader<'a> {
             // This hack is below the engineering quality bar I'm happy with.
             // It will cause unexpected behavior.
             if new_route.has_uppercase {
-                if let Some(existing) = self.static_list.get(&new_route.name[1..]) {
-                    let source = bun_ast::Source::init_empty_file(new_route.abs_path.as_bytes());
+                if let Some(existing) = self.static_list.get(&new_route.name()[1..]) {
+                    let source = bun_ast::Source::init_empty_file(new_route.abs_path());
                     self.log.add_error_fmt(
                         Some(&source),
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Route \"{}\" is already defined by {}",
-                            bstr::BStr::new(new_route.name),
+                            bstr::BStr::new(new_route.name()),
                             // SAFETY: *existing aliases a Box<Route> in self.all_routes
-                            bstr::BStr::new(unsafe { &**existing }.abs_path.as_bytes()),
+                            bstr::BStr::new(unsafe { &**existing }.abs_path()),
                         ),
                     );
 
@@ -418,11 +417,11 @@ impl<'a> RouteLoader<'a> {
                 }
 
                 self.static_list
-                    .put_assume_capacity(&new_route.name[1..], new_route_ptr);
+                    .put_assume_capacity(&new_route.name()[1..], new_route_ptr);
             }
 
             self.static_list
-                .put_assume_capacity(new_route.match_name.as_bytes(), new_route_ptr);
+                .put_assume_capacity(new_route.match_name(), new_route_ptr);
             self.all_routes.push(new_route);
 
             return;
@@ -431,20 +430,20 @@ impl<'a> RouteLoader<'a> {
         {
             match self.dedupe_dynamic.entry(route.full_hash) {
                 Entry::Occupied(e) => {
-                    let source = bun_ast::Source::init_empty_file(route.abs_path.as_bytes());
+                    let source = bun_ast::Source::init_empty_file(route.abs_path());
                     self.log.add_error_fmt(
                         Some(&source),
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Route \"{}\" is already defined by {}",
-                            bstr::BStr::new(route.name),
-                            bstr::BStr::new(*e.get()),
+                            bstr::BStr::new(route.name()),
+                            bstr::BStr::new(self.all_routes[*e.get()].abs_path()),
                         ),
                     );
                     return;
                 }
                 Entry::Vacant(v) => {
-                    v.insert(route.abs_path.as_bytes());
+                    v.insert(self.all_routes.len());
                 }
             }
         }
@@ -455,53 +454,17 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
-    fn load_all<R: ResolverLike>(
-        config: RouteConfig,
-        log: &'a mut bun_ast::Log,
-        resolver: &mut R,
-        root_dir_info: &DirInfo,
-        base_dir: &[u8],
-    ) -> Routes {
-        let mut route_dirname_len: u16 = 0;
-
-        // Call bun_paths directly to avoid the higher-tier bun_resolver dep.
-        let relative_dir = bun_paths::resolve_path::relative(base_dir, &config.dir);
-        if !relative_dir.starts_with(b"..") {
-            route_dirname_len =
-                (relative_dir.len() + usize::from(config.dir[config.dir.len() - 1] != SEP)) as u16;
-        }
-
-        let mut this = RouteLoader {
-            log,
-            fs: resolver.fs(),
-            config,
-            static_list: StringHashMap::new(),
-            dedupe_dynamic: ArrayHashMap::new(),
-            all_routes: Vec::new(),
-            index: None,
-            route_dirname_len,
-        };
-        this.load(resolver, root_dir_info, base_dir);
-        if this.all_routes.is_empty() {
-            return Routes {
-                static_: this.static_list,
-                ..Routes::default()
-            };
-        }
-
-        index_sort::sort_slice_unstable_by(&mut this.all_routes, |a, b| {
+    fn finish(mut self, dir: Box<[u8]>) -> Routes {
+        index_sort::sort_slice_unstable_by(&mut self.all_routes, |a, b| {
             sorter::sort_by_name_cmp(a, b)
         });
 
-        let mut route_list = RouteIndexList::default();
-        route_list
-            .set_capacity(this.all_routes.len())
-            .expect("unreachable");
+        let mut route_list = RouteIndexList::with_capacity(self.all_routes.len());
 
         let mut dynamic_start: Option<usize> = None;
         let mut index_id: Option<usize> = None;
 
-        for (i, route) in this.all_routes.into_iter().enumerate() {
+        for (i, route) in self.all_routes.into_iter().enumerate() {
             if (route.kind as u8) > (pattern::Tag::Static as u8) && dynamic_start.is_none() {
                 dynamic_start = Some(i);
             }
@@ -510,13 +473,7 @@ impl<'a> RouteLoader<'a> {
                 index_id = Some(i);
             }
 
-            let (filepath, match_name) = (route.abs_path.as_bytes(), route.match_name.as_bytes());
-            route_list.push(RouteIndex {
-                name: route.name,
-                filepath,
-                match_name,
-                route,
-            });
+            route_list.push(route);
         }
 
         let mut dynamic_len: usize = 0;
@@ -535,114 +492,103 @@ impl<'a> RouteLoader<'a> {
             list: route_list,
             dynamic_start,
             dynamic_len,
-            static_: this.static_list,
+            static_: self.static_list,
             // Points into a Box<Route> now owned by `route_list`; co-owned raw
             // pointer.
-            index: this.index,
+            index: self.index,
+            dir,
         }
     }
 
-    fn load<R: ResolverLike>(
-        &mut self,
-        resolver: &mut R,
-        root_dir_info: &DirInfo,
-        base_dir: &[u8],
-    ) {
-        let fs = self.fs;
+    /// Closes `dir`: one directory is open at a time. Byte order: a file system has its own.
+    fn list(dir: bun_sys::Dir, real_path: &[u8]) -> bun_sys::Result<DirListing> {
+        let mut listing = DirListing::read(&dir, real_path, |name| name.starts_with(b"."))?;
+        drop(dir);
+        listing.sort();
+        Ok(listing)
+    }
 
-        // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`:
-        // another thread (e.g. the bundler's resolver) rewrites this map in place
-        // under that lock, so iterating it live would walk freed buckets.
-        let entry_ptrs: Vec<*mut Fs::Entry> = {
-            let _entries_lock = fs.fs.entries_mutex.lock_guard();
-            match root_dir_info.get_entries_const() {
-                Some(entries) => entries.data.values().copied().collect(),
-                None => return,
-            }
-        };
-        // NOTE: the guard is dropped before this loop on purpose — the
-        // `read_dir_info_ignore_error` recursion below re-acquires `entries_mutex`.
-        'outer: for entry_ptr in entry_ptrs {
-            // NOTE: the snapshot yields raw `*mut Entry`. Reborrow locally for
-            // each access so `&` reads and the `kind()` call do not
-            // overlap; the lazy-stat rewrite inside `kind()` is serialized on
-            // the per-entry `Entry.mutex`.
-            // SAFETY: EntryStore-owned, valid for process lifetime.
-            if unsafe { &*entry_ptr }.base()[0] == b'.' {
-                continue 'outer;
-            }
-
-            // Thread the resolver's fs `Implementation` through —
-            // `Entry.kind` derefs it to lazily stat when `need_stat` is
-            // true, so null would be a latent crash / silent route-drop
-            // once the stub forwards it.
-            // SAFETY: no other live borrow of `*entry_ptr` here;
-            // `resolver.fs_impl()` points at the process-global RealFS.
-            let kind = unsafe { (&*entry_ptr).kind(resolver.fs_impl(), false) };
-            // SAFETY: shared read-only borrow for the match arms; the only
-            // subsequent mutation is via `Route::parse` which takes the raw
-            // pointer and reborrows internally.
-            let entry: &Fs::Entry = unsafe { &*entry_ptr };
-            match kind {
-                Fs::EntryKind::Dir => {
+    /// Loads the routes of a directory and of the directories below it, depth first.
+    fn load(&mut self, listing: &DirListing, walked: &WalkedDir<'_>) {
+        'outer: for entry in listing.iter() {
+            match entry.kind {
+                EntryKind::Dir => {
                     for banned_dir in BANNED_DIRS.iter() {
-                        if entry.base() == *banned_dir {
+                        if entry.name == *banned_dir {
                             continue 'outer;
                         }
                     }
 
-                    let abs_parts = [entry.dir(), entry.base()];
-                    if let Some(dir_info) = resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
-                    {
-                        self.load(resolver, &dir_info, base_dir);
+                    let mut real_path = Vec::new();
+                    join_path(&mut real_path, walked.real_path, entry.name);
+                    let Ok(child) = bun_sys::Dir::open(&real_path) else {
+                        continue;
+                    };
+                    if entry.is_link {
+                        // A link to a directory the walk is inside of would never end.
+                        let mut buf = bun_paths::path_buffer_pool::get();
+                        let Ok(target) = child.get_fd_path(&mut buf) else {
+                            continue;
+                        };
+                        if walked.is_inside(target) {
+                            continue;
+                        }
+                        real_path.clear();
+                        real_path.extend_from_slice(target);
                     }
+
+                    let Ok(child) = Self::list(child, &real_path) else {
+                        continue;
+                    };
+
+                    let parent_len = self.public_dir.len();
+                    self.public_dir.push(b'/');
+                    self.public_dir.extend_from_slice(entry.name);
+                    self.load(
+                        &child,
+                        &WalkedDir {
+                            real_path: &real_path,
+                            parent: Some(walked),
+                        },
+                    );
+                    self.public_dir.truncate(parent_len);
                 }
 
-                Fs::EntryKind::File => {
-                    let extname = bun_paths::extension(entry.base());
+                EntryKind::File => {
+                    let extname = bun_paths::extension(entry.name);
                     // exclude "." or ""
                     if extname.len() < 2 {
                         continue;
                     }
+                    if !self
+                        .extensions
+                        .iter()
+                        .any(|extension| &extname[1..] == extension.as_ref())
+                    {
+                        continue;
+                    }
 
-                    for _extname in self.config.extensions.iter() {
-                        if &extname[1..] == _extname.as_ref() {
-                            // `entry.dir()` is `base_dir` or a subdirectory of it, cached
-                            // with or without a trailing slash depending on which resolver
-                            // spelled it first (`base_dir` always has one). Both spellings
-                            // trim to the same `public_dir`.
-                            let entry_dir = entry.dir();
-                            debug_assert!(entry_dir.len() + 1 >= base_dir.len());
-                            if entry_dir.len() >= base_dir.len() {
-                                debug_assert!(bun_paths::resolve_path::is_sep_any(
-                                    entry_dir[base_dir.len() - 1]
-                                ));
-                            }
+                    // Only a link needs the file system to say where it leads.
+                    join_path(&mut self.path, walked.real_path, entry.name);
+                    if entry.is_link {
+                        self.path.push(0);
+                        let mut buf = bun_paths::path_buffer_pool::get();
+                        let Ok(target) = bun_sys::realpath(
+                            ZStr::from_buf(&self.path, self.path.len() - 1),
+                            &mut buf,
+                        ) else {
+                            continue;
+                        };
+                        self.path.clear();
+                        self.path.extend_from_slice(target);
+                    }
 
-                            // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
-                            let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
-
-                            // SAFETY: `entry_ptr` is EntryStore-owned (process
-                            // lifetime) with no other live `&mut` borrow here.
-                            let route = unsafe {
-                                Route::parse(
-                                    entry.base(),
-                                    extname,
-                                    entry_ptr,
-                                    self.log,
-                                    public_dir,
-                                    self.route_dirname_len,
-                                )
-                            };
-                            if let Some(route) = route {
-                                self.append_route(route);
-                            }
-                            break;
-                        }
+                    if let Some(route) =
+                        Route::parse(entry.name, extname, &self.path, &self.public_dir, self.log)
+                    {
+                        self.append_route(route);
                     }
                 }
-
-                Fs::EntryKind::Dangling => {}
             }
         }
     }
@@ -681,301 +627,125 @@ impl TinyPtr {
     }
 }
 
-// On Windows we need to normalize this path to have forward slashes.
-// The normalized path is interned into `DirnameStore` (process-lifetime arena), so
-// `abs_path` is uniformly an `Interned` over `'static` bytes on every
-// platform — keeping `RouteIndexList.filepath: &'static [u8]` sound and
-// avoiding the borrow-then-move at `RouteLoader::load_all`.
-pub type AbsPath = Interned;
-
 pub struct Route {
-    /// Public display name for the route.
-    /// "/", "/index" is "/"
-    /// "/foo/index.js" becomes "/foo"
-    /// case-sensitive, has leading slash
-    pub(crate) name: &'static [u8],
-
-    /// Name used for matching.
-    /// - Omits leading slash
-    /// - Lowercased
-    /// This is [inconsistent with Next.js](https://github.com/vercel/next.js/issues/21498)
-    pub(crate) match_name: Interned,
+    /// `name`, then `match_name` when it is not a part of `name`, then `abs_path`.
+    strings: Box<[u8]>,
+    name_len: u32,
+    match_name_start: u32,
+    match_name_end: u32,
+    abs_path_start: u32,
 
     pub(crate) full_hash: u32,
     pub(crate) param_count: u16,
-
-    pub(crate) abs_path: AbsPath,
 
     pub(crate) kind: pattern::Tag,
 
     pub(crate) has_uppercase: bool,
 }
 
-// TODO(b1): inherent assoc types unstable; module-level alias instead.
-
 impl Route {
-    pub(crate) const INDEX_ROUTE_NAME: &'static [u8] = b"/";
+    /// Public display name for the route.
+    /// "/", "/index" is "/"
+    /// "/foo/index.js" becomes "/foo"
+    /// case-sensitive, has leading slash
+    #[inline]
+    pub(crate) fn name(&self) -> &[u8] {
+        &self.strings[..self.name_len as usize]
+    }
 
-    /// # Safety
-    /// `entry` must point to a live `Fs::Entry` (EntryStore-owned) with no
-    /// other active `&mut` borrow for the duration of the call. `base_` and
-    /// `extname` may borrow `(*entry).base_`; see the NOTE below.
-    pub(crate) unsafe fn parse(
+    /// Name used for matching.
+    /// - Omits leading slash
+    /// - Lowercased
+    /// This is [inconsistent with Next.js](https://github.com/vercel/next.js/issues/21498)
+    #[inline]
+    pub(crate) fn match_name(&self) -> &[u8] {
+        &self.strings[self.match_name_start as usize..self.match_name_end as usize]
+    }
+
+    /// Every link is resolved, and `/` separates it on every platform.
+    #[inline]
+    pub(crate) fn abs_path(&self) -> &[u8] {
+        &self.strings[self.abs_path_start as usize..]
+    }
+
+    /// `public_dir`: the directory of the file below the routes directory, empty or `/blog/[slug]`.
+    pub(crate) fn parse(
         base_: &[u8],
         extname: &[u8],
-        entry: *mut Fs::Entry,
+        abs_path: &[u8],
+        public_dir: &[u8],
         log: &mut bun_ast::Log,
-        public_dir_: &[u8],
-        routes_dirname_len: u16,
     ) -> Option<Route> {
-        // NOTE: `entry` is a raw `*mut Entry`
-        // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
-        // string) and a `&mut Entry` parameter would alias them.
-        // Reads go through `unsafe { &*entry }`; the single mutation
-        // (`set_abs_path`) goes through `unsafe { &mut *entry }` after
-        // `base_`/`extname` are no longer used.
-        // SAFETY: caller passes an EntryStore-owned pointer valid for the
-        // process lifetime; no other live `&mut` to it during this call.
-        let entry_abs_path = unsafe { &*entry }.abs_path().as_bytes();
-        let mut abs_path_str: &[u8] = if entry_abs_path.is_empty() {
-            b""
-        } else {
-            entry_abs_path
-        };
-
         let base = &base_[0..base_.len() - extname.len()];
-
-        let public_dir = strings::trim(public_dir_, SEP_STR.as_bytes());
+        debug_assert!(!base.is_empty());
 
         // this is a path like
-        // "/pages/index.js"
-        // "/pages/foo/index.ts"
-        // "/pages/foo/bar.tsx"
-        // the name we actually store will often be this one
-        ROUTE_BUFS.with_borrow_mut(|bufs| {
-            let route_file_buf = &mut bufs.route_file_buf;
-            let public_path: &[u8] = 'brk: {
-                if base.is_empty() {
-                    break 'brk public_dir;
-                }
-                let mut buf: &mut [u8] = &mut route_file_buf[..];
+        // "/index.js"
+        // "/foo/index.ts"
+        // "/foo/bar.tsx"
+        // the name is this one without the extension and without a last "/index"
+        let is_index_file = base == b"index";
+        let name_len = if is_index_file {
+            public_dir.len()
+        } else {
+            public_dir.len() + 1 + base.len()
+        };
+        let is_index = name_len == 0;
+        let has_uppercase = !is_index
+            && [public_dir, base, extname]
+                .iter()
+                .any(|part| part.iter().any(u8::is_ascii_uppercase));
 
-                if !public_dir.is_empty() {
-                    // NOTE: reshaped for borrowck — `buf` already aliases
-                    // route_file_buf[..]; write through it instead of re-borrowing.
-                    buf[0] = b'/';
-                    buf = &mut buf[1..];
-                    buf[..public_dir.len()].copy_from_slice(public_dir);
-                }
-                buf[public_dir.len()] = b'/';
-                buf = &mut buf[public_dir.len() + 1..];
-                buf[..base.len()].copy_from_slice(base);
-                buf = &mut buf[base.len()..];
-                buf[..extname.len()].copy_from_slice(extname);
-                buf = &mut buf[extname.len()..];
+        let mut strings: Vec<u8> = Vec::with_capacity(
+            name_len.max(1) + if has_uppercase { name_len - 1 } else { 0 } + abs_path.len(),
+        );
+        strings.extend_from_slice(public_dir);
+        if !is_index_file {
+            strings.push(b'/');
+            strings.extend_from_slice(base);
+        }
 
-                let written_len = buf.as_ptr() as usize - route_file_buf.as_ptr() as usize;
-
-                #[cfg(windows)]
-                {
-                    bun_paths::resolve_path::platform_to_posix_in_place(
-                        &mut route_file_buf[0..written_len],
-                    );
-                }
-
-                // SAFETY: written_len computed from sub-slice pointer arithmetic above
-                break 'brk unsafe {
-                    core::slice::from_raw_parts(route_file_buf.as_ptr(), written_len)
-                };
-            };
-
-            let mut name = &public_path[0..public_path.len() - extname.len()];
-
-            while name.len() > 1 && name[name.len() - 1] == b'/' {
-                name = &name[0..name.len() - 1];
-            }
-
-            name = &name[routes_dirname_len as usize..];
-
-            if name.ends_with(b"/index") {
-                name = &name[0..name.len() - 6];
-            }
-
-            name = strings::trim_right(name, b"/");
-
-            let mut validation_result = pattern::ValidationResult::default();
-            let is_index = name.is_empty();
-
-            let mut has_uppercase = false;
-            // NOTE: reshaped for borrowck — both arms intern via DirnameStore
-            // (process-lifetime arena → `&'static`), so the post-if bindings are
-            // 'static and the route_file_buf borrow is dropped before the
-            // abs-path block below needs it mutably.
-            let (name, match_name): (&'static [u8], &'static [u8]) = if !name.is_empty() {
-                validation_result = match Pattern::validate(&name[1..], log) {
-                    Some(v) => v,
-                    None => return None,
-                };
-
-                let mut name_i: usize = 0;
-                while !has_uppercase && name_i < public_path.len() {
-                    has_uppercase = public_path[name_i] >= b'A' && public_path[name_i] <= b'Z';
-                    name_i += 1;
-                }
-
-                let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
-                let name_len = name.len();
-
-                // NOTE: DirnameStore::append returns `&'static [u8]` (process-
-                // lifetime arena), so rebinding here drops the borrow on
-                // `route_file_buf` and avoids needing lifetime transmutes
-                // below.
-                let dirname_store = FileSystem::instance().dirname_store();
-                let public_path: &'static [u8] =
-                    dirname_store.append(public_path).expect("unreachable");
-                let name: &'static [u8] = &public_path[name_offset..][0..name_len];
-                let match_name: &'static [u8] = if has_uppercase {
-                    dirname_store
-                        .append_lower_case(&name[1..])
-                        .expect("unreachable")
-                } else {
-                    &name[1..]
-                };
-
-                debug_assert!(match_name[0] != b'/');
-                debug_assert!(name[0] == b'/');
-                (name, match_name)
+        let mut validation_result = pattern::ValidationResult::default();
+        let match_name = if is_index {
+            strings.push(b'/');
+            0..1
+        } else {
+            validation_result = Pattern::validate(&strings[1..], log)?;
+            if has_uppercase {
+                strings.extend_from_within(1..);
+                strings[name_len..].make_ascii_lowercase();
+                name_len..strings.len()
             } else {
-                (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
-            };
-
-            if abs_path_str.is_empty() {
-                // The reads of `cache().fd` and the `set_abs_path` write below
-                // rewrite the cached `Entry`; serialize them on the per-entry
-                // mutex (the same lock every other `Entry` rewrite path takes).
-                // SAFETY: see fn-level NOTE — read-only reborrow.
-                let _entry_guard = unsafe { &*entry }.mutex.lock_guard();
-                // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
-                // becomes a scopeguard owning the Option<File>; `needs_close` is a
-                // Cell so the drop closure can read it while the body still mutates.
-                // The guard is inverted: when the fd belongs to the cache
-                // (`needs_close == false`), `into_raw()` so we do not close
-                // someone else's fd.
-                let needs_close = core::cell::Cell::new(true);
-                let mut file = scopeguard::guard(None::<bun_sys::File>, |f| {
-                    if !needs_close.get() {
-                        if let Some(f) = f {
-                            let _ = f.into_raw();
-                        }
-                    }
-                });
-
-                // SAFETY: see fn-level NOTE — read-only reborrow.
-                if let Some(valid) = unsafe { &*entry }.cache().fd.unwrap_valid() {
-                    *file = Some(bun_sys::File::from_fd(valid));
-                    needs_close.set(false);
-                } else {
-                    // SAFETY: see fn-level NOTE — read-only reborrow.
-                    let entry_r = unsafe { &*entry };
-                    let parts = [entry_r.dir(), entry_r.base()];
-                    let abs_len = FileSystem::instance().abs_buf(&parts, route_file_buf).len();
-                    // Rebind so the later getFdPath error
-                    // message prints the computed path instead of `b""`.
-                    // SAFETY: lifetime-laundered raw view into route_file_buf
-                    // (same pattern as `public_path` above) so the buffer can
-                    // be reborrowed mutably for the NUL write / open below.
-                    abs_path_str =
-                        unsafe { core::slice::from_raw_parts(route_file_buf.as_ptr(), abs_len) };
-                    route_file_buf[abs_len] = 0;
-                    // SAFETY: NUL-terminated above; `abs_len` bytes valid in route_file_buf.
-                    let buf = bun_core::ZStr::from_buf(&route_file_buf[..], abs_len);
-                    match bun_sys::open_file_absolute_z(buf, bun_sys::OpenFlags::READ_ONLY) {
-                        Ok(f) => {
-                            *file = Some(f);
-                        }
-                        Err(err) => {
-                            needs_close.set(false);
-                            log.add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "{} opening route: {}",
-                                    bstr::BStr::new(err.name()),
-                                    bstr::BStr::new(&route_file_buf[..abs_len])
-                                ),
-                            );
-                            return None;
-                        }
-                    }
-                    FileSystem::set_max_fd(file.as_ref().unwrap().handle().native());
-                }
-
-                let fd = file.as_ref().unwrap().handle();
-                let _abs = match bun_sys::get_fd_path(fd, route_file_buf) {
-                    Ok(p) => &p[..],
-                    Err(err) => {
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "{} resolving route: {}",
-                                bstr::BStr::new(err.name()),
-                                bstr::BStr::new(abs_path_str)
-                            ),
-                        );
-                        return None;
-                    }
-                };
-
-                abs_path_str = FileSystem::instance()
-                    .dirname_store()
-                    .append(_abs)
-                    .expect("unreachable");
-
-                // SAFETY: sole mutation; `base_`/`extname` (which may borrow
-                // `(*entry).base_.remainder_buf`) are not used after this.
-                unsafe { &mut *entry }.set_abs_path(Interned::from_static(abs_path_str));
+                1..name_len
             }
+        };
+        let name_len = name_len.max(1);
+        debug_assert!(is_index || strings[match_name.start] != b'/');
+        debug_assert!(strings[0] == b'/');
 
-            #[cfg(windows)]
-            let abs_path: AbsPath = {
-                // Intern into DirnameStore so the slice is genuinely `'static`
-                // and the `Interned` widen is sound on Windows.
-                let normalized = bun_paths::resolve_path::platform_to_posix_buf(
-                    abs_path_str,
-                    &mut bufs.normalized_abs_path_buf,
-                );
-                let interned: &'static [u8] = FileSystem::instance()
-                    .dirname_store()
-                    .append(normalized)
-                    .expect("unreachable");
-                Interned::from_static(interned)
-            };
-            #[cfg(not(windows))]
-            let abs_path = Interned::from_static(abs_path_str);
+        let abs_path_start = strings.len();
+        strings.extend_from_slice(abs_path);
+        #[cfg(windows)]
+        {
+            bun_paths::resolve_path::platform_to_posix_in_place(&mut strings[abs_path_start..]);
+            debug_assert!(strings::index_of_char(&strings, b'\\').is_none());
+        }
 
-            #[cfg(all(debug_assertions, windows))]
-            {
-                debug_assert!(!strings::index_of_char(name, b'\\').is_some());
-                debug_assert!(!strings::index_of_char(match_name, b'\\').is_some());
-                debug_assert!(!strings::index_of_char(abs_path.as_bytes(), b'\\').is_some());
-                // SAFETY: read-only reborrow; the `&mut` write above is dead.
-                debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
-            }
-
-            Some(Route {
-                name,
-                match_name: Interned::from_static(match_name),
-                full_hash: if is_index {
-                    INDEX_ROUTE_HASH
-                } else {
-                    wyhash(name) as u32
-                },
-                param_count: validation_result.param_count,
-                kind: validation_result.kind,
-                abs_path,
-                has_uppercase,
-            })
+        let full_hash = if is_index {
+            INDEX_ROUTE_HASH
+        } else {
+            wyhash(&strings[..name_len]) as u32
+        };
+        Some(Route {
+            strings: strings.into_boxed_slice(),
+            name_len: name_len as u32,
+            match_name_start: match_name.start as u32,
+            match_name_end: match_name.end as u32,
+            abs_path_start: abs_path_start as u32,
+            full_hash,
+            param_count: validation_result.param_count,
+            kind: validation_result.kind,
+            has_uppercase,
         })
     }
 }
@@ -1013,8 +783,8 @@ pub(crate) mod sorter {
     }
 
     pub(crate) fn sort_by_name(a: &Route, b: &Route) -> bool {
-        let a_name = a.match_name.as_bytes();
-        let b_name = b.match_name.as_bytes();
+        let a_name = a.match_name();
+        let b_name = b.match_name();
 
         // route order determines route match order
         // - static routes go first because we match those first
@@ -1050,28 +820,12 @@ pub(crate) mod sorter {
     }
 }
 
-struct RouteBufs {
-    route_file_buf: PathBuffer,
-    #[cfg(windows)]
-    normalized_abs_path_buf: bun_sys::windows::PathBuffer,
-}
-
-thread_local! {
-    // bun.ThreadlocalBuffers: heap-backed so only a Box pointer lives in TLS
-    // (keeps PT_TLS MemSiz small — see test/js/bun/binary/tls-segment-size).
-    static ROUTE_BUFS: RefCell<Box<RouteBufs>> = RefCell::new(Box::new(RouteBufs {
-        route_file_buf: PathBuffer::ZEROED,
-        #[cfg(windows)]
-        normalized_abs_path_buf: bun_sys::windows::PathBuffer::ZEROED,
-    }));
-}
-
 pub struct Match<'a> {
     /// raw url path from the request
     pub pathname: &'a [u8],
-    /// absolute filesystem path to the entry point
+    /// absolute filesystem path to the entry point; borrows the `Routes`
     pub file_path: &'a [u8],
-    /// route name, like `"posts/[id]"`
+    /// route name, like `"posts/[id]"`; borrows the `Routes`
     pub name: &'a [u8],
 
     // NOTE: raw `*mut` (not `&'a mut`).
@@ -1122,22 +876,124 @@ impl<'a> Match<'a> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Traits abstracting over the router's collaborators
-// (Resolver, Server, RequestContext).
-// TODO(refactor): colocate these with the canonical types in
-// bun_resolver / bun_runtime.
+// Directory listing
 // ──────────────────────────────────────────────────────────────────────────
 
-pub trait ResolverLike {
-    // `bun_resolver::fs::FileSystem` is a process-global singleton, so `'static`
-    // here is faithful and avoids threading the resolver borrow into RouteLoader<'a>.
-    fn fs(&self) -> &'static FileSystem;
-    /// The resolver's `Implementation` field, passed to
-    /// `Entry.kind` for lazy stat.
-    fn fs_impl(&self) -> *mut Fs::Implementation;
-    /// Returns an arena handle (not a borrow) so the resolver's `&mut self`
-    /// borrow ends before the recursive `load()` re-borrows it.
-    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;
+/// What a name in a directory is, or what a link with that name leads to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EntryKind {
+    File,
+    Dir,
+}
+
+pub struct DirListingEntry<'a> {
+    pub name: &'a [u8],
+    pub kind: EntryKind,
+    pub is_link: bool,
+}
+
+#[derive(Clone, Copy)]
+struct ListedName {
+    start: u32,
+    len: u32,
+    kind: EntryKind,
+    is_link: bool,
+}
+
+/// One directory, read from disk. The resolver's listing is a cache: a route scan cannot use it.
+pub struct DirListing {
+    names: Vec<u8>,
+    entries: Vec<ListedName>,
+}
+
+impl DirListing {
+    /// `dir` is open at `path`. Leaves out what `skip` accepts, a link to nothing, and what is
+    /// not a file or a directory. Opens nothing: a FIFO would block.
+    pub fn read(
+        dir: &bun_sys::Dir,
+        path: &[u8],
+        mut skip: impl FnMut(&[u8]) -> bool,
+    ) -> bun_sys::Result<DirListing> {
+        use bun_sys::FileKind;
+
+        let mut listing = DirListing {
+            names: Vec::new(),
+            entries: Vec::new(),
+        };
+        let mut entry_path = Vec::new();
+        let mut iterator = bun_sys::iterate_dir(dir.fd());
+        while let Some(entry) = iterator.next()? {
+            let name = entry.name.slice_u8();
+            if skip(name) {
+                continue;
+            }
+            let mut is_link = entry.kind == FileKind::SymLink;
+            let kind = match entry.kind {
+                FileKind::File => EntryKind::File,
+                FileKind::Directory => EntryKind::Dir,
+                // `Unknown`: the file system does not say what the name is.
+                FileKind::SymLink | FileKind::Unknown => {
+                    join_path(&mut entry_path, path, name);
+                    entry_path.push(0);
+                    let entry_path = ZStr::from_buf(&entry_path, entry_path.len() - 1);
+                    let mut kind = FileKind::SymLink;
+                    if !is_link {
+                        let Ok(stat) = bun_sys::lstat(entry_path) else {
+                            continue;
+                        };
+                        kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
+                        is_link = kind == FileKind::SymLink;
+                    }
+                    if is_link {
+                        let Ok(stat) = bun_sys::stat(entry_path) else {
+                            continue;
+                        };
+                        kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
+                    }
+                    match kind {
+                        FileKind::File => EntryKind::File,
+                        FileKind::Directory => EntryKind::Dir,
+                        _ => continue,
+                    }
+                }
+                _ => continue,
+            };
+            listing.entries.push(ListedName {
+                start: listing.names.len() as u32,
+                len: name.len() as u32,
+                kind,
+                is_link,
+            });
+            listing.names.extend_from_slice(name);
+        }
+        Ok(listing)
+    }
+
+    /// A directory lists its names in an order of its own. This puts them in byte order.
+    pub fn sort(&mut self) {
+        let names = &self.names;
+        index_sort::sort_slice_unstable_by_key(&mut self.entries, |entry| {
+            &names[entry.start as usize..][..entry.len as usize]
+        });
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = DirListingEntry<'_>> {
+        self.entries.iter().map(|entry| DirListingEntry {
+            name: &self.names[entry.start as usize..][..entry.len as usize],
+            kind: entry.kind,
+            is_link: entry.is_link,
+        })
+    }
+}
+
+/// `dir`, a separator and `name`, byte for byte: a normalizing join would rewrite a name.
+fn join_path(out: &mut Vec<u8>, dir: &[u8], name: &[u8]) {
+    out.clear();
+    out.extend_from_slice(dir);
+    if dir.last() != Some(&SEP) {
+        out.push(SEP);
+    }
+    out.extend_from_slice(name);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

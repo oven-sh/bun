@@ -21,6 +21,7 @@ pub(crate) mod kind_enum {
 
 use bun_paths::strings;
 use core::cell::UnsafeCell;
+use std::rc::Rc;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_ast as Log;
@@ -28,15 +29,14 @@ use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc};
 use bun_paths::{self as path, MAX_PATH_BYTES};
 use bun_ptr::BackRef;
 
 use bun_http_types::URLPath;
-use bun_resolver::Resolver;
 use bun_resolver::fs as Fs;
-use bun_router::{self as Router, Match as RouterMatch, RouteConfig};
+use bun_router::{Match as RouterMatch, RouteConfig, Routes};
+use bun_sys_jsc::ErrorJsc as _;
 use bun_url::{CombinedScanner, QueryStringMap, URL, route_param};
 
 use crate::api::bun_object;
@@ -51,47 +51,23 @@ pub(crate) use crate::bake::router::JSFrameworkRouter as FrameworkFileSystemRout
 
 const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
 
-// ── ResolverLike bridge ───────────────────────────────────────────────────
-// `bun_router::ResolverLike` is the duck-typed seam for `Router::load_routes`;
-// `bun_resolver::Resolver` is the concrete impl. The orphan-rule-compliant
-// impl lives here in `bun_runtime` (the runtime sees both).
-
-/// Newtype so the orphan rule lets us `impl ResolverLike` for the foreign
-/// `bun_resolver::Resolver`.
-struct RouterResolver<'a, 'r>(&'r mut Resolver<'a>);
-
-impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
-    #[inline]
-    fn fs(&self) -> &'static Fs::FileSystem {
-        Fs::FileSystem::instance()
-    }
-    #[inline]
-    fn fs_impl(&self) -> *mut Fs::Implementation {
-        // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-        unsafe { &raw mut (*self.0.fs()).fs }
-    }
-    #[inline]
-    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<bun_resolver::DirInfoRef> {
-        self.0.read_dir_info_ignore_error(path)
-    }
-}
-
 // `js.routesSetCached` codegen accessor — emitted by the `.classes.ts`
 // generator as `FileSystemRouterPrototype__routesSetCachedValue`. The
 // `codegen_cached_accessors!` proc-macro wires the extern.
 bun_jsc::codegen_cached_accessors!("FileSystemRouter"; routes);
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `JsCell` for the two fields that `reload`/`match`
-// mutate. The codegen shim may still emit `this: &mut FileSystemRouter` —
+// interior mutability via `JsCell` for the two fields that `reload`
+// replaces. The codegen shim may still emit `this: &mut FileSystemRouter` —
 // `&mut T` reborrows to `&T` so the impls compile against either.
 #[bun_jsc::JsClass]
 pub(crate) struct FileSystemRouter {
     // BACKREF — interned `RefString`s live in the VM cache and outlive this
     // router (we hold +1 via `claim` in `constructor`, released in `finalize`).
     pub(crate) origin: Option<BackRef<RefString>>,
-    pub(crate) base_dir: Option<BackRef<RefString>>,
-    pub(crate) router: JsCell<Router::Router>,
+    pub(crate) config: RouteConfig,
+    /// `reload()` replaces the routes and never changes them: a `MatchedRoute` shares them.
+    pub(crate) routes: JsCell<Rc<Routes>>,
     // Router borrows slices from this arena across calls;
     // kept as boxed arena per LIFETIMES.tsv (OWNED). `bun_alloc::Arena` (mimalloc heap) is
     // the runtime-wide arena type, so allocations here are individually freeable too.
@@ -208,43 +184,14 @@ impl FileSystemRouter {
             asset_prefix_slice = asset_prefix.to_utf8(global_this)?;
         }
         let mut log = Log::Log::new();
-        // `defer vm.transpiler.resolver.log = orig_log` — RAII guard restores on
-        // every exit path. Derived from the thread-local raw `*mut VirtualMachine`
-        // (via `get_mut_ptr`) so the stored slot pointer keeps valid provenance
-        // under Stacked Borrows across the `&mut vm.transpiler.resolver`
-        // reborrows below (deriving from `vm: &mut _` would be invalidated by
-        // those reborrows before the guard's `Drop` runs).
-        // SAFETY: `vm` is the live VM for this global; resolver outlives this
-        // scope. Guard is declared after `log` so it drops (and restores) first.
-        let _restore_log = unsafe {
-            let vm_ptr = VirtualMachine::get_mut_ptr();
-            Resolver::scoped_log(
-                core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
-                core::ptr::NonNull::from(&mut log),
-            )
-        };
 
         // `cloneWithTrailingSlash` → `strings.cloneNormalizingSeparators`: collapse duplicate
         // separators and append the PLATFORM-NATIVE separator (`\` on Windows).
         let path_to_use: Vec<u8> =
             strings::paths::clone_normalizing_separators(root_dir_path.slice());
 
-        let root_dir_info = match vm.transpiler.resolver.read_dir_info(&path_to_use) {
-            Ok(Some(info)) => info,
-            Ok(None) => {
-                return Err(global_this.throw(format_args!(
-                    "Unable to find directory: {}",
-                    bstr::BStr::new(root_dir_path.slice())
-                )));
-            }
-            Err(_) => {
-                let err_value = log.to_js(global_this, format_args!("reading root directory"));
-                return Err(global_this.throw_value(err_value?));
-            }
-        };
-
-        let mut router = Router::Router::init(RouteConfig {
-            dir: Box::from(&path_to_use[..]),
+        let config = RouteConfig {
+            dir: path_to_use.into_boxed_slice(),
             extensions: if !extensions.is_empty() {
                 extensions.iter().map(|s| Box::<[u8]>::from(*s)).collect()
             } else {
@@ -253,26 +200,9 @@ impl FileSystemRouter {
                     .map(|s| Box::<[u8]>::from(*s))
                     .collect()
             },
-            asset_prefix_path: Box::from(asset_prefix_slice.slice()),
-            ..Default::default()
-        })
-        .expect("unreachable");
+        };
 
-        {
-            let config_dir = router.config.dir.clone();
-            if router
-                .load_routes(
-                    &mut log,
-                    &root_dir_info,
-                    &mut RouterResolver(&mut vm.transpiler.resolver),
-                    &config_dir,
-                )
-                .is_err()
-            {
-                let err_value = log.to_js(global_this, format_args!("loading routes"));
-                return Err(global_this.throw_value(err_value?));
-            }
-        }
+        let routes = Self::scan(global_this, &config, &mut log)?;
 
         if let Some(origin) = argument.get(global_this, "origin")? {
             if !origin.is_string() {
@@ -286,12 +216,6 @@ impl FileSystemRouter {
             let err_value = log.to_js(global_this, format_args!("loading routes"));
             return Err(global_this.throw_value(err_value?));
         }
-
-        let base_dir_str = if !root_dir_info.abs_real_path.is_empty() {
-            root_dir_info.abs_real_path
-        } else {
-            root_dir_info.abs_path
-        };
 
         // Note: `vm.refCountedString` is an interning cache — on a cache HIT it
         // returns the existing `*mut RefString` WITHOUT bumping the refcount.
@@ -314,7 +238,6 @@ impl FileSystemRouter {
             } else {
                 None
             },
-            base_dir: Some(claim(vm.ref_counted_string::<true>(base_dir_str, None))),
             asset_prefix: if !asset_prefix_slice.slice().is_empty() {
                 Some(claim(vm.ref_counted_string::<true>(
                     asset_prefix_slice.slice(),
@@ -323,110 +246,35 @@ impl FileSystemRouter {
             } else {
                 None
             },
-            router: JsCell::new(router),
+            config,
+            routes: JsCell::new(Rc::new(routes)),
             arena: JsCell::new(arena),
         });
-
-        // RouteConfig::dir is an owned `Box<[u8]>`, so copy the bytes; the
-        // `claim` above already took our +1.
-        // `base_dir` was just set to Some above.
-        let base_dir = fs_router.base_dir.unwrap();
-        fs_router
-            .router
-            .with_mut(|r| r.config.dir = Box::from(base_dir.leak()));
 
         Ok(fs_router)
     }
 
-    pub(crate) fn bust_dir_cache_recursive(&self, global_this: &JSGlobalObject, input_path: &[u8]) {
-        // SAFETY: `bun_vm()` returns the live VM raw pointer for this global. Re-derive the
-        // `&mut` per use site so the recursive call (which does the same) doesn't pop our
-        // SB tag mid-loop.
-        let vm = global_this.bun_vm();
-        #[cfg(not(windows))]
-        let path = input_path;
-        #[cfg(windows)]
-        let path;
-        #[cfg(windows)]
-        let normalized: Vec<u8>;
-        #[cfg(windows)]
-        {
-            // Note: `with_borrow_mut` can't hand back a slice that outlives
-            // the closure, so copy out (cold reload path).
-            normalized = WIN32_NORMALIZE_BUF
-                .with_borrow_mut(|buf| vm.fs().normalize_buf(&mut buf[..], input_path).to_vec());
-            path = normalized.as_slice();
-        }
-
-        let root_dir_info = match vm.as_mut().transpiler.resolver.read_dir_info(path) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-
-        if let Some(dir_ref) = root_dir_info {
-            // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`
-            // (other threads rewrite the map in place under that lock), then drop
-            // the guard: `bust_dir_cache` / the recursion below re-acquire it.
-            let entry_ptrs: Vec<*mut Fs::Entry> = {
-                let _entries_lock = Fs::FileSystem::instance().fs.entries_mutex.lock_guard();
-                match dir_ref.get_entries_const() {
-                    Some(entries) => entries.data.values().copied().collect(),
-                    None => Vec::new(),
-                }
-            };
-            {
-                'outer: for entry_ptr in entry_ptrs {
-                    // BACKREF: `entry_ptr` is a `*mut Entry` into the process-static
-                    // EntryStore; the store outlives this loop. Wrap once so the
-                    // shared-only reads below are safe `Deref`s.
-                    let entry = BackRef::from(
-                        core::ptr::NonNull::new(entry_ptr).expect("EntryStore entry"),
-                    );
-                    if entry.base().first() == Some(&b'.') {
-                        continue 'outer;
-                    }
-                    // `Transpiler::fs_mut()` is the audited safe `&mut FileSystem`
-                    // accessor for the process-lifetime singleton; `&mut .fs` (the
-                    // `Implementation` field) is the lazy-stat receiver. `kind`
-                    // needs `&mut Entry` to update the cached stat; no shared
-                    // borrow of `*entry_ptr` is live across this block.
-                    let kind = {
-                        let fs_impl = &mut vm.transpiler.fs_mut().fs;
-                        // SAFETY: `entry_ptr` is a live `*mut Entry` in the process-static
-                        // EntryStore (checked non-null above); the lazy-stat rewrite is
-                        // serialized on `Entry.mutex`; fs_impl is the process-global RealFS.
-                        unsafe { (&*entry_ptr).kind(fs_impl, false) }
-                    };
-                    if kind == Fs::EntryKind::Dir {
-                        for banned_dir in Router::BANNED_DIRS.iter() {
-                            if entry.base() == *banned_dir {
-                                continue 'outer;
-                            }
-                        }
-                        let abs_parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                        // `abs()` writes into a thread-local buffer; copy out
-                        // before recursing (recursion overwrites it).
-                        let full_path = vm.fs().abs(&abs_parts).to_vec();
-                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
-                            strings::paths::without_trailing_slash_windows_path(&full_path),
-                        );
-                        self.bust_dir_cache_recursive(global_this, &full_path);
-                    }
-                }
+    /// The constructor and `reload()` both scan here: a new router and a reloaded one list the same routes.
+    fn scan(
+        global_this: &JSGlobalObject,
+        config: &RouteConfig,
+        log: &mut Log::Log,
+    ) -> JsResult<Routes> {
+        let dir = strings::paths::without_trailing_slash_windows_path(&config.dir);
+        let scanned = match bun_sys::Dir::open(dir) {
+            Ok(opened) => Routes::scan(opened, &config.extensions, log),
+            Err(err) if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
+                return Err(global_this.throw(format_args!(
+                    "Unable to find directory: {}",
+                    bstr::BStr::new(dir)
+                )));
             }
+            Err(err) => Err(err),
+        };
+        match scanned {
+            Ok(routes) => Ok(routes),
+            Err(err) => Err(global_this.throw_value(err.to_js(global_this)?)),
         }
-
-        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
-    }
-
-    pub(crate) fn bust_dir_cache(&self, global_this: &JSGlobalObject) {
-        let dir =
-            strings::paths::without_trailing_slash_windows_path(&self.router.get().config.dir);
-        // Note: reshaped for borrowck — `dir` borrows `self.router.config.dir`; the
-        // recursive walk re-derives the path from the resolver per-iteration so a one-time
-        // copy is sufficient.
-        let dir = dir.to_vec();
-        self.bust_dir_cache_recursive(global_this, &dir);
     }
 
     #[bun_jsc::host_fn(method)]
@@ -438,76 +286,11 @@ impl FileSystemRouter {
         let this_value = callframe.this();
 
         let arena = Box::new(ArenaAllocator::new());
-        // SAFETY: `bun_vm()` returns the live VM raw pointer for this global.
-        let vm_ptr = global_this.bun_vm_ptr();
 
         let mut log = Log::Log::new();
-        // SAFETY: `vm_ptr` is the live VM for this global; resolver outlives this
-        // scope. Guard declared after `log` so it drops (and restores) first.
-        let _restore_log = unsafe {
-            Resolver::scoped_log(
-                core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
-                core::ptr::NonNull::from(&mut log),
-            )
-        };
+        let routes = Self::scan(global_this, &this.config, &mut log)?;
 
-        this.bust_dir_cache(global_this);
-        // Note: `bust_dir_cache` re-derives the VM borrow internally; rebind here so
-        // our `vm` borrow is fresh under Stacked Borrows.
-        let vm = global_this.bun_vm().as_mut();
-
-        // R-2: snapshot the config fields up front so the `JsCell::get()` borrow is
-        // released before `JsCell::set()` below installs the new router.
-        let (cfg_dir, cfg_extensions, cfg_asset_prefix_path) = {
-            let cfg = &this.router.get().config;
-            (
-                cfg.dir.clone(),
-                cfg.extensions.clone(),
-                cfg.asset_prefix_path.clone(),
-            )
-        };
-
-        let root_dir_info = match vm.transpiler.resolver.read_dir_info(&cfg_dir) {
-            Ok(Some(info)) => info,
-            Ok(None) => {
-                return Err(global_this.throw(format_args!(
-                    "Unable to find directory: {}",
-                    bstr::BStr::new(&*cfg_dir)
-                )));
-            }
-            Err(_) => {
-                let err_value = log.to_js(global_this, format_args!("reading root directory"));
-                return Err(global_this.throw_value(err_value?));
-            }
-        };
-
-        let mut router = Router::Router::init(RouteConfig {
-            dir: cfg_dir,
-            extensions: cfg_extensions,
-            asset_prefix_path: cfg_asset_prefix_path,
-            ..Default::default()
-        })
-        .expect("unreachable");
-        {
-            let config_dir = router.config.dir.clone();
-            if router
-                .load_routes(
-                    &mut log,
-                    &root_dir_info,
-                    &mut RouterResolver(&mut vm.transpiler.resolver),
-                    &config_dir,
-                )
-                .is_err()
-            {
-                let err_value = log.to_js(global_this, format_args!("loading routes"));
-                return Err(global_this.throw_value(err_value?));
-            }
-        }
-
-        // `this.router.deinit(); this.arena.deinit(); destroy(this.arena)` — drop old values.
-        // Note: order matters — old router borrows slices from old arena, so it must drop
-        // first.
-        this.router.set(router);
+        this.routes.set(Rc::new(routes));
         this.arena.set(arena);
         // `js.routesSetCached` — wired via `codegen_cached_accessors!` above.
         routes_set_cached(this_value, global_this, JSValue::ZERO);
@@ -591,14 +374,10 @@ impl FileSystemRouter {
         };
         let mut params = route_param::List::default();
         // `defer params.deinit(allocator)` → Drop
-        // SAFETY: R-2 — short-lived `&mut Router` for the route lookup;
-        // `match_page_with_allocator` is pure (no JS re-entry), and the returned
-        // `Match<'p>` borrows `params`/`path_bytes`, not `*router`, so the
-        // exclusive borrow ends at the `;`.
-        let Some(route) = unsafe { this.router.get_mut() }
-            .routes
-            .match_page_with_allocator(b"", &url_path, &mut params)
-        else {
+        // `Match<'p>` borrows `params`/`path_bytes` and the strings of `routes`, which the
+        // `MatchedRoute` below keeps alive across a `reload()`.
+        let routes = this.routes.get();
+        let Some(route) = routes.match_page_with_allocator(b"", &url_path, &mut params) else {
             return Ok(JSValue::NULL);
         };
 
@@ -621,7 +400,7 @@ impl FileSystemRouter {
             path,
             this.origin,
             this.asset_prefix,
-            this.base_dir.unwrap(),
+            Rc::clone(routes),
         )
         .expect("unreachable");
 
@@ -646,14 +425,12 @@ impl FileSystemRouter {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_routes(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let router = this.router.get();
-        let paths = router.get_entry_points();
-        let names = router.get_names();
-        let mut name_strings: Vec<EncodedSlice> = vec![EncodedSlice::EMPTY; names.len() * 2];
-        let (name_strings_slice, paths_strings) = name_strings.split_at_mut(names.len());
-        for (i, name) in names.iter().enumerate() {
+        let routes = Rc::clone(this.routes.get());
+        let mut name_strings: Vec<EncodedSlice> = vec![EncodedSlice::EMPTY; routes.len() * 2];
+        let (name_strings_slice, paths_strings) = name_strings.split_at_mut(routes.len());
+        for (i, (name, file_path)) in routes.iter().enumerate() {
             name_strings_slice[i] = EncodedSlice::from_bytes(name);
-            paths_strings[i] = EncodedSlice::from_bytes(paths[i]);
+            paths_strings[i] = EncodedSlice::from_bytes(file_path);
         }
         JSValue::from_entries(global_this, name_strings_slice, paths_strings, true)
     }
@@ -676,19 +453,16 @@ impl FileSystemRouter {
         if let Some(p) = self.origin.take() {
             p.get().deref();
         }
-        if let Some(p) = self.base_dir.take() {
-            p.get().deref();
-        }
     }
 }
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct MatchedRoute {
     /// Self-referential: always points at `self.route_holder`. See `init`.
-    // Note: `Match<'a>` borrows (a) the resolver's process-lifetime DirnameStore for
-    // `name`/`file_path`/`basename`/`path` and (b) `self.pathname_backing` for
-    // `pathname`/`query_string`/param values. Both are stable for `Self`'s lifetime, so
-    // the stored `'static` is the standard self-referential erasure — see `init`.
+    // Note: `Match<'a>` borrows (a) `self.routes` for `name`/`file_path` and the
+    // param names, and (b) `self.pathname_backing` for `pathname`/`query_string`/param
+    // values. Both are stable for `Self`'s lifetime, so the stored `'static` is the
+    // standard self-referential erasure — see `init`.
     pub(crate) route: *const RouterMatch<'static>,
     // Note: `route_holder`/`params_list_holder` are wrapped in `UnsafeCell` because
     // `route` (above) and `route_holder.params` hold raw self-referential pointers into
@@ -708,7 +482,8 @@ pub(crate) struct MatchedRoute {
     pub(crate) origin: Option<BackRef<RefString>>,
     pub(crate) asset_prefix: Option<BackRef<RefString>>,
     pub(crate) needs_deinit: bool,
-    pub(crate) base_dir: Option<BackRef<RefString>>,
+    /// Owns the bytes of `route_holder.name`/`file_path` and of the param names.
+    pub(crate) routes: Rc<Routes>,
 }
 
 impl MatchedRoute {
@@ -740,7 +515,7 @@ impl MatchedRoute {
         pathname_backing: Utf8Bytes<'static>,
         origin: Option<BackRef<RefString>>,
         asset_prefix: Option<BackRef<RefString>>,
-        base_dir: BackRef<RefString>,
+        routes: Rc<Routes>,
     ) -> Result<Box<MatchedRoute>, bun_alloc::AllocError> {
         // SAFETY: `match_.params` points at the caller's stack `route_param::List`, which is
         // live for this call. Clone its contents into our own holder before re-pointing.
@@ -748,9 +523,9 @@ impl MatchedRoute {
 
         // SAFETY: self-referential lifetime erasure — `RouterMatch<'_>` borrows two
         // backing stores —
-        //   (a) `name`/`file_path`/`basename`/`path` slice the resolver's DirnameStore
-        //       (process-lifetime arena — `bun_router` paths are `Interned`), so are
-        //       genuinely `'static`;
+        //   (a) `name`/`file_path` and the param `name`s slice the strings of `routes`,
+        //       which nothing changes after the scan and which we hold a reference to
+        //       below;
         //   (b) `pathname`/`query_string` and the param `value`s slice `pathname_backing`,
         //       which we move into the same heap-stable Box below. The Box is never moved
         //       after construction (JsClass m_ctx payload), so those bytes are valid for
@@ -775,16 +550,15 @@ impl MatchedRoute {
             route: core::ptr::null(),
             asset_prefix,
             origin,
-            base_dir: Some(base_dir),
+            routes,
             query_string_map: JsCell::new(None),
             param_map: JsCell::new(None),
             params_list_holder: UnsafeCell::new(params_list),
             pathname_backing,
             needs_deinit: true,
         });
-        // Note: `base_dir.ref()` / `o.ref()` / `prefix.ref()` — bump refcounts.
+        // Note: `o.ref()` / `prefix.ref()` — bump refcounts.
         // Each is a live interned `RefString` (caller-provided BackRef).
-        base_dir.ref_();
         if let Some(o) = origin {
             o.ref_();
         }
@@ -822,9 +596,6 @@ impl MatchedRoute {
             p.get().deref();
         }
         if let Some(p) = this.asset_prefix.take() {
-            p.get().deref();
-        }
-        if let Some(p) = this.base_dir.take() {
             p.get().deref();
         }
     }
@@ -905,11 +676,7 @@ impl MatchedRoute {
         };
         bun_object::get_public_path_with_asset_prefix(
             this.route().file_path,
-            if let Some(ref base_dir) = this.base_dir {
-                base_dir.leak()
-            } else {
-                Fs::FileSystem::get().top_level_dir
-            },
+            this.routes.dir(),
             &origin_url,
             if let Some(ref prefix) = this.asset_prefix {
                 prefix.leak()
@@ -979,14 +746,4 @@ impl MatchedRoute {
             None => Ok(JSValue::create_empty_object(global_this, 0)),
         })
     }
-}
-
-// Note: `bun.ThreadlocalBuffers(struct { buf: if (isWindows) [MAX_PATH_BYTES*2]u8 else void })`
-// Heap-backed so only a Box pointer lives in TLS — a `const { [0u8; MAX_PATH_BYTES*2] }`
-// initializer here would put ~192 KB of zeros directly into the PE `.tls` section
-// (PE/COFF has no TLS-BSS). See test/js/bun/binary/tls-segment-size.
-#[cfg(windows)]
-thread_local! {
-    static WIN32_NORMALIZE_BUF: core::cell::RefCell<Box<[u8; MAX_PATH_BYTES * 2]>> =
-        core::cell::RefCell::new(bun_core::boxed_zeroed());
 }

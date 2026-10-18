@@ -183,17 +183,6 @@ impl Entry {
         self.dir
     }
 
-    /// `Interned` is `Copy`.
-    #[inline]
-    pub fn abs_path(&self) -> Interned {
-        self.abs_path
-    }
-
-    #[inline]
-    pub fn set_abs_path(&mut self, p: Interned) {
-        self.abs_path = p;
-    }
-
     /// Stat-on-first-use.
     ///
     /// # Safety

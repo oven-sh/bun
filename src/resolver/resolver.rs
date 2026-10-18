@@ -89,7 +89,7 @@ mod bun_paths {
                     $body
                 }
                 rp::Platform::Posix => {
-                    type $P = platform::PosixLoose;
+                    type $P = platform::Posix;
                     $body
                 }
                 rp::Platform::Nt => {
@@ -2518,7 +2518,7 @@ impl<'a> Resolver<'a> {
 
         let joined = bun_paths::join_abs(
             bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO),
-            bun_paths::Platform::AUTO,
+            bun_paths::Platform::Loose,
             specifier,
         );
         let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
@@ -6560,7 +6560,7 @@ impl<'a> Resolver<'a> {
                     ts_dir_name,
                     bufs!(tsconfig_path_abs),
                     &[ts_dir_name, &current.extends],
-                    bun_paths::Platform::AUTO,
+                    bun_paths::Platform::Loose,
                 );
                 let parent_config_maybe: Option<*mut TSConfigJSON> =
                     match self.parse_tsconfig(abs_path, FD::INVALID) {
@@ -6665,7 +6665,7 @@ impl<'a> Resolver<'a> {
                     &path,
                     bufs!(tsconfig_path_abs),
                     &[b"tsconfig.json".as_slice()],
-                    bun_paths::Platform::AUTO,
+                    bun_paths::Platform::Loose,
                 )
                 .to_vec();
             }

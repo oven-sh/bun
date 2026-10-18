@@ -636,10 +636,18 @@ impl PackageJSON {
                         // import of "foo", but that's actually not a bug. Or arguably it's a
                         // bug in Browserify but we have to replicate this bug because packages
                         // do this in the wild.
-                        let key: &[u8] = resolve_path::resolve_path::normalize_string_spill::<
-                            true,
-                            resolve_path::platform::AutoLoose,
-                        >(&mut key_spill, prop.key.slice());
+                        use resolve_path::{platform, resolve_path::normalize_string_spill};
+                        let key: &[u8] = if cfg!(windows) {
+                            normalize_string_spill::<true, platform::Windows>(
+                                &mut key_spill,
+                                prop.key.slice(),
+                            )
+                        } else {
+                            normalize_string_spill::<true, platform::Loose>(
+                                &mut key_spill,
+                                prop.key.slice(),
+                            )
+                        };
 
                         match &prop.value {
                             js_ast::E::JsonValue::String(str) => {

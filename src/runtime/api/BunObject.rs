@@ -24,10 +24,9 @@ pub(crate) fn get_public_path_with_asset_prefix(
         // that wrapper is stateless and forwards to bun_paths — dispatch on runtime `platform`
         // here to keep this fn callable without const-generic plumbing through `transpiler.fs`.
         match platform {
-            Platform::Posix => resolve_path::relative_platform::<
-                resolve_path::platform::PosixLoose,
-                false,
-            >(dir, to),
+            Platform::Posix => {
+                resolve_path::relative_platform::<resolve_path::platform::Posix, false>(dir, to)
+            }
             Platform::Windows => {
                 resolve_path::relative_platform::<resolve_path::platform::Windows, false>(dir, to)
             }

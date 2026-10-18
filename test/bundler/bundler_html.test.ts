@@ -800,6 +800,21 @@ body {
     },
   });
 
+  // A browser reads `\\app.js` as `/app.js`.
+  itBundled("html/absolute-path-written-with-a-backslash", {
+    outdir: "out/",
+    files: {
+      "/pages/index.html": `<script src="\\app.js"></script>`,
+      "/app.js": "console.log('at the root')",
+      "/pages/app.js": "console.log('beside the page')",
+    },
+    entryPoints: ["/pages/index.html"],
+    onAfterBundle(api) {
+      const src = api.readFile("out/index.html").match(/src="(.*\.js)"/);
+      expect(api.readFile("out/" + src![1])).toContain("at the root");
+    },
+  });
+
   // Test absolute paths in HTML
   itBundled("html/absolute-paths", {
     outdir: "out/",

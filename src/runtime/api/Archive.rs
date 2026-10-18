@@ -1340,7 +1340,7 @@ fn extract_to_disk_filtered(
             continue;
         }
         let pathname_z: &bun_core::ZStr = bun_paths::resolve_path::normalize_buf_z::<
-            bun_paths::platform::PosixLoose,
+            bun_paths::platform::Loose,
         >(raw_pathname, &mut normalized_buf[..]);
         let pathname = pathname_z.as_bytes();
 

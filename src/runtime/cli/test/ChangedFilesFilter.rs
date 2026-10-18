@@ -635,7 +635,7 @@ fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
             continue;
         }
         let abs =
-            resolve_path::join_abs_string_buf::<platform::AutoLoose>(git_root, &mut buf.0, &[rel]);
+            resolve_path::join_abs_string_buf::<platform::Loose>(git_root, &mut buf.0, &[rel]);
         // Skip deletions; the bundler can only parse files that exist.
         if !sys::exists(abs) {
             continue;

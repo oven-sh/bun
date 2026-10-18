@@ -539,7 +539,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     };
 
     for fsr in &framework.file_system_router_types {
-        let joined_root = resolve_path::join_abs::<platform::AutoLoose>(cwd, &fsr.root);
+        let joined_root = resolve_path::join_abs::<platform::Loose>(cwd, &fsr.root);
         let Some(entry) = server_transpiler
             .resolver
             .read_dir_info_ignore_error(joined_root)

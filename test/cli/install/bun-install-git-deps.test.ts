@@ -3421,6 +3421,31 @@ test.concurrent("rejects a file: folder dependency of a tarball package that poi
   expect(exitCode).toBe(1);
 });
 
+for (const linker of ["hoisted", "isolated"]) {
+  test.concurrent.skipIf(isWindows)(
+    `rejects a file: folder dependency of a tarball package that is an absolute path written with \\ (${linker})`,
+    async () => {
+      using dir = tempDir("tarball-backslash-file-dep", {
+        "outside/package.json": JSON.stringify({ name: "outside", version: "1.0.0" }),
+      });
+      const root = String(dir);
+      const written = join(root, "outside").replaceAll("/", "\\");
+      // The tarball has a folder of that very name, for a step that reads the path as a relative one.
+      await packTarball(
+        join(root, "tarballs", "escaping.tgz"),
+        { name: "escaping", version: "1.0.0", dependencies: { outside: `file:${written}` } },
+        { [`${written}/package.json`]: JSON.stringify({ name: "outside", version: "1.0.0" }) },
+      );
+      const project = writeProject(root, { escaping: `file:../tarballs/escaping.tgz` });
+
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {}, `--linker=${linker}`);
+      expect(stderr).toContain(`error: outside@file:${written} failed to resolve`);
+      expect(existsSync(join(project, "node_modules"))).toBe(false);
+      expect(exitCode).toBe(1);
+    },
+  );
+}
+
 // A git package whose package.json has no name is named after its repository. bun.lock stores a
 // package as "<name>@<resolution>", so when that repository name itself contains an "@" (or is
 // otherwise unusable as a package name) the generic name is used instead; the repository name

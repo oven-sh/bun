@@ -937,6 +937,18 @@ describe("Bun.Archive", () => {
       );
     });
 
+    test.skipIf(isWindows)("`..` behind a leading backslash stays inside", async () => {
+      using dir = tempDir("archive-leading-backslash", {});
+      const out = join(String(dir), "a", "b", "out");
+      expect(await new Bun.Archive({ "\\..\\..\\up.txt": "up" }).extract(out)).toBe(1);
+      expect(readdirSync(String(dir), { recursive: true }).map(String).sort()).toEqual([
+        "a",
+        "a/b",
+        "a/b/out",
+        "a/b/out/up.txt",
+      ]);
+    });
+
     test("skips tar entries whose pathname exceeds the platform path limit", async () => {
       // GNU `@LongLink` ('L') records let a tar entry carry a pathname of
       // arbitrary length, far beyond what fits in the extractor's fixed-size

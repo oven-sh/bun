@@ -2208,7 +2208,7 @@ fn string_pairs(e: Option<&bun_ast::Expr>, bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>
 /// Returns one of `INSTALL_FIELDS` as sorted pairs, normalized so that two spellings that install
 /// the same thing compare equal. A registry rewrites some fields when a package is published.
 fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>)> {
-    use bun_paths::resolve_path::{join_abs_string_checked, platform};
+    use bun_paths::resolve_path::{join_abs_string_checked, platform, slashes_to_posix_in_place};
     let Some(value) = json.get(field) else {
         return Vec::new();
     };
@@ -2224,8 +2224,9 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
             }
             for (name, path) in &mut pairs {
                 *name = bun_paths::basename(name).to_vec();
+                slashes_to_posix_in_place(path);
                 if let Some(normal) =
-                    join_abs_string_checked::<platform::PosixLoose>(b"/", &[path.as_slice()])
+                    join_abs_string_checked::<platform::Posix>(b"/", &[path.as_slice()])
                 {
                     *path = normal.to_vec();
                 }

@@ -167,7 +167,7 @@ impl DevServer {
         // on); capture the length, drop the shared borrow, then re-slice
         // mutably to convert separators in place.
         let rel_len = bun_paths::resolve_path::relative_platform_buf::<
-            bun_paths::resolve_path::platform::AutoLoose,
+            bun_paths::resolve_path::platform::Auto,
             true,
         >(&mut relative_path_buf[..], &self.root, path)
         .len();

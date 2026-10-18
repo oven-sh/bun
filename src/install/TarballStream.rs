@@ -27,7 +27,6 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
-use bun_paths::resolve_path::{self, platform};
 use bun_paths::{self, OSPathChar, OSPathSliceZ};
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
@@ -819,10 +818,7 @@ impl TarballStream {
         let normalized = if self.npm_mode {
             bun_libarchive::normalize_npm_entry_path(rest, &mut norm_buf[..])
         } else {
-            resolve_path::normalize_buf_t::<OSPathChar, platform::AutoLoose>(
-                rest,
-                &mut norm_buf[..],
-            )
+            bun_libarchive::normalize_entry_path(rest, &mut norm_buf[..])
         };
         let norm_len = normalized.len();
         norm_buf[norm_len] = 0;

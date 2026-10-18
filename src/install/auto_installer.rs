@@ -267,7 +267,7 @@ impl hooks::AutoInstaller for PackageManager {
                 _ => return None,
             }
         };
-        let len = join_abs_string_buf_checked::<platform::AutoLoose>(base, buf, &[path])?.len();
+        let len = join_abs_string_buf_checked::<platform::Loose>(base, buf, &[path])?.len();
         Some(&buf[..len])
     }
 
@@ -344,7 +344,7 @@ impl hooks::AutoInstaller for PackageManager {
             && let hooks::URI::Local(path) = version.tarball().uri
         {
             let mut buf = bun_paths::path_buffer_pool::get();
-            let Some(joined) = join_abs_string_buf_checked::<platform::AutoLoose>(
+            let Some(joined) = join_abs_string_buf_checked::<platform::Loose>(
                 package_json_dir,
                 &mut buf[..],
                 &[path.slice(version_buf)],

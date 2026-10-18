@@ -1,4 +1,6 @@
-import { describe, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -334,6 +336,24 @@ describe("bundler", () => {
     run: {
       stdout: "123",
     },
+  });
+  test("tsconfig/ExtendsAbsolutePathWrittenWithBackslashes", async () => {
+    using dir = tempDir("tsconfig-extends-absolute-backslash", {
+      "entry.ts": `import test from "#/test"; console.log(test);`,
+      "src/test.ts": `export default 123`,
+      "config/tsconfig.paths.json": JSON.stringify({ compilerOptions: { paths: { "#/*": ["../src/*"] } } }),
+    });
+    const base = join(String(dir), "config", "tsconfig.paths.json").replaceAll("/", "\\");
+    await Bun.write(join(String(dir), "tsconfig.json"), JSON.stringify({ extends: base }));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "123\n", stderr: "", exitCode: 0 });
   });
   itBundled("tsconfig/PathsOverriddenBaseURLDifferentDir", {
     files: {

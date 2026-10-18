@@ -205,9 +205,13 @@ Path helpers operate on `&[u8]` and are platform-parameterized via the
 `Platform` const-generic (`Posix`, `Windows`, `Loose`, `Nt`; `platform::Auto`
 picks the host). Never use `std::path` for runtime path logic. On POSIX a `\` is
 part of a file name. Text read out of a file (a manifest, a lockfile, a config,
-an archive, an import specifier) may have been written on Windows and takes
-`platform::AutoLoose` (or `PosixLoose`), which splits at `\` too. So does a path
-that is compared with one the resolver produced: the resolver uses `Loose`.
+an import specifier) may have been written on Windows: join it with
+`platform::Loose`, which splits at `\` too and is `Windows` on Windows for
+`join_abs*`. It reads a leading `\` and `C:\` as absolute, so check such text with
+`is_absolute_loose`. `normalize_*::<Loose>` and `relative*::<Loose>` print `/`
+everywhere; where that is wrong on Windows, pick `Windows` there with
+`cfg!(windows)`. A path that is compared with one the resolver produced takes
+`Loose` as well, which is what the resolver uses.
 
 ```rust
 use bun_paths::{dirname, basename};

@@ -163,10 +163,17 @@ fn normalize_package_json_path<'a>(
         strings::trim_right(non_normalized_path, SEP_STR.as_bytes())
     } else {
         strings::trim_right(
-            resolve_path::normalize_string_spill::<true, bun_paths::platform::AutoLoose>(
-                &mut normalize_spill,
-                non_normalized_path,
-            ),
+            if cfg!(windows) {
+                resolve_path::normalize_string_spill::<true, bun_paths::platform::Windows>(
+                    &mut normalize_spill,
+                    non_normalized_path,
+                )
+            } else {
+                resolve_path::normalize_string_spill::<true, bun_paths::platform::Loose>(
+                    &mut normalize_spill,
+                    non_normalized_path,
+                )
+            },
             SEP_STR.as_bytes(),
         )
     };

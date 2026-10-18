@@ -8,7 +8,7 @@ use bun_core::ZStr;
 use bun_core::w;
 #[cfg(not(windows))]
 use bun_paths::MAX_PATH_BYTES;
-use bun_paths::platform::{Auto as PlatformAuto, AutoLoose as PlatformAutoLoose};
+use bun_paths::platform::{Auto as PlatformAuto, Loose as PlatformLoose};
 use bun_paths::resolve_path::{self, join_abs_string_buf_z_checked as join_z_checked};
 use bun_paths::strings;
 use bun_paths::{self as path, AbsPath, SEP};
@@ -756,6 +756,11 @@ fn normalized_bin_name(name: &[u8]) -> &[u8] {
     name
 }
 
+/// npm reads a `bin` target as a path below the package, where a leading separator means nothing.
+pub fn below_package_dir(target: &[u8]) -> &[u8] {
+    strings::trim_left(target, b"/\\")
+}
+
 /// True when a `bin` entry's target value would resolve outside the package
 /// directory (absolute path or `..` traversal). The bin *value* is taken
 /// verbatim from package.json, so without this check a malicious package could
@@ -781,7 +786,7 @@ pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
 /// Returns true if `target` is absolute, or if its `..` components lead above the directory it
 /// starts in.
 pub(crate) fn path_climbs_out(target: &[u8]) -> bool {
-    if path::is_absolute(target) {
+    if path::is_absolute_loose(target) {
         return true;
     }
     // The OS stops reading a path at a NUL byte, so `..\0x` would open `..` even though the loop
@@ -1552,7 +1557,7 @@ impl<'a> Linker<'a> {
         let target = strings::without_trailing_slash(target);
 
         if !is_native_binlink_redirect {
-            return join_z_checked::<PlatformAutoLoose>(package_dir, buf, &[target]);
+            return join_z_checked::<PlatformLoose>(package_dir, buf, &[target]);
         }
 
         let target_basename = path::basename(target);
@@ -1568,7 +1573,7 @@ impl<'a> Linker<'a> {
             if candidate.is_empty() {
                 continue;
             }
-            let found = join_z_checked::<PlatformAutoLoose>(package_dir, buf, &[candidate])
+            let found = join_z_checked::<PlatformLoose>(package_dir, buf, &[candidate])
                 .filter(|abs| sys::exists_z(abs));
             if let Some(len) = found.map(ZStr::len) {
                 return Some(ZStr::from_buf(buf, len));
@@ -1578,7 +1583,7 @@ impl<'a> Linker<'a> {
         // Nothing found; return the primary so `link_bin_or_create_shim` sets
         // `skipped_due_to_missing_bin` and the caller retries without the
         // redirect.
-        join_z_checked::<PlatformAutoLoose>(package_dir, buf, &[target])
+        join_z_checked::<PlatformLoose>(package_dir, buf, &[target])
     }
 
     /// Length of `<node_modules>/<package>/` in `abs_target_buf`, `None` if a NUL no longer fits.
@@ -1679,6 +1684,7 @@ impl<'a> Linker<'a> {
 
         // `false`: the name does not fit.
         let mut link_named = |this: &mut Self, name: &[u8], target: &[u8]| -> bool {
+            let target = below_package_dir(target);
             if name.is_empty() || target.is_empty() || bin_target_escapes_package_dir(target) {
                 return true;
             }
@@ -1726,11 +1732,11 @@ impl<'a> Linker<'a> {
                 }
             }
             Tag::Dir => {
-                let target = bin.dir().slice(string_buf);
+                let target = below_package_dir(bin.dir().slice(string_buf));
                 if target.is_empty() || bin_target_escapes_package_dir(target) {
                     return;
                 }
-                let Some(abs_target_dir) = join_z_checked::<PlatformAutoLoose>(
+                let Some(abs_target_dir) = join_z_checked::<PlatformLoose>(
                     &self.abs_target_buf[0..package_dir_len],
                     resolved_target_buf,
                     &[target],
@@ -1823,13 +1829,13 @@ impl<'a> Linker<'a> {
                 }
             }
             Tag::Dir => {
-                let target = bin.dir().slice(string_buf);
+                let target = below_package_dir(bin.dir().slice(string_buf));
                 if target.is_empty() {
                     return;
                 }
 
                 let mut abs_target_dir_buf = path::path_buffer_pool::get();
-                let Some(abs_target_dir) = join_z_checked::<PlatformAutoLoose>(
+                let Some(abs_target_dir) = join_z_checked::<PlatformLoose>(
                     &self.abs_target_buf[0..package_dir_len],
                     abs_target_dir_buf.as_mut_slice(),
                     &[target],

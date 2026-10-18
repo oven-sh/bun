@@ -149,7 +149,7 @@ impl FileSystemRouter {
                 // An absolute path is normalized too: a route is named by what follows this
                 // path in the resolver's spelling of its directory, which is normalized.
                 let Some(joined) =
-                    path::resolve_path::join_abs_string_buf_checked::<path::platform::AutoLoose>(
+                    path::resolve_path::join_abs_string_buf_checked::<path::platform::Loose>(
                         Fs::FileSystem::instance().top_level_dir,
                         &mut out_buf,
                         &[root_dir_path_.slice()],

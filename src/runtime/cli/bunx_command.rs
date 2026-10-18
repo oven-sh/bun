@@ -325,7 +325,8 @@ impl BunxCommand {
                     for prop in object.get().properties() {
                         let bin_name = prop.key.slice();
                         // Same values the bin linker does not link (`bin.rs`).
-                        let Some(target) = prop.value.as_str().filter(|target| {
+                        let target = prop.value.as_str().map(bun_install::bin::below_package_dir);
+                        let Some(target) = target.filter(|target| {
                             !target.is_empty()
                                 && !bun_install::bin::bin_target_escapes_package_dir(target)
                         }) else {
@@ -364,6 +365,7 @@ impl BunxCommand {
         if let Some(dirs) = expr.as_property(b"directories")
             && let Some(bin_prop) = dirs.expr.as_property(b"bin")
             && let Some(dir_name) = bin_prop.expr.as_utf8_string_literal()
+            && let dir_name = bun_install::bin::below_package_dir(dir_name)
             && !dir_name.is_empty()
             && !bun_install::bin::bin_target_escapes_package_dir(dir_name)
         {

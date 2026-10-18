@@ -71,8 +71,8 @@ impl<'a> HTMLScanner<'a> {
     fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
-        let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
-            resolve_path::join_abs_string::<platform::AutoLoose>(
+        let path_to_use: &[u8] = if input_path.len() > 1 && bun_paths::is_sep_any(input_path[0]) {
+            resolve_path::join_abs_string::<platform::Loose>(
                 fs::FileSystem::instance().top_level_dir,
                 &[&input_path[1..]],
             )
@@ -94,7 +94,7 @@ impl<'a> HTMLScanner<'a> {
                     break 'blk input_path;
                 }
                 let resolved =
-                    resolve_path::join_abs_string_z::<platform::AutoLoose>(dirname, &[input_path]);
+                    resolve_path::join_abs_string_z::<platform::Loose>(dirname, &[input_path]);
                 if sys::exists_z(resolved) {
                     resolved.as_bytes()
                 } else {

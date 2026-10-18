@@ -111,7 +111,7 @@ pub(crate) fn folder_relative_to_top_level_dir<'a>(
     buf: &'a mut [u8],
 ) -> Option<&'a [u8]> {
     let top_level_dir = FileSystem::instance().top_level_dir();
-    let joined = resolve_path::join_abs_string_buf_checked::<path::platform::AutoLoose>(
+    let joined = resolve_path::join_abs_string_buf_checked::<path::platform::Loose>(
         top_level_dir,
         buf,
         &[pkg_dir, folder],

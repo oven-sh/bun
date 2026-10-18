@@ -162,9 +162,12 @@ use options::{CheckLength, Error as PathError, Kind, PathSeparators};
 // const-folds the match to a single monomorphized call.
 macro_rules! sep_dispatch {
     ($fn:ident ( $($a:expr),* $(,)? )) => {
+        sep_dispatch!(Auto, $fn($($a),*))
+    };
+    ($auto:ident, $fn:ident ( $($a:expr),* $(,)? )) => {
         match PathSeparators::from_u8(SEP_OPT) {
-            PathSeparators::Any | PathSeparators::Auto => path::$fn::<path::platform::AutoLoose>($($a),*),
-            PathSeparators::Posix => path::$fn::<path::platform::PosixLoose>($($a),*),
+            PathSeparators::Any | PathSeparators::Auto => path::$fn::<path::platform::$auto>($($a),*),
+            PathSeparators::Posix => path::$fn::<path::platform::Posix>($($a),*),
             PathSeparators::Windows => path::$fn::<path::platform::Windows>($($a),*),
         }
     };
@@ -1062,12 +1065,15 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             // `unreachable!()` and is const-folded out in this monomorphisation.
             let parts_u8: &[&[u8]] = U::id_u8_slices(parts);
             let joined = if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
-                match sep_dispatch!(join_abs_string_buf_checked(cloned_slice, pooled, parts_u8)) {
+                match sep_dispatch!(
+                    Loose,
+                    join_abs_string_buf_checked(cloned_slice, pooled, parts_u8)
+                ) {
                     Some(j) => j,
                     None => return Err(PathError::MaxPathExceeded),
                 }
             } else {
-                sep_dispatch!(join_abs_string_buf(cloned_slice, pooled, parts_u8))
+                sep_dispatch!(Loose, join_abs_string_buf(cloned_slice, pooled, parts_u8))
             };
 
             let trimmed = trim_input(TrimInputKind::Abs, joined);

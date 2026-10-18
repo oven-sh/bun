@@ -7,6 +7,7 @@ use bun_glob::Prepared;
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{
     join_abs_string_buf, join_abs_string_buf_checked, platform, platform_to_posix_in_place,
+    slashes_to_posix_in_place,
 };
 
 use crate::bun_fs::FileSystem;
@@ -503,16 +504,17 @@ pub fn select_lockfile_workspaces(
         .iter()
         .map(|&pkg_id| {
             let res = &pkg_resolutions[pkg_id as usize];
-            let rel: &[u8] = match res.tag {
-                ResolutionTag::Workspace => res.workspace().slice(string_buf),
-                _ => b".",
+            let mut rel: Vec<u8> = match res.tag {
+                ResolutionTag::Workspace => res.workspace().slice(string_buf).to_vec(),
+                _ => b".".to_vec(),
             };
+            slashes_to_posix_in_place(&mut rel);
             // A path out of bun.lock that fits no path buffer is selected by its name only.
             strings::without_trailing_slash(
-                join_abs_string_buf_checked::<platform::PosixLoose>(
+                join_abs_string_buf_checked::<platform::Posix>(
                     top_level_dir,
                     &mut path_buf.0,
-                    &[rel],
+                    &[&rel],
                 )
                 .unwrap_or_default(),
             )

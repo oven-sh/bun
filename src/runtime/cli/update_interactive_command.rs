@@ -195,7 +195,7 @@ impl UpdateInteractiveCommand {
         path_buf: &'b mut PathBuffer,
     ) -> &'b [u8] {
         if !workspace_path.is_empty() {
-            path::resolve_path::join_abs_string_buf::<path::platform::AutoLoose>(
+            path::resolve_path::join_abs_string_buf::<path::platform::Loose>(
                 root_dir,
                 path_buf,
                 &[workspace_path, b"package.json"],

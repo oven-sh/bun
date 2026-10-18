@@ -311,7 +311,7 @@ impl LinkedMembers {
     pub(crate) fn real_path_of(path: &[u8]) -> Box<[u8]> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let mut real_buf = bun_paths::path_buffer_pool::get();
-        let Some(path) = resolve_path::join_abs_string_buf_z_checked::<platform::AutoLoose>(
+        let Some(path) = resolve_path::join_abs_string_buf_z_checked::<platform::Loose>(
             FileSystem::instance().top_level_dir(),
             &mut buf.0,
             &[path],

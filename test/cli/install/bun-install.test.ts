@@ -7382,6 +7382,26 @@ describe.concurrent("bun-install", () => {
     expect(await readlink(join(String(dir), "node_modules", ".bin", "hb"))).toBe(join("..", "dep", "bin", "hb.js"));
   });
 
+  test('a leading slash in the "bin" of a dependency means nothing, as for npm', async () => {
+    using dir = tempDir("manifest-bin-leading-slash", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { dep: "file:dep", dirs: "file:dirs" } }),
+      "dep/package.json": JSON.stringify({
+        name: "dep",
+        version: "1.0.0",
+        bin: { forward: "/bin/forward.js", back: "\\bin\\back.js" },
+      }),
+      "dep/bin/forward.js": "#!/usr/bin/env node\n",
+      "dep/bin/back.js": "#!/usr/bin/env node\n",
+      "dirs/package.json": JSON.stringify({ name: "dirs", version: "1.0.0", directories: { bin: "/bin" } }),
+      "dirs/bin/in-dir": "#!/usr/bin/env node\n",
+    });
+    await runBunInstall(env, String(dir));
+    const bin = (name: string) => join(String(dir), "node_modules", ".bin", name);
+    expect(bin("forward")).toBeValidBin(join("..", "dep", "bin", "forward.js"));
+    expect(bin("back")).toBeValidBin(join("..", "dep", "bin", "back.js"));
+    expect(bin("in-dir")).toBeValidBin(join("..", "dirs", "bin", "in-dir"));
+  });
+
   describe.concurrent("root package.json that cannot be read or parsed", () => {
     async function installWithBrokenRootPackageJson(
       withLockfile: boolean,

@@ -2859,7 +2859,7 @@ fn enqueue_local_tarball(
         match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
             None => (path, true),
             Some(base_dir) => (
-                Path::resolve_path::join_abs_string_buf::<Path::platform::AutoLoose>(
+                Path::resolve_path::join_abs_string_buf::<Path::platform::Loose>(
                     FileSystem::instance().top_level_dir(),
                     &mut abs_buf,
                     &[base_dir, path],
@@ -3758,23 +3758,22 @@ fn get_or_put_resolved_package(
             let symlink_path = this.lockfile.str_detached(version.symlink());
             if dependency::is_link_path(symlink_path) {
                 let mut buf2 = bun_paths::path_buffer_pool::get();
-                let res = match Path::resolve_path::join_abs_string_buf_checked::<
-                    Path::platform::AutoLoose,
-                >(
-                    FileSystem::instance().top_level_dir(),
-                    &mut buf2[..],
-                    &[symlink_path],
-                ) {
-                    Some(symlink_path_abs) => FolderResolution::get_or_put(
-                        GlobalOrRelative::Relative(dependency::version::Tag::Symlink),
-                        version,
-                        symlink_path_abs,
-                        this,
-                    ),
-                    None => FolderResolutionValue::Err(crate::Error::Sys(
-                        bun_errno::SystemErrno::ENAMETOOLONG,
-                    )),
-                };
+                let res =
+                    match Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Loose>(
+                        FileSystem::instance().top_level_dir(),
+                        &mut buf2[..],
+                        &[symlink_path],
+                    ) {
+                        Some(symlink_path_abs) => FolderResolution::get_or_put(
+                            GlobalOrRelative::Relative(dependency::version::Tag::Symlink),
+                            version,
+                            symlink_path_abs,
+                            this,
+                        ),
+                        None => FolderResolutionValue::Err(crate::Error::Sys(
+                            bun_errno::SystemErrno::ENAMETOOLONG,
+                        )),
+                    };
                 return resolved_folder_package(this, res, dependency_id, success_fn);
             }
             if let Err(why) = try_global_link_dir(this) {
@@ -3835,7 +3834,7 @@ fn project_path<'a>(path: &'a [u8], buf: &'a mut [u8]) -> &'a [u8] {
     if bun_paths::is_absolute(path) {
         return path;
     }
-    Path::resolve_path::join_abs_string_buf::<Path::platform::AutoLoose>(
+    Path::resolve_path::join_abs_string_buf::<Path::platform::Loose>(
         FileSystem::instance().top_level_dir(),
         buf,
         &[path],

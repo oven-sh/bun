@@ -1962,7 +1962,7 @@ fn load_npmrc_files<'a>(
     let mut buf = bun_paths::path_buffer_pool::get();
     let parts = [b"./.npmrc" as &[u8]];
     // `None` (too long for `buf`) could not be opened either, so it counts as a missing file.
-    let join = resolve_path::join_abs_string_buf_z_checked::<platform::AutoLoose>;
+    let join = resolve_path::join_abs_string_buf_z_checked::<platform::Loose>;
     // npm's `userconfig` replaces both candidates below (actions/setup-node exports it).
     let userconfig = [b"NPM_CONFIG_USERCONFIG" as &[u8], b"npm_config_userconfig"]
         .into_iter()

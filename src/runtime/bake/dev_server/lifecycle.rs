@@ -1,7 +1,6 @@
 //! Creating and destroying the dev server, and loading the framework's server runtime.
 
 use super::*;
-use bun_paths::platform::AutoLoose;
 
 /// DevServer is stored on the heap, storing its allocator.
 pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
@@ -464,7 +463,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             .enumerate()
         {
             let mut buf = paths::path_buffer_pool::get();
-            let joined_root = paths::resolve_path::join_abs_string_buf::<AutoLoose>(
+            let joined_root = paths::resolve_path::join_abs_string_buf::<paths::platform::Loose>(
                 &dev.root,
                 &mut buf[..],
                 &[&fsr.root],

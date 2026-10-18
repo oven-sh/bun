@@ -49,7 +49,7 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
 
 /// Decides what `bun <command>` runs, without looking at `command`'s own arguments.
 pub(crate) fn runs(command: &[u8]) -> Runs {
-    use bun_paths::platform::AutoLoose;
+    use bun_paths::platform::Loose;
     use bun_paths::resolve_path::join_abs_string;
     let mut cwd = working_directory();
     let mut args = bun_core::argv().into_iter();
@@ -73,7 +73,7 @@ pub(crate) fn runs(command: &[u8]) -> Runs {
             None => None,
         };
         if let Some(given) = given {
-            cwd = join_abs_string::<AutoLoose>(&cwd, &[given]).to_vec();
+            cwd = join_abs_string::<Loose>(&cwd, &[given]).to_vec();
         }
     }
     let other_if = |found: bool| if found { Runs::Other } else { Runs::Command };

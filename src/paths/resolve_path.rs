@@ -642,11 +642,11 @@ pub fn dirname_w(str: &[u16]) -> &[u16] {
 
 /// Splits at `\` too, like `relative_buf_z` and `relative_alloc`: most callers pass a path the resolver spelled.
 pub fn relative(from: &[u8], to: &[u8]) -> &'static [u8] {
-    relative_platform::<platform::AutoLoose, false>(from, to)
+    relative_platform::<platform::Auto, false>(from, to)
 }
 
 pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr {
-    let rel = relative_platform_buf::<platform::AutoLoose, true>(buf, from, to);
+    let rel = relative_platform_buf::<platform::Auto, true>(buf, from, to);
     let len = rel.len();
     // reshaped for borrowck — drop `rel` borrow before mutating buf
     buf[len] = 0;
@@ -746,7 +746,7 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
 }
 
 pub fn relative_alloc(from: &[u8], to: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError> {
-    let result = relative_platform::<platform::AutoLoose, false>(from, to);
+    let result = relative_platform::<platform::Auto, false>(from, to);
     Ok(Box::<[u8]>::from(result))
 }
 
@@ -1123,8 +1123,6 @@ mod sealed {
 }
 pub trait PlatformT: Copy + sealed::Sealed + 'static {
     const P: Platform;
-    /// `normalize_*`, `join_abs*` and `relative*` split at `\` as well where `P` is `Posix`.
-    const LOOSE_SEPARATORS: bool = false;
 }
 macro_rules! platform_variant {
     ($name:ident => $variant:ident) => {
@@ -1148,22 +1146,6 @@ pub mod platform {
     pub type Auto = Posix;
     #[cfg(all(not(windows), not(unix)))]
     pub type Auto = Loose;
-
-    /// `Posix` for text out of a file, which may have been written on Windows, and for what is matched against the resolver's paths.
-    #[derive(Copy, Clone)]
-    pub struct PosixLoose;
-    impl sealed::Sealed for PosixLoose {}
-    impl PlatformT for PosixLoose {
-        const P: Platform = Platform::Posix;
-        const LOOSE_SEPARATORS: bool = true;
-    }
-    /// `Auto` for such a path.
-    #[cfg(windows)]
-    pub type AutoLoose = Windows;
-    #[cfg(unix)]
-    pub type AutoLoose = PosixLoose;
-    #[cfg(all(not(windows), not(unix)))]
-    pub type AutoLoose = Loose;
 }
 
 impl Platform {
@@ -1403,7 +1385,7 @@ fn normalize_string_buf_t<
             normalize_string_windows_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
         }
         // A file name cannot hold a `\` on Windows, where `Posix` is given native paths to print with `/`.
-        Platform::Posix if cfg!(not(windows)) && !P::LOOSE_SEPARATORS => {
+        Platform::Posix if cfg!(not(windows)) => {
             normalize_string_generic_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(
                 str,
                 buf,
@@ -1741,7 +1723,7 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     Some(&buf[..len])
 }
 
-/// Joins a directory from disk and `text` out of a file: as with `AutoLoose`, but a `\` in `dir` stays part of a name.
+/// Joins a directory from disk and `text` out of a file. Either slash separates in `text`; a `\` in `dir` stays part of a name.
 pub fn join_abs_text_buf_checked<'a>(
     dir: &'a [u8],
     buf: &'a mut [u8],
@@ -2795,11 +2777,11 @@ mod tests {
 
     #[cfg(not(windows))]
     #[test]
-    fn posix_keeps_a_backslash_in_a_name_and_posix_loose_splits_at_it() {
+    fn posix_keeps_a_backslash_in_a_name_and_loose_splits_at_it() {
         let mut buf = [0u8; 64];
         let mut join = |loose: bool, part: &[u8]| {
             if loose {
-                join_abs_string_buf::<platform::PosixLoose>(b"/w", &mut buf, &[part]).to_vec()
+                join_abs_string_buf::<platform::Loose>(b"/w", &mut buf, &[part]).to_vec()
             } else {
                 join_abs_string_buf::<platform::Posix>(b"/w", &mut buf, &[part]).to_vec()
             }
@@ -2808,18 +2790,13 @@ mod tests {
         assert_eq!(join(true, b"a\\b"), b"/w/a/b");
         assert_eq!(join(false, b"a\\..\\b"), b"/w/a\\..\\b");
         assert_eq!(join(true, b"a\\..\\b"), b"/w/b");
-        // Only `/` makes a part absolute, so neither leaves `/w`.
-        assert_eq!(join(true, b"\\etc"), b"/w/etc");
-        assert_eq!(join(true, b"C:\\etc"), b"/w/C:/etc");
+        assert_eq!(join(false, b"\\etc"), b"/w/\\etc");
+        assert_eq!(join(true, b"\\etc"), b"/etc");
 
         let mut buf = [0u8; 64];
         assert_eq!(
             normalize_buf::<platform::Posix>(b"a\\..\\b", &mut buf),
             b"a\\..\\b"
-        );
-        assert_eq!(
-            normalize_buf::<platform::PosixLoose>(b"\\..\\..\\b", &mut buf),
-            b"b"
         );
         assert_eq!(
             relative_platform::<platform::Posix, false>(b"/w/a\\b", b"/w/a\\c"),
@@ -2834,9 +2811,15 @@ mod tests {
         for len in 0..=6u32 {
             for n in 0..4usize.pow(len) {
                 let text: Vec<u8> = (0..len).map(|i| b"a./\\"[(n >> (2 * i)) & 3]).collect();
+                // As `Loose`, but a leading `\` does not make the text absolute.
+                let dot: &[u8] = if text.starts_with(b"\\") { b"." } else { b"" };
                 assert_eq!(
                     join_abs_text_buf_checked(b"/w/d", &mut text_only, &text).unwrap(),
-                    join_abs_string_buf::<platform::PosixLoose>(b"/w/d", &mut loose, &[&text]),
+                    join_abs_string_buf::<platform::Loose>(
+                        b"/w/d",
+                        &mut loose,
+                        &[&[dot, &text].concat()]
+                    ),
                     "{:?}",
                     bstr::BStr::new(&text),
                 );

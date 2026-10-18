@@ -317,7 +317,7 @@ fn add_glob_error(
 ) -> crate::Error {
     let mut buf = path::path_buffer_pool::get();
     let failed_path = path::string_paths::without_trailing_slash_windows_path(
-        resolve_path::join_abs_string_buf_checked::<path::platform::AutoLoose>(
+        resolve_path::join_abs_string_buf_checked::<path::platform::Loose>(
             root_dir,
             &mut buf.0[..],
             &[&err.path],
@@ -342,7 +342,7 @@ fn relative_workspace_path<'b>(
     root_dir: &[u8],
     abs_workspace_dir: &[u8],
 ) -> &'b [u8] {
-    let len = resolve_path::relative_platform_buf::<path::platform::AutoLoose, true>(
+    let len = resolve_path::relative_platform_buf::<path::platform::Auto, true>(
         buf,
         root_dir,
         abs_workspace_dir,
@@ -430,7 +430,7 @@ impl WorkspaceMap {
             }
 
             let abs_package_json_path = resolve_path::join_abs_string_buf_checked::<
-                path::platform::AutoLoose,
+                path::platform::Loose,
             >(
                 root_dir, filepath_buf, &[input_path, b"package.json"]
             );
@@ -596,7 +596,7 @@ impl WorkspaceMap {
                     );
 
                     let processed = match resolve_path::join_abs_string_buf_checked::<
-                        path::platform::AutoLoose,
+                        path::platform::Loose,
                     >(
                         root_dir, filepath_buf, &[entry_dir, b"package.json"]
                     ) {
@@ -702,7 +702,7 @@ impl WorkspaceMap {
                 continue;
             }
             // A workspace listed by its exact path is a member even if a negated pattern matches.
-            if resolve_path::join_abs_string_buf_checked::<path::platform::AutoLoose>(
+            if resolve_path::join_abs_string_buf_checked::<path::platform::Loose>(
                 root_dir,
                 &mut abs_buf.0[..],
                 &[input_path],

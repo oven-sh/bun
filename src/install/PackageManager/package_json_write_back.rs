@@ -312,7 +312,7 @@ fn edit_update_targets(
             selected.push(WorkspaceTarget {
                 name: Box::from(name),
                 name_hash,
-                package_json_path: join_abs_string_buf::<platform::AutoLoose>(
+                package_json_path: join_abs_string_buf::<platform::Loose>(
                     top_level,
                     &mut path_buf.0,
                     &[rel, b"package.json"],

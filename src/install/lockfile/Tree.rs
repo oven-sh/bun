@@ -564,16 +564,17 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) linked: reachable::Linked,
 }
 
-/// The peers of the package that's being hoisted, each with the in-range copy that the package
-/// loads from the highest folder checked so far. An optional peer is only listed if the package's
-/// owner provides it. The bit sets cache which packages have peers, and which packages a regular
-/// dependency resolves to. The flag is true if the package is hoisted for a peer dependency.
+/// The peers of the package that's being hoisted. Each one comes with:
+/// - whether the package loads an in-range copy from the highest folder checked so far, and
+/// - the in-range copy that the package's owner depends on, if the owner also depends on the package.
+///
+/// An optional peer is only listed if the owner provides it. The bit sets cache which packages have
+/// peers, and which packages a regular dependency resolves to.
 #[derive(Default)]
 pub(crate) struct PeerProbes(
-    Vec<(DependencyID, Option<PackageID>)>,
+    Vec<(DependencyID, bool, Option<PackageID>)>,
     Option<DynamicBitSet>,
     Option<DynamicBitSet>,
-    bool,
 );
 
 impl PeerProbes {
@@ -588,7 +589,6 @@ impl PeerProbes {
         is_for_peer: bool,
     ) {
         self.0.clear();
-        self.3 = is_for_peer;
         if package_id == invalid_package_id {
             return;
         }
@@ -654,7 +654,9 @@ impl PeerProbes {
                 None => !peer.behavior.is_optional_peer(),
             };
             if is_listed {
-                self.0.push((peer_dep_id, owner_copy));
+                let next_to_package = owner_copy.filter(|_| !is_for_peer);
+                self.0
+                    .push((peer_dep_id, owner_copy.is_some(), next_to_package));
             }
         }
     }
@@ -662,9 +664,10 @@ impl PeerProbes {
     /// Returns true if the package must not be hoisted into tree `tree_id`, because it would stop
     /// loading the copy of a peer that it loads now. That's the case if the tree has:
     /// - an out-of-range version of a required peer, or
-    /// - a different version that was only installed for another package's peer dependency. Adding
-    ///   an unrelated package to a project must not split a plugin from its host. This doesn't apply
-    ///   to a package that's hoisted for a peer dependency. As in pnpm, it belongs to the project.
+    /// - a different version than the package's owner depends on, which was only installed for
+    ///   another package's peer dependency. Adding an unrelated package to a project must not split
+    ///   a plugin from its host. This doesn't apply to a package that's hoisted for a peer
+    ///   dependency. As in pnpm, it belongs to the project.
     fn is_hidden_by(
         &mut self,
         lockfile: &Lockfile,
@@ -678,7 +681,7 @@ impl PeerProbes {
 
         let mut i = 0;
         while i < self.0.len() {
-            let (peer_dep_id, provided) = self.0[i];
+            let (peer_dep_id, provided, owner_copy) = self.0[i];
             let peer = &deps[peer_dep_id as usize];
             let Some(held) = placed
                 .get(&(tree_id, peer.name_hash))
@@ -688,34 +691,25 @@ impl PeerProbes {
                 i += 1;
                 continue;
             };
-            let in_range = pkg_resolutions[held as usize].satisfies_dependency_version(
-                &peer.version,
-                buf,
-                buf,
-            );
             let is_optional = peer.behavior.is_optional_peer();
-            match provided {
-                Some(_) if !in_range && !is_optional => return true,
-                Some(provided)
-                    if in_range
-                        && held != provided
-                        && !self.3
-                        && !(self.2)
-                            .get_or_insert_with(|| regular_targets(lockfile, deps, resolutions))
-                            .is_set(held as usize) =>
-                {
-                    return true;
-                }
-                _ if in_range => {
-                    if !is_optional {
-                        self.0[i].1 = Some(held);
+            if pkg_resolutions[held as usize].satisfies_dependency_version(&peer.version, buf, buf)
+            {
+                if owner_copy.is_some_and(|copy| copy != held) {
+                    if !(self.2)
+                        .get_or_insert_with(|| regular_targets(lockfile, deps, resolutions))
+                        .is_set(held as usize)
+                    {
+                        return true;
                     }
-                    i += 1;
+                    self.0[i].2 = None;
                 }
+                self.0[i].1 |= !is_optional;
+                i += 1;
+            } else if provided && !is_optional {
+                return true;
+            } else {
                 // Out of range wherever the package ends up.
-                _ => {
-                    self.0.swap_remove(i);
-                }
+                self.0.swap_remove(i);
             }
         }
 

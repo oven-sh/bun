@@ -2590,6 +2590,27 @@ describe.concurrent("adding an unrelated package doesn't split a plugin from its
   });
 });
 
+// kernel@1 is at the top for hook's peer dependency, and kernel@2 is under frame. gear accepts both, and kernel@2 doesn't
+// depend on itself, so gear goes to the top. That's where lockfiles from older versions have it.
+test.concurrent("a package is hoisted past a copy of its peer that its owner doesn't depend on", async () => {
+  using server = await serveGraph({
+    hook: { "1.0.0": { peerDependencies: { kernel: "^1.0.0" } } },
+    kernel: {
+      "1.1.0": { peerDependencies: { frame: "2.0.0" } },
+      "2.0.0": { dependencies: { gear: "1.0.0" } },
+    },
+    frame: { "2.0.0": { dependencies: { kernel: "2.0.0" } } },
+    gear: { "1.0.0": { peerDependencies: { kernel: "^1.0.0 || ^2.0.0" } } },
+  });
+  using tmp = tempDir("hoist-past-peer-copy", {
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({ name: "root", dependencies: { hook: "1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await run(dir, "install");
+  expect(layout(dir)).toEqual(["frame@2.0.0", "frame/kernel@2.0.0", "gear@1.0.0", "hook@1.0.0", "kernel@1.1.0"]);
+});
+
 // web provides host@2 to its own hostdom. Nothing provides it in ui, where hostdom needs host@2 and refs needs host@1.
 // No version satisfies both, so refs shares host@2 instead of getting a second copy.
 test.concurrent.each(["hoisted", "isolated"])(

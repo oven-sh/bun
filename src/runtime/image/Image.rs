@@ -4,9 +4,7 @@
 //! Shape: the constructor only captures the *input* (path or bytes). Chainable
 //! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each
 //! write one slot of `Pipeline` and return `this` — there is no op list, so
-//! calling a setter twice overwrites. A format setter overwrites only the
-//! options it names, and each format has its own (`format_options`), so an
-//! option never crosses formats. The actual decode → transform → encode
+//! calling `resize` twice overwrites. The actual decode → transform → encode
 //! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
 //! `toBase64`/`metadata`) is awaited, as a `bun_jsc::Job` (`PipelineTask`).
 
@@ -64,11 +62,6 @@ pub(crate) use crate::generated_classes::js_Image as js;
 pub(crate) struct Image {
     source: JsCell<Source>,
     pipeline: Cell<Pipeline>,
-    /// What the setter of each format has recorded. A format call starts
-    /// from its own entry, so an option stays for a later call of that format
-    /// (as in Sharp) and never reaches another format. Not in `Pipeline`: the
-    /// worker needs only `Pipeline.output`, the entry of the format that was
-    /// set last.
     format_options: FormatOptions,
     /// Decompression-bomb guard. Checked against the *header* dimensions before
     /// any RGBA buffer is allocated. Mirrors Sharp's `limitInputPixels`.
@@ -104,7 +97,7 @@ impl Default for Image {
     }
 }
 
-/// One entry per format setter.
+/// The options each format setter has recorded. A format call starts from its own entry.
 #[derive(Default)]
 struct FormatOptions {
     jpeg: Cell<codecs::EncodeOptions>,

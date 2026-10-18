@@ -17,7 +17,7 @@
 
 ### Downsides
 - These refusals use `maxSessionInvalidFrames` (default 1000), not `maxSessionRejectedStreams` (default 100). A server that set either option sees another count.
-- Cost: +24 bytes per session, 4 bytes per refused stream (4 KB at the default budget), +512 bytes of `.text`, +58 instructions per request.
+- Cost: +24 bytes per session, at most 8 KB of refused ids, +768 bytes of `.text`, +59 instructions per request.
 
 <details><summary>Notes</summary>
 
@@ -84,7 +84,7 @@ A client on nghttp2 holds its first flight to 100 streams, so it gets at most 10
 
 **The count.** `open_peer_streams` goes up where `handle_received_stream_id` makes the `Stream` of a request that the engine admitted. `Stream::release_peer_slot` takes the bit and goes down, so a second call does nothing. It is called from `free_resources` and from `close_unsent`, and from nowhere else. It never reads `Stream.state`: a local half-close can write over CLOSED after a reset. `assert_peer_slots` checks in builds with debug assertions, once per read, that the count is the number of streams with the bit and that no CLOSED stream has it.
 
-**The refused ids.** A refused stream has no engine entry, so a later frame on its id finds nothing. On 1.4.3 the engine still has the entry of a refused stream for the rest of the read, so the frames that follow in the same write get no answer. Node gives them no answer in any read. One of the pins holds that, and without a record of the refused ids this PR fails it (DATA gets RST_STREAM(STREAM_CLOSED), a trailer block is refused a second time). `refused_ids` is that record: a sorted `Vec<u32>` with one entry for each refused stream. `handle_headers` and the two DATA paths read it, and the first test is one compare with the last id.
+**The refused ids.** A refused stream has no engine entry, so a later frame on its id finds nothing. On 1.4.3 the engine still has the entry of a refused stream for the rest of the read, so the frames that follow in the same write get no answer. Node gives them no answer in any read. One of the pins holds that, and without a record of the refused ids this PR fails it (DATA gets RST_STREAM(STREAM_CLOSED), a trailer block is refused a second time). `refused_ids` is that record: a sorted `Vec<u32>` with one entry for each refused stream. `handle_headers` and the two DATA paths read it, and the first test is one compare with the last id. It keeps the last 2048 ids at most (8 KB). The default budgets end a session before it has refused that many streams, so only a server that raised them can drop an id. A frame on a dropped id gets the reply that `main` gives today.
 
 A review asked for the commit of #37985 in place of the list. That commit reads every client id at or below the highest id, with no entry, as a closed stream. I did not take it. Jarred's note on #31359 ([r3295037991](https://github.com/oven-sh/bun/pull/31359#discussion_r3295037991)) says why that rule needs care: Bun's own client can write stream ids out of order (#37568 is the client half). #45801 leaves that rule out for the same reason. The list is exact for the ids that this server refused and says nothing about any other id. When #37985 and #45801 land, the list can go.
 
@@ -102,7 +102,7 @@ A review asked for the commit of #37985 in place of the list. That commit reads 
 
 | | `main` | this PR |
 |---|---|---|
-| `.text` (`size -A`) | 81,316,949 | 81,317,461 (+512) |
+| `.text` (`size -A`) | 81,316,949 | 81,317,717 (+768) |
 | `.rodata` | 22,590,412 | 22,590,412 |
 | `.bun_builtins` (the JS modules) | 2,697,031 | 2,696,083 (-948) |
 | file | 106,858,208 | 106,858,208 |
@@ -116,21 +116,21 @@ Instructions that each function executes for one request that is admitted, calle
 
 | Server, one GET request, no limit set | `main` | this PR |
 |---|---|---|
-| `Connection::receive` (the read with the HEADERS frame) | 297 | 309 |
+| `Connection::receive` (the read with the HEADERS frame) | 297 | 310 |
 | `Connection::finish_header_block` | 1487 | 1517 |
 | `handle_received_stream_id` (2 calls) | 189 + 39 | 199 + 40 |
 | `Stream::free_resources` | 161 | 166 |
 | `rewrite_read` | 192 | 192 |
-| sum | 2365 | 2423 (+58) |
+| sum | 2365 | 2424 (+59) |
 
 | Client, one `http2.connect()` request | `main` | this PR |
 |---|---|---|
-| `Connection::receive` (the read with the response) | 486 | 474 |
+| `Connection::receive` (the read with the response) | 486 | 475 |
 | `Connection::finish_header_block` | 723 | 739 |
 | `handle_received_stream_id` (3 calls) | 159 + 39 + 39 | 167 + 40 + 40 |
 | `Stream::free_resources` | 104 | 108 |
 | `rewrite_read` | 161 | 161 |
-| sum | 1711 | 1729 (+18) |
+| sum | 1711 | 1730 (+19) |
 
 No line is new on the admitted path of `finish_header_block`. Its +30 and +16 come with the two new match arms: the compiler lays the function out in another way. A DATA frame pays one more test (`refused_ids` is empty, or the id is above its last entry). The server loses the JS count for each stream: 3 `% 2` tests, 4 private-field reads, 2 writes and 1 call of the `stream.id` getter.
 
@@ -171,6 +171,8 @@ A server with no limit, 20,000 requests in one write, handler `respond()` then `
 - Bun's `node:http2` client does not hold its first flight to 100 streams before the SETTINGS of the server arrive (`peerMaxConcurrentStreams`). For that client the session still ends, at refusal 1002. `ClientHttp2Session.request()` reads `#remoteSettings?.maxConcurrentStreams`, which is undefined until then.
 - `session.settings({ enableConnectProtocol })` inside a handler applies from the next read. Node applies it from the call.
 - `#connections`, the JS count of the streams of a session, is given back twice after a `respond()` that fails.
+- After a `respond()` that fails, the server writes no RST_STREAM, and the entries of the stream stay until the peer resets it. `main` does the same. The slot is given back at once, as on 1.4.3. #43478 and #43419 remove two of the ways to make `respond()` fail.
+- A stream whose `streamStart` makes no JS stream (it threw, or an exception was pending) stays open until the peer resets it, and it holds its slot for that time. The JS count of 1.4.3 did not count such a stream. Node resets it.
 - #43478: `respond()` fails in Bun for `weight: 0` and for a parent out of range. Node accepts both.
 - #43539: Bun answers a peer reset of some streams with its own RST_STREAM(CANCEL).
 - The client side: a push response over the limit that the client advertised.

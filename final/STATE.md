@@ -1,7 +1,9 @@
-# State of the work on oven-sh/bun#44337 (written 2026-10-18 04:30 UTC)
+# State of the work on oven-sh/bun#44337 (written 2026-10-18 05:25 UTC)
 
-- PR #44337: base `main`, ready for review (not a draft). Head d0736b318c = empty `ci: retrigger` on f3cca1e32e.
-  Commits: #44248's three (rebased), the pins (1df6a37548), the limit (f3cca1e32e), the retrigger.
+- PR #44337: base `main`, ready for review (not a draft). Head d8c5baf2c4.
+  Commits: #44248's three (rebased), the pins (1df6a37548), the limit (f3cca1e32e), the empty retrigger (d0736b318c),
+  and d8c5baf2c4 (review response: `refused_ids` keeps at most 2048 ids; the test spawns Bun through the harness).
+- claude[bot] reviewed at d0736b318c: nothing blocking, 6 threads, all answered and resolved at d8c5baf2c4.
 - The one `ci: retrigger` of this conversation is SPENT (d0736b318c). Do not push another.
 - #44335 is closed (folded in). Do not reopen.
 - #37985 (alii) is NOT carried. No new comment was posted there. Reason is in the PR body ("The refused ids").

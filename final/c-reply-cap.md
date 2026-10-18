@@ -1,0 +1,1 @@
+Done in d8c5baf2c4. `refused_ids` keeps the last 2048 ids at most (8 KB). The default budgets end a session before it has refused that many streams (1002 over the limit, 100 for memory), so a session with the defaults never drops an id. With a raised budget, a frame on an id that was dropped gets the reply that `main` gives today.

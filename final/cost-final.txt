@@ -1,1 +1,1 @@
-+24 bytes per session, 4 bytes per refused stream (4 KB at the default budget), +512 bytes of `.text`, +58 instructions per request.
++24 bytes per session, at most 8 KB of refused ids, +768 bytes of `.text`, +59 instructions per request.

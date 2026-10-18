@@ -1,0 +1,1 @@
+Yes. It is in the PR body under "Where it still differs from node", and it is not new: the JS count of 1.4.3 gives the slot back at the same points. Bun resets an unread request body only when body bytes are buffered or arrive, and that is on purpose since #32488. This PR does not change it.

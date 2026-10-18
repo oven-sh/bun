@@ -11,7 +11,7 @@ SYMS=(
 "<bun_runtime::api::h2_frame_parser_body::H2FrameParser>::rewrite_read"
 )
 NAMES=(receive finish_header_block handle_received_stream_id free_resources rewrite_read)
-for b in rel-main rel-head; do
+for b in ${ICOUNT_BUILDS:-rel-main rel-head}; do
   for mode in server client; do
     for i in 0 1 2 3 4; do
       timeout 900 node run.cjs /tmp/h2repro/$b/bun-profile $mode "${SYMS[$i]}" 6 > $OUT/$b-$mode-${NAMES[$i]}.txt 2>&1

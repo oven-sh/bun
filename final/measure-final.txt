@@ -2,7 +2,7 @@ Release builds of `main` (d0831bc9fe) and of this PR on that commit, same toolch
 
 | | `main` | this PR |
 |---|---|---|
-| `.text` (`size -A`) | 81,316,949 | 81,317,461 (+512) |
+| `.text` (`size -A`) | 81,316,949 | 81,317,717 (+768) |
 | `.rodata` | 22,590,412 | 22,590,412 |
 | `.bun_builtins` (the JS modules) | 2,697,031 | 2,696,083 (-948) |
 | file | 106,858,208 | 106,858,208 |
@@ -16,21 +16,21 @@ Instructions that each function executes for one request that is admitted, calle
 
 | Server, one GET request, no limit set | `main` | this PR |
 |---|---|---|
-| `Connection::receive` (the read with the HEADERS frame) | 297 | 309 |
+| `Connection::receive` (the read with the HEADERS frame) | 297 | 310 |
 | `Connection::finish_header_block` | 1487 | 1517 |
 | `handle_received_stream_id` (2 calls) | 189 + 39 | 199 + 40 |
 | `Stream::free_resources` | 161 | 166 |
 | `rewrite_read` | 192 | 192 |
-| sum | 2365 | 2423 (+58) |
+| sum | 2365 | 2424 (+59) |
 
 | Client, one `http2.connect()` request | `main` | this PR |
 |---|---|---|
-| `Connection::receive` (the read with the response) | 486 | 474 |
+| `Connection::receive` (the read with the response) | 486 | 475 |
 | `Connection::finish_header_block` | 723 | 739 |
 | `handle_received_stream_id` (3 calls) | 159 + 39 + 39 | 167 + 40 + 40 |
 | `Stream::free_resources` | 104 | 108 |
 | `rewrite_read` | 161 | 161 |
-| sum | 1711 | 1729 (+18) |
+| sum | 1711 | 1730 (+19) |
 
 No line is new on the admitted path of `finish_header_block`. Its +30 and +16 come with the two new match arms: the compiler lays the function out in another way. A DATA frame pays one more test (`refused_ids` is empty, or the id is above its last entry). The server loses the JS count for each stream: 3 `% 2` tests, 4 private-field reads, 2 writes and 1 call of the `stream.id` getter.
 

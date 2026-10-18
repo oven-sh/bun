@@ -14,7 +14,7 @@ use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
 use crate::lockfile::tree;
-use crate::{DependencyID, ExtractData, PackageID};
+use crate::{DependencyID, ExtractData, Integrity, Lockfile, PackageID, PackageNameHash};
 // Bring the `items_<field>{,_mut}()` column accessors for
 // `MultiArrayList::Slice<Package>` into scope.
 use crate::PackageManager;
@@ -176,6 +176,34 @@ fn link_deferred(
     Ok(())
 }
 
+/// Returns the `.bun-tag` of each tarball and git package that `lockfile` loaded, by name.
+fn other_tags(lockfile: &Lockfile) -> Vec<(PackageNameHash, Box<[u8]>)> {
+    use crate::resolution::Tag;
+    let packages = &lockfile.packages;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let loaded = (lockfile.loaded_package_count as usize).min(packages.len());
+    let mut tags: Vec<(PackageNameHash, Box<[u8]>)> = Vec::new();
+    for id in 0..loaded {
+        let resolution = &packages.items_resolution()[id];
+        let name_hash = packages.items_name_hash()[id];
+        match resolution.tag {
+            Tag::LocalTarball | Tag::RemoteTarball => {
+                let integrity = &packages.items_meta()[id].integrity;
+                let sri = integrity.sri(&mut [0; Integrity::MAX_SRI_LEN]).into();
+                // An install with `--no-verify` leaves an empty tag.
+                tags.extend([(name_hash, sri), (name_hash, Box::default())]);
+            }
+            Tag::Git | Tag::Github => {
+                let commit = resolution.repository().resolved.slice(buf);
+                tags.push((name_hash, commit.into()));
+            }
+            _ => {}
+        }
+    }
+    tags.sort_unstable();
+    tags
+}
+
 pub(crate) fn install_hoisted_packages(
     this: &mut PackageManager,
     ctx: Command::Context,
@@ -183,6 +211,8 @@ pub(crate) fn install_hoisted_packages(
     install_root_dependencies: bool,
     log_level: package_manager::Options::LogLevel,
     packages_to_install: Option<&[PackageID]>,
+    // The loaded bun.lock, if this run changes what bun.lock places.
+    loaded: Option<&Lockfile>,
 ) -> crate::Result<package_install::Summary> {
     analytics::features::hoisted_bun_install.fetch_add(1, Ordering::Relaxed);
 
@@ -453,6 +483,7 @@ pub(crate) fn install_hoisted_packages(
                     break 'trees trees.into_boxed_slice();
                 },
                 trusted_dependencies_from_update_requests: trusted_deps,
+                other_tags: loaded.map_or(Vec::new(), other_tags),
                 seen_bin_links: StringHashMap::<()>::default(),
                 destination_dir_subpath_buf: bun_paths::PathBuffer::ZEROED,
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,

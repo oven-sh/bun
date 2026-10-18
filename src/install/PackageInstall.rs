@@ -1175,6 +1175,11 @@ pub(crate) fn tarball_tag_matches(tag: &[u8], integrity: &Integrity, skips_verif
         || (skips_verify && tag.is_empty())
 }
 
+/// Returns true if `tag` is the integrity of a registry package: a tarball of the same bytes.
+pub(crate) fn is_registry_integrity(tag: &[u8], integrity: &Integrity) -> bool {
+    integrity.tag.is_supported() && tarball_tag_matches(tag, integrity, false)
+}
+
 impl<'a> PackageInstall<'a> {
     fn verify_patch_hash(&mut self, patch: Patch, root_node_modules_dir: &Dir) -> bool {
         // hash from the .patch file, to be checked against bun tag
@@ -1272,6 +1277,26 @@ impl<'a> PackageInstall<'a> {
 
         verified
             && (self.patch).is_none_or(|patch| self.verify_patch_hash(patch, root_node_modules_dir))
+    }
+
+    /// Returns true if `is_other` accepts the `.bun-tag` of the folder, or if it cannot be read.
+    #[cold]
+    pub(crate) fn has_bun_tag(
+        &self,
+        root_node_modules_dir: &Dir,
+        is_other: &dyn Fn(&[u8]) -> bool,
+    ) -> bool {
+        let mut spill = Vec::new();
+        let bun_tag_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
+            &mut spill,
+            &[self.destination_dir_subpath.as_bytes(), BUN_TAG],
+        );
+        let tag = (self.node_modules).read_small_file(root_node_modules_dir, bun_tag_path);
+        match tag {
+            Ok(tag) if tag.err.is_none() => is_other(&tag.bytes),
+            Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => false,
+            _ => true,
+        }
     }
 
     // Only check for destination directory in node_modules. We can't use package.json because

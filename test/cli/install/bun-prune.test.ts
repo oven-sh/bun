@@ -2752,11 +2752,16 @@ test.concurrent(
 );
 
 // name -> version -> dependencies. The fixture registry has no package whose versions have different names below them.
-async function serveGraph(graph: Record<string, Record<string, Record<string, string>>>) {
+// `more`: `name-version` -> the other files of its tarball.
+async function serveGraph(
+  graph: Record<string, Record<string, Record<string, string>>>,
+  more: Record<string, Record<string, string>> = {},
+) {
   const tarballs = new Map<string, Uint8Array>();
   for (const [name, versions] of Object.entries(graph)) {
     for (const [version, dependencies] of Object.entries(versions)) {
-      const files = { "package/package.json": JSON.stringify({ name, version, dependencies }) };
+      const files: Record<string, string> = { "package/package.json": JSON.stringify({ name, version, dependencies }) };
+      for (const [path, text] of Object.entries(more[`${name}-${version}`] ?? {})) files[`package/${path}`] = text;
       tarballs.set(`/${name}-${version}.tgz`, await new Bun.Archive(files, { compress: "gzip" }).bytes());
     }
   }
@@ -4302,6 +4307,451 @@ test.concurrent("hoisted: a nested copy left behind by an override to a tarball 
   expect(existsSync(nested)).toBeFalse();
   expect(await file(join(nm, "no-deps", "package.json")).json()).toMatchObject({ name: "no-deps" });
 });
+
+// A tarball and a git checkout can have the name and version of a registry package. Bun writes a `.bun-tag` into
+// their folders, and a registry package has none.
+const TAGGED_WARN = (expected: string, kept: string) =>
+  `warn: ${expected} has a .bun-tag that does not match the registry package bun.lock expects; keeping ${kept}`;
+const TAGGED_NOTE = "note: remove the folder with the .bun-tag and run 'bun install' first";
+const TAGGED_INSTALL_NOTE = "note: remove the folder with the .bun-tag and run 'bun install', then 'bun prune'";
+const diagnostics = (stderr: string) => lines(stderr).filter(line => /^(warn|note|error):/.test(line));
+
+const taggedSources = {
+  "a local tarball": (dir: string) => packTarball(dir, { name: "no-deps", version: "1.0.0" }),
+  "a tarball URL": (_: string, host: { url: URL }) => `${host.url}no-deps-1.0.0.tgz`,
+  "a git repository": (dir: string) => gitDependency(dir, "no-deps"),
+};
+const fromRegistry = { name: "foo", dependencies: { "no-deps": "1.0.0", "one-fixed-dep": "1.0.0" } };
+const toRegistry: Record<string, (dir: string) => ReturnType<typeof bun>> = {
+  "bun remove": dir => bun(dir, "remove", "no-deps"),
+  "bun add": dir => bun(dir, "add", "no-deps@1.0.0"),
+  "an edit and bun install": async dir => {
+    await write(join(dir, "package.json"), JSON.stringify(fromRegistry));
+    return bun(dir, "install");
+  },
+  "an edit and bun update": async dir => {
+    await write(join(dir, "package.json"), JSON.stringify(fromRegistry));
+    return bun(dir, "update");
+  },
+};
+
+test.concurrent.each([
+  ["a local tarball", "bun remove"],
+  ["a local tarball", "bun add"],
+  ["a local tarball", "an edit and bun install"],
+  ["a local tarball", "an edit and bun update"],
+  ["a tarball URL", "bun remove"],
+  ["a git repository", "bun remove"],
+] as const)("hoisted: the registry package replaces %s of its name and version after %s", async (source, flow) => {
+  using host = await serveGraph({ "no-deps": { "1.0.0": {} } });
+  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  const spec = await taggedSources[source](dir, host);
+  await write(
+    packageJson,
+    JSON.stringify({ name: "foo", dependencies: { "no-deps": spec, "one-fixed-dep": "1.0.0" } }),
+  );
+  await install(dir);
+  // Only the registry's `no-deps` has an index.js, and `one-fixed-dep` has that one below itself.
+  const laid = listing(dir, "node_modules");
+  expect(laid).toContain(join("node_modules", "no-deps", ".bun-tag"));
+  expect(laid).toContain(join("node_modules", "one-fixed-dep", "node_modules", "no-deps", "index.js"));
+
+  const { stderr, exitCode } = await toRegistry[flow](dir);
+  expect(diagnostics(stderr)).toEqual([]);
+  // What a first install of the new package.json lays, and the folder that the copy was in.
+  expect(listing(dir, "node_modules")).toEqual(
+    ["no-deps", "no-deps/index.js", "no-deps/package.json", "one-fixed-dep", "one-fixed-dep/index.js"]
+      .concat("one-fixed-dep/node_modules", "one-fixed-dep/package.json")
+      .map(path => join("node_modules", path)),
+  );
+  expect(exitCode).toBe(0);
+});
+
+// The registry gets fork@1.0.1, which needs the registry's `tagged`, after the first install.
+test.concurrent(
+  "hoisted: bun update replaces a tarball folder when its name moves to the registry package",
+  async () => {
+    using host = await serveGraph({ tagged: { "1.0.0": {} } }, { "tagged-1.0.0": { "from-the-tarball.js": "" } });
+    const later = { tagged: "1.0.0" };
+    const graph = {
+      tagged: { "1.0.0": {} },
+      fork: { "1.0.0": { tagged: `${host.url}tagged-1.0.0.tgz` }, "1.0.1": later } as Record<
+        string,
+        Record<string, string>
+      >,
+      top: { "1.0.0": { fork: "^1.0.0" } },
+    };
+    using server = await serveGraph(graph);
+    delete graph.fork["1.0.1"];
+    using tmp = tempDir("prune-update-to-registry", {
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({ name: "foo", dependencies: { top: "1.0.0" } }),
+    });
+    const dir = String(tmp);
+    await install(dir);
+    const folder = join(dir, "node_modules", "tagged");
+    expect(readdirSync(folder).toSorted()).toEqual([".bun-tag", "from-the-tarball.js", "package.json"]);
+
+    graph.fork["1.0.1"] = later;
+    const { stderr, exitCode } = await bun(dir, "update");
+    expect(diagnostics(stderr)).toEqual([]);
+    expect(await lock(dir)).toContain('"fork@1.0.1"');
+    expect(readdirSync(folder)).toEqual(["package.json"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// A link to itself: the open fails, and not because the file is missing.
+test
+  .skipIf(isWindows)
+  .concurrent("hoisted: an install replaces a tarball folder whose .bun-tag it cannot read", async () => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+    const tarball = await packTarball(dir, { name: "no-deps", version: "1.0.0" });
+    const manifest = (spec: string) =>
+      JSON.stringify({ name: "foo", dependencies: { "no-deps": spec, "one-fixed-dep": "1.0.0" } });
+    await write(packageJson, manifest(tarball));
+    await install(dir);
+    const folder = join(dir, "node_modules", "no-deps");
+    rmSync(join(folder, ".bun-tag"));
+    symlinkSync(".bun-tag", join(folder, ".bun-tag"));
+
+    await write(packageJson, manifest("1.0.0"));
+    const { stderr, exitCode } = await bun(dir, "install");
+    expect(diagnostics(stderr)).toEqual([]);
+    expect(readdirSync(folder).toSorted()).toEqual(["index.js", "package.json"]);
+    expect(existsSync(join(dir, "node_modules", "one-fixed-dep", "node_modules", "no-deps"))).toBeFalse();
+    expect(exitCode).toBe(0);
+  });
+
+test.concurrent(
+  "hoisted: a tarball with the bytes of the registry's tarball counts as the registry package",
+  async () => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+    const spec = copyTarball(dir, "no-deps", "1.0.0");
+    await write(
+      packageJson,
+      JSON.stringify({ name: "foo", dependencies: { "no-deps": spec, "one-fixed-dep": "1.0.0" } }),
+    );
+    await install(dir);
+    const tag = join(dir, "node_modules", "no-deps", ".bun-tag");
+    const nested = join(dir, "node_modules", "one-fixed-dep", "node_modules", "no-deps");
+    expect(existsSync(join(nested, "index.js"))).toBeTrue();
+    // The tag of a tarball is its integrity, which is the one that the registry gives for its package.
+    const { versions } = await file(join(registry.packagesPath, "no-deps", "package.json")).json();
+    expect(await file(tag).text()).toBe(versions["1.0.0"].dist.integrity);
+
+    const { stderr, exitCode } = await bun(dir, "remove", "no-deps");
+    expect(diagnostics(stderr)).toEqual([]);
+    // The folder is not installed again, and the copy below `one-fixed-dep` is not needed.
+    expect(existsSync(tag)).toBeTrue();
+    expect(existsSync(nested)).toBeFalse();
+    expect(exitCode).toBe(0);
+  },
+);
+
+// bun.lock changes without an install in these tests, as it does after a `git pull`. No install then replaces the
+// folder, because its package.json has the name and version.
+test.concurrent("hoisted: bun prune keeps a workspace's registry copy below a tarball folder", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  const tarball = await packTarball(dir, { name: "no-deps", version: "1.0.0" });
+  const workspaces = (spec: string) => ({
+    root: { dependencies: { "no-deps": spec } },
+    packages: { web: { dependencies: { "no-deps": "1.0.0" } } },
+  });
+  await writeWorkspaces(dir, packageJson, workspaces(tarball));
+  await install(dir);
+  const folder = join(dir, "node_modules", "no-deps");
+  const copy = join(dir, "packages", "web", "node_modules", "no-deps");
+  expect(readdirSync(folder).toSorted()).toEqual([".bun-tag", "package.json"]);
+  expect(readdirSync(copy).toSorted()).toEqual(["index.js", "package.json"]);
+
+  await writeWorkspaces(dir, packageJson, workspaces("1.0.0"));
+  await install(dir, "--lockfile-only");
+  expect(await lock(dir)).not.toContain('"web/no-deps"');
+  const { stderr, exitCode } = await prune(dir);
+  expect(out(stderr)).toBe(
+    `${TAGGED_WARN("node_modules/no-deps", "packages/web/node_modules/no-deps")}\n${TAGGED_NOTE}`,
+  );
+  expect(readdirSync(copy).toSorted()).toEqual(["index.js", "package.json"]);
+  expect(exitCode).toBe(0);
+
+  // What the note says.
+  rmSync(folder, { recursive: true });
+  await install(dir);
+  expect(readdirSync(folder).toSorted()).toEqual(["index.js", "package.json"]);
+});
+
+test.concurrent(
+  "hoisted: an install keeps a registry copy below a tarball folder that bun.lock no longer names",
+  async () => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+    const tarball = await packTarball(dir, { name: "no-deps", version: "1.0.0" });
+    const manifest = (spec: string) =>
+      JSON.stringify({ name: "foo", dependencies: { "no-deps": spec, "one-fixed-dep": "1.0.0" } });
+    await write(packageJson, manifest(tarball));
+    await install(dir);
+    await write(packageJson, manifest("2.0.0"));
+    await install(dir, "--lockfile-only");
+    expect(await lock(dir)).not.toContain("no-deps@./no-deps-1.0.0.tgz");
+
+    await write(packageJson, manifest("1.0.0"));
+    const { stderr, exitCode } = await bun(dir, "install");
+    expect(diagnostics(stderr)).toEqual([
+      TAGGED_WARN("node_modules/no-deps", "node_modules/one-fixed-dep/node_modules/no-deps"),
+      TAGGED_INSTALL_NOTE,
+    ]);
+    expect(existsSync(join(dir, "node_modules", "no-deps", ".bun-tag"))).toBeTrue();
+    expect(existsSync(join(dir, "node_modules", "one-fixed-dep", "node_modules", "no-deps", "index.js"))).toBeTrue();
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent("hoisted: bun prune keeps a registry copy below a folder whose .bun-tag it cannot read", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  const tarball = await packTarball(dir, { name: "no-deps", version: "1.0.0" });
+  const manifest = (spec: string) =>
+    JSON.stringify({ name: "foo", dependencies: { "no-deps": spec, "one-fixed-dep": "1.0.0" } });
+  await write(packageJson, manifest(tarball));
+  await install(dir);
+  const tag = join(dir, "node_modules", "no-deps", ".bun-tag");
+  rmSync(tag);
+  mkdirSync(tag);
+
+  await write(packageJson, manifest("1.0.0"));
+  await install(dir, "--lockfile-only");
+  const { stderr, exitCode } = await prune(dir);
+  expect(out(stderr)).toBe(
+    `${TAGGED_WARN("node_modules/no-deps", "node_modules/one-fixed-dep/node_modules/no-deps")}\n${TAGGED_NOTE}`,
+  );
+  expect(existsSync(join(dir, "node_modules", "one-fixed-dep", "node_modules", "no-deps", "index.js"))).toBeTrue();
+  expect(exitCode).toBe(0);
+});
+
+// `--omit=dev` also runs the removal of the copies that Bun 1.4.3 laid, and `dependent/node_modules/dep` is in a
+// place of that layout.
+test.concurrent(
+  "hoisted: an install that leaves out dependencies keeps a registry copy below a tarball folder",
+  async () => {
+    using host = await serveGraph({ dep: { "1.0.1": {} } }, { "dep-1.0.1": { "from-the-tarball.js": "" } });
+    using server = await serveGraph({
+      dep: { "1.0.1": {} },
+      a: { "1.0.0": { dep: `${host.url}dep-1.0.1.tgz` } },
+      dependent: { "1.0.0": { dep: "^1.0.0" } },
+    });
+    const manifest = (more: object) =>
+      JSON.stringify({ name: "foo", dependencies: { a: "1.0.0", dependent: "1.0.0" }, ...more });
+    using tmp = tempDir("prune-omit-below-tarball", {
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+      "package.json": manifest({}),
+    });
+    const dir = String(tmp);
+    await install(dir);
+    const copy = join(dir, "node_modules", "dependent", "node_modules", "dep");
+    expect(existsSync(join(dir, "node_modules", "dep", "from-the-tarball.js"))).toBeTrue();
+    expect(readdirSync(copy)).toEqual(["package.json"]);
+
+    await write(join(dir, "package.json"), manifest({ devDependencies: { dep: "^1.0.0" } }));
+    await install(dir, "--lockfile-only");
+    const { stderr, exitCode } = await bun(dir, "install", "--omit=dev");
+    expect(diagnostics(stderr)).toEqual([]);
+    expect(existsSync(join(dir, "node_modules", "a", "node_modules", "dep", "from-the-tarball.js"))).toBeTrue();
+    expect(readdirSync(copy)).toEqual(["package.json"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.each([
+  ["the cache", ""],
+  ["node_modules/.cache", "cache = false\n"],
+])("hoisted: a registry package that ships a .bun-tag is not taken for a tarball, with %s", async (_, cache) => {
+  using server = await serveGraph(
+    { tagged: { "1.0.0": {}, "2.0.0": {} }, dependent: { "1.0.0": { tagged: "1.0.0" } } },
+    { "tagged-1.0.0": { ".bun-tag": "shipped" } },
+  );
+  const manifest = (tagged: string) => JSON.stringify({ name: "foo", dependencies: { tagged, dependent: "1.0.0" } });
+  using tmp = tempDir("prune-shipped-tag", {
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n${cache}`,
+    "package.json": manifest("2.0.0"),
+  });
+  const dir = String(tmp);
+  await install(dir);
+  const nested = join(dir, "node_modules", "dependent", "node_modules", "tagged");
+  expect(await file(join(nested, ".bun-tag")).text()).toBe("shipped");
+
+  await write(join(dir, "package.json"), manifest("1.0.0"));
+  const switched = await bun(dir, "install");
+  expect(diagnostics(switched.stderr)).toEqual([]);
+  expect(await file(join(dir, "node_modules", "tagged", ".bun-tag")).text()).toBe("shipped");
+  expect(existsSync(nested)).toBeFalse();
+  expect(switched.exitCode).toBe(0);
+
+  // `bun prune` has not opened the cache when it asks.
+  plant(dir, "node_modules/dependent/node_modules/tagged");
+  const { stderr, exitCode } = await prune(dir);
+  expect(stderr).toBe("");
+  expect(existsSync(nested)).toBeFalse();
+  expect(exitCode).toBe(0);
+});
+
+// `fork` has a tarball of `tagged` below it, so an install looks at the `.bun-tag` of the registry's `tagged`.
+test.concurrent("hoisted: a registry package that ships a .bun-tag is not installed again", async () => {
+  using host = await serveGraph({ tagged: { "1.0.0": {} } }, { "tagged-1.0.0": { "from-the-tarball.js": "" } });
+  using server = await serveGraph(
+    { tagged: { "1.0.0": {} }, fork: { "1.0.0": { tagged: `${host.url}tagged-1.0.0.tgz` } }, other: { "1.0.0": {} } },
+    { "tagged-1.0.0": { ".bun-tag": "shipped" } },
+  );
+  using tmp = tempDir("prune-shipped-tag-beside-tarball", {
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({ name: "foo", dependencies: { tagged: "1.0.0", fork: "1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await install(dir);
+  const folder = join(dir, "node_modules", "tagged");
+  expect(await file(join(folder, ".bun-tag")).text()).toBe("shipped");
+  expect(existsSync(join(dir, "node_modules", "fork", "node_modules", "tagged", "from-the-tarball.js"))).toBeTrue();
+  // An install that replaces the folder removes this file.
+  writeFileSync(join(folder, "mine.txt"), "");
+
+  const { stderr, exitCode } = await bun(dir, "add", "other");
+  expect(diagnostics(stderr)).toEqual([]);
+  expect(readdirSync(folder).toSorted()).toEqual([".bun-tag", "mine.txt", "package.json"]);
+  expect(exitCode).toBe(0);
+});
+
+const addsBunTag = [
+  "diff --git a/.bun-tag b/.bun-tag",
+  "new file mode 100644",
+  "index 0000000000000000000000000000000000000000..4f3b7e0f5fd1f5a0f0b7c5a5a8e5b5d5c5e5f5a5",
+  "--- /dev/null",
+  "+++ b/.bun-tag",
+  "@@ -0,0 +1 @@",
+  "+patched",
+  "",
+].join("\n");
+
+test.concurrent(
+  "hoisted: a .bun-tag that a patch adds to a registry package is not taken for a tarball's",
+  async () => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: { "patches/no-deps@1.0.0.patch": addsBunTag },
+    });
+    const manifest = (version: string) =>
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "no-deps": version, "one-fixed-dep": "1.0.0" },
+        patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+      });
+    await write(packageJson, manifest("2.0.0"));
+    await install(dir);
+    const nested = join(dir, "node_modules", "one-fixed-dep", "node_modules", "no-deps");
+    expect(await file(join(nested, ".bun-tag")).text()).toBe("patched\n");
+
+    await write(packageJson, manifest("1.0.0"));
+    const { stderr, exitCode } = await bun(dir, "install");
+    expect(diagnostics(stderr)).toEqual([]);
+    expect(await file(join(dir, "node_modules", "no-deps", ".bun-tag")).text()).toBe("patched\n");
+    expect(existsSync(nested)).toBeFalse();
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent("hoisted: bun prune keeps a patched registry copy below a tarball folder", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { linker: "hoisted" },
+    files: { "patches/no-deps@1.0.0.patch": addsBunTag },
+  });
+  const tarball = await packTarball(dir, { name: "no-deps", version: "1.0.0" });
+  const manifest = (spec: string) =>
+    JSON.stringify({
+      name: "foo",
+      dependencies: { "no-deps": spec, "one-fixed-dep": "1.0.0" },
+      patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+    });
+  await write(packageJson, manifest(tarball));
+  await install(dir);
+  const nested = join(dir, "node_modules", "one-fixed-dep", "node_modules", "no-deps");
+  expect(await file(join(nested, ".bun-tag")).text()).toBe("patched\n");
+  expect(await file(join(dir, "node_modules", "no-deps", ".bun-tag")).text()).toStartWith("sha512-");
+
+  await write(packageJson, manifest("1.0.0"));
+  await install(dir, "--lockfile-only");
+  const { stderr, exitCode } = await prune(dir);
+  expect(out(stderr)).toBe(
+    `${TAGGED_WARN("node_modules/no-deps", "node_modules/one-fixed-dep/node_modules/no-deps")}\n${TAGGED_NOTE}`,
+  );
+  expect(await file(join(nested, ".bun-tag")).text()).toBe("patched\n");
+  expect(exitCode).toBe(0);
+});
+
+// The tarball has a patch, so its folder has the marker of a patch too.
+test.concurrent("hoisted: bun prune keeps a registry copy below a patched tarball folder", async () => {
+  const addsFile = [
+    "diff --git a/added.js b/added.js",
+    "new file mode 100644",
+    "index 0000000000000000000000000000000000000000..4f3b7e0f5fd1f5a0f0b7c5a5a8e5b5d5c5e5f5a5",
+    "--- /dev/null",
+    "+++ b/added.js",
+    "@@ -0,0 +1 @@",
+    "+module.exports = 1;",
+    "",
+  ].join("\n");
+  const { packageDir: dir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { linker: "hoisted" },
+    files: { "patches/no-deps.patch": addsFile },
+  });
+  const tarball = await packTarball(dir, { name: "no-deps", version: "1.0.0" });
+  const manifest = (spec: string, patched: string) =>
+    JSON.stringify({
+      name: "foo",
+      dependencies: { "no-deps": spec, "one-fixed-dep": "1.0.0" },
+      patchedDependencies: { [patched]: "patches/no-deps.patch" },
+    });
+  await write(packageJson, manifest(tarball, "no-deps@./no-deps-1.0.0.tgz"));
+  await install(dir);
+  const folder = join(dir, "node_modules", "no-deps");
+  expect(readdirSync(folder).filter(name => name.startsWith(".bun-tag-"))).toHaveLength(1);
+  expect(existsSync(join(folder, "added.js"))).toBeTrue();
+
+  await write(packageJson, manifest("1.0.0", "no-deps@1.0.0"));
+  await install(dir, "--lockfile-only");
+  const { stderr, exitCode } = await prune(dir);
+  expect(out(stderr)).toBe(
+    `${TAGGED_WARN("node_modules/no-deps", "node_modules/one-fixed-dep/node_modules/no-deps")}\n${TAGGED_NOTE}`,
+  );
+  expect(existsSync(join(dir, "node_modules", "one-fixed-dep", "node_modules", "no-deps", "index.js"))).toBeTrue();
+  expect(exitCode).toBe(0);
+});
+
+// `--no-verify` leaves an empty tag, and a registry that gives no integrity leaves none in bun.lock.
+test.concurrent(
+  "hoisted: a tarball folder with an empty .bun-tag is not a registry package without integrity",
+  async () => {
+    using host = await serveGraph({ dep: { "1.0.0": {} } }, { "dep-1.0.0": { "from-the-tarball.js": "" } });
+    using server = await serveGraph({ dep: { "1.0.0": {} }, dependent: { "1.0.0": { dep: "1.0.0" } } });
+    using tmp = tempDir("prune-empty-tag", {
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "foo",
+        dependencies: { dep: `${host.url}dep-1.0.0.tgz`, dependent: "1.0.0" },
+      }),
+    });
+    const dir = String(tmp);
+    await install(dir);
+    rmSync(join(dir, "node_modules"), { recursive: true });
+    rmSync(join(dir, ".bun-cache"), { recursive: true });
+    await install(dir, "--no-verify");
+    const folder = join(dir, "node_modules", "dep");
+    expect(await file(join(folder, ".bun-tag")).text()).toBe("");
+    expect(await lock(dir)).toContain(`"dependent/dep": ["dep@1.0.0", "${server.url}dep-1.0.0.tgz", {}, ""]`);
+
+    const { stderr, exitCode } = await bun(dir, "remove", "dep");
+    expect(diagnostics(stderr)).toEqual([]);
+    expect(readdirSync(folder)).toEqual(["package.json"]);
+    expect(readdirSync(join(dir, "node_modules", "dependent", "node_modules"))).toEqual([]);
+    expect(exitCode).toBe(0);
+  },
+);
 
 // https://github.com/oven-sh/bun/issues/13563
 test.concurrent(

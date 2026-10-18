@@ -418,12 +418,27 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> sys::Maybe<Dir> {
             (*this).cache_directory_path =
                 ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
-                    &[b"node_modules", b".cache"],
+                    &[CACHE_IN_PROJECT],
                 ))
         };
 
-        return Dir::cwd().make_open_path(b"node_modules/.cache", Default::default());
+        return Dir::cwd().make_open_path(CACHE_IN_PROJECT, Default::default());
     }
+}
+
+/// Packages are extracted here when the cache is disabled or cannot be opened.
+const CACHE_IN_PROJECT: &[u8] = b"node_modules/.cache";
+
+/// Opens the cache directory if it exists, else `node_modules/.cache`. Creates nothing.
+pub(crate) fn open_existing_cache_directory(this: &PackageManager) -> Option<Dir> {
+    if this.options.enable.contains(Enable::CACHE)
+        && let Ok(cache) =
+            fetch_cache_directory_path(this.env_mut(), Some(this.options.cache_directory))
+        && let Ok(dir) = Dir::open(&cache.path)
+    {
+        return Some(dir);
+    }
+    Dir::open(CACHE_IN_PROJECT).ok()
 }
 
 pub struct CacheDir {

@@ -104,6 +104,9 @@ pub struct PackageInstaller<'a> {
 
     pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
+    /// `hoisted_install::other_tags` of the loaded bun.lock.
+    pub(crate) other_tags: Vec<(PackageNameHash, Box<[u8]>)>,
+
     /// uses same ids as lockfile.trees
     pub(crate) trees: Box<[TreeContext]>,
 
@@ -1541,6 +1544,26 @@ impl<'a> PackageInstaller<'a> {
         self.trees[tree_id as usize].inside_replaced_folder = inside;
     }
 
+    /// Returns true if the folder of a registry package has one of the `other_tags` of its name.
+    #[cold]
+    fn has_other_tag(
+        &self,
+        name_hash: PackageNameHash,
+        package_id: PackageID,
+        installer: &PackageInstall<'_>,
+    ) -> bool {
+        let first = (self.other_tags).partition_point(|other| other.0 < name_hash);
+        let others = &self.other_tags[first..];
+        let others = &others[..others.partition_point(|other| other.0 == name_hash)];
+        // A tarball with the registry's bytes has the registry integrity, and it can stay.
+        let integrity = &self.metas[package_id as usize].integrity;
+        !others.is_empty()
+            && installer.has_bun_tag(&self.root_node_modules_folder, &|tag| {
+                !package_install::is_registry_integrity(tag, integrity)
+                    && others.iter().any(|other| *other.1 == *tag)
+            })
+    }
+
     /// Call when you mutate the length of `lockfile.packages`
     pub(crate) fn fix_cached_lockfile_package_slices(&mut self) {
         // These `RawSlice<T>` fields alias into `self.lockfile.packages`
@@ -2020,7 +2043,11 @@ impl<'a> PackageInstaller<'a> {
                 &self.metas[package_id as usize].integrity,
                 self.manager().skips_verify(resolution.tag),
                 &self.root_node_modules_folder,
-            );
+            )
+            // `verify` passes for a tarball or a git checkout of this name and version.
+            || (resolution.tag == resolution::Tag::Npm
+                && !self.other_tags.is_empty()
+                && self.has_other_tag(pkg_name_hash, package_id, &installer));
         self.summary.skipped += (!needs_install) as u32;
         if !needs_install && log_level.show_progress() {
             self.node.complete_one();

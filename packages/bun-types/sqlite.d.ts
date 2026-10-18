@@ -844,9 +844,6 @@ declare module "bun:sqlite" {
      * `Statement`, the next step of this iterator throws. Use
      * {@link Database.prepare} to get a statement with a cursor of its own.
      *
-     * A statement that writes, such as `INSERT ... RETURNING`, runs to its end
-     * at the first `next()`, and its rows are kept in memory as by `all`.
-     *
      * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
      */
     iterate(...params: ParamsType): IterableIterator<ReturnType>;

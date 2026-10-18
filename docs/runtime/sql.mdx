@@ -335,9 +335,8 @@ Bun converts a parameter by its JavaScript type. On PostgreSQL the type that the
 
 | JavaScript value                                             | PostgreSQL                                                                                                                                    | MySQL / MariaDB   | SQLite                                                       |
 | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------ |
-| `Date`                                                       | The instant for `timestamp` and `timestamptz`. JSON for `json` and `jsonb`. ISO 8601 text for every other type, such as `date`, `text`        | `DATETIME` in UTC | Not supported. Pass `date.toISOString()` or `date.getTime()` |
-| Plain object                                                 | JSON. An error for a built-in array type                                                                                                      | JSON              | Not supported. Pass `sql.json(value)`                        |
-| Object with its own `toString()` or `Symbol.toPrimitive`     | JSON for `json` and `jsonb`. `String(value)` for every other type                                                                             | JSON              | Not supported. Pass `String(value)`                          |
+| `Date`                                                       | The instant for `timestamp` and `timestamptz`. ISO 8601 text for `date`, `time`, `text`                                                       | `DATETIME` in UTC | Not supported. Pass `date.toISOString()` or `date.getTime()` |
+| Plain object                                                 | JSON                                                                                                                                          | JSON              | Not supported. Pass `sql.json(value)`                        |
 | `Array`                                                      | An array literal such as `{1,2}` for a built-in array type. JSON for `json` and `jsonb`. `String(value)`, such as `1,2`, for every other type | JSON              | Not supported. Pass `sql.json(value)`                        |
 | `Int32Array`                                                 | Like an `Array` of its numbers. Its bytes for `bytea`                                                                                         | Its bytes         | `BLOB` with its bytes                                        |
 | `Buffer`, `ArrayBuffer`, `DataView`, every other typed array | `bytea`                                                                                                                                       | Binary data       | `BLOB`                                                       |
@@ -345,26 +344,6 @@ Bun converts a parameter by its JavaScript type. On PostgreSQL the type that the
 | `null`, `undefined`                                          | `NULL`                                                                                                                                        | `NULL`            | `NULL`                                                       |
 
 See [Numbers and BigInt](#numbers-and-bigint) for numbers and [Dates and time zones](#dates-and-time-zones) for `Date`.
-
-JSON is what `JSON.stringify(value)` returns, so a `toJSON()` method counts, also that of a `Date`. A value for which it returns `undefined` is an error.
-
-`bytea` is not one of the "every other type" above. It takes a `Buffer`, an `ArrayBuffer`, a `DataView`, a typed array or a string, and every other object is an error. With `prepare: false`, Bun does not ask the server for the parameter types for a `Date` or a plain object, so the server stores their text.
-
-Bun never calls `valueOf()`, and it calls `Symbol.toPrimitive` with the hint `"string"`, also for a numeric parameter. An object that only has `valueOf()` is a plain object. Pass `Number(value)` to bind the number:
-
-```ts
-class Money {
-  constructor(cents) {
-    this.cents = cents;
-  }
-  [Symbol.toPrimitive](hint) {
-    return hint === "number" ? this.cents / 100 : (this.cents / 100).toFixed(2);
-  }
-}
-
-await sql`INSERT INTO prices (label) VALUES (${new Money(1250)})`; // label text: "12.50"
-await sql`INSERT INTO prices (units) VALUES (${Number(new Money(1200))})`; // units integer: 12
-```
 
 A JavaScript array works wherever PostgreSQL expects an array:
 
@@ -1188,8 +1167,6 @@ await sql.begin(async tx => {
 });
 ```
 
-`sql.begin` resolves once the database has answered `COMMIT`. If the connection is lost while `COMMIT` is unanswered, `sql.begin` rejects and nobody can know whether the transaction was committed, so check before you run it again.
-
 To pipeline the queries in a transaction, return an array of queries from the callback:
 
 ```ts
@@ -1211,6 +1188,7 @@ The adapters differ in two ways:
 The `tx` client belongs to its transaction. Once Bun has sent `COMMIT` or `ROLLBACK`, a query on `tx` never reaches the database. It rejects with `ERR_POSTGRES_INVALID_TRANSACTION_STATE`, or the same code with `MYSQL` or `SQLITE`.
 
 Queries are lazy, so this includes a query that you create inside the callback and first await later. Await every query inside the callback, or return the queries in an array.
+`sql.begin` resolves once the database has answered `COMMIT`. If the connection is lost while `COMMIT` is unanswered, `sql.begin` rejects and nobody can know whether the transaction was committed, so check before you run it again.
 
 ```ts
 let late;
@@ -1639,7 +1617,7 @@ Queries still use the "extended" protocol, but run as [unnamed prepared statemen
 - The server parses and plans each query from scratch
 - Queries are not [pipelined](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-PIPELINING)
 - Only one command per query is supported (unless you use `sql``.simple()`)
-- A query takes one more round trip when a parameter is an array, an `Int32Array`, or an object with its own `toString()` or `Symbol.toPrimitive`. Bun asks the server for the parameter types first, so that it sends the same value as with prepared statements
+- A query takes one more round trip when a parameter is an array, an `Int32Array`, or an object with its own `toString()`. Bun asks the server for the parameter types first, so that it sends the same value as with prepared statements
 - A `Date` does not work for a `time`, `timetz`, `json` or `jsonb` parameter, because Bun sends it as ISO 8601 text without asking for the type
 - A string for a `json` or `jsonb` parameter is sent as it is, so it must already be JSON text. [`sql.json(value)`](#sql-json) stores the same value with and without prepared statements
 

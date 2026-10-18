@@ -1136,19 +1136,6 @@ describe.each(scripted)("$adapter, scripted server", script => {
   /** These servers answer no query: a connection that has one stays busy, and close() would wait for it. */
   const unanswered = (sql: SQL) => ({ [Symbol.asyncDispose]: () => sql.close({ timeout: 0 }) });
 
-  test.concurrent.each([-1, 0, NaN, undefined, "abc", {}, Infinity, 2 ** 53, 1, 5])(
-    "options.max = %p after the client is made changes nothing",
-    async max => {
-      await using server = await serverOf(serving);
-      const connected = new Calls();
-      await using sql = new SQL({ url: url(server.port), max: 2, onconnect: connected.hit });
-      Object.assign(sql.options, { max });
-      expect(await outcome(sql.unsafe("select 1").simple())).toBe("resolved");
-      await connected.reached(2);
-      expect(await server.dials()).toBe(2);
-    },
-  );
-
   test.concurrent("a server that refuses every login is dialed `max` times for each query", async () => {
     await using server = await serverOf(refuseLogin);
     await using sql = new SQL({ url: url(server.port), max: 5 });

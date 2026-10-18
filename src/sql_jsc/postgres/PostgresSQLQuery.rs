@@ -469,6 +469,7 @@ impl PostgresSQLQuery {
         }
 
         let this_value = callframe.this();
+        let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
         let unnamed = connection
             .flags
             .get()
@@ -476,11 +477,6 @@ impl PostgresSQLQuery {
         // Reading the values can run user code, so it comes before any look at the connection's state.
         let mut declared = Vec::new();
         if !this.flags.get().simple {
-            let binding_value = PostgresRequest::private_copy(
-                global_object,
-                js::binding_get_cached(this_value).unwrap_or_default(),
-            )?;
-            js::binding_set_cached(this_value, global_object, binding_value);
             declared = Signature::declared_types(global_object, binding_value)?;
             let describe_first =
                 !unnamed || PostgresRequest::needs_parameter_types(global_object, binding_value)?;

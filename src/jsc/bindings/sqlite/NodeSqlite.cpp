@@ -1021,7 +1021,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLoadExtension, (JSGlobalObject * globalOb
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
-    JSDatabaseSync::BusyScope busy { self };
     if (!self->allowLoadExtension() || !self->enableLoadExtensionIsOn()) {
         return throwNodeState(globalObject, scope, "extension loading is not allowed"_s);
     }
@@ -2377,7 +2376,8 @@ static EncodedJSValue statementStepAll(JSGlobalObject* globalObject, ThrowScope&
 {
     StatementResetter resetter { self->statement() };
     JSStatementSync::SteppingScope stepping { self };
-    JSArray* rows = JSArray::create(getVM(globalObject), globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0);
+    JSArray* rows = constructEmptyArray(globalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(scope, {});
     int r;
     while ((r = sqlite3_step(self->statement())) == SQLITE_ROW) {
         // Read the column count AFTER step(): sqlite3_prepare_v2's
@@ -2391,8 +2391,7 @@ static EncodedJSValue statementStepAll(JSGlobalObject* globalObject, ThrowScope&
             ? rowToArray(globalObject, scope, self->statement(), numCols, self->useBigInts())
             : rowToObjectCached(globalObject, scope, self, numCols, self->useBigInts());
         RETURN_IF_EXCEPTION(scope, {});
-        // Not push(): an indexed setter on a prototype would get the row in place of the array, and the array as `this`.
-        rows->putDirectIndex(globalObject, rows->length(), row);
+        rows->push(globalObject, row);
         RETURN_IF_EXCEPTION(scope, {});
     }
     CHECK_UDF_EXCEPTION(scope);
@@ -2611,7 +2610,6 @@ void JSStatementSyncIterator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_statement);
-    visitor.append(thisObject->m_rows);
 }
 DEFINE_VISIT_CHILDREN(JSStatementSyncIterator);
 
@@ -2654,25 +2652,6 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
         return throwNodeState(globalObject, scope, "statement is currently executing"_s);
     }
     JSDatabaseSync::BusyScope busy { stmt->database() };
-    // A write has made all its changes before its first row, and to end it is its commit. Left on a row it would hold
-    // the lock and its transaction until somebody ends the iterator, perhaps the collector. (Node v26.3.0 leaves it.)
-    if (!self->m_rows && !sqlite3_stmt_readonly(stmt->statement())) {
-        JSValue rows = JSValue::decode(statementStepAll(globalObject, scope, stmt));
-        if (scope.exception()) [[unlikely]] {
-            self->setDone();
-            return {};
-        }
-        self->m_rows.set(vm, self, uncheckedDowncast<JSArray>(rows));
-    }
-    if (JSArray* rows = self->m_rows.get()) {
-        if (self->m_nextRow == rows->length()) {
-            self->setDone();
-            return JSValue::encode(createIterResult(vm, globalObject, true, jsNull()));
-        }
-        JSValue row = rows->getDirectIndex(globalObject, self->m_nextRow++);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(createIterResult(vm, globalObject, false, row));
-    }
     JSStatementSync::SteppingScope stepping { stmt };
 
     int r = sqlite3_step(stmt->statement());

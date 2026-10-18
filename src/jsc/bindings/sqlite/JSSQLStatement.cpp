@@ -2217,12 +2217,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JS
     if (!castedThis)
         return {};
 
-    // Left on a row, a write would hold its transaction, and what ends it later would be its commit. Statement.iterate() reads it with all().
-    if (!sqlite3_stmt_readonly(castedThis->stmt)) [[unlikely]] {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Only a read-only statement can be read row by row"_s));
-        return {};
-    }
-
     StatementRun run { castedThis->stmt };
     JSC::EncodedJSValue row = stepIterator<true>(lexicalGlobalObject, scope, castedThis);
     RETURN_IF_EXCEPTION(scope, {});

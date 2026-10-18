@@ -405,8 +405,6 @@ for (const row of query) {
 
 A `Statement` has one cursor, and its newest run owns it. If you run the same `Statement` again inside the loop, the call works and the loop throws at its next row. `db.query()` returns the same `Statement` for the same SQL, so use `db.prepare()` to run the same SQL inside the loop.
 
-A statement that writes, such as `INSERT ... RETURNING`, does not stream. SQLite makes all of its changes before it returns the first row, so Bun reads the other rows at the first `next()`, keeps them in memory as `.all()` does, and ends the statement. From then on the write is committed and the database is unlocked, even if you leave the loop early. A very large `INSERT ... SELECT ... RETURNING` holds all of its rows in memory at once.
-
 ### `.values()`
 
 Use `values()` to run a query and get back all results as an array of arrays.

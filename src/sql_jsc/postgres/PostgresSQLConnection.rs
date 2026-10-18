@@ -686,11 +686,6 @@ impl PostgresSQLConnection {
         if success != 1
             || (ssl_error.error_no != 0 && verifies_certificate(&self.tls_config, self.ssl_mode))
         {
-            // The socket was closed under the handshake: usockets has no verdict then, and this is no verification error.
-            if ssl_error.reason_bytes().is_empty() {
-                self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
-                return;
-            }
             let v = verify_error_to_js(&ssl_error, self.global());
             self.fail_with_js_value(v);
             return;

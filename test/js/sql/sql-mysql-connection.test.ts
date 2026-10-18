@@ -6,8 +6,6 @@ import net from "node:net";
 import {
   listeningServer,
   loopbackFence,
-  MYSQL_CLIENT_SSL,
-  MYSQL_DEFAULT_CAPABILITIES,
   MYSQL_SERVER_MORE_RESULTS_EXISTS,
   mysqlAckSessionSetup,
   mysqlErrPacket,
@@ -926,47 +924,6 @@ describe("scripted server", () => {
     } finally {
       server.close();
     }
-  });
-
-  // A server gives up on a client that is stalled from the dial on: the client's first read has the greeting and the
-  // goodbye. In a child, since what this guards against is an assertion: only a debug or sanitizer build can fail it.
-  test("plaintext behind the greeting of a server that has closed rejects the query of a client that asked for TLS", async () => {
-    const firstRead = Buffer.concat([
-      mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }),
-      mysqlErrPacket(1, 1159, "08S01", "Got timeout reading communication packets"),
-    ]);
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        // The server is in the client's event loop, so it has closed before the client reads. Closed, not only ended:
-        // a reset answers the SSLRequest, and the kernel refuses the ClientHello behind it.
-        `
-          const server = require("node:net").createServer(socket => {
-            socket.on("error", () => {});
-            socket.write(Buffer.from(process.env.FIRST_READ, "base64"));
-            socket.destroySoon();
-          });
-          server.listen(0, "127.0.0.1", async () => {
-            const url = "mysql://root@127.0.0.1:" + server.address().port + "/db";
-            const sql = new Bun.SQL({ url, max: 1, tls: { rejectUnauthorized: false } });
-            const err = await sql\`SELECT 1\`.catch(err => err);
-            console.log(JSON.stringify({ code: err.code }));
-            await sql.close();
-            server.close();
-          });
-        `,
-      ],
-      env: { ...bunEnv, FIRST_READ: firstRead.toString("base64") },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // stderr is here so that a failure shows it.
-    expect({ stdout, stderr, exitCode }).toMatchObject({
-      stdout: JSON.stringify({ code: "ERR_MYSQL_UNEXPECTED_PACKET" }) + "\n",
-      exitCode: 0,
-    });
   });
 
   test("a connection that the server ends in the read that established it is not given to a query", async () => {

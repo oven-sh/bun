@@ -944,8 +944,6 @@ pub enum BuiltinName {
     signal,
     cmd,
     errors,
-    /// `Symbol.toPrimitive`.
-    toPrimitive,
     /// Private name (`$internal` in builtins); user code cannot set it.
     internal,
     /// Private name (`$sharedFd` in builtins); user code cannot set it.

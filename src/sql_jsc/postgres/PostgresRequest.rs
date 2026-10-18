@@ -4,7 +4,6 @@ use crate::jsc::{
 };
 use bun_core::String as BunString;
 use bun_core::fmt as bun_fmt;
-use bun_jsc::BuiltinName;
 
 use bun_sql::postgres::TLSStatus;
 use bun_sql::postgres::postgres_protocol as protocol;
@@ -62,16 +61,7 @@ fn is_list(js_type: JSType) -> bool {
     js_type.is_array() || js_type == JSType::Int32Array
 }
 
-/// `String(value)` does not end in `Object.prototype.toString`.
-fn converts_to_string(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
-    // One that is not callable makes `String(value)` throw.
-    Ok(value
-        .fast_get(global, BuiltinName::toPrimitive)?
-        .is_some_and(|method| !method.is_null())
-        || value.implements_to_string(global)?)
-}
-
-/// A list goes as JSON, an array literal or `String(list)`, an object that converts itself as JSON or that string.
+/// A list goes as JSON, an array literal or `String(list)`, an object with `toString` as JSON or that string.
 pub(crate) fn needs_parameter_types(global: &JSGlobalObject, values: JSValue) -> JsResult<bool> {
     let mut iter = JSArrayIterator::init(values, global)?;
     while let Some(value) = iter.next()? {
@@ -83,24 +73,11 @@ pub(crate) fn needs_parameter_types(global: &JSGlobalObject, values: JSValue) ->
         {
             continue;
         }
-        if is_list(js_type) || converts_to_string(global, value)? {
+        if is_list(js_type) || value.implements_to_string(global)? {
             return Ok(true);
         }
     }
     Ok(false)
-}
-
-/// A copy of `values` that script can neither reach nor see being filled. Script can hold `values`
-/// and put an accessor on it, so reading it can run user code.
-pub(crate) fn private_copy(global: &JSGlobalObject, values: JSValue) -> JsResult<JSValue> {
-    let mut iter = JSArrayIterator::init(values, global)?;
-    let copy = JSValue::create_empty_array(global, iter.len as usize)?;
-    let mut index: u32 = 0;
-    while let Some(value) = iter.next()? {
-        copy.put_index(global, index, value)?;
-        index += 1;
-    }
-    Ok(copy)
 }
 
 /// Replaces each value by the text that `write_bind` sends for it, unless it can encode the value
@@ -160,8 +137,7 @@ fn parameter_text(
             received,
         ))));
     }
-    // In JSON a Date is what its `toJSON` says, as it is inside an object.
-    if !js_type.is_object() || (js_type == JSType::JSDate && !tag.is_json()) {
+    if !js_type.is_object() || js_type == JSType::JSDate {
         return Ok(None);
     }
 
@@ -169,28 +145,11 @@ fn parameter_text(
         if is_list(js_type) && tag.array_element().is_some() {
             return array_literal(global, value, tag).map(Some);
         }
-        if is_list(js_type) || converts_to_string(global, value)? {
+        if is_list(js_type) || value.implements_to_string(global)? {
             return Ok(Some(value.to_js_string(global)?.to_js()));
         }
-        if let Some(element) = tag.array_element() {
-            // The JSON `{}` is also the literal of an empty array.
-            let received = JSGlobalObject::determine_specific_type(global, value)?;
-            return Err(global.throw_value(global.ERR_INVALID_ARG_TYPE(format_args!(
-                "Query parameter ${} of type {}[] must be an Array, Int32Array or string. Received {}",
-                index + 1,
-                element.tag_name().unwrap_or("(unknown)"),
-                received,
-            ))));
-        }
     }
-    let json = value.json_stringify_fast(global)?;
-    if json.is_empty() {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Cannot bind an object whose JSON is undefined to query parameter ${}",
-            index + 1,
-        )));
-    }
-    Ok(Some(json.into_js(global)?))
+    Ok(Some(value.json_stringify_fast(global)?.into_js(global)?))
 }
 
 fn array_literal(global: &JSGlobalObject, list: JSValue, tag: types::Tag) -> JsResult<JSValue> {

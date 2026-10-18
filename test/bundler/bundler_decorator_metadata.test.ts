@@ -1261,4 +1261,184 @@ describe("bundler", () => {
       stdout: "true\n",
     },
   });
+  // The type names of decorated members are bound when the class is lowered, once every
+  // declaration of the file is in its scope. The metadata is then a use of the symbol in the
+  // part of the class.
+  const tsconfig = /* json */ `{ "compilerOptions": { "experimentalDecorators": true, "emitDecoratorMetadata": true } }`;
+  // `design` holds the value of each `design:` entry that reached a decorated member.
+  const collect = /* ts */ `
+    export const design: Record<string, any> = {};
+    (Reflect as any).metadata = (key: string, value: any) => () => {
+      design[key.slice("design:".length)] = value;
+    };
+    export const d: any = () => {};
+  `;
+  const names = `console.log(design.paramtypes.map((type: any) => type.name).join(","));`;
+  // These run the bundler in its own process (`backend: "cli"`): a parser without this
+  // change can abort on them.
+
+  itBundled("decorator_metadata/ConditionalArrowBody", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        const c = false, x = 0;
+        const make: any = c ? (x) : y => { class K { @d m(a: Bar): Baz { return a } } return K; };
+        class Bar {}
+        class Baz {}
+        make(1);
+        console.log(design.paramtypes[0].name, design.returntype.name);
+      `,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { stdout: "Bar Baz\n" },
+  });
+
+  itBundled("decorator_metadata/TypeDeclaredAfterTheClass", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        function atModuleScope() { class K { @d m(a: LaterClass, b: LaterFunction) {} } return K; }
+        class LaterClass {}
+        function LaterFunction() {}
+        atModuleScope();
+        ${names}
+
+        function inFunctionBody() {
+          class K { @d m(a: Inner) {} }
+          function Inner() {}
+          return Inner;
+        }
+        const Inner = inFunctionBody();
+        console.log(design.paramtypes[0] === Inner);
+      `,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { stdout: "LaterClass,LaterFunction\ntrue\n" },
+  });
+
+  // The metadata is the only use of `Later`, and it keeps the class in the bundle. When Bun
+  // runs this bundle it transpiles it, which moves a class without side effects to the top.
+  itBundled("decorator_metadata/ClassDeclaredAfterTheClassIsKept", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        class K { @d m(a: Later) {} }
+        class Later {}
+        ${names}
+      `,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { stdout: "Later\n" },
+  });
+
+  // Bun does not transpile a bundle for `--target=bun`. The metadata then reads the class in
+  // its temporal dead zone, as it does when the class has another use, and as the output of
+  // tsc does.
+  itBundled("decorator_metadata/ClassDeclaredAfterTheClassIsInItsDeadZone", {
+    backend: "cli",
+    target: "bun",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d } from "./collect";
+        class K { @d m(a: Later) {} }
+        class Later {}
+      `,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { error: "ReferenceError: Cannot access 'Later' before initialization." },
+  });
+
+  itBundled("decorator_metadata/ImportAfterTheClass", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        class K { @d m(a: Svc) {} }
+        import { Svc } from "./svc";
+        ${names}
+      `,
+      "/svc.ts": `export class Svc {}`,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { stdout: "Svc\n" },
+  });
+
+  itBundled("decorator_metadata/ParameterWithTheNameOfAType", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        class Bar {}
+        class K { @d m(Bar: any, b: Bar) {} }
+        ${names}
+      `,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { stdout: "Object,Bar\n" },
+  });
+
+  // Only the first part of a qualified name is an identifier.
+  itBundled("decorator_metadata/QualifiedName", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        import * as ns from "./ns";
+        import { lib } from "./lib";
+        namespace local { export namespace inner { export class Deep {} } }
+        class K { @d m(a: ns.Bar, b: ns.inner.Baz, c: lib.Qux, d: local.inner.Deep) {} }
+        ${names}
+      `,
+      "/ns.ts": `export class Bar {}\nexport namespace inner { export class Baz {} }`,
+      "/lib.ts": `export namespace lib { export class Qux {} }`,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { stdout: "Bar,Baz,Qux,Deep\n" },
+  });
+
+  itBundled("decorator_metadata/ExportOfAnotherNamespaceBlock", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        namespace ns { export class Bar {} }
+        namespace ns {
+          export class K { @d m(a: Bar) {} }
+          export const same = Bar;
+        }
+        console.log(design.paramtypes[0] === ns.Bar, ns.same === ns.Bar);
+      `,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { stdout: "true true\n" },
+  });
+
+  // The metadata of these types is Array and Object. It does not name the interface, so the
+  // import of the interface is not kept.
+  itBundled("decorator_metadata/TypeOnlyImportThatNoMetadataNames", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        import { IFoo } from "./types";
+        class K { @d m(a: IFoo[], b: IFoo | string) {} }
+        ${names}
+      `,
+      "/types.ts": `export interface IFoo { x: number }`,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { stdout: "Array,Object\n" },
+  });
 });

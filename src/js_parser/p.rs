@@ -558,8 +558,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Becomes `Ast::scope_uses`.
     pub(crate) scope_uses: Vec<js_ast::ast_result::ScopeUse>,
     /// `(class body scope, symbol)`; becomes `Ast::scope_uses.spans` once the
-    /// visit pass has numbered every scope. A `None` scope is the whole file.
-    pub(crate) span_uses: Vec<(Option<js_ast::StoreRef<Scope>>, u32)>,
+    /// visit pass has numbered every scope.
+    pub(crate) span_uses: Vec<(js_ast::StoreRef<Scope>, u32)>,
 
     /// True while `visit_single_stmt` is visiting a non-block body. `if`,
     /// `else`, `while`, and `do` reach it without pushing a scope, so inside
@@ -1810,7 +1810,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let file = ScopeUseSpan::whole_file;
         let mut spans: Vec<ScopeUseSpan> = Vec::with_capacity(self.span_uses.len() + 2);
         for &(scope, symbol) in &self.span_uses {
-            spans.push(match scope.and_then(|scope| scope.visit_span()) {
+            spans.push(match scope.visit_span() {
                 Some((first, last)) => ScopeUseSpan {
                     symbol,
                     first,
@@ -2004,15 +2004,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let symbol = ref_.inner_index();
         let scope = self.current_scope;
-        if scope.visit_span[0] == u32::MAX {
-            // The parse pass (TypeScript decorator metadata resolves type
-            // names then): no scope numbering yet.
-            self.span_uses.push((None, symbol));
-        } else if scope.kind == js_ast::scope::Kind::ClassBody {
+        // Only the visit pass records a use, and it numbers each scope that it enters.
+        debug_assert!(scope.visit_span[0] != u32::MAX);
+        if scope.kind == js_ast::scope::Kind::ClassBody {
             // A field initializer is visited in the class body scope but may
             // be printed inside the constructor.
-            if self.span_uses.last().copied() != Some((Some(scope), symbol)) {
-                self.span_uses.push((Some(scope), symbol));
+            if self.span_uses.last().copied() != Some((scope, symbol)) {
+                self.span_uses.push((scope, symbol));
             }
         } else {
             let point = js_ast::ast_result::ScopeUse {
@@ -2024,8 +2022,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         for &class_body in &self.field_init_class_bodies {
-            if self.span_uses.last().copied() != Some((Some(class_body), symbol)) {
-                self.span_uses.push((Some(class_body), symbol));
+            if self.span_uses.last().copied() != Some((class_body, symbol)) {
+                self.span_uses.push((class_body, symbol));
             }
         }
     }
@@ -5492,8 +5490,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         parts: &mut ListManaged<'a, js_ast::Part>,
         stmts: &'a mut [Stmt],
     ) -> Result<bool, crate::Error> {
-        // Uses recorded outside a part's visit (the parse pass resolving
-        // decorator-metadata types) belong to no part.
+        // Uses recorded outside a part's visit belong to no part.
         self.part_uses.clear();
         self.part_generation += 1;
         self.declared_symbols.clear_retaining_capacity();
@@ -7683,7 +7680,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         match prop.kind {
-            PropertyKind::Normal | PropertyKind::Abstract => {
+            PropertyKind::Normal | PropertyKind::Abstract | PropertyKind::Declare => {
                 {
                     // design:type
                     let v = self
@@ -7795,8 +7792,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
-            PropertyKind::Spread | PropertyKind::Declare | PropertyKind::AutoAccessor => {} // not allowed in a class (auto_accessor is standard decorators only)
-            PropertyKind::ClassStaticBlock => {} // not allowed to decorate this
+            PropertyKind::Spread | PropertyKind::AutoAccessor => {} // not allowed in a class (auto_accessor is standard decorators only)
+            PropertyKind::ClassStaticBlock => {}                    // not allowed to decorate this
         }
     }
 
@@ -7834,35 +7831,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.maybe_defined_helper(e)?
             }
             M::MPromise => ident!(b"Promise"),
-            M::MIdentifier(ref_) => {
-                self.record_usage(ref_);
-                let e = if self.is_import_item.contains_key(&ref_) {
-                    self.note_import_use(ref_, IdentifierOpts::new());
-                    self.new_expr(
-                        E::ImportIdentifier {
-                            ref_,
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    )
-                } else {
-                    self.new_expr(E::Identifier::init(ref_), bun_ast::Loc::EMPTY)
-                };
+            M::MIdentifier(name) => {
+                let name = self.load_name_from_ref(name);
+                // The guard prints the name twice.
+                let e = self.metadata_type_reference(name, 2, false)?;
                 return self.maybe_defined_helper(e);
             }
-            M::MDot(refs) => {
-                debug_assert!(refs.len() >= 2);
-                // (refs.deinit(p.arena) — arena-backed; nothing to free in Rust)
-
-                macro_rules! ref_name {
-                    ($r:expr) => {
-                        E::Str::new(self.load_name_from_ref($r))
-                    };
-                }
+            M::MDot(parts) => {
+                debug_assert!(parts.len() >= 2);
+                // The guard tests the first part once for each part, then prints the path.
+                let first =
+                    self.metadata_type_reference(parts[0].slice(), parts.len() as u32 + 1, true)?;
 
                 let mut dots = self.new_expr(
                     E::Dot {
-                        name: ref_name!(refs[refs.len() - 1]),
+                        name: E::Str::new(parts[parts.len() - 1].slice()),
                         name_loc: bun_ast::Loc::EMPTY,
                         target: Expr::default(), // patched below
                         ..Default::default()
@@ -7879,11 +7862,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .expect("infallible: variant checked")
                         .target,
                 );
-                let mut i: usize = refs.len() - 2;
+                let mut i: usize = parts.len() - 2;
                 while i > 0 {
                     *current_expr = self.new_expr(
                         E::Dot {
-                            name: ref_name!(refs[i]),
+                            name: E::Str::new(parts[i].slice()),
                             name_loc: bun_ast::Loc::EMPTY,
                             target: Expr::default(),
                             ..Default::default()
@@ -7901,18 +7884,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     i -= 1;
                 }
 
-                if self.is_import_item.contains_key(&refs[0]) {
-                    *current_expr = self.new_expr(
-                        E::ImportIdentifier {
-                            ref_: refs[0],
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    );
-                } else {
-                    *current_expr =
-                        self.new_expr(E::Identifier::init(refs[0]), bun_ast::Loc::EMPTY);
-                }
+                *current_expr = first;
 
                 let dot_identifier = *current_expr;
                 let mut current_dot = dots;
@@ -7927,7 +7899,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     bun_ast::Loc::EMPTY,
                 );
 
-                if i < refs.len() - 2 {
+                if i < parts.len() - 2 {
                     current_dot = current_dot
                         .data
                         .e_dot()
@@ -7942,7 +7914,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .left,
                 );
 
-                while i < refs.len() - 2 {
+                while i < parts.len() - 2 {
                     let right_n = self.check_if_defined_helper(current_dot)?;
                     *current_expr = self.new_expr(
                         E::Binary {
@@ -7961,7 +7933,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     );
                     current_expr = next;
                     i += 1;
-                    if i < refs.len() - 2 {
+                    if i < parts.len() - 2 {
                         current_dot = current_dot
                             .data
                             .e_dot()
@@ -7985,6 +7957,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(root);
             }
         })
+    }
+
+    /// The type `name`, bound like an identifier at the class. The caller prints it `printed` times.
+    fn metadata_type_reference(
+        &mut self,
+        name: &'a [u8],
+        printed: u32,
+        is_property_access_target: bool,
+    ) -> Result<Expr, crate::Error> {
+        let result = self.find_symbol(bun_ast::Loc::EMPTY, name)?;
+        let expr = self.handle_identifier(
+            bun_ast::Loc::EMPTY,
+            E::Identifier::init(result.r#ref)
+                .with_must_keep_due_to_with_stmt(result.is_inside_with_scope),
+            None,
+            IdentifierOpts::new()
+                .with_was_originally_identifier(true)
+                .with_is_property_access_target(is_property_access_target),
+        );
+        // `find_symbol` counted the first use.
+        let ref_ = match expr.data {
+            js_ast::ExprData::EIdentifier(e) => e.ref_,
+            js_ast::ExprData::EImportIdentifier(e) => e.ref_,
+            _ => return Ok(expr),
+        };
+        for _ in 1..printed {
+            self.record_usage(ref_);
+        }
+        Ok(expr)
     }
 
     #[cold]
@@ -8205,7 +8206,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// on restore; the attempt's arena allocations just become unreachable.
     /// The legal comments waiting for the next statement are moved out
     /// instead: a block body or `import()` drains them, so a length cannot
-    /// restore them.
+    /// restore them. The parse pass binds no names, so an older scope needs no restore.
     pub(crate) fn parser_snapshot(&mut self) -> ParserSnapshot<'a> {
         let comments_to_preserve_before =
             core::mem::take(&mut self.lexer.comments_to_preserve_before);

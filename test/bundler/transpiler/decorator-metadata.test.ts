@@ -1,3 +1,4 @@
+import { bunEnv, bunExe, tempDir } from "harness";
 import "reflect-metadata";
 
 describe("decorator metadata", () => {
@@ -542,5 +543,276 @@ describe("decorator metadata", () => {
     expect(Reflect.getMetadata("design:paramtypes", A.prototype, "method4")[0]).toBe(Object);
     expect(Reflect.getMetadata("design:type", A.prototype, "method4")).toBe(Function);
     expect(Reflect.getMetadata("design:returntype", A.prototype, "method4")).toBeUndefined();
+  });
+});
+
+// The parse pass stores the name of a type. The name is bound to a symbol when the class is
+// lowered, once every declaration of the file is in its scope.
+describe("decorator metadata binds a type name when the class is lowered", () => {
+  const tsconfig = JSON.stringify({
+    compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true },
+  });
+
+  // `seen` lists the `design:` entries that reach a decorated member, in the order that the
+  // decorators run.
+  const collect = /* ts */ `
+    export const seen: string[] = [];
+    const show = (v: any): string =>
+      Array.isArray(v) ? "[" + v.map(show).join(",") + "]" : typeof v === "function" ? v.name : String(v);
+    (Reflect as any).metadata = (key: string, value: any) => () => {
+      seen.push(key.slice("design:".length) + "=" + show(value));
+    };
+    export const d: any = () => {};
+  `;
+  const head = `import { d, seen } from "./collect";\n`;
+  const tail = `\nconsole.log(seen.join(" "));\n`;
+
+  type Fixture = [name: string, index: string, stdout: string];
+
+  // `c ? (x) : y => { ... }` is first parsed as the arrow function `(x): y => { ... }`. That
+  // parse is thrown away, so it must leave nothing behind for the names in its body.
+  const conditional: Fixture[] = [
+    [
+      "types declared later as classes",
+      `const c = false, x = 0;
+       const make: any = c ? (x) : y => { class K { @d m(a: Bar): Baz { return a } } return K; };
+       class Bar {}
+       class Baz {}
+       make(1);`,
+      "returntype=Baz paramtypes=[Bar] type=Function\n",
+    ],
+    [
+      "a type declared later as a function",
+      `const c = false, x = 0;
+       const make: any = c ? (x) : y => { class K { @d m(a: Bar) {} } return K; };
+       function Bar() {}
+       make(1);`,
+      "returntype=undefined paramtypes=[Bar] type=Function\n",
+    ],
+    [
+      "a member of a namespace declared later",
+      `const c = false, x = 0;
+       const make: any = c ? (x) : y => { class K { @d m(a: ns.Bar) {} } return K; };
+       namespace ns { export class Bar {} }
+       make(1);`,
+      "returntype=undefined paramtypes=[Bar] type=Function\n",
+    ],
+    [
+      "three types",
+      `const c = false, x = 0;
+       const make: any = c ? (x) : y => { class K { @d m(a: Bar, b: Baz, c: Qux) {} } return K; };
+       class Bar {}
+       class Baz {}
+       class Qux {}
+       make(1);`,
+      "returntype=undefined paramtypes=[Bar,Baz,Qux] type=Function\n",
+    ],
+    [
+      "a constructor parameter and a later let",
+      `const c = false, x = 0;
+       const make: any = c ? (x) : y => { @d class K { constructor(a: Bar) {} } return K; };
+       let Bar = class Later {};
+       make(1);`,
+      "paramtypes=[Later]\n",
+    ],
+    [
+      "a type imported after the conditional",
+      `const c = false, x = 0;
+       const make: any = c ? (x) : y => { class K { @d m(a: Svc) {} } return K; };
+       import { Svc } from "./svc";
+       make(1);`,
+      "returntype=undefined paramtypes=[Svc] type=Function\n",
+    ],
+    [
+      "decorated fields",
+      `const c = false, x = 0;
+       const make: any = c ? (x) : y => { class K { @d p: Bar; @d static q: Baz; } return K; };
+       class Bar {}
+       class Baz {}
+       make(1);`,
+      "type=Bar type=Baz\n",
+    ],
+    [
+      "a global type",
+      `const c = false, x = 0;
+       const make: any = c ? (x) : y => { class K { @d m(a: Date) {} } return K; };
+       make(1);
+       console.log(new Date(0).getTime());`,
+      "0\nreturntype=undefined paramtypes=[Date] type=Function\n",
+    ],
+    [
+      "the arrow function is kept",
+      `const c = true;
+       const make: any = c ? (x): any => { class K { @d m(a: Bar): Baz { return a } } return K; } : null;
+       class Bar {}
+       class Baz {}
+       make(1);`,
+      "returntype=Baz paramtypes=[Bar] type=Function\n",
+    ],
+    [
+      "the arrow function is kept and its parameter has the name of a type-only import",
+      `import { IFoo } from "./types";
+       const c = true;
+       const make: any = c ? (IFoo): any => { class K { @d m(a: IFoo) {} } return K; } : null;
+       make(class Param {});`,
+      "returntype=undefined paramtypes=[Param] type=Function\n",
+    ],
+    [
+      "async (x)",
+      `const c = false, x = 0;
+       declare const async: any;
+       const make: any = c ? async (x) : y => { class K { @d m(a: Bar): Baz { return a } } return K; };
+       class Bar {}
+       class Baz {}
+       make(1);`,
+      "returntype=Baz paramtypes=[Bar] type=Function\n",
+    ],
+    [
+      "a conditional inside the arrow body",
+      `const c = false, x = 0;
+       const make: any = c ? (x) : y => c ? (x) : z => { class K { @d m(a: Bar): Baz { return a } } return K; };
+       class Bar {}
+       class Baz {}
+       make(1)(2);`,
+      "returntype=Baz paramtypes=[Bar] type=Function\n",
+    ],
+    [
+      "an export of another block of the namespace",
+      `const c = false, x = 0;
+       namespace ns { export class Bar {} }
+       namespace ns {
+         export const make: any = c ? (x) : y => { class K { @d m(a: Bar) {} } return K; };
+         export const same = Bar;
+       }
+       ns.make(1);
+       console.log(ns.same === ns.Bar);`,
+      "true\nreturntype=undefined paramtypes=[Bar] type=Function\n",
+    ],
+  ];
+
+  // These need no conditional. A name that is declared after the class binds to that
+  // declaration. A name that the metadata does not print is not a use, so a type-only import
+  // with that name is removed.
+  const declarationOrder: Fixture[] = [
+    [
+      "an import after the class",
+      `class K { @d m(a: Svc) {} }
+       import { Svc } from "./svc";`,
+      "returntype=undefined paramtypes=[Svc] type=Function\n",
+    ],
+    [
+      "an export of another block of the namespace",
+      `namespace ns { export class Bar {} }
+       namespace ns {
+         export class K { @d m(a: Bar) {} }
+         export const same = Bar;
+       }
+       console.log(ns.same === ns.Bar);`,
+      "true\nreturntype=undefined paramtypes=[Bar] type=Function\n",
+    ],
+    [
+      "an import alias that a namespace exports",
+      `namespace lib { export class Bar {} }
+       namespace ns {
+         export import Bar = lib.Bar;
+         export class K { @d m(a: Bar) {} }
+       }`,
+      "returntype=undefined paramtypes=[Bar] type=Function\n",
+    ],
+    [
+      "a declare field",
+      `import { Svc } from "./svc";
+       class K { @d declare p: Svc; }`,
+      "type=Svc\n",
+    ],
+    [
+      "a type-only import that only a folded type names",
+      `import { IFoo } from "./types";
+       class K { @d m(a: IFoo[], b: IFoo | string, c: IFoo & { y: 1 }): void {} }`,
+      "returntype=undefined paramtypes=[Array,Object,Object] type=Function\n",
+    ],
+    [
+      "a type-only import with the name of a later part of a qualified name",
+      `import { File } from "./types";
+       namespace Express { export namespace Multer { export class File {} } }
+       class K { @d f!: Express.Multer.File; }
+       const unused: File | undefined = undefined;`,
+      "type=File\n",
+    ],
+    [
+      "a type-only import that only a declare class names",
+      `import { IFoo } from "./types";
+       declare class D { @d m(a: IFoo): void; }`,
+      "\n",
+    ],
+    [
+      "a type-only import that only an overload signature names",
+      `import { IFoo } from "./types";
+       class K { @d m(a: IFoo): void; m(a: any) {} }`,
+      "\n",
+    ],
+    [
+      "a type-only import that only an abstract member names",
+      `import { IFoo } from "./types";
+       abstract class K { @d abstract m(a: IFoo): void; }`,
+      "\n",
+    ],
+    [
+      "two union members with the same name",
+      `class Bar {}
+       class K { @d m(a: Bar | Bar, b: Bar & Bar, c: Bar | null, d: undefined | Bar, e: Bar | Date) {} }`,
+      "returntype=undefined paramtypes=[Bar,Bar,Bar,Bar,Object] type=Function\n",
+    ],
+  ];
+
+  const files = {
+    "tsconfig.json": tsconfig,
+    "collect.ts": collect,
+    "svc.ts": `export class Svc {}\n`,
+    "types.ts": `export interface IFoo { x: number }\nexport interface File { x: number }\n`,
+  };
+
+  test.concurrent("Bun.Transpiler transforms and scans a conditional's arrow body", async () => {
+    const script = /* js */ `
+      const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig: ${tsconfig} });
+      // The names that the metadata of the output reads.
+      const names = code => [...code.matchAll(/typeof (\\w+) === "undefined" \\? Object : \\1/g)].map(m => m[1]);
+      const twoTypes = "const v = c ? (x) : y => { class K { @dec m(a: A): B {} } };";
+      const laterFunction = "const a = c ? (x) : y => { class K { @d m(a: Bar) {} } return 1 };\\nfunction Bar() {}";
+      console.log(JSON.stringify({
+        transformSync: names(transpiler.transformSync(twoTypes)),
+        scan: transpiler.scan(twoTypes),
+        laterFunction: names(transpiler.transformSync(laterFunction)),
+      }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      transformSync: ["A", "B"],
+      scan: { exports: [], imports: [] },
+      laterFunction: ["Bar"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  describe.each([
+    ["in a conditional's arrow body", conditional],
+    ["outside a conditional", declarationOrder],
+  ] as const)("%s", (_group, fixtures) => {
+    test.concurrent.each(fixtures)("%s", async (_name, index, expected) => {
+      using dir = tempDir("decorator-metadata-names", { ...files, "index.ts": head + index + tail });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(stdout).toBe(expected);
+      expect(exitCode).toBe(0);
+    });
   });
 });

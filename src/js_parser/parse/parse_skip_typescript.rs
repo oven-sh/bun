@@ -3,7 +3,7 @@ use crate::Error;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
-    FnOrArrowDataParse, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag,
+    FnOrArrowDataParse, ParseStatementOptions, SkipTypeParameterResult, TypeParameterFlag,
 };
 use crate::typescript;
 use crate::typescript::SkipTypeOptions;
@@ -633,12 +633,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         TsIdentKind::Normal => {
                             if GET_METADATA {
-                                let ident = self.lexer.identifier;
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                let name = self.store_name_in_ref(self.lexer.identifier);
                                 **result
                                     .as_mut()
                                     .expect("infallible: GET_METADATA implies Some") =
-                                    Metadata::MIdentifier(find_result.r#ref);
+                                    Metadata::MIdentifier(name);
                             }
 
                             self.lexer.next()?;
@@ -824,6 +823,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .as_deref_mut()
                                     .expect("infallible: GET_METADATA implies Some"),
                                 left,
+                                |r| self.load_name_from_ref(r),
                             );
                         }
                     } else {
@@ -869,6 +869,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .as_deref_mut()
                                     .expect("infallible: GET_METADATA implies Some"),
                                 left,
+                                |r| self.load_name_from_ref(r),
                             );
                         }
                     } else {
@@ -898,28 +899,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     if GET_METADATA {
-                        // `find_symbol` borrows `&mut self`; `result` is a disjoint fn
-                        // parameter so the borrows do not conflict.
-                        let ident = self.lexer.identifier;
+                        // A member name is a property name, not an identifier.
+                        let member = bun_ast::StoreStr::new(self.lexer.identifier);
                         let r = result
                             .as_deref_mut()
                             .expect("infallible: GET_METADATA implies Some");
                         match r {
-                            Metadata::MIdentifier(id_ref) => {
-                                let id_ref = *id_ref;
-                                let mut dot: Vec<Ref> = Vec::with_capacity(2);
-                                dot.push(id_ref);
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                dot.push(find_result.r#ref);
-                                *r = Metadata::MDot(dot);
+                            Metadata::MIdentifier(root) => {
+                                let root = bun_ast::StoreStr::new(self.load_name_from_ref(*root));
+                                *r = Metadata::MDot(vec![root, member]);
                             }
-                            Metadata::MDot(dot) => {
-                                if self.lexer.is_identifier_or_keyword() {
-                                    let find_result =
-                                        self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                    dot.push(find_result.r#ref);
-                                }
-                            }
+                            Metadata::MDot(dot) => dot.push(member),
                             _ => {}
                         }
                     }
@@ -1005,6 +995,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .as_deref_mut()
                                     .expect("infallible: GET_METADATA implies Some"),
                                 left,
+                                |r| self.load_name_from_ref(r),
                             );
                         }
                     } else {

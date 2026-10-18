@@ -18,6 +18,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         name: &'a [u8],
     ) -> Result<FindSymbolResult, crate::Error> {
+        // The parse pass stores a name (`store_name_in_ref`). Only the visit pass binds it.
+        debug_assert!(
+            self.current_scope.visit_span[0] != u32::MAX,
+            "find_symbol called before the visit pass entered the current scope"
+        );
+
         // Every `break 'brk` below assigns `declare_loc` first; the one
         // early-`return` builds its own `FindSymbolResult` without reading it.
         let declare_loc: bun_ast::Loc;

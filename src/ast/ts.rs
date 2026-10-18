@@ -5,6 +5,7 @@ use bun_collections::array_hash_map::StringContext;
 
 use crate::base::Ref;
 use crate::e::String as EString;
+use crate::nodes::StoreStr;
 
 /// This is for TypeScript "enum" and "namespace" blocks. Each block can
 /// potentially be instantiated multiple times. The exported members of each
@@ -170,10 +171,15 @@ pub enum Metadata {
     MBigint,
     MSymbol,
     MPromise,
+    /// A type named by one identifier. The `Ref` holds the written name
+    /// (`P::store_name_in_ref`), which is bound to a symbol when the class is
+    /// lowered: the parse pass binds no names.
     MIdentifier(Ref),
+    /// "a.b.c": the written name of each part. Only the first is bound to a
+    /// symbol.
     // A heap `Vec` is used here because `Metadata` is lifetime-free.
     // Decorator metadata is rare and the lists are tiny.
-    MDot(Vec<Ref>),
+    MDot(Vec<StoreStr>),
 }
 
 impl Metadata {
@@ -209,7 +215,8 @@ impl Metadata {
         }
     }
 
-    pub fn merge_union(&mut self, left: Self) {
+    /// Two `MIdentifier`s are the same type when they have the same name, as in tsc.
+    pub fn merge_union<'b, F: Fn(Ref) -> &'b [u8]>(&mut self, left: Self, load_name: F) {
         let result = self;
         if !matches!(left, Metadata::MNone) {
             if core::mem::discriminant(result) != core::mem::discriminant(&left) {
@@ -218,15 +225,9 @@ impl Metadata {
 
                     _ => Metadata::MObject,
                 };
-            } else {
-                // Reshaped for borrowck — copy Ref out before reassigning *result
-                if let Metadata::MIdentifier(r) = result {
-                    let r = *r;
-                    if let Metadata::MIdentifier(l) = left {
-                        if !r.eql(l) {
-                            *result = Metadata::MObject;
-                        }
-                    }
+            } else if let (Metadata::MIdentifier(r), Metadata::MIdentifier(l)) = (&*result, &left) {
+                if load_name(*r) != load_name(*l) {
+                    *result = Metadata::MObject;
                 }
             }
         } else {
@@ -265,7 +266,7 @@ impl Metadata {
         }
     }
 
-    pub fn merge_intersection(&mut self, left: Self) {
+    pub fn merge_intersection<'b, F: Fn(Ref) -> &'b [u8]>(&mut self, left: Self, load_name: F) {
         let result = self;
         if !matches!(left, Metadata::MNone) {
             if core::mem::discriminant(result) != core::mem::discriminant(&left) {
@@ -277,15 +278,9 @@ impl Metadata {
 
                     _ => Metadata::MObject,
                 };
-            } else {
-                // Reshaped for borrowck — copy Ref out before reassigning *result
-                if let Metadata::MIdentifier(r) = result {
-                    let r = *r;
-                    if let Metadata::MIdentifier(l) = left {
-                        if !r.eql(l) {
-                            *result = Metadata::MObject;
-                        }
-                    }
+            } else if let (Metadata::MIdentifier(r), Metadata::MIdentifier(l)) = (&*result, &left) {
+                if load_name(*r) != load_name(*l) {
+                    *result = Metadata::MObject;
                 }
             }
         } else {

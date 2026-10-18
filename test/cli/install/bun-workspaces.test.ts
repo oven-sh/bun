@@ -2031,6 +2031,29 @@ test.concurrent("it should detect duplicate workspace dependencies", async () =>
   expect(await exited).toBe(1);
 });
 
+// Auto-install reads the project from the folder of the script, not from the root.
+test.concurrent("a script that imports a missing package reports two workspaces with the same name", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(packageJson, JSON.stringify({ name: "root", workspaces: ["packages/*"] })),
+    write(join(packageDir, "packages", "app", "package.json"), JSON.stringify({ name: "app" })),
+    write(join(packageDir, "packages", "app", "index.ts"), `import "not-installed";`),
+    write(join(packageDir, "packages", "one", "package.json"), JSON.stringify({ name: "same" })),
+    write(join(packageDir, "packages", "two", "package.json"), JSON.stringify({ name: "same" })),
+  ]);
+  await using proc = spawn({
+    cmd: [bunExe(), "index.ts"],
+    cwd: join(packageDir, "packages", "app"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(err).toContain('Workspace name "same" already exists');
+  expect(exitCode).toBe(1);
+});
+
 // One package of a monorepo copied into an image without its siblings (#15102).
 describe("a local devDependency whose target is missing", () => {
   const specs = {

@@ -2914,11 +2914,7 @@ impl Package<u64> {
                         // this path does alot of extra work to format the error message
                         // but this is ok because the install is going to fail anyways, so this
                         // has zero effect on the happy path.
-                        let mut cwd_buf = bun_paths::path_buffer_pool::get();
-                        // `bun_sys::getcwd` returns the byte length — slice
-                        // the buffer ourselves.
-                        let cwd_len = bun_sys::getcwd(&mut cwd_buf.0[..])?;
-                        let cwd: &[u8] = &cwd_buf.0[..cwd_len];
+                        let root_dir = workspace_map::package_json_dir(source);
 
                         let num_notes = 'count: {
                             let mut i: usize = 0;
@@ -2943,7 +2939,7 @@ impl Package<u64> {
                                 if strings::eql_long(&value.name, &entry.name, true) {
                                     let note_abs_path = bun_core::ZBox::from_bytes(
                                         resolve_path::join_abs_string_z::<path::platform::Auto>(
-                                            cwd,
+                                            root_dir,
                                             &[note_path, b"package.json"],
                                         )
                                         .as_bytes(),
@@ -2983,7 +2979,7 @@ impl Package<u64> {
 
                         let abs_path = bun_core::ZBox::from_bytes(
                             resolve_path::join_abs_string_z::<path::platform::Auto>(
-                                cwd,
+                                root_dir,
                                 &[path_, b"package.json"],
                             )
                             .as_bytes(),

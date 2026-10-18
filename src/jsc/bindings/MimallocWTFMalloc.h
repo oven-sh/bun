@@ -4,7 +4,6 @@
 #include <cstdlib>
 #include <wtf/Assertions.h>
 #include <wtf/Compiler.h>
-#include <wtf/PlatformOS.h>
 #include "mimalloc.h"
 #include "mimalloc/types.h"
 

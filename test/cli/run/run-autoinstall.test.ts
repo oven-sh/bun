@@ -618,6 +618,21 @@ describe.concurrent("auto-install reads every dependency group of the project's 
     expect(exitCode).toBe(0);
   });
 
+  test("the manifest of a peer that nothing imports is not requested", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-group-package-peer-unused", {
+      // forward-peer-deps depends on peer-deps. Both have the peer no-deps@*.
+      "index.js": `console.log(require("forward-peer-deps/package.json").version);\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("1.0.0\n");
+    expect(registry.requests).toContain("/peer-deps");
+    expect(registry.requests).not.toContain("/no-deps");
+    expect(exitCode).toBe(0);
+  });
+
   test("a peer of an auto-installed package is the version the project names", async () => {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-group-package-peer-pin", {

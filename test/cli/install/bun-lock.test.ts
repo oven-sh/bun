@@ -4862,6 +4862,39 @@ it("a version that is resolved for a peer and then dropped is not downloaded or 
   expect(err).not.toContain("gone");
 });
 
+// a loads w's z, whatever the registry says about z.
+it.each(["the registry no longer has the package", "--offline has no manifest of the package"])(
+  "a peer shares the version of bun.lock that the workspace above it depends on if %s",
+  async reason => {
+    const manifests: Manifests = {
+      a: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      other: { "1.0.0": { dependencies: { a: "1.0.0" } } },
+      z: zVersions,
+    };
+    using registry = await serveRegistry(manifests);
+    const w = (dependencies: object) => JSON.stringify({ name: "w", dependencies });
+    using dir = projectOnRegistry(registry, { "package.json": { name: "foo", workspaces: ["w"] } });
+    const cwd = String(dir);
+    // `other` puts a's manifest and tarball in the cache.
+    await write(join(cwd, "w", "package.json"), w({ other: "1.0.0", z: "1.0.0" }));
+    await installWithOwnCache(cwd);
+    await write(join(cwd, "w", "package.json"), w({ z: "1.0.0" }));
+    await installWithOwnCache(cwd);
+
+    const cache = join(cwd, ".bun-cache");
+    for (const entry of await readdirSorted(cache)) {
+      if (entry.endsWith(".npm") && (await file(join(cache, entry)).text()).includes("/z-1.0.0.tgz")) {
+        await rm(join(cache, entry));
+      }
+    }
+    delete manifests.z;
+    await write(join(cwd, "w", "package.json"), w({ a: "1.0.0", z: "1.0.0" }));
+    await installWithOwnCache(cwd, ...(reason.startsWith("--offline") ? ["--offline"] : []));
+    const lock = await file(join(cwd, "bun.lock")).text();
+    expect({ ...instancesOf(lock, "a"), ...instancesOf(lock, "z") }).toEqual({ "a": "a@1.0.0", "z": "z@1.0.0" });
+  },
+);
+
 it("a peer on an `npm:` alias gets a version in its range next to another version of the package", async () => {
   using registry = await serveRegistry({
     a: { "1.0.0": { peerDependencies: { zz: "npm:z@^1.0.0" } } },

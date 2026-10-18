@@ -1145,6 +1145,7 @@ fn request_row_ahead(this: &mut PackageManager, id: DependencyID, item: Lockfile
     let row = queued_row(this, id, item);
     // Most names come up many times, and one request serves all of them.
     if row.behavior.is_optional_peer()
+        || (row.behavior.is_peer() && this.options.runtime_auto_install)
         || (row.version.tag == dependency::version::Tag::Npm
             && !row.version.npm().is_alias
             && this.look_ahead.seen.contains_key(&row.name_hash))
@@ -1866,16 +1867,22 @@ pub(crate) fn bind_row(
 
                     debug_assert!(task_id.get() != 0);
 
+                    // The registry has no answer: a peer takes what there is.
+                    let installed = (dependency.behavior.is_peer())
+                        .then(|| highest_peer_candidate(&this.lockfile, name_hash, version))
+                        .flatten();
                     if this.has_created_network_task(task_id, dependency.behavior.is_required()) {
-                        if this.manifest_failures.contains_key(&task_id) {
+                        let has_failure = this.manifest_failures.contains_key(&task_id);
+                        if !has_failure && !this.network_task_has_failed(task_id) {
+                            return Ok(wait_for(this, task_id));
+                        }
+                        if let Some(installed) = installed {
+                            bind_existing(this, id, installed, success_fn)?;
+                        } else if has_failure {
+                            // Whoever else marked the task as failed reported why, as `--offline` does.
                             report_manifest_failure(this, task_id, id, dependency, &name_str);
-                            return Ok(Row::Done);
                         }
-                        // Whoever marked the task as failed also reported why, as `--offline` does.
-                        if this.network_task_has_failed(task_id) {
-                            return Ok(Row::Done);
-                        }
-                        return Ok(wait_for(this, task_id));
+                        return Ok(Row::Done);
                     }
 
                     let needs_extended_manifest = this.options.minimum_release_age_ms.is_some();
@@ -1974,7 +1981,7 @@ pub(crate) fn bind_row(
 
                     if this.options.offline == OfflineMode::Offline {
                         // Any other releases the reservation: a later required edge still reports.
-                        if dependency.behavior.is_required() {
+                        if dependency.behavior.is_required() && installed.is_none() {
                             this.mark_network_task_failed(task_id);
                             this.log_mut().add_error_fmt(
                                 None,
@@ -1986,6 +1993,9 @@ pub(crate) fn bind_row(
                             );
                         } else {
                             let _ = this.network_dedupe_map.remove(&task_id);
+                        }
+                        if let Some(installed) = installed {
+                            bind_existing(this, id, installed, success_fn)?;
                         }
                         return Ok(Row::Done);
                     }

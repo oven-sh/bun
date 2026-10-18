@@ -7,7 +7,7 @@ use core::ptr::NonNull;
 
 use crate::{
     ArrayBuffer, ErrorCode, JSGlobalObject, JSObject, JSString, JSValue, JsError, JsThread,
-    MarkedArgumentBuffer, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
+    PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -277,7 +277,7 @@ impl<'a> IntoError<'a> for core::convert::Infallible {
 
 // ───────────────────────────── values ─────────────────────────────
 
-/// A [`JSValue`] held by a host call, known to be a `T`. Lists of them go in a [`MarkedArgumentBuffer`].
+/// A [`JSValue`] held by a host call, known to be a `T`. Lists of them go in a [`crate::MarkedArgumentBuffer`].
 #[repr(transparent)]
 pub struct JsLocal<'a, T = JSValue>(JSValue, InvariantLifetime<'a>, PhantomData<*const T>);
 impl<T> Clone for JsLocal<'_, T> {
@@ -798,37 +798,29 @@ pub mod to_js {
         items: I,
         mut convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
     ) -> Result<'a, JsLocal<'a>> {
+        let global = heap.global_object();
         // A short array is made with one call. A longer one takes a call per element.
         let mut short = [JSValue::ZERO; 8];
         let mut items = items.into_iter();
         for count in 0..short.len() {
             let Some(item) = items.next() else {
                 // SAFETY: `count` initialized values.
-                return JsLocal::from_js_result(crate::call_zero_is_throw(
-                    heap.global_object(),
-                    || unsafe {
-                        extern_types::Bun__Bindgen__constructArrayFromValues(
-                            heap.global_ptr(),
-                            short.as_ptr(),
-                            count,
-                        )
-                    },
-                ));
+                return JsLocal::from_js_result(crate::call_zero_is_throw(global, || unsafe {
+                    extern_types::Bun__Bindgen__constructArrayFromValues(
+                        heap.global_ptr(),
+                        short.as_ptr(),
+                        count,
+                    )
+                }));
             };
             short[count] = convert(heap, item)?.0;
         }
-        MarkedArgumentBuffer::new(|values| {
-            for value in short {
-                values.append(value);
-            }
-            for item in items {
-                values.append(convert(heap, item)?.0);
-            }
-            // SAFETY: `values` is live for the call.
-            JsLocal::from_js_result(crate::call_zero_is_throw(heap.global_object(), || unsafe {
-                extern_types::Bun__Bindgen__constructArray(heap.global_ptr(), values)
-            }))
-        })
+        let array = JSValue::create_empty_array(global, short.len() + items.size_hint().0)?;
+        let rest = items.map(|item| convert(heap, item).map(|value| value.0));
+        for (index, value) in short.into_iter().map(Ok).chain(rest).enumerate() {
+            array.put_index(global, index as u32, value?)?;
+        }
+        Ok(JsLocal::from_raw(array))
     }
 
     /// An empty value is a member that is absent.

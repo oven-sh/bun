@@ -1,5 +1,6 @@
 import { bindgen as bindings } from "bun:internal-for-testing";
 import { describe as describeAlways, expect, it as itAlways } from "bun:test";
+import { BlockList, SocketAddress } from "node:net";
 import { rustIdent } from "../../src/codegen/bindgen-lib-internal.ts";
 import * as b from "../../src/codegen/bindgen-lib.ts";
 
@@ -90,6 +91,15 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.i32.loose.allowBigInt.validateInteger()).toThrow(".validateInteger() refuses a BigInt");
   expect(b.u16.allowBigInt.loose.idlType).toBe(b.u16.loose.allowBigInt.idlType);
   expect(() => b.string.utf8.owned.default("x")).toThrow("cannot have a default");
+  expect(() => b.string.owned.utf8).toThrow(".utf8 comes before .owned");
+  expect(b.string.owned.loose.isOwned).toBe(true);
+  expect(b.string.owned.allowStringObject.isOwned).toBe(true);
+  const instance = b.classRef("SocketAddress");
+  for (const type of [instance, instance.nullable, b.union({ instance, other: b.any })]) {
+    expect(() => b.dictionary({ type })).toThrow("b.classRef is only for an argument");
+    expect(() => b.array(type)).toThrow("b.classRef is only for an argument");
+  }
+  expect(() => b.union({ instance, again: b.classRef("SocketAddress") })).toThrow("again is never chosen");
   expect(() => b.namespace({})).toThrow("a namespace with no functions");
   expect(() => b.namespace({ f: b.fn({ args: { x: b.i32 } }) as any })).toThrow(
     "f: write what b.fn takes, without b.fn",
@@ -380,6 +390,8 @@ describe("strings", () => {
   ];
 
   it.each(texts)("round trips %j", text => {
+    expect(bindgen.stringLength(text)).toBe(text.length);
+    expect(bindgen.stringLength(text, text)).toBe(text.length * 2);
     expect(bindgen.utf8Echo(text)).toBe(text);
     expect(bindgen.utf8EchoLoose(text)).toBe(text);
     expect(bindgen.utf8Optional(text)).toBe(text);
@@ -444,6 +456,48 @@ describe("strings", () => {
       );
       expect(bindgen.utf8EchoLoose(...args)).toBe("undefined");
     }
+  });
+});
+
+describe("instances of a class of a .classes.ts file", () => {
+  const address = new SocketAddress({ port: 8080 });
+  const notInstances = [undefined, null, 1, "a", {}, SocketAddress.prototype, Object.create(address), new BlockList()];
+
+  it("alone", () => {
+    expect(bindgen.portOf(address)).toBe(8080);
+    for (const value of notInstances) {
+      expect(() => bindgen.portOf(value as any)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "address must be an instance of SocketAddress",
+        }),
+      );
+    }
+  });
+
+  it("nullable", () => {
+    expect(bindgen.portOfOrNull(address)).toBe(8080);
+    expect(bindgen.portOfOrNull(null)).toBeNull();
+    expect(bindgen.portOfOrNull(undefined)).toBeNull();
+    expect(() => bindgen.portOfOrNull({} as any)).toThrow("address must be an instance of SocketAddress");
+  });
+
+  it("is held by the argument while JavaScript runs", () => {
+    expect(bindgen.portAfterCallback(new SocketAddress({ port: 81 }), () => Bun.gc(true))).toBe(81);
+  });
+
+  it("in a union", () => {
+    expect(bindgen.describeAddressOrList(address)).toBe("address");
+    expect(bindgen.describeAddressOrList(new BlockList())).toBe("list");
+    expect(() => bindgen.describeAddressOrList({} as any)).toThrow("value must be of type SocketAddress or BlockList");
+    expect(bindgen.isAddress(address)).toBe(true);
+    for (const value of notInstances) expect(bindgen.isAddress(value)).toBe(false);
+  });
+
+  it("is one kind of value however many times the schema names the class", () => {
+    expect(bindgen.portPlus(address, 2)).toBe(8082);
+    expect(bindgen.portPlus(address, "abc")).toBe(8083);
   });
 });
 

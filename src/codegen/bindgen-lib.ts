@@ -62,8 +62,8 @@ export const blob = new RefType(
   "detached Blobs",
 );
 
-/** An instance of the class `name` of a `.classes.ts` file, as a `&'a` of the Rust struct at `rustPath`. */
-export const classRef = (name: string, rustPath: string) => new ClassRefType(name, rustPath);
+/** An instance of the class `name` of a `.classes.ts` file, as a `&'a` of the Rust struct it wraps. */
+export const classRef = (name: string) => new ClassRefType(name);
 
 const null_ = new UnitType("null");
 

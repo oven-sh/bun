@@ -14,7 +14,7 @@ export const clusterCloseHandle = b.fn({ args: { fd: b.f64 } });
 
 /** `process[kHandle]` of a `cluster.Worker`, which takes any object as its process. */
 export const WorkerProcess = b.union({
-  subprocess: b.classRef("Subprocess", "crate::api::bun::subprocess::Subprocess<'static>"),
+  subprocess: b.classRef("Subprocess"),
   other: b.any,
 });
 export const onInternalMessagePrimary = b.fn({

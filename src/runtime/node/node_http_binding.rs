@@ -84,8 +84,8 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
             .throw_invalid_arguments(format_args!("handshake must be a complete response head")));
     }
     let deflate_params = deflate.map(|deflate| PerMessageDeflateParams {
-        server_max_window_bits: deflate.server_max_window_bits,
-        client_max_window_bits: deflate.client_max_window_bits,
+        server_max_window_bits: deflate.server_max_window_bits as i32,
+        client_max_window_bits: deflate.client_max_window_bits as i32,
         server_no_context_takeover: deflate.server_no_context_takeover,
         client_no_context_takeover: deflate.client_no_context_takeover,
     });
@@ -132,7 +132,7 @@ pub(crate) fn set_max_http_header_size<'a>(
     value: f64,
 ) -> bindgen::Result<'a, usize> {
     let num = value as i64;
-    if num <= 0 || num == i64::MAX {
+    if num <= 0 {
         return Err(heap.error_with_code(
             ErrorCode::INVALID_ARG_TYPE,
             format_args!("maxHeaderSize must be a positive integer"),

@@ -56,6 +56,10 @@ pub(crate) fn string_echo(text: bun_core::String) -> bun_core::String {
     text
 }
 
+pub(crate) fn string_length(text: &bun_core::String, other: &bun_core::String) -> usize {
+    text.length() + other.length()
+}
+
 pub(crate) fn next_color(color: TestColor) -> TestColor {
     match color {
         TestColor::Red => TestColor::Green,

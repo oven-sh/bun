@@ -2,8 +2,8 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::socket::socket" });
 
-const TCPSocket = b.classRef("TCPSocket", "crate::socket::TCPSocket");
-const TLSSocket = b.classRef("TLSSocket", "crate::socket::TLSSocket");
+const TCPSocket = b.classRef("TCPSocket");
+const TLSSocket = b.classRef("TLSSocket");
 
 export const NativeSocket = b.union({ tcp: TCPSocket, tls: TLSSocket });
 /** The `_handle` of a `net.Socket`, which is not always one of ours. */

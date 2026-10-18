@@ -12,21 +12,21 @@ export const setMaxHTTPHeaderSize = b.fn({
 export const getInsecureHTTPParser = b.fn({ returns: b.bool });
 
 export const BunServer = b.union({
-  http: b.classRef("HTTPServer", "crate::server::HTTPServer"),
-  https: b.classRef("HTTPSServer", "crate::server::HTTPSServer"),
-  debugHTTP: b.classRef("DebugHTTPServer", "crate::server::DebugHTTPServer"),
-  debugHTTPS: b.classRef("DebugHTTPSServer", "crate::server::DebugHTTPSServer"),
+  http: b.classRef("HTTPServer"),
+  https: b.classRef("HTTPSServer"),
+  debugHTTP: b.classRef("DebugHTTPServer"),
+  debugHTTPS: b.classRef("DebugHTTPSServer"),
 });
 export const getBunServerOpenCount = b.fn({ args: { server: BunServer }, returns: b.f64 });
 
 /** What `ws` was handed as the response, which is not always one of ours. */
 export const UpgradeResponse = b.union({
-  response: b.classRef("NodeHTTPResponse", "crate::server::NodeHTTPResponse"),
+  response: b.classRef("NodeHTTPResponse"),
   other: b.any,
 });
 export const PerMessageDeflate = b.dictionary({
-  serverMaxWindowBits: b.i32.wrap.nullable.default(15),
-  clientMaxWindowBits: b.i32.wrap.nullable.default(15),
+  serverMaxWindowBits: b.f64.loose.nullable.default(15),
+  clientMaxWindowBits: b.f64.loose.nullable.default(15),
   serverNoContextTakeover: b.bool.loose.default(false),
   clientNoContextTakeover: b.bool.loose.default(false),
 });
@@ -47,7 +47,7 @@ export const upgradeNodeHTTPResponseToWebSocket = b.fn({
 
 export const sendWebSocketFrame = b.fn({
   args: {
-    handle: b.classRef("ServerWebSocket", "crate::server::ServerWebSocket"),
+    handle: b.classRef("ServerWebSocket"),
     data: b.any,
     opcode: b.i32,
     fin: b.bool,

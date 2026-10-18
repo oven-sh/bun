@@ -28,6 +28,7 @@ export const utf8EchoLoose = b.fn({ args: { text: b.string.loose.utf8 }, returns
 export const utf8Optional = b.fn({ args: { text: b.string.utf8.nullable }, returns: b.string.utf8.nullable });
 export const utf8Owned = b.fn({ args: { text: b.string.utf8.owned }, returns: b.string.utf8 });
 export const stringEcho = b.fn({ args: { text: b.string.owned }, returns: b.string });
+export const stringLength = b.fn({ args: { text: b.string, other: b.string.default("") }, returns: b.usize });
 
 export const TestColor = b.enumeration(["red", ["green", "lime"], "blue"]);
 export const nextColor = b.fn({ args: { color: TestColor }, returns: TestColor });

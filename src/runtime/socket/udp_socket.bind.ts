@@ -14,7 +14,7 @@ export const dgramGuessHandleType = b.fn({ args: { fd: b.i32 }, returns: b.strin
 export const dgramListenFd = b.fn({ args: { fd: b.i32 }, throws: true });
 export const dgramCloseFd = b.fn({ args: { fd: b.i32 }, throws: true });
 
-const UDPSocket = b.classRef("UDPSocket", "crate::socket::UDPSocket");
+const UDPSocket = b.classRef("UDPSocket");
 
 export const connect = b.fn({
   args: { socket: UDPSocket, host: b.string.loose, port: b.i32 },

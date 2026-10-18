@@ -330,6 +330,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "XMLObject.bind.ts": "typeof Bun.XML",
   "YAMLObject.bind.ts": "typeof Bun.YAML",
   "bindgen_test.bind.ts": null,
+  "class_ref_test.bind.ts": null,
   "csrf_jsc.bind.ts": "typeof Bun.CSRF",
   "dns.bind.ts": "typeof Bun.dns",
   "fmt_jsc.bind.ts": null,

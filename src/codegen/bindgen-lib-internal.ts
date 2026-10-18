@@ -106,11 +106,16 @@ export interface JSClass {
 
 type ValueKinds = readonly ValueKind[] | "any";
 
+const isSameKind = (a: ValueKind, b: ValueKind) =>
+  a === b || (a instanceof ClassRefType && b instanceof ClassRefType && a.cpp === b.cpp);
+
 const takes = (type: Type, kind: ValueKind | "other") =>
-  type.valueKinds === "any" || (kind !== "other" && type.valueKinds.includes(kind));
+  type.valueKinds === "any" || (kind !== "other" && type.valueKinds.some(own => isSameKind(own, kind)));
 
 const distinguishingKinds = (types: readonly Type[]): (ValueKind | "other")[] => [
-  ...new Set(types.flatMap(type => (type.valueKinds === "any" ? [] : type.valueKinds))),
+  ...types
+    .flatMap(type => (type.valueKinds === "any" ? [] : type.valueKinds))
+    .filter((kind, index, kinds) => kinds.findIndex(earlier => isSameKind(earlier, kind)) === index),
   "other",
 ];
 
@@ -209,6 +214,10 @@ export abstract class Type {
   /** Points into memory JavaScript can detach, resize or free: not for a function that can run it, and only for an argument, read once all are converted. */
   get borrowsHeap(): boolean {
     return this.dependencies.some(type => type.borrowsHeap);
+  }
+  /** Points at what a cell owns without holding the cell: only for an argument, whose slot in the frame holds it. */
+  get borrowsCell(): boolean {
+    return this.dependencies.some(type => type.borrowsCell);
   }
   /** Points into the C++ host function's frame: only usable for the duration of a host call. */
   get borrowsFrame(): boolean {
@@ -573,12 +582,12 @@ export class StringType extends Type {
   /** `ToString`: any value is accepted. */
   get loose(): StringType {
     assert(!this.valueKinds.includes("stringObject"), ".loose already takes a String object");
-    return new StringType("WebCore::IDLDOMString", "any");
+    return new StringType("WebCore::IDLDOMString", "any", this.isOwned);
   }
   /** Also takes a `String` object, as `.utf8` does. */
   get allowStringObject(): StringType {
     assert(this.valueKinds !== "any", ".loose already takes a String object");
-    return new StringType("Bun::Bindgen::IDLStrictStringOrStringObject", ["string", "stringObject"]);
+    return new StringType("Bun::Bindgen::IDLStrictStringOrStringObject", ["string", "stringObject"], this.isOwned);
   }
   /** As an argument: the body gets the string itself, to keep or to return, and not a `&`. */
   get owned(): StringType {
@@ -993,11 +1002,11 @@ export class ClassRefType extends Type {
   readonly cpp: string;
   readonly idlType: string;
   readonly rustPath: string;
-  constructor(name: string, rustPath: string) {
+  constructor(name: string) {
     super();
     this.cpp = `WebCore::JS${name}`;
     this.idlType = `Bun::Bindgen::IDLClassRef<${this.cpp}, std::to_array("${name}")>`;
-    this.rustPath = rustPath;
+    this.rustPath = `crate::generated_classes::${name}`;
   }
   get valueKinds(): ValueKinds {
     return [this];
@@ -1006,6 +1015,9 @@ export class ClassRefType extends Type {
     return "instances that wrap nothing";
   }
   get holdsJSValue(): boolean {
+    return true;
+  }
+  get borrowsCell(): boolean {
     return true;
   }
   get nullRepresentation() {
@@ -1224,6 +1236,7 @@ export class ArrayType extends Type {
     assert(!(element instanceof DefaultType), "an element of an array is never absent, so it has no default");
     assert(!(element instanceof RangeType), "a range reports the name of its argument, which an element does not have");
     assert(!element.passesValue, "b.bytes is only for an argument");
+    assert(!element.borrowsCell, "b.classRef is only for an argument: nothing else keeps the instance alive");
     assert(
       !element.borrowsHeap,
       "the bytes of a buffer are only for an argument: they are read after everything else is converted",
@@ -1432,6 +1445,7 @@ export class DictionaryType extends NamedType {
       "fields",
     );
     for (const { name, type } of this.members) assert(!type.passesValue, `${name}: b.bytes is only for an argument`);
+    assert(!this.borrowsCell, "b.classRef is only for an argument: nothing else keeps the instance alive");
     assert(
       !this.nonObjectAsEmpty || this.hasDefault,
       "nonObjectAsEmpty: every member must be optional or have a default",

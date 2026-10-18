@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { bunRun } from "harness";
 import { once } from "node:events";
 import http from "node:http";
@@ -70,14 +70,34 @@ test("maxHeaderSize", async () => {
   (http as any).maxHeaderSize = originalMaxHeaderSize;
 });
 
-test("maxHeaderSize given as a string is not wrapped to 32 bits", () => {
+describe("maxHeaderSize is not wrapped to 32 or to 64 bits", () => {
   const originalMaxHeaderSize = http.maxHeaderSize;
-  try {
-    (http as any).maxHeaderSize = "5000000000";
-    expect(http.maxHeaderSize).toBe(5000000000);
-  } finally {
+  afterEach(() => {
     (http as any).maxHeaderSize = originalMaxHeaderSize;
-  }
+  });
+
+  test.each([
+    ['"5000000000"', "5000000000", 5000000000],
+    ['"3000000000"', "3000000000", 3000000000],
+    ["an object whose valueOf gives 5000000000", { valueOf: () => 5000000000 }, 5000000000],
+    ["an object whose valueOf gives 5n", { valueOf: () => 5n }, 5],
+    ["Infinity", Infinity, 2 ** 63],
+    ["2 ** 63", 2 ** 63, 2 ** 63],
+    ["2n ** 63n", 2n ** 63n, 2 ** 63],
+    ["2n ** 64n + 16384n", 2n ** 64n + 16384n, 2 ** 63],
+  ])("%s", (_, value, expected) => {
+    (http as any).maxHeaderSize = value;
+    expect(http.maxHeaderSize).toBe(expected);
+  });
+
+  test.each([
+    ['"-4294950912"', "-4294950912"],
+    ["-(2n ** 64n) + 5n", -(2n ** 64n) + 5n],
+  ])("%s is negative", (_, value) => {
+    expect(() => {
+      (http as any).maxHeaderSize = value;
+    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
 });
 
 test("server.maxHeaderSize assigned after construction is not narrowed to a smaller limit", async () => {

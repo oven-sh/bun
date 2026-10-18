@@ -710,7 +710,7 @@ impl<V: CalcValue> Calc<V> {
                 return Err(i.new_custom_error(css::ParserError::invalid_value));
             };
 
-            if to_angle && !rad.is_nan() {
+            if to_angle {
                 if let Some(val) = V::try_from_angle(Angle::Rad(rad)) {
                     return Ok(Calc::Value(Box::new(val)));
                 }

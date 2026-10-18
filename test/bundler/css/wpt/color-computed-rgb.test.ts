@@ -94,12 +94,12 @@ describe("color-computed-rgb", () => {
   runTest("Green channel resolves negative infinity to zero", "rgb(0, calc(-infinity), 0)", "#000");
   runTest("Blue channel resolves negative infinity to zero", "rgb(0, 0, calc(-infinity))", "#000");
   runTest("Alpha channel resolves negative infinity to fully transparent", "rgba(0, 0, 0, calc(-infinity))", "#0000");
-  runTest("Red channel resolves NaN to zero", "rgb(calc(NaN), 0, 0)", "rgb(calc(NaN), 0, 0)");
-  runTest("Green channel resolves NaN to zero", "rgb(0, calc(NaN), 0)", "rgb(0, calc(NaN), 0)");
-  runTest("Blue channel resolves NaN to zero", "rgb(0, 0, calc(NaN))", "rgb(0, 0, calc(NaN))");
+  runTest("Red channel resolves NaN to zero", "rgb(calc(NaN), 0, 0)", "#000");
+  runTest("Green channel resolves NaN to zero", "rgb(0, calc(NaN), 0)", "#000");
+  runTest("Blue channel resolves NaN to zero", "rgb(0, 0, calc(NaN))", "#000");
+  runTest("Alpha channel resolves NaN to zero", "rgba(0, 0, 0, calc(NaN))", "#0000");
   // TODO: do this later, requires a lot of machinery to change in calc parsing
   // not necessary for spec compliance as this is technially browser behavior
-  // runTest("Alpha channel resolves NaN to zero", "rgba(0, 0, 0, calc(NaN))", "#0000");
   // runTest(
   //   "Red channel resolves NaN equivalent calc statements to zero",
   //   "rgb(calc(0 / 0), 0, 0)",

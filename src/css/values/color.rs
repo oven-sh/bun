@@ -1955,10 +1955,12 @@ impl ComponentParser {
         }
 
         if let Ok(value) = input.try_parse(CSSNumberFns::parse) {
-            Ok(NumberOrPercentage::Number { value })
+            Ok(NumberOrPercentage::Number {
+                value: censor_nan(value),
+            })
         } else if let Ok(value) = input.try_parse(Percentage::parse) {
             Ok(NumberOrPercentage::Percentage {
-                unit_value: value.v,
+                unit_value: censor_nan(value.v),
             })
         } else if self.allow_none {
             input.expect_ident_matching(b"none")?;
@@ -1982,10 +1984,12 @@ impl ComponentParser {
 
         if let Ok(angle) = input.try_parse(Angle::parse) {
             Ok(css::color::AngleOrNumber::Angle {
-                degrees: angle.to_degrees(),
+                degrees: censor_nan(angle.to_degrees()),
             })
         } else if let Ok(value) = input.try_parse(CSSNumberFns::parse) {
-            Ok(css::color::AngleOrNumber::Number { value })
+            Ok(css::color::AngleOrNumber::Number {
+                value: censor_nan(value),
+            })
         } else if self.allow_none {
             input.expect_ident_matching(b"none")?;
             Ok(css::color::AngleOrNumber::Number { value: f32::NAN })
@@ -2003,7 +2007,7 @@ impl ComponentParser {
         }
 
         if let Ok(val) = input.try_parse(Percentage::parse) {
-            Ok(val.v)
+            Ok(censor_nan(val.v))
         } else if self.allow_none {
             input.expect_ident_matching(b"none")?;
             Ok(f32::NAN)
@@ -2020,7 +2024,7 @@ impl ComponentParser {
         }
 
         if let Ok(val) = input.try_parse(CSSNumberFns::parse) {
-            Ok(val)
+            Ok(censor_nan(val))
         } else if self.allow_none {
             input.expect_ident_matching(b"none")?;
             Ok(f32::NAN)
@@ -2114,7 +2118,7 @@ impl RelativeComponentParser {
             }
         }) {
             return Ok(css::color::AngleOrNumber::Angle {
-                degrees: value.to_degrees(),
+                degrees: censor_nan(value.to_degrees()),
             });
         }
 
@@ -2148,7 +2152,7 @@ impl RelativeComponentParser {
             }
         }) {
             return Ok(NumberOrPercentage::Percentage {
-                unit_value: value.v,
+                unit_value: censor_nan(value.v),
             });
         }
 
@@ -2175,7 +2179,7 @@ impl RelativeComponentParser {
             }
             Err(i.new_custom_error(css::ParserError::invalid_value))
         }) {
-            return Ok(value.v);
+            return Ok(censor_nan(value.v));
         }
 
         Err(input.new_error_for_next_token())
@@ -2220,10 +2224,10 @@ impl RelativeComponentParser {
         }) {
             // PERF: I don't like this redundant allocation
             if let Calc::Value(v) = calc_val {
-                return Ok(*v);
+                return Ok(censor_nan(*v));
             }
             if let Calc::Number(n) = calc_val {
-                return Ok(n);
+                return Ok(censor_nan(n));
             }
         }
         Err(input.new_custom_error(css::ParserError::invalid_value))
@@ -2256,6 +2260,11 @@ impl RelativeComponentParser {
 
         None
     }
+}
+
+/// A calculation that is NaN is 0 (css-values-4 #top-level-calculation). NaN in a color is `none`.
+fn censor_nan(value: f32) -> f32 {
+    if value.is_nan() { 0.0 } else { value }
 }
 
 bitflags::bitflags! {

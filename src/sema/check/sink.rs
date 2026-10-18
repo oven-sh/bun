@@ -345,6 +345,31 @@ impl super::Program<'_> {
         }
     }
 
+    /// Returns the key of that entry in `Log::of_nodes`.
+    fn key_of_entry(&self, q: Query) -> Option<[u32; 3]> {
+        use crate::table::{NodeKey, Publish};
+        fn key<'s>(table: &dyn Publish<'s>, key: impl NodeKey) -> Option<[u32; 3]> {
+            Some([table.slot(), key.file().0, key.index()])
+        }
+        match q {
+            Query::Expr(file, e) => key(&self.expr_types, (file, e)),
+            Query::Call(file, e) => key(&self.calls, (file, e)),
+            Query::Symbol(symbol) => key(&self.symbol_types, symbol),
+            Query::Declared(symbol) => key(&self.declared_types, symbol),
+            Query::Bases(symbol) => key(&self.base_types, symbol),
+            Query::BaseConstructor(symbol) => key(&self.base_constructor_types, symbol),
+            Query::Return(file, func) | Query::ReturnAtFirstLook(file, func) => {
+                key(&self.fn_return_types, (file, func))
+            }
+            Query::Pat(file, pat) | Query::ParameterSymbol(file, pat) => {
+                key(&self.pat_types, (file, pat))
+            }
+            Query::LiteralProp(file, prop) => key(&self.literal_prop_types, (file, prop)),
+            Query::TypeNode(file, node) => key(&self.type_node_types, (file, node)),
+            _ => None,
+        }
+    }
+
     /// At a commit, under its mutex, before it stores. What was reported while a query was evaluated belongs to the entry
     /// that the query stores. If another task has stored that entry, this task's loses: every reader goes by the
     /// other one, and what belongs to it is what its task has reported. `is_own`: whether a commit is one of this task.
@@ -789,6 +814,11 @@ impl Checker<'_, '_> {
             && !diagnostic.by_emit
             && !self.is_reported_in_time(owner, diagnostic.file)
         {
+            // tsc never collects this diagnostic, because it's reported after its file was checked. But the task that
+            // checks that file may run `owner` too, and must report it. A cache hit would skip the report, so don't
+            // share the entry.
+            let key = owner.and_then(|q| self.p.key_of_entry(q));
+            self.unshared_entries.extend(key);
             return;
         }
         if self.task.is_planned() {

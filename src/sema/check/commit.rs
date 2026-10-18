@@ -35,6 +35,12 @@
 //!   the one that it visits is checked for good: none of those leads there, or the task would have found what the members
 //!   got (`Task::close_ring`). Any other task is lost, and the driver checks its files again as soon as the files
 //!   before them are checked.
+//!   - Earlier files that can't reach the cycle don't matter. If only importers of the current file can reach it, the task
+//!     is trusted once the earlier files of its own import cycle are done (`Checker::is_reachable_only_by_importers`).
+//!   - A discarded task stops at its next statement. The driver rechecks its file as soon as a commit resolves that cycle
+//!     (`Program::is_cycle_resolved`), on any thread.
+//!   - Once a file is discarded, one worker switches from the heavy files to the first unchecked files of the program, so
+//!     cycles that everything uses are resolved early.
 //! - **A ring is seen whole or not at all.** A task has a snapshot for each file, and none for the entries under records. So
 //!   it could miss one member of a ring and find the next, which closes no ring and is right from no entry. The commit of
 //!   a task that was believed about a ring follows a file, so nothing of it is withheld, and says so before it stores its
@@ -48,6 +54,9 @@
 //!   diagnostic (`Program::drop_diagnostics_of_losers`). What the walk of a file reports belongs to the file, and goes when a
 //!   commit follows the end of the file. So does what the task has stored under the nodes of the file
 //!   (`Checker::withhold_until_the_file_ends`), with what was reported for it.
+//! - **An entry isn't shared if this task dropped one of its diagnostics as too late** (`Checker::unshared_entries`). tsc
+//!   ignores an error that a later file causes in an earlier one. The earlier file's own task still has to report it, and a
+//!   cache hit would skip that.
 //! - **What a task stores about an expression of the file that it visits never leaves the task**
 //!   (`crate::table::Location::KEEPS_THE_VISITED_FILE`). It is most of what a check stores, and hardly anybody else asks for it.
 //!   It is neither logged nor a `Task::hold_back`.
@@ -106,6 +115,8 @@ pub(super) struct Ring {
     /// The keys that the task has logged from then on, sorted: those of the members, and of what follows from them.
     of_records: Vec<[u32; 2]>,
     of_nodes: Vec<[u32; 3]>,
+    /// Hashes of the queries in the cycles this commit resolves, sorted. See `Task::take_cycle_members`.
+    members: Vec<u64>,
 }
 
 #[derive(Default)]
@@ -491,6 +502,23 @@ impl<'s> Program<'s> {
         not_registered
     }
 
+    /// Returns the number of the last commit that has finished storing.
+    pub fn last_commit(&self) -> u32 {
+        self.commits.numbers.stored.load(Ordering::Acquire)
+    }
+
+    /// True if a commit numbered `after + 1..=last` resolved a cycle that contains one of `members`. See
+    /// `Checker::take_unresolved_cycle`.
+    pub fn is_cycle_resolved(&self, members: &[u64], after: u32, last: u32) -> bool {
+        let rings = self.commits.rings.lock();
+        let from = rings.partition_point(|ring| ring.number <= after);
+        let mut since = rings[from..].iter().take_while(|ring| ring.number <= last);
+        since.any(|ring| {
+            let mut members = members.iter();
+            members.any(|member| ring.members.binary_search(member).is_ok())
+        })
+    }
+
     /// `Program::validate` for what one task has noted, against the commits so far.
     /// - Variances and listings: against every commit, as `validate` compares with every earlier step. A task notes only
     ///   what it has computed, which it does only if it has found nothing. The variances that it has noted stay noted: it
@@ -638,14 +666,31 @@ impl<'s> Checker<'_, 's> {
                             .any(|key| ring.of_nodes.binary_search(key).is_ok()))
         });
         view.compared_with_pinned.set(compared.max(newest));
-        if has_missed {
-            self.task.lose("a ring of which it has missed a member");
+        if has_missed && !self.task.is_lost() {
+            // That cycle is already committed, so the file can be rechecked right away.
+            drop(self.task.take_cycle_members());
+            (self.task).discard_for_cycle("a ring of which it has missed a member");
         }
     }
 
+    /// True if the task is discarded: its files will be rechecked, and nothing it computes from now on is kept.
+    pub fn is_lost(&self) -> bool {
+        self.task.is_lost()
+    }
+
+    /// True if the task was discarded because of a cycle, not a limit. Its files can be rechecked before the last round.
+    pub fn is_discarded_for_cycle(&self) -> bool {
+        self.task.is_discarded_for_cycle()
+    }
+
+    /// Returns hashes of the queries in the cycle that got this task discarded. Empty if that cycle is already committed.
+    pub fn take_unresolved_cycle(&self) -> Vec<u64> {
+        self.task.take_cycle_members()
+    }
+
     /// Before `check_file`: see `Task::set_first_in_order`.
-    pub fn set_first_in_order(&self, is_first: bool) {
-        self.task.set_first_in_order(is_first);
+    pub fn set_first_in_order(&self, is_first: bool, is_first_in_component: bool) {
+        (self.task).set_first_in_order(is_first, is_first_in_component);
     }
 
     /// After `check_file`: the task has to end here. See `Task::keep_the_rest_for_itself`.
@@ -698,6 +743,7 @@ impl<'s> Checker<'_, 's> {
                 number: 0,
                 of_records,
                 of_nodes,
+                members: self.task.take_cycle_members(),
             }
         });
         self.withhold_until_the_file_ends(&mut log, is_between_files);
@@ -743,6 +789,9 @@ impl<'s> Checker<'_, 's> {
     /// has: to evaluate an expression is also to leave notes for the later passes over the file, like
     /// `unresolved_identifiers`, and whoever finds an entry leaves none.
     fn withhold_until_the_file_ends(&mut self, log: &mut Log, is_between_files: bool) {
+        if !self.unshared_entries.is_empty() {
+            (log.of_nodes).retain(|entry| !self.unshared_entries.contains(entry));
+        }
         let withheld = &mut self.withheld_until_the_file_ends;
         if is_between_files {
             log.of_nodes.append(withheld);

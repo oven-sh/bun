@@ -99,8 +99,13 @@ pub struct Task<'s> {
     is_lost: Cell<Option<&'static str>>,
     /// The task is never lost: it runs alone, in the last round.
     is_believed: bool,
+    /// See `discard_for_cycle`.
+    is_discarded_for_cycle: Cell<bool>,
     /// See `close_ring`.
     is_first_in_order: Cell<bool>,
+    is_first_in_component: Cell<bool>,
+    /// See `take_cycle_members`.
+    cycle_members: RefCell<Vec<u64>>,
     /// `Some`: `close_ring` has believed the task since its last commit. `Buffer::lengths_of_log` the first time.
     has_closed_a_ring: Cell<Option<[usize; 2]>>,
     /// `Buffer::lengths_of_log` when the task was last at rest.
@@ -149,7 +154,10 @@ impl<'s> Task<'s> {
             view: None,
             is_lost: Cell::new(None),
             is_believed: false,
+            is_discarded_for_cycle: Cell::new(false),
             is_first_in_order: Cell::new(false),
+            is_first_in_component: Cell::new(false),
+            cycle_members: RefCell::default(),
             has_closed_a_ring: Cell::new(None),
             logged_at_rest: Cell::new([0; 2]),
             committed: Cell::new([0; 2]),
@@ -307,31 +315,69 @@ impl<'s> Task<'s> {
         self.stop_writing_at_once();
     }
 
+    /// Discards the task because of a cycle. Its files can be rechecked once a commit resolves that cycle.
+    pub(super) fn discard_for_cycle(&self, why: &'static str) {
+        self.is_discarded_for_cycle
+            .set(!self.is_lost() || self.is_discarded_for_cycle.get());
+        self.lose(why);
+    }
+
+    pub(super) fn is_discarded_for_cycle(&self) -> bool {
+        self.is_discarded_for_cycle.get()
+    }
+
     #[inline]
     pub(super) fn is_lost(&self) -> bool {
         self.is_lost.get().is_some()
     }
 
     /// Before the task visits a file. `is_first`: every file before that one in program order is checked for good, or the
-    /// task has checked it itself.
-    pub(super) fn set_first_in_order(&self, is_first: bool) {
+    /// task has checked it itself. `is_first_in_component`: the same, counting only the earlier files in that file's
+    /// import cycle.
+    pub(super) fn set_first_in_order(&self, is_first: bool, is_first_in_component: bool) {
         self.is_first_in_order.set(is_first);
+        (self.is_first_in_component).set(is_first_in_component);
     }
 
     /// The task has come round to something that is in progress, and what the members of that ring get depends on where
     /// it was entered. tsc enters it from the first file in program order that leads there. That is this task if every
     /// file before is checked for good: none of them has led there, or the task would have found what the members got.
     /// Any other task is lost. Its files are checked again when the files before them are.
-    pub(super) fn close_ring(&self) {
-        if self.is_first_in_order.get() || self.is_believed {
+    ///
+    /// `is_reachable_only_by_importers`: returns true if only files that import the current file can reach the cycle. Then
+    /// unrelated earlier files don't matter.
+    ///
+    /// `members`: hashes of the queries in the cycle.
+    pub(super) fn close_ring(
+        &self,
+        is_reachable_only_by_importers: impl FnOnce() -> bool,
+        members: impl Iterator<Item = u64>,
+    ) {
+        if self.is_lost() {
+            return;
+        }
+        self.cycle_members.borrow_mut().extend(members);
+        if self.is_first_in_order.get()
+            || self.is_believed
+            || self.is_first_in_component.get() && is_reachable_only_by_importers()
+        {
             if self.has_closed_a_ring.get().is_none() {
                 let logged = self.buffer().lengths_of_log();
                 self.has_closed_a_ring.set(Some(logged));
             }
             self.stop_writing_at_once();
         } else {
-            self.lose("a ring that an earlier file may enter");
+            self.discard_for_cycle("a ring that an earlier file may enter");
         }
+    }
+
+    /// Returns the `members` of the cycles this task has resolved since its last commit, sorted. For a task that was
+    /// discarded because of a cycle, that cycle is included.
+    pub(super) fn take_cycle_members(&self) -> Vec<u64> {
+        let mut members = self.cycle_members.take();
+        members.shared_sort_unstable();
+        members.dedup();
+        members
     }
 
     /// Whether `close_ring` has believed the task since its last commit.
@@ -475,7 +521,10 @@ impl<'s> Task<'s> {
         self.assignments_walked.get_mut().clear();
         (self.view, self.is_believed) = (None, false);
         self.is_lost.set(None);
+        self.is_discarded_for_cycle.set(false);
         self.is_first_in_order.set(false);
+        self.is_first_in_component.set(false);
+        self.cycle_members.get_mut().clear();
         self.has_closed_a_ring.set(None);
         self.logged_at_rest.set([0; 2]);
         self.committed.set([0; 2]);

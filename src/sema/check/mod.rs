@@ -990,6 +990,7 @@ impl<'s> Program<'s> {
             unresolved_identifiers: Vec::new(),
             unknown_symbols: Default::default(),
             withheld_until_the_file_ends: Vec::new(),
+            unshared_entries: Default::default(),
             alias_targets_reported: Default::default(),
             alias_targets_in_progress: Vec::new(),
             is_deferred_node: Default::default(),
@@ -1107,6 +1108,52 @@ enum Query {
     /// stack: it only owns the diagnostic of a stack depth overflow (`error_about_comparison_at_current_node`). Likewise the
     /// entry of a `MappedProp` (`circular_mapped_property`).
     Comparison(u64),
+}
+
+/// A record that `Mentioned` still has to visit, or has visited.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+enum Mention {
+    Type(TypeId),
+    Signature(SigId),
+    Mapper(MapperId),
+    Components(ComponentsId),
+}
+
+/// Searches a record, and the records it references, for a node or symbol of a file that `is_near` accepts. See
+/// `Checker::is_reachable_only_by_importers`.
+struct Mentioned<'a> {
+    is_near: &'a dyn Fn(FileId) -> bool,
+    is_found: bool,
+    seen: crate::util::FxHashSet<Mention>,
+    to_visit: Vec<Mention>,
+}
+
+impl Mentioned<'_> {
+    fn record(&mut self, record: Mention) {
+        if !self.is_found && self.seen.insert(record) {
+            self.to_visit.push(record);
+        }
+    }
+}
+
+impl Visitor for Mentioned<'_> {
+    fn atom(&mut self, _: Atom) {}
+    fn components(&mut self, id: ComponentsId) {
+        self.record(Mention::Components(id));
+    }
+    fn mapper(&mut self, id: MapperId) {
+        self.record(Mention::Mapper(id));
+    }
+    fn sig(&mut self, id: SigId) {
+        self.record(Mention::Signature(id));
+    }
+    fn ty(&mut self, id: TypeId) {
+        self.record(Mention::Type(id));
+    }
+    fn file(&mut self, file: FileId) {
+        self.is_found |= (self.is_near)(file);
+    }
+    fn plain<T: std::hash::Hash + ?Sized>(&mut self, _: &T) {}
 }
 
 /// Whether tsgo notices that it comes round to `q`. See `Checker::close_ring_from`.
@@ -1862,6 +1909,8 @@ pub struct Checker<'p, 's> {
     unknown_symbols: FxHashMap<ExprId, bool>,
     /// See the function of that name: entries of `Log::of_nodes`.
     withheld_until_the_file_ends: Vec<[u32; 3]>,
+    /// Keys of `Log::of_nodes` that commits skip. See `log_diagnostic`.
+    unshared_entries: crate::util::FxHashSet<[u32; 3]>,
     /// The aliases that `check_target_of_alias_symbol` has reported on since `check_file` began:
     /// `aliasSymbolLinks.aliasTarget != nil`, or `resolveAlias` is in progress.
     alias_targets_reported: crate::util::FxHashSet<Sym>,
@@ -2477,7 +2526,80 @@ impl<'p, 's> Checker<'p, 's> {
         let mut guarded = self.stack[i..].iter().filter(|&&q| is_guarded(q));
         let are_constraints = matches!(guarded.next(), Some(Query::Constraint(_)));
         if guarded.any(|q| !are_constraints || !matches!(q, Query::Constraint(_))) {
-            self.task.close_ring();
+            self.close_ring(i);
+        }
+    }
+
+    /// Calls `Task::close_ring` for a cycle whose queries are all in `stack[from..]`.
+    pub(super) fn close_ring(&self, from: usize) {
+        let members = self.stack[from..].iter().map(crate::util::fx_hash);
+        (self.task).close_ring(|| self.is_reachable_only_by_importers(from), members);
+    }
+
+    /// True if only files that import the current file can run any query in `stack[from..]`.
+    ///
+    /// That's the case when every query is about, or mentions, a declaration in the current file's import cycle
+    /// (`Components`), and those files declare nothing global. An importer comes after the files it imports in program
+    /// order, unless they import each other.
+    fn is_reachable_only_by_importers(&self, from: usize) -> bool {
+        let (files, Some(visited)) = (self.files(), self.task.file) else {
+            return false;
+        };
+        let component_of = |file: FileId| files.components.of_file.get(file.idx());
+        let is_near = |file: FileId| {
+            component_of(file) == component_of(visited) && files.module(file).is_closed
+        };
+        let mut mentioned = Mentioned {
+            is_near: &is_near,
+            is_found: false,
+            seen: Default::default(),
+            to_visit: Vec::new(),
+        };
+        self.stack[from..].iter().all(|&q| {
+            mentioned.is_found = q.syntax().is_some_and(|(file, _)| is_near(file));
+            match q {
+                Query::Shape(ty)
+                | Query::Properties(ty)
+                | Query::Constraint(ty)
+                | Query::InferredConstraint(ty)
+                | Query::TypeArguments(ty)
+                | Query::MappedProp(ty, _) => mentioned.ty(ty),
+                Query::ReturnOfSignature(signature) => mentioned.sig(signature),
+                Query::Cond(_, _, mapper) => mentioned.mapper(mapper),
+                Query::AliasTarget(alias) => mentioned.file(alias.file),
+                Query::WriteType(file, _) => mentioned.file(file),
+                _ => {}
+            }
+            while let Some(record) = mentioned.to_visit.pop().filter(|_| !mentioned.is_found) {
+                match record {
+                    Mention::Type(ty) => self.data(ty).visit(&mut mentioned),
+                    Mention::Signature(signature) => {
+                        self.types().sig(signature).visit(&mut mentioned)
+                    }
+                    Mention::Mapper(mapper) => {
+                        for &(from, to) in self.types().mapping(mapper) {
+                            mentioned.ty(from);
+                            mentioned.ty(to);
+                        }
+                    }
+                    Mention::Components(list) => {
+                        self.types().components(list).visit(&mut mentioned)
+                    }
+                }
+            }
+            mentioned.to_visit.clear();
+            mentioned.seen.clear();
+            mentioned.is_found
+        })
+    }
+
+    /// Like `close_ring_from`, for in-progress state that isn't a query and was started when `stack` had `height` entries.
+    /// tsgo silently continues with the partial state. If it had entered the cycle at one of the resolutions in between,
+    /// it would have reported a circular reference there instead.
+    pub(super) fn close_cycle_above(&self, height: usize) {
+        self.task.hold_back();
+        if self.stack[height..].iter().any(|&q| self.is_resolution(q)) {
+            self.close_ring(height);
         }
     }
 
@@ -3780,7 +3902,28 @@ impl<'p, 's> Checker<'p, 's> {
     /// `members_in_place_hits`.
     #[inline]
     fn note_members_in_place(&mut self) {
-        self.task.close_ring();
+        self.close_ring(0);
+        self.count_members_in_place();
+    }
+
+    /// Like `note_members_in_place`, when the partial members belong to `key`.
+    fn note_members_in_place_of(&mut self, key: TypeId) {
+        let from = self.stack.iter().rposition(|&q| q == Query::Shape(key));
+        // The cycle contains only types and starts at a class or interface. The other types are created while that one's
+        // members are resolved, so no task can enter the cycle anywhere else, and every task gets the same result.
+        let is_same_in_every_task = matches!(self.data(key), TypeData::Ref { .. })
+            && from.is_some_and(|from| {
+                self.stack[from..]
+                    .iter()
+                    .all(|q| matches!(q, Query::Shape(_) | Query::Properties(_)) || !is_guarded(*q))
+            });
+        if !is_same_in_every_task {
+            self.close_ring(from.unwrap_or(0));
+        }
+        self.count_members_in_place();
+    }
+
+    fn count_members_in_place(&mut self) {
         self.cycles += 1;
         self.members_in_place_hits += 1;
         self.members_in_place_hit_at = self.work;

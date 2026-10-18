@@ -633,6 +633,40 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(1);
   });
 
+  // `user.js` is checked after `lib.js`, so tsc ignores what `user.js` makes it report in `lib.js`. `lib.js` reports the same
+  // errors itself, unless it gets a cache hit on what the task of `user.js` computed first.
+  test("reports implicit any in a destructured parameter that another file resolves first", async () => {
+    using dir = project({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, allowJs: true, checkJs: true },
+      }),
+      "lib.js": `function f({ x, y, z }) { return [x, y, z]; }\nmodule.exports = { f };\n`,
+      "user.js": `const { f } = require("./lib");
+/**
+ * @template This, Result
+ * @param {(this: This, ...args: any[]) => Result} fn
+ * @param {This} [thisArg]
+ * @param {...any} args
+ * @returns {Result}
+ */
+function scope(fn, thisArg, ...args) { return fn.apply(/** @type {This} */ (thisArg), args); }
+scope(f, null, { x: 1, y: "a", z: true });
+module.exports = { scope };
+`,
+    });
+    const threads = [1, 2, 2, 2, 2, 8, 8, 8, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(
+        [
+          "lib.js(1,14): error TS7031: Binding element 'x' implicitly has an 'any' type.",
+          "lib.js(1,17): error TS7031: Binding element 'y' implicitly has an 'any' type.",
+          "lib.js(1,20): error TS7031: Binding element 'z' implicitly has an 'any' type.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    }
+  });
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

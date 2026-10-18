@@ -1126,7 +1126,7 @@ impl<'p, 's> Checker<'p, 's> {
             .any(|it| it.0 > 0 && self.stack.get(it.0 - 1) == Some(&Query::Shape(key)))
         {
             self.task.hold_back();
-            self.task.close_ring();
+            self.close_ring(0);
             let mut shape = build(self);
             // `resolveAnonymousTypeMembers` computes the index signatures of the static side of a
             // class before its signatures.
@@ -1157,7 +1157,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.base_types_so_far.iter().any(|it| it.0 == target)
             && self.stack[self.resolution_start..].contains(&Query::Shape(key))
         {
-            self.note_members_in_place();
+            self.note_members_in_place_of(key);
             let shape = meanwhile(self);
             return self.provisional_shape(shape);
         }
@@ -1171,7 +1171,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         ) && self.stack[self.resolution_start..].contains(&Query::Shape(key))
         {
-            self.note_members_in_place();
+            self.note_members_in_place_of(key);
             let shape = meanwhile(self);
             return self.provisional_shape(shape);
         }
@@ -1180,7 +1180,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.inheriting.iter().any(|it| it.0 == key)
             || binding == MemberBinding::Late && self.is_late_binding(key)
         {
-            self.note_members_in_place();
+            self.note_members_in_place_of(key);
             let shape = meanwhile(self);
             return self.provisional_shape(shape);
         }
@@ -1602,7 +1602,15 @@ impl<'p, 's> Checker<'p, 's> {
                 // For the members of `ty`, also where the shape is there already. For the shape: see below.
                 if depends_on_state {
                     self.note_state_was_read();
-                    self.task.close_ring();
+                }
+                // `has_circular_base_types` doesn't count: a task that can't see that note yet re-enters the base types
+                // itself.
+                if is_other_inheriting
+                    || is_at_base_types
+                    || gets_no_declared_index_infos
+                    || binding == MemberBinding::Early
+                {
+                    self.close_ring(0);
                 }
                 let (key, under) = if declared != ty
                     && (inherits_from_type_arguments
@@ -7593,7 +7601,11 @@ impl<'p, 's> Checker<'p, 's> {
             return known;
         }
         // `ObjectFlagsIsNeverIntersectionComputed` is set before the properties are examined, so a recursive query gets `false`.
-        if self.never_in_progress.contains(&ty) {
+        let in_progress = &self.never_in_progress;
+        if let Some(at) = in_progress.iter().position(|&it| it == ty) {
+            // `never_in_progress_from` only has an entry for the first occurrence of each type.
+            let nth = (0..at).filter(|&i| !in_progress[..i].contains(&in_progress[i]));
+            self.close_cycle_above(self.never_in_progress_from[nth.count()]);
             return false;
         }
         self.tally(MemberCount::Reduced, 1);

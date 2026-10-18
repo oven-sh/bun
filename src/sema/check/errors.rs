@@ -333,6 +333,12 @@ impl Checker<'_, '_> {
         self.save_deferred_diagnostics = true;
         let logged = self.task.diagnostics.len();
         self.check_source_file(file);
+        // The file will be rechecked, so skip the remaining passes.
+        if self.task.is_lost() {
+            self.reported.clear();
+            self.is_type_checked = true;
+            return self.checked(syntactic, Vec::new());
+        }
         self.check_declare_modifiers(file);
         self.check_modules(file);
         self.report_unresolved_identifiers();

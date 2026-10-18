@@ -735,7 +735,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `ObjectFlagsIdenticalBaseTypeCalculated` is set before the base types are requested, so a recursive query gets nil.
         let mut in_progress = self.identical_base_types_in_progress.iter();
-        if in_progress.any(|it| it.0 == ty) {
+        if let Some(&(_, height)) = in_progress.find(|it| it.0 == ty) {
+            self.close_cycle_above(height);
             return None;
         }
         let (mut has_heritage_clause, mut extends_entity_name, mut has_members) =

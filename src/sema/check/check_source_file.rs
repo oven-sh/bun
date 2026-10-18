@@ -399,6 +399,9 @@ impl<'s> Checker<'_, 's> {
     fn check_source_elements(&mut self, file: FileId, statements: IdList<StmtId>) {
         for s in self.hir(file).ids(statements) {
             self.rest_between_statements();
+            if self.task.is_lost() {
+                return;
+            }
             self.check_source_element(file, s);
         }
     }
@@ -449,6 +452,9 @@ impl<'s> Checker<'_, 's> {
     fn check_deferred_nodes(&mut self, file: FileId) {
         while let Some(e) = self.deferred_nodes.pop_front() {
             self.rest_between_statements();
+            if self.task.is_lost() {
+                return;
+            }
             let saved = self.enter_source_element(CurrentNode::Expr(file, e));
             self.check_deferred_node(file, e);
             self.current_source_element = saved;

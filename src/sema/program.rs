@@ -220,6 +220,8 @@ pub struct Module<'s> {
     pub is_leaf: bool,
     /// It adds no globally visible declarations, so it `is_leaf` if no file refers to it.
     adds_nothing: bool,
+    /// True for a module that declares nothing global: only files that import it can refer to its declarations.
+    pub(crate) is_closed: bool,
     /// Whether it contains a conditional or a mapped type node.
     has_conditional_or_mapped_type: bool,
     /// Result of `count_identifiers`, copied into `Files::sizes`.
@@ -6828,14 +6830,16 @@ impl<'s> Files<'s> {
             )
         });
         let identifiers = count_identifiers(hir);
-        let adds_nothing = !is_lib
-            && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
-            && !hir.is_js
-            && hir.has_module_syntax
+        let is_closed = !is_lib
+            && (hir.has_module_syntax || bound.commonjs_indicator.is_some())
             && bound.global_augmentations.is_empty()
             && bound.ambient_modules.is_empty()
             && bound.pattern_ambient_modules.is_empty()
             && bound.umd_globals.is_empty();
+        let adds_nothing = is_closed
+            && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
+            && !hir.is_js
+            && hir.has_module_syntax;
         let (type_resolutions_trace, resolutions_trace) =
             (types_tracer.into_traces(), tracer.into_traces());
         let parse = parsed.unwrap_or_else(|parse| Parse {
@@ -6879,6 +6883,7 @@ impl<'s> Files<'s> {
             is_from_external_library: false,
             is_leaf: false,
             adds_nothing,
+            is_closed,
             has_conditional_or_mapped_type,
             identifiers,
             transient_symbols: ArenaVec::new_in(arena),
@@ -6981,6 +6986,7 @@ impl<'s> Files<'s> {
                 is_from_external_library,
                 is_leaf,
                 adds_nothing: _,
+                is_closed: _,
                 has_conditional_or_mapped_type: _,
                 identifiers: _,
             } = self.module(file);

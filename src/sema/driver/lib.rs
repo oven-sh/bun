@@ -4930,9 +4930,27 @@ fn check_named_files(
     // Which files are checked for good, and how many from the first one on, in program order. The task that checks the
     // next one enters a ring where `tsc --singleThreaded` does: `Checker::set_first_in_order`.
     let checked_for_good = Guarded::new((vec![false; to_check.len()], 0usize));
-    // The files that were lost and checked again before the last round.
-    let taken_again = Guarded::new(vec![false; to_check.len()]);
-    // The number of the round of those tasks.
+    /// What the driver remembers about the last time a file was checked.
+    #[derive(Clone, Default)]
+    struct Visit {
+        /// `Checker::take_unresolved_cycle`
+        unresolved_cycle: Vec<u64>,
+        /// Commits up to this number don't resolve `unresolved_cycle`.
+        commits_compared: u32,
+        /// `Checker::is_discarded_for_cycle`
+        is_discarded_for_cycle: bool,
+        /// The file was already rechecked once because all earlier files were done.
+        was_retried_as_first: bool,
+        /// How many times the file was rechecked before the last round.
+        rechecks: usize,
+    }
+    let visits = Guarded::new(vec![Visit::default(); to_check.len()]);
+    let index_of_file: FxHashMap<FileId, usize> = (to_check
+        .iter()
+        .enumerate()
+        .map(|(index, &file)| (file, index)))
+    .collect();
+    // A task that starts with a rechecked file gets a round number of its own, starting here, so task numbers stay unique.
     const AGAIN: usize = 2;
     /// What the tasks of a round add up to.
     #[derive(Default)]
@@ -4969,39 +4987,63 @@ fn check_named_files(
         let (mut queue, light): (Vec<usize>, Vec<usize>) =
             files.iter().partition(|it| is_heavy(it));
         queue.shared_sort_by_key(|&file| Reverse(size_of(file)));
-        let heavy = queue.len();
+        let mut heavy = queue.len();
         queue.extend(light);
         if request.order != 1 {
             queue.shared_sort_by_key(|&file| (file as u32 + 1).wrapping_mul(request.order));
+            heavy = 0;
         }
-        // How many files of `queue` are taken, and the cost of the others.
-        let left = Guarded::new((0usize, cost));
+        // How many heavy files of `queue` are taken, how many light ones, and the cost of the rest.
+        let left = Guarded::new((0usize, 0usize, cost));
         // The next run: consecutive files of `queue` for one thread. Threads that work far apart ask for different
-        // types at any one time. A run is a share of what is left, so the runs get shorter toward the end.
-        let take_run = || -> std::ops::Range<usize> {
-            let (taken, cost_left) = &mut *left.lock();
-            let from = *taken;
+        // types at any one time. A run is a share of what is left, so the runs get shorter toward the end. A heavy file is a
+        // run by itself. `skips_heavy_files`: this worker takes light files first, so the first files of the program get
+        // done and discarded files can be rechecked. See `checked_for_good`.
+        let take_run = |skips_heavy_files: bool| -> std::ops::Range<usize> {
+            let (heavy_taken, light_taken, cost_left) = &mut *left.lock();
+            let from = heavy + *light_taken;
+            if *heavy_taken < heavy && (!skips_heavy_files || from == queue.len()) {
+                *heavy_taken += 1;
+                *cost_left = cost_left.saturating_sub(size_of(queue[*heavy_taken - 1]));
+                return *heavy_taken - 1..*heavy_taken;
+            }
             let share = match request.plan_options.runs_per_thread {
                 _ if is_last_round => usize::MAX,
                 0 => 0,
                 runs => *cost_left / (workers * runs),
             };
-            let mut cost_of_run = 0;
-            while *taken < queue.len() && (*taken == from || *taken > heavy && cost_of_run < share)
-            {
-                cost_of_run += size_of(queue[*taken]);
-                *taken += 1;
+            let (mut to, mut cost_of_run) = (from, 0);
+            while to < queue.len() && (to == from || cost_of_run < share) {
+                cost_of_run += size_of(queue[to]);
+                to += 1;
             }
+            *light_taken = to - heavy;
             *cost_left = cost_left.saturating_sub(cost_of_run);
-            from..*taken
+            from..to
         };
-        // A lost file before which every file is checked for good now: no ring is a reason to lose it again. Once each.
-        let take_lost_file_that_is_next = || -> Option<usize> {
+        // Returns the first file in program order that was discarded because of a cycle and is worth rechecking now:
+        // either a commit has resolved that cycle, or all earlier files are done, so this file's task will be trusted.
+        let take_file_to_recheck = || -> Option<usize> {
             let next = checked_for_good.lock().1;
-            let (mut lost, mut taken) = (lost.lock(), taken_again.lock());
-            let at = lost.iter().position(|&file| file == next && !taken[file])?;
-            taken[next] = true;
-            Some(lost.swap_remove(at))
+            let last = program.last_commit();
+            let (mut lost, mut visits) = (lost.lock(), visits.lock());
+            let mut can_recheck = |file: usize| {
+                let visit = &mut visits[file];
+                let after = std::mem::replace(&mut visit.commits_compared, last);
+                if program.is_cycle_resolved(&visit.unresolved_cycle, after, last) {
+                    visit.unresolved_cycle.clear();
+                }
+                visit.is_discarded_for_cycle
+                    && (visit.unresolved_cycle.is_empty()
+                        || file == next && !visit.was_retried_as_first)
+            };
+            let candidates = lost.iter().enumerate();
+            let candidates = candidates.filter(|&(_, &file)| can_recheck(file));
+            let (at, &file) = candidates.min_by_key(|&(_, &file)| file)?;
+            visits[file].was_retried_as_first |= file == next;
+            visits[file].rechecks += 1;
+            lost.swap_remove(at);
+            Some(file)
         };
         // As in `run_round`.
         let is_read_afterwards = request.retains_everything
@@ -5015,9 +5057,9 @@ fn check_named_files(
             let (began, cost_before) = (Instant::now(), request.task_clock.map(|clock| clock()));
             let mut checker = new_checker(expected);
             // The index of a task is that of its first file, which no other task of the round has.
-            let round = match !is_last_round && taken_again.lock()[first] {
-                true => AGAIN,
-                false => round,
+            let round = match visits.lock()[first].rechecks {
+                rechecks if rechecks != 0 && !is_last_round => AGAIN + rechecks,
+                _ => round,
             };
             checker.begin_task(round as u32, first as u32, true);
             checker.see_commits(request.plan_options.commit_policy, is_last_round);
@@ -5028,13 +5070,25 @@ fn check_named_files(
             let (mut done, mut spent, mut index) = (0, 0, first);
             let upcoming = loop {
                 let file = to_check[index];
-                checker.set_first_in_order({
+                visits.lock()[index].commits_compared = program.last_commit();
+                {
                     let (is_checked, next) = &*checked_for_good.lock();
-                    (*next..index).all(|before| is_checked[before] || waiting.contains(&before))
-                });
+                    let is_done = |before: usize| is_checked[before] || waiting.contains(&before);
+                    // The files in the same import cycle.
+                    let components = &program.files.components;
+                    let component = components.of_file.get(file.idx());
+                    let component = component.and_then(|&at| components.all.get(at as usize));
+                    let around = component.map_or(&[][..], |it| it.files).iter();
+                    let around = around.filter_map(|it| index_of_file.get(it).copied());
+                    checker.set_first_in_order(
+                        (*next..index).all(is_done),
+                        around.take_while(|&it| it < index).all(is_done),
+                    );
+                }
                 checked.push((file, checker.check_file(file)));
                 if let Some(after_file) = request.after_file
                     && expected == wanted
+                    && !checker.is_lost()
                 {
                     after_file(&mut checker, file);
                 }
@@ -5083,6 +5137,16 @@ fn check_named_files(
                             progress.checked.fetch_sub(waiting.len(), Ordering::Relaxed);
                             progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
                         }
+                        {
+                            let mut visits = visits.lock();
+                            for &file in &waiting {
+                                visits[file].is_discarded_for_cycle =
+                                    checker.is_discarded_for_cycle();
+                                visits[file].unresolved_cycle.clear();
+                            }
+                            // Only the last file hit a cycle. The earlier ones can be rechecked right away.
+                            visits[index].unresolved_cycle = checker.take_unresolved_cycle();
+                        }
                         lost.lock().append(&mut waiting);
                         break upcoming;
                     }
@@ -5130,23 +5194,40 @@ fn check_named_files(
             task_times.lock().push((cost, done, first));
             upcoming
         };
+        let first_files_worker = AtomicUsize::new(usize::MAX);
+        let workers_started = AtomicUsize::new(0);
         // Returns a closure that runs one task per call on the current thread. It returns false once the queue is empty.
-        let shared = (&take_lost_file_that_is_next, &take_run, &run_task, &queue);
+        let shared = (&take_file_to_recheck, &take_run, &run_task, &queue, &lost);
         let worker = || {
-            let (take_lost_file_that_is_next, take_run, run_task, queue) = shared;
+            let (take_file_to_recheck, take_run, run_task, queue, lost) = shared;
+            let (first_files_worker, id) = (
+                &first_files_worker,
+                workers_started.fetch_add(1, Ordering::Relaxed),
+            );
             let (mut run, mut first) = (0..0, None);
             move || {
                 let mut next = || {
-                    if let Some(file) = take_lost_file_that_is_next() {
+                    if let Some(file) = take_file_to_recheck() {
                         return Some(file);
                     }
                     if run.is_empty() {
-                        run = take_run();
+                        // The first worker that sees a discarded file moves to the first unchecked files, and stays there.
+                        let is_needed = !lost.lock().is_empty();
+                        let is_mine = is_needed
+                            && first_files_worker
+                                .compare_exchange(
+                                    usize::MAX,
+                                    id,
+                                    Ordering::Relaxed,
+                                    Ordering::Relaxed,
+                                )
+                                .is_ok();
+                        run = take_run(is_mine || first_files_worker.load(Ordering::Relaxed) == id);
                     }
                     run.next().map(|at| queue[at])
                 };
-                // A task asks for its next file before it commits the last one, and that commit can make a lost file the
-                // next.
+                // A task asks for its next file before it commits the last one, and that commit can make a discarded file
+                // the next.
                 let file = first.take().or_else(&mut next);
                 first = file.and_then(|file| run_task(file, &mut next));
                 file.is_some()

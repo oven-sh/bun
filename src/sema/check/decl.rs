@@ -2189,6 +2189,8 @@ impl<'p, 's> Checker<'p, 's> {
         let mut in_progress = self.defaults_in_progress.iter_mut();
         if let Some(resolving) = in_progress.find(|resolving| resolving.0 == param) {
             resolving.2 = true;
+            let height = resolving.1;
+            self.close_cycle_above(height);
             return None;
         }
         let (before, scope) = (self.non_cacheable_mark(), self.begin_scope());

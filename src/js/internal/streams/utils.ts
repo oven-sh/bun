@@ -32,25 +32,21 @@ const kConstructed = 1 << 8;
 
 function isReadableNodeStream(obj, strict = false) {
   return !!(
-    (
-      obj &&
-      typeof obj.pipe === "function" &&
-      typeof obj.on === "function" &&
-      (!strict || (typeof obj.pause === "function" && typeof obj.resume === "function")) &&
-      (!obj._writableState || obj._readableState?.readable !== false) && // Duplex
-      (!obj._writableState || obj._readableState)
-    ) // Writable has .pipe.
+    obj &&
+    typeof obj.pipe === "function" &&
+    typeof obj.on === "function" &&
+    (!strict || (typeof obj.pause === "function" && typeof obj.resume === "function")) &&
+    (!obj._writableState || obj._readableState?.readable !== false) && // Duplex
+    (!obj._writableState || obj._readableState) // Writable has .pipe.
   );
 }
 
 function isWritableNodeStream(obj) {
   return !!(
-    (
-      obj &&
-      typeof obj.write === "function" &&
-      typeof obj.on === "function" &&
-      (!obj._readableState || obj._writableState?.writable !== false)
-    ) // Duplex
+    obj &&
+    typeof obj.write === "function" &&
+    typeof obj.on === "function" &&
+    (!obj._readableState || obj._writableState?.writable !== false) // Duplex
   );
 }
 

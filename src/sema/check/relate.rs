@@ -11,6 +11,7 @@ use super::infer::{Inference, PRIORITY_ALWAYS_STRICT, PRIORITY_NO_CONSTRAINTS};
 use super::related::Place;
 use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::*;
+use crate::util::SharedSort;
 use crate::util::{FxHashSet, FxHasher};
 use smallvec::SmallVec;
 use std::hash::Hasher;
@@ -1306,12 +1307,9 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     break 'members false;
                 };
-                let (a, b) = (self.enum_member_type(member), self.enum_member_type(other));
-                let value = |c: &Self, ty: TypeId| match c.data(ty) {
-                    TypeData::EnumLit { value, .. } => Some(*value),
-                    _ => None,
-                };
-                let (code, values) = match (value(self, a), value(self, b)) {
+                let actual = self.enum_member_value_of_symbol(member);
+                let expected = self.enum_member_value_of_symbol(other);
+                let (code, values) = match (actual, expected) {
                     (Some(actual), Some(expected)) if !Self::is_equal_value(actual, expected) => {
                         (4125, [Some(expected), Some(actual)])
                     }
@@ -1872,7 +1870,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut pairs = self.types().mapping(mapper).to_vec();
         for (i, &param) in params.iter().enumerate() {
-            pairs.push((param, self.get_inferred_type(&context, i, false)));
+            // `combineTypeMappers(context.mapper, mapper)`: an inferred type is instantiated
+            // with `mapper`.
+            let inferred = self.get_inferred_type(&context, i, false);
+            pairs.push((param, self.instantiate(inferred, mapper)));
         }
         let combined = self.types().mapper(pairs);
         let declared = self.type_from_node(file, nodes[2]);
@@ -3582,14 +3583,8 @@ impl<'p, 's> Checker<'p, 's> {
             let is_this = matches!(self.data(arg), TypeData::ThisParam(_));
             if is_this || matches!(self.data(arg), TypeData::TypeParam(..)) {
                 // The constraint of a `this` type is the class or interface it belongs to.
-                let is_unconstrained = ignore_constraints
-                    || !is_this && {
-                        // The constraint is resolved only to build the key, so a cycle through here is not an error.
-                        self.eager.push(self.stack.len());
-                        let constraint = self.constraint_of_type_param(arg);
-                        self.eager.pop();
-                        constraint.is_none()
-                    };
+                let is_unconstrained =
+                    ignore_constraints || !is_this && self.constraint_of_type_param(arg).is_none();
                 if !is_unconstrained {
                     key.constrained = true;
                 } else if let Some(index) = key.type_param_index(arg) {
@@ -5039,14 +5034,18 @@ impl<'p, 's> Checker<'p, 's> {
                     let mut source_extends = self.cond_extends(source);
                     let target_extends = self.cond_extends(target);
                     let mut mapper = MapperId::IDENTITY;
-                    // Instantiated from one declaration, both sides have the same `infer` type
-                    // parameters: each that occurs in the extends type maps to itself. For one that
-                    // does not, nothing is inferred.
-                    if !source_params.is_empty()
-                        && (source_extends != target_extends
-                            || (self.params_mentioned_in(source_extends, &source_params))
-                                .contains(&false))
-                    {
+                    // Also when both sides have the same extends type: the inference asks for the
+                    // variances of the generic types in it, and in a cycle of variance
+                    // computations what they are depends on who asks first.
+                    // FOR SPEED: once. Instantiated from one declaration, both sides have the same
+                    // `infer` type parameters, and each that occurs in the extends type maps to
+                    // itself: after the first time the inference changes nothing.
+                    let is_repeated = !source_params.is_empty()
+                        && source_extends == target_extends
+                        && !(self.params_mentioned_in(source_extends, &source_params))
+                            .contains(&false)
+                        && !self.inferred_between_same_extends.insert(source_extends);
+                    if !source_params.is_empty() && !is_repeated {
                         let around = self.cond_origin(source).2;
                         let inferred = self.infer_from_types_comparing(
                             &source_params,
@@ -5388,6 +5387,26 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         result
+    }
+
+    /// `members`, for `getPropertiesOfType(ty)`: an intersection has the list of properties that
+    /// `getPropertiesOfUnionOrIntersectionType` assigned, which can lack some that
+    /// `getPropertyOfType` finds by name (`listed_properties`).
+    /// Whether the list of properties that the intersection `ty` keeps lacks the members of a
+    /// constituent (`listed_members`).
+    pub(super) fn has_partial_list(&self, ty: TypeId) -> bool {
+        matches!(self.data(ty), TypeData::Intersection(_))
+            && (self.p.listed_properties.get(&self.task, &ty)).is_some_and(|listed| listed != ty)
+    }
+
+    pub(super) fn listed_members(&mut self, ty: TypeId) -> Option<Members<'p>> {
+        if matches!(self.data(ty), TypeData::Intersection(_))
+            && let Some(listed) = self.p.listed_properties.get(&self.task, &ty)
+            && listed != ty
+        {
+            return self.members(listed);
+        }
+        self.members(ty)
     }
 
     /// The type that `getPropertiesOfType`, `getPropertyOfType` and `getIndexInfosOfType` use:
@@ -5864,7 +5883,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let provisional = self.provisional_shapes.len();
         let has_properties = properties.unwrap_or(source);
-        let (Some(sm), Some(tm)) = (self.members(has_properties), self.members(target)) else {
+        let (Some(sm), Some(tm)) = (self.members(has_properties), self.listed_members(target))
+        else {
             return Ternary::FALSE;
         };
         // A cached shape does not change. An intersection has its signatures elsewhere.
@@ -5948,7 +5968,7 @@ impl<'p, 's> Checker<'p, 's> {
                 PropSource::Type(_) => (true, atoms.bytes(tp.name)),
                 _ => (false, &[][..]),
             };
-            in_order.sort_by(|a, b| place(a).cmp(&place(b)));
+            in_order.shared_sort_by(|a, b| place(a).cmp(&place(b)));
         }
         for (i, tp) in tm.shape().props.iter().enumerate() {
             let tp = if REPORT {
@@ -6113,7 +6133,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getDeclaringClass`
     pub(super) fn declaring_class(&self, prop: &Prop) -> Option<Sym> {
-        match prop.source {
+        match *Self::value_declaration(prop)? {
             PropSource::Symbol(sym) => self.declaring_class_of_symbol(sym),
             _ => None,
         }
@@ -6749,6 +6769,15 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getMinArgumentCount`
     pub(super) fn min_argument_count(&mut self, params: &[SigParam]) -> usize {
+        self.min_argument_count_asked(None, params)
+    }
+
+    /// `sig`: `params` is its list from `sig_params_with_first`.
+    pub(super) fn min_argument_count_asked(
+        &mut self,
+        sig: Option<SigId>,
+        params: &[SigParam],
+    ) -> usize {
         let mut count = None;
         if let Some(rest) = params.last().filter(|p| p.rest) {
             self.get_type_of_parameter(rest);
@@ -6765,10 +6794,11 @@ impl<'p, 's> Checker<'p, 's> {
         let mut count = count.unwrap_or_else(|| Self::min_args(params));
         // Trailing parameters that accept `void` are optional.
         while count > 0 {
-            let ty = match params.get(count - 1) {
-                Some(param) if !param.rest => self.get_type_of_parameter(param),
-                _ => self.param_type_at(params, count - 1).unwrap_or(TypeId::ANY),
+            let ty = match sig {
+                Some(sig) => self.param_type_asked_at(sig, params, count - 1),
+                None => self.param_type_at(params, count - 1),
             };
+            let ty = ty.unwrap_or(TypeId::ANY);
             if !self.some_type(ty, |_, m| m == TypeId::VOID) {
                 break;
             }

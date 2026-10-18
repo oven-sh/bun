@@ -206,7 +206,8 @@ pub enum ObjectLiteralCheck {
     ForAssignmentDeclaration,
     /// `checkExpressionCached`, for `getContextualThisParameterType`, where the parent has left no `links.resolvedType`.
     ForThis,
-    /// The same for the `this` parameter of this member. `checkSignatureDeclaration` requests its type while the literal is checked.
+    /// The same for the `this` parameter of this member, or for a type query of `this` in its signature: both are resolved
+    /// while the literal is checked.
     ForThisParameter(FnId),
 }
 
@@ -611,6 +612,10 @@ pub struct IndexInfo {
     pub key: TypeId,
     pub value: TypeId,
     pub readonly: bool,
+    /// It is `enumNumberIndexInfo`, the reverse mapping from a number to the name of a member of an
+    /// enum. `keyof` and inference leave it out, in a type that has it from an enum object as well
+    /// (`getRestType`).
+    pub is_enum_number_index_info: bool,
     /// The index signature that declares it (`getIndexInfosOfIndexSymbol`).
     pub declaration: Option<(FileId, crate::hir::MemberId)>,
     /// The declarations with computed names that it is built from (`getObjectLiteralIndexInfo`):
@@ -626,6 +631,7 @@ impl IndexInfo {
             key,
             value,
             readonly,
+            is_enum_number_index_info: false,
             declaration: None,
             components: ComponentsId::NONE,
         }
@@ -674,9 +680,10 @@ pub struct Shape<'s> {
     /// For a type created by `createDefaultPropertyWrapperForModule`: `originalSymbol`, the module,
     /// which is the `Parent` of its `default`.
     pub default_of: Option<Sym>,
-    /// For a type created by `getSpreadType`, which creates a new type on every call: its left and
-    /// right operands.
-    pub spread_of: Option<(TypeId, TypeId)>,
+    /// For a type created by `getSpreadType` or `getRestType`, which create a new type on every
+    /// call: the left and the right operand of the spread, or the type that is destructured and
+    /// `never`.
+    pub created_from: Option<(TypeId, TypeId)>,
     /// The number of types `getSpreadType` had created for the same object literal before this
     /// one. `mapType` iterates over a union of named unions by its origin, which is not the order
     /// of `CompareTypes`.
@@ -795,7 +802,7 @@ impl<'s> Shape<'s> {
             instantiation_expression: None,
             instantiation_target: None,
             default_of: None,
-            spread_of: None,
+            created_from: None,
             spread_rank: 0,
             properties_of: None,
             single_signature_arguments: None,
@@ -1457,8 +1464,14 @@ impl<'s, V> Interned<'s, V> {
     }
 
     /// For `put`.
-    fn halves(&self) -> (&[GrowingPlaces<&'s Session>], &AppendVec<V, &'s Session>) {
-        (&self.shards[..], &self.items)
+    fn halves(
+        &self,
+    ) -> (
+        &[GrowingPlaces<&'s Session>],
+        &AppendVec<V, &'s Session>,
+        u32,
+    ) {
+        (&self.shards[..], &self.items, 0)
     }
 
     /// Assigns the next id to `item`, which must not be present yet. `spread`: its lookup hash.
@@ -3326,6 +3339,7 @@ follow_struct!(IndexInfo {
     key,
     value,
     readonly,
+    is_enum_number_index_info,
     declaration,
     components
 });
@@ -3348,7 +3362,7 @@ follow_struct!(Shape<'_> {
     instantiation_expression,
     instantiation_target,
     default_of,
-    spread_of,
+    created_from,
     spread_rank,
     properties_of,
     single_signature_arguments,
@@ -3597,7 +3611,7 @@ clone_in_struct!(Shape {
     instantiation_expression,
     instantiation_target,
     default_of,
-    spread_of,
+    created_from,
     spread_rank,
     properties_of,
     single_signature_arguments,
@@ -3908,6 +3922,22 @@ struct Taken<V> {
     joined: Vec<(u32, V)>,
 }
 
+impl<V> Taken<V> {
+    fn map<U>(self, mut of: impl FnMut(V) -> U) -> Taken<U> {
+        let records = self.records.into_iter();
+        let joined = self.joined.into_iter();
+        Taken {
+            len: self.len,
+            records: records
+                .map(|(index, hash, record)| (index, hash, of(record)))
+                .collect(),
+            positions: self.positions,
+            parts: self.parts,
+            joined: joined.map(|(id, record)| (id, of(record))).collect(),
+        }
+    }
+}
+
 impl<V> Default for Taken<V> {
     fn default() -> Self {
         Taken {
@@ -4170,9 +4200,9 @@ enum Placed<V> {
 
 /// FOLLOW, for one kind: writes the surviving records into the shared store, at their ids. Returns
 /// those that are `Later`, in id order: the caller writes them. Also returns, for `check_joined`,
-/// the merged records, remapped.
+/// the merged records, remapped. `first` is the id of the first element of `items`.
 fn put<V: Send + Sync, A: Allocator + Clone + Sync>(
-    (shards, items): (&[GrowingPlaces<A>], &AppendVec<V, A>),
+    (shards, items, first): (&[GrowingPlaces<A>], &AppendVec<V, A>, u32),
     tasks: Vec<(Taken<V>, &Link)>,
     in_parallel: InParallel<'_>,
     settle: &(dyn Fn(V, &Link, u32) -> Placed<V> + Sync),
@@ -4212,7 +4242,7 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync>(
                 }
             };
             // SAFETY: the id is in the range that was reserved, and no other record has it.
-            unsafe { items.write(id, record) };
+            unsafe { items.write(id - first, record) };
         }
     });
     {
@@ -4239,13 +4269,13 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync>(
 /// In a debug build: a record that was merged with another must equal it. Otherwise two different
 /// contents have the same content hash.
 fn check_joined<V, A: Allocator + Clone>(
-    items: &AppendVec<V, A>,
+    (_, items, first): (&[GrowingPlaces<A>], &AppendVec<V, A>, u32),
     joined: Vec<(u32, V)>,
     is_same: impl Fn(&V, &V) -> bool,
 ) {
     for (id, record) in joined {
         assert!(
-            is_same(&record, items.get(id)),
+            is_same(&record, items.get(id - first)),
             "two records with one content hash differ"
         );
     }
@@ -4296,7 +4326,7 @@ impl<'s> TypeStore<'s> {
         let mut links = [
             number(
                 &mut of(&mut tasks, |it| &mut it.atoms),
-                atoms.halves().1.len(),
+                atoms.halves().2 + atoms.halves().1.len(),
                 in_parallel,
             ),
             number(
@@ -4342,7 +4372,8 @@ impl<'s> TypeStore<'s> {
         let (mut texts, mut components, mut mappers, mut sigs, mut types) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for (task, link) in tasks.into_iter().zip(&links) {
-            texts.push((task.atoms, link));
+            // The texts of the interner are not in an arena: see `atom::Tables`.
+            texts.push((task.atoms.map(|text| crate::atom::Text::from(&*text)), link));
             components.push((task.components, link));
             mappers.push((task.mappers, link));
             sigs.push((task.sigs, link));
@@ -4352,7 +4383,7 @@ impl<'s> TypeStore<'s> {
             let spread = crate::atom::hash_of(&text);
             Placed::Indexed(text, spread)
         });
-        check_joined(atoms.halves().1, joined, |a, b| a == b);
+        check_joined(atoms.halves(), joined, |a, b| **a == **b);
         let (_, joined) = put(
             self.components.halves(),
             components,
@@ -4363,7 +4394,7 @@ impl<'s> TypeStore<'s> {
                 Placed::Indexed(list, spread)
             },
         );
-        check_joined(&self.components.items, joined, |a, b| a == b);
+        check_joined(self.components.halves(), joined, |a, b| a == b);
         let (_, joined) = put(
             self.mappers.halves(),
             mappers,
@@ -4375,7 +4406,7 @@ impl<'s> TypeStore<'s> {
                 Placed::Indexed((pairs, flags), spread)
             },
         );
-        check_joined(&self.mappers.items, joined, |a, b| a == b);
+        check_joined(self.mappers.halves(), joined, |a, b| a == b);
         let (_, joined) = put(
             self.sigs.halves(),
             sigs,
@@ -4386,7 +4417,7 @@ impl<'s> TypeStore<'s> {
                 Placed::Indexed(data, spread)
             },
         );
-        check_joined(&self.sigs.items, joined, |a, b| a == b);
+        check_joined(self.sigs.halves(), joined, |a, b| a == b);
         let (later, joined) = put(
             self.types.halves(),
             types,
@@ -4430,7 +4461,7 @@ impl<'s> TypeStore<'s> {
             unsafe { self.types.items.write(id, record) };
             self.types.shards[shard_of(spread)].extend(1, std::iter::once((spread, id)));
         }
-        check_joined(&self.types.items, joined, |a, b| a.created == b.created);
+        check_joined(self.types.halves(), joined, |a, b| a.created == b.created);
         self.summarize_types(self.types.items.len());
         (links, counts)
     }

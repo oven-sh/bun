@@ -1479,6 +1479,7 @@ mod border_handler_body {
             dest: &mut DeclarationList,
             context: &mut PropertyHandlerContext,
         ) -> bool {
+            use BorderProperty as B;
             use PropertyIdTag as P;
             let side = match target {
                 P::BorderBlockStart
@@ -1500,17 +1501,26 @@ mod border_handler_body {
                 _ => return false,
             };
             // The writing mode decides which physical side a logical side is.
-            if !(side.is_empty()
+            let flush = !(side.is_empty()
                 && self.border_top.is_empty()
                 && self.border_bottom.is_empty()
                 && self.border_left.is_empty()
-                && self.border_right.is_empty())
-            {
-                // A later value prints after the alias, so this flush is no fallback for it.
-                let flushed = self.flushed_properties;
-                self.flush(dest, context);
-                self.flushed_properties = flushed;
+                && self.border_right.is_empty());
+            let mut overridable = B::try_from_property_id(target).unwrap_or_default();
+            if overridable.intersects(B::BORDER_BLOCK_COLOR | B::BORDER_INLINE_COLOR) {
+                overridable |= B::BORDER_COLOR;
             }
+            if overridable.intersects(B::BORDER_BLOCK_WIDTH | B::BORDER_INLINE_WIDTH) {
+                overridable |= B::BORDER_WIDTH;
+            }
+            if overridable.intersects(B::BORDER_BLOCK_STYLE | B::BORDER_INLINE_STYLE) {
+                overridable |= B::BORDER_STYLE;
+            }
+            if flush {
+                self.flush(dest, context);
+            }
+            // What the alias can override is no fallback for a value after the alias.
+            self.flushed_properties.remove(overridable);
             true
         }
 

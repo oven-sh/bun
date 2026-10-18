@@ -4858,10 +4858,15 @@ describe("css tests", () => {
       "a{-webkit-border-before-color:blue;border-left-color:red;border-right-color:red;}",
       browserDefault,
     );
-    // A value after the alias still gets its generated fallbacks.
+    // A later declaration that can override the alias gets its own generated fallbacks.
     prefix_test(
       "a{background-size:1px;-webkit-background-size:2px;background:lab(50% 10 10)}",
       "a{background-size:1px;-webkit-background-size:2px;background:#8c7166;background:color(display-p3 .532519 .445804 .40786);background:lab(50% 10 10);}",
+      browserDefault,
+    );
+    prefix_test(
+      "a{background-repeat:no-repeat;background-size:1px;-webkit-background-size:2px;background:lab(50% 10 10)}",
+      "a{background-repeat:no-repeat;background-size:1px;-webkit-background-size:2px;background:#8c7166;background:color(display-p3 .532519 .445804 .40786);background:lab(50% 10 10);}",
       browserDefault,
     );
     prefix_test(
@@ -4870,8 +4875,18 @@ describe("css tests", () => {
       browserDefault,
     );
     prefix_test(
+      "a{background:red;background:var(--x);background-size:1px;-webkit-background-size:2px;background:lab(50% 10 10)}",
+      "a{background:red;background:var(--x);background-size:1px;-webkit-background-size:2px;background:#8c7166;background:color(display-p3 .532519 .445804 .40786);background:lab(50% 10 10);}",
+      browserDefault,
+    );
+    prefix_test(
       "a{border-top:1px solid red;-webkit-border-before-color:blue;border-top:2px solid lab(50% 10 10)}",
       "a{border-top:1px solid red;-webkit-border-before-color:blue;border-top:2px solid #8c7166;border-top:2px solid color(display-p3 .532519 .445804 .40786);border-top:2px solid lab(50% 10 10);}",
+      browserDefault,
+    );
+    prefix_test(
+      "a{border-top:1px solid red;-webkit-border-before-width:2px;border-top:3px solid lab(50% 10 10)}",
+      "a{border-top:1px solid red;-webkit-border-before-width:2px;border-top:3px solid #8c7166;border-top:3px solid color(display-p3 .532519 .445804 .40786);border-top:3px solid lab(50% 10 10);}",
       browserDefault,
     );
     prefix_test(
@@ -4884,7 +4899,17 @@ describe("css tests", () => {
       "a{width:100px;-webkit-logical-width:5px;width:-webkit-fill-available;width:-moz-available;width:stretch;}",
       browserDefault,
     );
+    prefix_test(
+      "a{border-top-color:var(--c);-webkit-border-before-color:blue;border-top-color:lab(50% 10 10)}",
+      "a{border-top-color:var(--c);-webkit-border-before-color:blue;border-top-color:#8c7166;border-top-color:color(display-p3 .532519 .445804 .40786);border-top-color:lab(50% 10 10);}",
+      browserDefault,
+    );
     // Also when the rule merges with another rule and is minified again.
+    prefix_test(
+      "a{background-size:1px;-webkit-background-size:2px;background:lab(50% 10 10)} a{color:red}",
+      "a{background-size:1px;-webkit-background-size:2px;background:#8c7166;background:color(display-p3 .532519 .445804 .40786);color:red;background:lab(50% 10 10);}",
+      browserDefault,
+    );
     prefix_test(
       "a{width:stretch;-webkit-logical-width:5px;width:fit-content} a{color:red}",
       "a{width:-webkit-fill-available;width:-moz-available;width:stretch;-webkit-logical-width:5px;color:red;width:-moz-fit-content;width:fit-content;}",
@@ -4901,7 +4926,7 @@ describe("css tests", () => {
       "a{width:1px;-webkit-logical-width:2px;min-width:-moz-fit-content;min-width:fit-content;}",
       browserDefault,
     );
-    // An earlier value that the alias can override is no fallback for a later one.
+    // Also after an earlier value that does not parse.
     prefix_test(
       "a{width:var(--w);inline-size:1px;-webkit-logical-width:2px;width:stretch}",
       "a{width:var(--w);inline-size:1px;-webkit-logical-width:2px;width:-webkit-fill-available;width:-moz-available;width:stretch;}",
@@ -4912,10 +4937,20 @@ describe("css tests", () => {
       "a{width:var(--w);-webkit-logical-width:2px;width:-webkit-fill-available;width:-moz-available;width:stretch;}",
       browserDefault,
     );
-    // A value that was written before the flush for the alias is still a fallback.
+    // A later declaration that cannot override the alias keeps the earlier value as its fallback.
     prefix_test(
-      "a{background:red;background:var(--x);background-size:1px;-webkit-background-size:2px;background:lab(50% 10 10)}",
-      "a{background:red;background:var(--x);background-size:1px;-webkit-background-size:2px;background:lab(50% 10 10);}",
+      "a{background-size:1px;background-color:red;-webkit-background-size:2px;background-color:lab(50% 10 10)}",
+      "a{background-color:red;background-size:1px;-webkit-background-size:2px;background-color:lab(50% 10 10);}",
+      browserDefault,
+    );
+    prefix_test(
+      "a{border-top-color:red;border-top-width:1px;-webkit-border-before-width:2px;border-top-color:lab(50% 10 10)}",
+      "a{border-top-width:1px;border-top-color:red;-webkit-border-before-width:2px;border-top-color:lab(50% 10 10);}",
+      browserDefault,
+    );
+    prefix_test(
+      "a{background-color:var(--c);background-size:1px;-webkit-background-size:2px;background-color:lab(50% 10 10)}",
+      "a{background-color:var(--c);background-size:1px;-webkit-background-size:2px;background-color:lab(50% 10 10);}",
       browserDefault,
     );
     prefix_test(

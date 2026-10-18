@@ -595,6 +595,8 @@ pub struct BackgroundHandler {
     // `'bump` through BackgroundHandler would avoid the heap alloc.
     pub(crate) decls: Vec<Property>,
     pub(crate) flushed_properties: BackgroundProperty,
+    /// What was written before a legacy alias. It still is the fallback of a later colour or image.
+    pub(crate) flushed_before_alias: BackgroundProperty,
     pub(crate) has_any: bool,
 }
 
@@ -961,7 +963,9 @@ impl BackgroundHandler {
         }
 
         if let Some(mut color) = maybe_color.take() {
-            if !self.flushed_properties.contains(BackgroundProperty::COLOR) {
+            if !(self.flushed_properties | self.flushed_before_alias)
+                .contains(BackgroundProperty::COLOR)
+            {
                 let fallbacks = color.get_fallbacks(arena, &context.targets);
                 for fallback in fallbacks.into_iter() {
                     push_property!(
@@ -983,7 +987,9 @@ impl BackgroundHandler {
         }
 
         if let Some(mut images) = maybe_images.take() {
-            if !self.flushed_properties.contains(BackgroundProperty::IMAGE) {
+            if !(self.flushed_properties | self.flushed_before_alias)
+                .contains(BackgroundProperty::IMAGE)
+            {
                 let mut fallbacks =
                     crate::small_list::get_fallbacks(&mut images, arena, &context.targets);
                 // Pop in reverse then re-reverse via a temp Vec to preserve
@@ -1134,6 +1140,7 @@ impl BackgroundHandler {
     ) {
         self.flush_with_prefixed(dest, context);
         self.flushed_properties = BackgroundProperty::empty();
+        self.flushed_before_alias = BackgroundProperty::empty();
     }
 
     /// Flushes if an alias of `target` can override what is held. False: `target` is not ours.
@@ -1149,11 +1156,11 @@ impl BackgroundHandler {
             _ => return false,
         };
         if held || self.keeps_prefixed_shorthand() {
-            // A later value prints after the alias, so this flush is no fallback for it.
-            let flushed = self.flushed_properties;
             self.flush_with_prefixed(dest, context);
-            self.flushed_properties = flushed;
         }
+        // A later `background` resets what the alias sets, so it needs its own fallbacks.
+        self.flushed_before_alias |= self.flushed_properties;
+        self.flushed_properties = BackgroundProperty::empty();
         true
     }
 

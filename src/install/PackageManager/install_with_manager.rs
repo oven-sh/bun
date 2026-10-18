@@ -732,8 +732,9 @@ pub fn install_with_manager(
                 && load_result.migrated_from().is_none();
             // A command that names what it adds scans only that. What a retried row brought is
             // new to the tree too.
-            let retried: Vec<(DependencyID, PackageID)> =
-                (retried_rows.iter()).map(|&row| (row, invalid_package_id)).collect();
+            let retried: Vec<(DependencyID, PackageID)> = (retried_rows.iter())
+                .map(|&row| (row, invalid_package_id))
+                .collect();
             moved_by_overrides.extend(moved_targets_after_clean(
                 &lockfile_before_clean,
                 &manager.lockfile,

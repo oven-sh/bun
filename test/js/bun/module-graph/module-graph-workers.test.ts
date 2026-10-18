@@ -71,7 +71,7 @@ const dir = String(
       export function perform(order) {
         control.performed++;
         if (order === "dispose") control.dispose();
-        else if (order === "dispose-inner") { control.snapshot(); held.inner.dispose(); }
+        else if (order === "dispose-inner") control.dispose(held.inner);
         else if (order === "terminate-leaf") Promise.resolve(held.worker.terminate()).then(() => control.hear("terminate resolved"));
         else if (order === "arm") setInterval(() => control.tick(), 1);
         else if (order === "exit") process.exit(3);
@@ -166,8 +166,7 @@ const dir = String(
           hear: name => { heard.push(name); Atomics.add(i32, base + S.HEARD, 1); },
           pid: pid => store(S.PID, pid),
           sendPort: port => parentPort.postMessage({ port }, [port]),
-          snapshot,
-          dispose: () => { snapshot(); graph.dispose(); store(S.DISPOSE_RETURNED, 1); },
+          dispose: (disposed = graph) => { snapshot(); disposed.dispose(); store(S.DISPOSE_RETURNED, 1); },
         };
         out.control = control;
         out.dispose = control.dispose;
@@ -356,7 +355,7 @@ const dir = String(
           return fds() - baseline;
         };
         const disposed = () => load(0, S.DISPOSED) === 1;
-        // terminate() can stop the worker between its snapshot and its dispose().
+        // terminate() can stop the worker after its snapshot and before its dispose() has killed anything.
         const disposeReturned = () => load(0, S.DISPOSE_RETURNED) === 1;
         // What the subject's graph heard, ticked and received since it was disposed.
         const afterDispose = () => ({

@@ -2583,7 +2583,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let rc = p.enter_react_compiler_function(
             bun_react_compiler::lowering::FunctionNode::Arrow(&e_),
-            None,
+            false,
         );
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
@@ -2614,7 +2614,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()
         };
-        if let Some(fn_type) = rc.fn_type {
+        if let bun_react_compiler::Discovery::Compile(fn_type) = rc.found {
             let mut flags = bun_ast::flags::FUNCTION_NONE;
             if e_.is_async {
                 flags |= bun_ast::flags::Function::IsAsync;
@@ -2633,7 +2633,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, &mut temp_opts)
             .expect("unreachable");
-        if rc.fn_type.is_some()
+        if matches!(rc.found, bun_react_compiler::Discovery::Compile(_))
             && let Some(result) = p.react_compiler_result.take()
         {
             e_.args = result.args;

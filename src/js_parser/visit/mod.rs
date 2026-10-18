@@ -117,13 +117,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let body_stmts: &'a [Stmt] = func.body.stmts.slice();
         // The name of `export default function () {}` is the parser's, and that of a function
         // expression is bound in the function's own scope: neither names a React function.
-        let rc_name = func
-            .name
-            .filter(|_| kind == FnKind::Decl)
-            .and_then(|name| name.ref_.to_nullable());
         let rc = self.enter_react_compiler_function(
             bun_react_compiler::lowering::FunctionNode::Function(&func),
-            rc_name,
+            kind == FnKind::Decl,
         );
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
@@ -146,7 +142,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
         };
-        if let Some(fn_type) = rc.fn_type {
+        if let bun_react_compiler::Discovery::Compile(fn_type) = rc.found {
             self.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
                 args: func.args,
                 flags: func.flags,
@@ -161,7 +157,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.visit_stmts_and_prepend_temp_refs(&mut stmts, &mut temp_opts)
             .expect("unreachable");
-        if rc.fn_type.is_some()
+        if matches!(rc.found, bun_react_compiler::Discovery::Compile(_))
             && let Some(result) = self.react_compiler_result.take()
         {
             func.args = result.args;

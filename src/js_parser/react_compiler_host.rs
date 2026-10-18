@@ -9,7 +9,6 @@
 use bun_ast as js_ast;
 use bun_collections::VecExt;
 use bun_react_compiler::Discovery;
-use bun_react_compiler::hir::ReactFunctionType;
 use bun_react_compiler::lowering::FunctionNode;
 
 use crate::JSXImport;
@@ -28,21 +27,18 @@ pub(crate) enum ReactCompilerSearch {
     Replace,
 }
 
-/// What [`P::enter_react_compiler_function`] did, for the frame that visits the function.
+/// What [`P::enter_react_compiler_function`] found, for the frame that visits the function.
+/// Two scalars, so that it is returned in registers.
 #[derive(Clone, Copy)]
 pub(crate) struct ReactCompilerEntered {
-    /// What `react_compiler_search` was before the function changed it.
-    outer: Option<ReactCompilerSearch>,
-    /// Set for a function that is compiled once its body is visited.
-    pub(crate) fn_type: Option<ReactFunctionType>,
-    /// The binding that names such a function, or `Ref::NONE`.
+    pub(crate) found: Discovery,
+    /// The binding that names a function that is compiled, or `Ref::NONE`.
     pub(crate) name: js_ast::Ref,
 }
 
 impl ReactCompilerEntered {
     const NOTHING: Self = Self {
-        outer: None,
-        fn_type: None,
+        found: Discovery::Search,
         name: js_ast::Ref::NONE,
     };
 }
@@ -240,24 +236,25 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     }
 
     /// Asks the React Compiler about a function that the visit pass enters, before anything of
-    /// the function is visited: see `ReactCompilerState::enter_function`. `name` is the name of
-    /// a function declaration. The scope is the one around the function.
+    /// the function is visited: see `ReactCompilerState::enter_function`. A declaration has its
+    /// own name for the compiler. The scope is the one around the function.
     #[inline]
     pub(crate) fn enter_react_compiler_function(
         &mut self,
         func: FunctionNode<'_>,
-        name: Option<js_ast::Ref>,
+        is_declaration: bool,
     ) -> ReactCompilerEntered {
         if self.react_compiler.is_none() {
             return ReactCompilerEntered::NOTHING;
         }
-        self.discover_react_function(func, name)
+        self.discover_react_function(func, is_declaration)
     }
 
     #[inline]
     pub(crate) fn leave_react_compiler_function(&mut self, entered: ReactCompilerEntered) {
-        if let Some(outer) = entered.outer {
-            self.react_compiler_search = outer;
+        // A function is asked about in `Search` alone, so that is what it changed.
+        if entered.found != Discovery::Search {
+            self.react_compiler_search = ReactCompilerSearch::Search;
         }
     }
 
@@ -275,17 +272,25 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     fn discover_react_function(
         &mut self,
         func: FunctionNode<'_>,
-        name: Option<js_ast::Ref>,
+        is_declaration: bool,
     ) -> ReactCompilerEntered {
         if self.react_compiler_search != ReactCompilerSearch::Search {
             return ReactCompilerEntered::NOTHING;
         }
-        // A method is no function to upstream: it is not asked about, and what is in it is.
-        let is_method = matches!(func, FunctionNode::Function(method)
-            if method.flags.contains(js_ast::flags::Function::IsUniqueFormalParameters));
-        if is_method {
-            return ReactCompilerEntered::NOTHING;
-        }
+        let declared_name = match func {
+            // A method is no function to upstream: it is not asked about, and what is in it is.
+            FunctionNode::Function(method)
+                if method
+                    .flags
+                    .contains(js_ast::flags::Function::IsUniqueFormalParameters) =>
+            {
+                return ReactCompilerEntered::NOTHING;
+            }
+            FunctionNode::Function(declaration) if is_declaration => {
+                declaration.name.and_then(|name| name.ref_.to_nullable())
+            }
+            _ => None,
+        };
         let Some(mut rc) = self.react_compiler.take() else {
             return ReactCompilerEntered::NOTHING;
         };
@@ -294,19 +299,18 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         let (found, name) = rc.enter_function(
             &ReactCompilerHost::new(self),
             &func,
-            name,
+            declared_name,
             is_in_class,
             is_top_level,
         );
         self.react_compiler = Some(rc);
-        let (search, fn_type) = match found {
+        self.react_compiler_search = match found {
             Discovery::Search => return ReactCompilerEntered::NOTHING,
-            Discovery::Skip => (ReactCompilerSearch::Skip, None),
-            Discovery::Compile(fn_type) => (ReactCompilerSearch::Replace, Some(fn_type)),
+            Discovery::Skip => ReactCompilerSearch::Skip,
+            Discovery::Compile(_) => ReactCompilerSearch::Replace,
         };
         ReactCompilerEntered {
-            outer: Some(core::mem::replace(&mut self.react_compiler_search, search)),
-            fn_type,
+            found,
             name: name.unwrap_or(js_ast::Ref::NONE),
         }
     }

@@ -2261,7 +2261,7 @@ describe("frames on a closed stream (RFC 9113 §5.1)", () => {
   /** A server whose stream 1 pushes `pushes` streams, and a raw client connected to it. */
   async function pushingServer(pushes: number, onPush: (push: http2.ServerHttp2Stream) => void) {
     const server = http2.createServer();
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       stream.on("error", () => {});
       for (let i = 0; stream.id === 1 && i < pushes; i++) {
         stream.pushStream({ ":path": `/push/${i}` }, (err, push) => {

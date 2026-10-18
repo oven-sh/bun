@@ -199,8 +199,9 @@ concurrentUnlessDebug("AbortSignal.timeout is released when its wrapper is colle
     expect(stderr).toBe("");
     const { armed, live } = JSON.parse(stdout);
     // Only the held one. All 501 stay armed when the timeouts are not released.
-    expect(armed).toBeWithin(1, 50);
-    // The wrappers are collected either way.
+    expect(armed).toBe(1);
+    // The wrappers are collected either way. Not an exact count: the constructor and the prototype are in it, and a
+    // JIT plan that is still in flight can hold one aborted any() signal.
     expect(live).toBeLessThan(50);
     expect(exitCode).toBe(0);
   });

@@ -4696,6 +4696,25 @@ describe("css tests", () => {
         );
       });
 
+      describe("with other rules", () => {
+        prefix_test(
+          ".foo { -webkit-box-orient: vertical; flex-direction: column } .bar { -webkit-box-orient: vertical; flex-direction: column }",
+          ".foo, .bar { -webkit-box-orient: vertical; flex-direction: column; }",
+          defaults,
+        );
+        // Needs #44704: the duplicate-rule check ignores unknown names and importance, so the first `.foo` rule is deleted.
+        cssTestTodo(
+          ".foo { -webkit-line-clamp: 2; flex-direction: column; -webkit-box-orient: vertical } .bar { color: red } .foo { cursor: pointer; -webkit-box-orient: vertical; flex-direction: column }",
+          ".foo { -webkit-line-clamp: 2; -webkit-box-orient: vertical; flex-direction: column; } .bar { color: red; } .foo { cursor: pointer; -webkit-box-orient: vertical; flex-direction: column; }",
+          defaults,
+        );
+        cssTestTodo(
+          ".foo { -webkit-box-orient: vertical; flex-direction: row !important } .bar { color: red } .foo { -webkit-box-orient: vertical; flex-direction: column }",
+          ".foo { -webkit-box-orient: vertical; flex-direction: row !important; } .bar { color: red; } .foo { -webkit-box-orient: vertical; flex-direction: column; }",
+          defaults,
+        );
+      });
+
       // Targets that need the 2009 syntax get it generated from `flex-direction`.
       // In one rule, only the prefixes the author did not write are generated.
       describe("targets that need the 2009 syntax", () => {

@@ -1671,8 +1671,8 @@ mod tests {
                 });
             }
         });
-        // A thread that loses the race frees its chunk at once.
-        assert_eq!(count(), 2);
+        // One chunk each, plus the page bits of `cells`. A thread that loses the race frees its chunk immediately.
+        assert_eq!(count(), 3);
         drop((cells, vec));
         assert_eq!(count(), 0);
 

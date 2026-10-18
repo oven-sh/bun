@@ -4924,6 +4924,24 @@ a.ts(17,7): error TS2322: Type 'string' is not assignable to type 'number'.
       );
     });
 
+    test("prints reverse mapped types in the order of the types they were inferred from", async () => {
+      using dir = project({
+        "a.ts": `
+type Deep<T> = { [K in keyof T]: Deep<T[K]> };
+declare function infer<T>(deep: Deep<T>): T;
+interface Zed { z: {} }
+interface Abe { a: {} }
+declare const source: { p: Zed | Abe };
+export const x: never = infer(source).p;
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(7,14): error TS2322: Type '{ a: unknown; } | { z: unknown; }' is not assignable to type 'never'.
+          Type '{ a: unknown; }' is not assignable to type 'never'."
+      `);
+    });
+
     test("a parameter annotation that depends on the parameter types of its own function", async () => {
       using dir = project({
         "a.ts": `
@@ -4971,9 +4989,10 @@ export function f<O>(x: { t?: string } & { a: { code: number } }) {
       expect(stdout).toBe("");
     });
 
-    // TypeScript keeps the variances it measures while one of them is still being measured, so they depend on which type of a cycle is
-    // compared first. `tsc --singleThreaded` reports the error in model.ts only if global.ts is checked before it.
-    describe("variances of mutually recursive types are measured in program order", () => {
+    // TypeScript caches the variances it measures while another measurement is still in progress. 7.1 restarts from the cycle's
+    // first-declared type, so the result doesn't depend on check order. In 7.0 it does: `tsc --singleThreaded` reports the error in
+    // model.ts only if global.ts is checked first.
+    describe("variances of mutually recursive types don't depend on check order", () => {
       const files = {
         "directives.ts": `
 export interface Binding<Value = any, Modifiers extends string = string> {
@@ -5020,23 +5039,281 @@ dynamic.getSSRProps = binding => {
 `,
       };
 
-      test.each([1, 8])("with the earlier file, on %d threads", async threads => {
-        using dir = project(files);
-        const { stdout } = await check(dir, ["--threads", String(threads)]);
-        expect(stdout).toMatchInlineSnapshot(`
-          "model.ts(11,48): error TS2345: Argument of type 'Binding<any, string>' is not assignable to parameter of type 'Binding<any, "number">'.
-            Types of property 'dir' are incompatible.
-              Type 'ObjectDirective<any, any, string>' is not assignable to type 'ObjectDirective<any, any, "number">'.
-                Type 'string' is not assignable to type '"number"'."
-        `);
-      });
+      const { "global.ts": _, ...withoutGlobal } = files;
+      for (const [name, program] of [
+        ["reports the error when an earlier file compares another type first", files],
+        ["reports the same error without that file", withoutGlobal],
+      ] as const) {
+        test.each([1, 8])(`${name}, on %d threads`, async threads => {
+          using dir = project(program);
+          const { stdout } = await check(dir, ["--threads", String(threads)]);
+          expect(stdout).toMatchInlineSnapshot(`
+            "model.ts(11,48): error TS2345: Argument of type 'Binding<any, string>' is not assignable to parameter of type 'Binding<any, "number">'.
+              Types of property 'dir' are incompatible.
+                Type 'ObjectDirective<any, any, string>' is not assignable to type 'ObjectDirective<any, any, "number">'.
+                  Type 'string' is not assignable to type '"number"'."
+          `);
+        });
+      }
+    });
 
-      test("without the earlier file", async () => {
-        const { "global.ts": _, ...rest } = files;
-        using dir = project(rest);
-        const { stdout } = await check(dir);
-        expect(stdout).toBe("");
+    // The expected output is TypeScript 7.1's. 7.0 misses the errors in issue_v0.ts and issue_v1.ts and some in order_b.ts.
+    test.each([1, 8])("reports the errors of TypeScript 7.1 in cycles of generic types, on %d threads", async threads => {
+      using dir = project({
+        "issue_v0.ts": `interface Box<N extends Record<string, Box<any, any> | undefined>, X> {
+  get: () => Fn<N, X>;
+}
+type Wrap<N> = { [K in keyof N]: N[K] extends Box<infer M, any> ? never : never };
+type Fn<N extends Record<string, Box<any, any> | undefined>, X> = (p: { n: Wrap<N>; x: X }) => void;
+type B<C> = Box<{}, C extends Fn<any, infer X> ? X : never>;
+
+export const v: B<any> = {} as B<Fn<{}, {}>>;
+`,
+        "issue_v1.ts": `type Entry<C> = Shape<
+  C extends Comp<infer N, any> ? N : never,
+  C extends Comp<any, infer X> ? X : never
+>;
+
+interface Shape<N extends {}, X> {
+  root: () => Comp<N, X>;
+}
+
+type Comp<N extends Record<string, Entry<any>>, X> = (props: {
+  nested: { [K in keyof N]: CompOf<N[K]> };
+  extra: X;
+}) => void;
+
+type CompOf<E> = E extends Entry<infer C> ? C : never;
+
+declare const inner: Entry<Comp<{}, {}>>;
+
+// Entry<any> should accept any entry.
+declare function take(entry: Entry<any>): void;
+take(inner);
+
+// Same thing through a conditional parameter type.
+declare function create<R>(
+  params: R extends () => Comp<infer N, infer X> ? { root: R; nested: N } : never,
+): void;
+create({
+  root: (): Comp<{ a: typeof inner }, {}> => null!,
+  nested: { a: inner },
+});
+
+export {}
+`,
+        "issue_v2.ts": `interface Internal<N extends Record<string, Entry<any> | undefined>, X extends {} | null> {
+  root: Comp<N, X>;
+}
+type Preloaded<E> = E extends { [k: string]: Internal<any, any> | undefined }
+  ? { [K in keyof E]: PreloadedOne<CompOf<E[K]>> }
+  : never;
+type Props<N, X> = { entryPoints: Preloaded<N>; x: X };
+type Comp<N extends Record<string, Entry<any> | undefined>, X extends {} | null = {}> = (props: Props<N, X>) => void;
+type PreloadedOne<C> = C extends Comp<infer N, any> ? { entryPoints: Preloaded<N> } : never;
+type Entry<C> = Internal<C extends Comp<infer N, any> ? N : never, C extends Comp<any, infer X> ? X : never>;
+type CompOf<E> = E extends Entry<infer C> ? C : never;
+
+declare const inner: Entry<Comp<{}, null>>;
+declare const parent: Entry<Comp<{ inner: typeof inner }>>;
+declare const props: Props<{ parent?: typeof parent }, {}>;
+export const x = props.entryPoints.parent;
+`,
+        "issue_v3.ts": `interface Internal<N extends Record<string, Entry<any> | undefined>, X extends {} | null> {
+  root: Comp<N, X>;
+}
+type Preloaded<E> = E extends { [k: string]: Internal<any, any> | undefined }
+  ? { [K in keyof E]: PreloadedOne<CompOf<E[K]>> }
+  : never;
+type Props<N, X> = { entryPoints: Preloaded<N>; x: X };
+type Comp<N extends Record<string, Entry<any> | undefined>, X extends {} | null = {}> = (props: Props<N, X>) => void;
+type PreloadedOne<C> = C extends Comp<infer N, any> ? { entryPoints: Preloaded<N> } : never;
+type Entry<C> = Internal<C extends Comp<infer N, any> ? N : never, C extends Comp<any, infer X> ? X : never>;
+type CompOf<E> = E extends Entry<infer C> ? C : never;
+
+declare const inner: Entry<Comp<{}, null>>;
+declare function create<C>(p: C extends Comp<infer N, any> ? { run: (a: { id: string }) => void } : never): void;
+create<Comp<{ inner: typeof inner }>>({ run: ({ id }) => {} });
+
+export {}
+`,
+        "issue_v4.ts": `interface Internal<
+  Nested extends Record<string, Entry<any> | undefined>,
+  Extra extends {} | null,
+> {
+  root: Comp<Nested, Extra>;
+}
+
+type Preloaded<E> = E extends { [k: string]: Internal<any, any> }
+  ? { [K in keyof E]: PreloadedOne<CompOf<E[K]>> }
+  : never;
+
+type Props<N, X> = {
+  entryPoints: Preloaded<N>;
+  x: X;
+};
+
+type Comp<
+  N extends Record<string, Entry<any> | undefined>,
+  X extends {} | null = {},
+> = (props: Props<N, X>) => void;
+
+type PreloadedOne<C> = C extends Comp<infer N, any>
+  ? { entryPoints: Preloaded<N> }
+  : never;
+
+type Entry<C> = Internal<
+  C extends Comp<infer N, any> ? N : never,
+  C extends Comp<any, infer X> ? X : never
+>;
+
+type CompOf<E> = E extends Entry<infer C> ? C : never;
+
+declare const inner: Entry<Comp<{}, null>>;
+export type Outer = Comp<{ inner: typeof inner }>;
+`,
+        "order_a.ts": `interface Box<N extends Record<string, Box<any, any> | undefined>, X> {
+  get: () => Fn<N, X>;
+}
+type Wrap<N> = { [K in keyof N]: N[K] extends Box<infer M, any> ? never : never };
+type Fn<N extends Record<string, Box<any, any> | undefined>, X> = (p: { n: Wrap<N>; x: X }) => void;
+type B<C> = Box<{}, C extends Fn<any, infer X> ? X : never>;
+export const p1: never = null! as B<any>;
+type X1 = any extends Fn<any, infer X> ? X : never;
+export const p2: never = null! as X1;
+declare let narrow: Box<{}, {}>; declare let wide: Box<{}, unknown>; declare let str: Box<{}, string>; declare let num: Box<{}, number>;
+wide = narrow; narrow = wide; str = num; num = str;
+declare let f1: Fn<{}, {}>; declare let f2: Fn<{}, unknown>; declare let f3: Fn<{}, string>; declare let f4: Fn<{}, number>;
+f2 = f1; f1 = f2; f3 = f4; f4 = f3;
+export const sentinel: number = '';
+`,
+        "order_b.ts": `interface Box<N extends Record<string, Box<any, any> | undefined>, X> {
+  get: () => Fn<N, X>;
+}
+type Wrap<N> = { [K in keyof N]: N[K] extends Box<infer M, any> ? never : never };
+type Fn<N extends Record<string, Box<any, any> | undefined>, X> = (p: { n: Wrap<N>; x: X }) => void;
+type B<C> = Box<{}, C extends Fn<any, infer X> ? X : never>;
+declare let f1: Fn<{}, {}>; declare let f2: Fn<{}, unknown>; declare let f3: Fn<{}, string>; declare let f4: Fn<{}, number>;
+f2 = f1; f1 = f2; f3 = f4; f4 = f3;
+declare let narrow: Box<{}, {}>; declare let wide: Box<{}, unknown>; declare let str: Box<{}, string>; declare let num: Box<{}, number>;
+wide = narrow; narrow = wide; str = num; num = str;
+export const v: B<any> = {} as B<Fn<{}, {}>>;
+export const sentinel: number = '';
+`,
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "es2022", "module": "esnext", "moduleResolution": "bundler", "types": [], "moduleDetection": "force"}, "files": ["issue_v0.ts", "issue_v1.ts", "issue_v2.ts", "issue_v3.ts", "issue_v4.ts", "order_a.ts", "order_b.ts"]}`,
       });
+      const { stdout } = await check(dir, ["--threads", String(threads)]);
+      expect(stdout).toBe(
+        `
+issue_v0.ts(8,14): error TS2322: Type 'B<Fn<{}, {}>>' is not assignable to type 'B<any>'.
+  The types returned by 'get()' are incompatible between these types.
+    Type 'Fn<{}, {}>' is not assignable to type 'Fn<{}, unknown>'.
+      Types of parameters 'p' and 'p' are incompatible.
+        Type '{ n: Wrap<{}>; x: unknown; }' is not assignable to type '{ n: Wrap<{}>; x: {}; }'.
+          Types of property 'x' are incompatible.
+            Type 'unknown' is not assignable to type '{}'.
+issue_v1.ts(21,6): error TS2345: Argument of type 'Entry<Comp<{}, {}>>' is not assignable to parameter of type 'Entry<any>'.
+  The types returned by 'root()' are incompatible between these types.
+    Type 'Comp<{}, {}>' is not assignable to type 'Comp<Record<string, Entry<any>>, unknown>'.
+      Types of parameters 'props' and 'props' are incompatible.
+        Type '{ nested: { [x: string]: any; }; extra: unknown; }' is not assignable to type '{ nested: {}; extra: {}; }'.
+          Types of property 'extra' are incompatible.
+            Type 'unknown' is not assignable to type '{}'.
+issue_v1.ts(27,8): error TS2345: Argument of type '{ root: () => Comp<{ a: typeof inner; }, {}>; nested: { a: Entry<Comp<{}, {}>>; }; }' is not assignable to parameter of type 'never'.
+issue_v1.ts(28,18): error TS2344: Type '{ a: Entry<Comp<{}, {}>>; }' does not satisfy the constraint 'Record<string, Entry<any>>'.
+  Property 'a' is incompatible with index signature.
+    Type 'Entry<Comp<{}, {}>>' is not assignable to type 'Entry<any>'.
+      The types returned by 'root()' are incompatible between these types.
+        Type 'Comp<{}, {}>' is not assignable to type 'Comp<Record<string, Entry<any>>, unknown>'.
+          Types of parameters 'props' and 'props' are incompatible.
+            Type '{ nested: { [x: string]: any; }; extra: unknown; }' is not assignable to type '{ nested: {}; extra: {}; }'.
+              Types of property 'extra' are incompatible.
+                Type 'unknown' is not assignable to type '{}'.
+order_a.ts(7,14): error TS2322: Type 'B<any>' is not assignable to type 'never'.
+order_a.ts(9,14): error TS2322: Type 'unknown' is not assignable to type 'never'.
+order_a.ts(11,1): error TS2322: Type 'Box<{}, {}>' is not assignable to type 'Box<{}, unknown>'.
+  The types returned by 'get()' are incompatible between these types.
+    Type 'Fn<{}, {}>' is not assignable to type 'Fn<{}, unknown>'.
+      Types of parameters 'p' and 'p' are incompatible.
+        Type '{ n: Wrap<{}>; x: unknown; }' is not assignable to type '{ n: Wrap<{}>; x: {}; }'.
+          Types of property 'x' are incompatible.
+            Type 'unknown' is not assignable to type '{}'.
+order_a.ts(11,31): error TS2322: Type 'Box<{}, number>' is not assignable to type 'Box<{}, string>'.
+  The types returned by 'get()' are incompatible between these types.
+    Type 'Fn<{}, number>' is not assignable to type 'Fn<{}, string>'.
+      Types of parameters 'p' and 'p' are incompatible.
+        Type '{ n: Wrap<{}>; x: string; }' is not assignable to type '{ n: Wrap<{}>; x: number; }'.
+          Types of property 'x' are incompatible.
+            Type 'string' is not assignable to type 'number'.
+order_a.ts(11,42): error TS2322: Type 'Box<{}, string>' is not assignable to type 'Box<{}, number>'.
+  The types returned by 'get()' are incompatible between these types.
+    Type 'Fn<{}, string>' is not assignable to type 'Fn<{}, number>'.
+      Types of parameters 'p' and 'p' are incompatible.
+        Type '{ n: Wrap<{}>; x: number; }' is not assignable to type '{ n: Wrap<{}>; x: string; }'.
+          Types of property 'x' are incompatible.
+            Type 'number' is not assignable to type 'string'.
+order_a.ts(13,1): error TS2322: Type 'Fn<{}, {}>' is not assignable to type 'Fn<{}, unknown>'.
+  Types of parameters 'p' and 'p' are incompatible.
+    Type '{ n: Wrap<{}>; x: unknown; }' is not assignable to type '{ n: Wrap<{}>; x: {}; }'.
+      Types of property 'x' are incompatible.
+        Type 'unknown' is not assignable to type '{}'.
+order_a.ts(13,19): error TS2322: Type 'Fn<{}, number>' is not assignable to type 'Fn<{}, string>'.
+  Types of parameters 'p' and 'p' are incompatible.
+    Type '{ n: Wrap<{}>; x: string; }' is not assignable to type '{ n: Wrap<{}>; x: number; }'.
+      Types of property 'x' are incompatible.
+        Type 'string' is not assignable to type 'number'.
+order_a.ts(13,28): error TS2322: Type 'Fn<{}, string>' is not assignable to type 'Fn<{}, number>'.
+  Types of parameters 'p' and 'p' are incompatible.
+    Type '{ n: Wrap<{}>; x: number; }' is not assignable to type '{ n: Wrap<{}>; x: string; }'.
+      Types of property 'x' are incompatible.
+        Type 'number' is not assignable to type 'string'.
+order_a.ts(14,14): error TS2322: Type 'string' is not assignable to type 'number'.
+order_b.ts(8,1): error TS2322: Type 'Fn<{}, {}>' is not assignable to type 'Fn<{}, unknown>'.
+  Types of parameters 'p' and 'p' are incompatible.
+    Type '{ n: Wrap<{}>; x: unknown; }' is not assignable to type '{ n: Wrap<{}>; x: {}; }'.
+      Types of property 'x' are incompatible.
+        Type 'unknown' is not assignable to type '{}'.
+order_b.ts(8,19): error TS2322: Type 'Fn<{}, number>' is not assignable to type 'Fn<{}, string>'.
+  Types of parameters 'p' and 'p' are incompatible.
+    Type '{ n: Wrap<{}>; x: string; }' is not assignable to type '{ n: Wrap<{}>; x: number; }'.
+      Types of property 'x' are incompatible.
+        Type 'string' is not assignable to type 'number'.
+order_b.ts(8,28): error TS2322: Type 'Fn<{}, string>' is not assignable to type 'Fn<{}, number>'.
+  Types of parameters 'p' and 'p' are incompatible.
+    Type '{ n: Wrap<{}>; x: number; }' is not assignable to type '{ n: Wrap<{}>; x: string; }'.
+      Types of property 'x' are incompatible.
+        Type 'number' is not assignable to type 'string'.
+order_b.ts(10,1): error TS2322: Type 'Box<{}, {}>' is not assignable to type 'Box<{}, unknown>'.
+  The types returned by 'get()' are incompatible between these types.
+    Type 'Fn<{}, {}>' is not assignable to type 'Fn<{}, unknown>'.
+      Types of parameters 'p' and 'p' are incompatible.
+        Type '{ n: Wrap<{}>; x: unknown; }' is not assignable to type '{ n: Wrap<{}>; x: {}; }'.
+          Types of property 'x' are incompatible.
+            Type 'unknown' is not assignable to type '{}'.
+order_b.ts(10,31): error TS2322: Type 'Box<{}, number>' is not assignable to type 'Box<{}, string>'.
+  The types returned by 'get()' are incompatible between these types.
+    Type 'Fn<{}, number>' is not assignable to type 'Fn<{}, string>'.
+      Types of parameters 'p' and 'p' are incompatible.
+        Type '{ n: Wrap<{}>; x: string; }' is not assignable to type '{ n: Wrap<{}>; x: number; }'.
+          Types of property 'x' are incompatible.
+            Type 'string' is not assignable to type 'number'.
+order_b.ts(10,42): error TS2322: Type 'Box<{}, string>' is not assignable to type 'Box<{}, number>'.
+  The types returned by 'get()' are incompatible between these types.
+    Type 'Fn<{}, string>' is not assignable to type 'Fn<{}, number>'.
+      Types of parameters 'p' and 'p' are incompatible.
+        Type '{ n: Wrap<{}>; x: number; }' is not assignable to type '{ n: Wrap<{}>; x: string; }'.
+          Types of property 'x' are incompatible.
+            Type 'number' is not assignable to type 'string'.
+order_b.ts(11,14): error TS2322: Type 'B<Fn<{}, {}>>' is not assignable to type 'B<any>'.
+  The types returned by 'get()' are incompatible between these types.
+    Type 'Fn<{}, {}>' is not assignable to type 'Fn<{}, unknown>'.
+      Types of parameters 'p' and 'p' are incompatible.
+        Type '{ n: Wrap<{}>; x: unknown; }' is not assignable to type '{ n: Wrap<{}>; x: {}; }'.
+          Types of property 'x' are incompatible.
+            Type 'unknown' is not assignable to type '{}'.
+order_b.ts(12,14): error TS2322: Type 'string' is not assignable to type 'number'.
+`.slice(1, -1),
+      );
     });
 
     test("an intersection with a conditional type whose constraint is any", async () => {

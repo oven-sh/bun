@@ -2305,7 +2305,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `compareSymbols`, limited to the comparison of the first declarations.
-    fn compare_symbols(&self, s: Sym, t: Sym) -> std::cmp::Ordering {
+    pub(super) fn compare_symbols(&self, s: Sym, t: Sym) -> std::cmp::Ordering {
         let place = |symbol: Sym| {
             let (_, file, pos) = self.symbol_place(symbol)?;
             Some(self.place_in_program_order(file, pos))
@@ -2675,6 +2675,21 @@ impl<'p, 's> Checker<'p, 's> {
             (TypeData::TypeParam(_, _, x), TypeData::TypeParam(_, _, y)) => {
                 self.compare_targets_of_type_mappers(*x, *y)
             }
+            // TypeScript 7.1: by source, mapped type and constraint. 7.0 falls back to the ids.
+            (
+                TypeData::ReverseMapped {
+                    source: s,
+                    mapped: m,
+                    of: c,
+                },
+                TypeData::ReverseMapped {
+                    source: t,
+                    mapped: n,
+                    of: d,
+                },
+            ) => types(*s, *t)
+                .then_with(|| types(*m, *n))
+                .then_with(|| types(*c, *d)),
             // `ObjectFlagsObjectTypeKindMask`, then `compareTypeMappers`: a type without a mapper
             // comes last.
             (x, y) => {

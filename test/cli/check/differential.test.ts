@@ -33,7 +33,8 @@ const tsconfig = JSON.stringify({
 test.concurrent.skipIf(!tsc)("one thread enters every cycle where `tsc --singleThreaded` does", async () => {
   using dir = tempDir("bun-check-differential", {
     "tsconfig.json": tsconfig,
-    ...modulesInRings(isDebug || isASAN ? 24 : 60),
+    // With 52 or 60 modules TypeScript 7.0 reports TS2321 in every file and 7.1 in none. Up to 48 they agree.
+    ...modulesInRings(isDebug || isASAN ? 24 : 48),
   });
   const root = String(dir);
   const [theirs, ours] = await Promise.all([

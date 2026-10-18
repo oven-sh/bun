@@ -36,6 +36,11 @@ that a checker creates first comes first. Two tests show the difference: `parseB
 and `temporal.types` are those of microsoft/TypeScript 5237fd46890956e4bb8177a1a05dcd69e4166560. A sync with an older
 version brings the old ones back.
 
+`bun check` measures the variances of a cycle of generic types from the cycle's first-declared type, as TypeScript 7.1
+does. In 7.0 the result depends on which type is compared first. One test shows the difference:
+`classVarianceResolveCircularity2.errors.txt` and `classVarianceResolveCircularity2.types` are those of
+microsoft/TypeScript 5237fd46890956e4bb8177a1a05dcd69e4166560. A sync with an older version brings the old ones back.
+
 ```sh
 bun bd test test/cli/check/conformance
 # One test, or all whose path contains the text

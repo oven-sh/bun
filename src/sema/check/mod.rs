@@ -875,6 +875,9 @@ impl<'s> Program<'s> {
             is_marker_comparison: false,
             is_trial_comparison: false,
             variances_in_progress: Vec::new(),
+            variances_marked_empty: Vec::new(),
+            suspended_variances: Vec::new(),
+            in_progress_variance_reads: 0,
             variance_cycles: 0,
             variances_measured: Vec::new(),
             failed_type_argument: 0,
@@ -1675,6 +1678,12 @@ pub struct Checker<'p, 's> {
     /// `Relater::caches_failures`.
     pub(super) is_trial_comparison: bool,
     variances_in_progress: Vec<Sym>,
+    /// In-progress symbols that a cycle re-entered. Their variances read as empty until the measurement finishes.
+    variances_marked_empty: Vec<Sym>,
+    /// Measurements suspended by a restart. Their marker types still count as marker types.
+    suspended_variances: Vec<Sym>,
+    /// Counts requests for the variances of a symbol that is still being measured.
+    in_progress_variance_reads: u64,
     /// How many times `variances_worker` was re-entered for a symbol in `variances_in_progress`.
     variance_cycles: u32,
     /// The entries cached since the outermost `variances_worker` call on the stack began.

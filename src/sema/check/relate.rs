@@ -2607,19 +2607,18 @@ impl<'p, 's> Checker<'p, 's> {
             if modifiers != Flags::IN && modifiers != Flags::OUT {
                 return false;
             }
-            let is_created = self.has_type_parameter_deferred_check_started(sym, param);
-            if !is_created {
-                // The answer changes later, so a comparison that depends on it is not stored. tsgo
-                // repeats a failed one, since this check compares with `reportErrors`.
-                self.mark_tainted_by_pattern_from(self.frames.len());
-            }
-            return is_created;
+            // The answer depends on the current node, which isn't part of a relation's cache key. Don't cache a comparison
+            // that depends on it: a task checking an earlier file could hit the entry. tsgo repeats a failed one anyway,
+            // since this check compares with `reportErrors`.
+            self.mark_tainted_by_pattern_from(self.frames.len());
+            return self.has_type_parameter_deferred_check_started(sym, param);
         }
         // `getVariancesWorker` takes the variance of a parameter declared `in` or `out` from the modifiers and creates no marker type.
         if !modifiers.is_empty() {
             return false;
         }
         self.variances_in_progress.contains(&sym)
+            || self.suspended_variances.contains(&sym)
             || self.p.variances.get(&self.task, &sym).is_some()
     }
 
@@ -2773,9 +2772,43 @@ impl<'p, 's> Checker<'p, 's> {
                 Err(_) => variances,
             };
         }
-        if self.variances_in_progress.contains(&sym) {
-            self.variance_cycles += 1;
+        if self.variances_marked_empty.contains(&sym) {
+            self.in_progress_variance_reads += 1;
             return &[];
+        }
+        // TypeScript 7.1: variances measured inside a cycle of generic types depend on which type was measured first.
+        // On re-entry, restart from the cycle's first-declared type with an empty stack and keep those results. That
+        // makes them independent of check order.
+        if let Some(at) = (self.variances_in_progress.iter()).position(|&it| it == sym) {
+            self.in_progress_variance_reads += 1;
+            let mut first = sym;
+            for &other in &self.variances_in_progress[at + 1..] {
+                if self.compare_symbols(other, first).is_lt() {
+                    first = other;
+                }
+            }
+            if first != sym && self.is_half_of_stack_in_use() {
+                // Not enough native stack to nest a restart (typescript-go's stack grows). Fall back to 7.0's
+                // order-dependent result.
+                let cycle = std::iter::once(crate::util::fx_hash(&first));
+                self.task.close_ring(|| false, cycle);
+            } else if first != sym {
+                let in_progress = std::mem::take(&mut self.variances_in_progress);
+                let resolution_start =
+                    std::mem::replace(&mut self.resolution_start, self.stack.len());
+                let suspended = self.suspended_variances.len();
+                self.suspended_variances.extend_from_slice(&in_progress);
+                self.variances_of(first);
+                self.suspended_variances.truncate(suspended);
+                self.resolution_start = resolution_start;
+                self.variances_in_progress = in_progress;
+            }
+            let known = self.p.variances.get(&self.task, &sym);
+            // `links.variances = []VarianceFlags{}`: `sym` reads as empty until its in-progress measurement finishes.
+            return known.unwrap_or_else(|| {
+                self.variances_marked_empty.push(sym);
+                &[]
+            });
         }
         // The value of the first task in serial order, for a task that is retried (`Program::validate`). For a task that
         // commits, also what a measurement that has ended has shared: `commit::Claims`.
@@ -2876,18 +2909,26 @@ impl<'p, 's> Checker<'p, 's> {
                 self.reliability = saved;
                 variance
             };
+            // A restart already measured `sym`.
+            if self.p.variances.get(&self.task, &sym).is_some() {
+                break;
+            }
             variances.push(variance);
         }
         self.in_variance_computation = was_computing;
         self.resolution_start = resolution_start;
         self.variances_in_progress.pop();
+        self.variances_marked_empty.retain(|&it| it != sym);
         // Kept until the check ends, published or not: a few bytes.
         let variances: &'s [u8] = self.arena.alloc_slice_copy(&variances);
         let mut is_open = false;
         let variances = match self.end_scope(scope) {
             Ok(stored) => {
-                self.variances_measured.push((sym, variances));
-                self.p.variances.insert(&self.task, sym, variances, stored)
+                let known = self.p.variances.get(&self.task, &sym);
+                known.unwrap_or_else(|| {
+                    self.variances_measured.push((sym, variances));
+                    self.p.variances.insert(&self.task, sym, variances, stored)
+                })
             }
             Err(_) => {
                 is_open = true;
@@ -5626,16 +5667,18 @@ impl<'p, 's> Checker<'p, 's> {
                     // Also when both sides have the same extends type: the inference asks for the
                     // variances of the generic types in it, and in a cycle of variance
                     // computations what they are depends on who asks first.
-                    // FOR SPEED: once. Instantiated from one declaration, both sides have the same
-                    // `infer` type parameters, and each that occurs in the extends type maps to
-                    // itself: after the first time the inference changes nothing.
-                    let is_repeated = !source_params.is_empty()
+                    // FOR SPEED: skip the inference once it has run with all of those variances
+                    // measured. Both sides come from one declaration, so they have the same `infer`
+                    // type parameters and each one in the extends type maps to itself: repeating
+                    // the inference changes nothing.
+                    let maps_to_itself = !source_params.is_empty()
                         && source_extends == target_extends
                         && !(self.params_mentioned_in(source_extends, &source_params))
-                            .contains(&false)
-                        && !(self.task_facts)
-                            .add(source_extends, task_fact::HAS_INFERRED_BETWEEN_SAME_EXTENDS);
+                            .contains(&false);
+                    let fact = task_fact::HAS_INFERRED_BETWEEN_SAME_EXTENDS;
+                    let is_repeated = maps_to_itself && self.task_facts.has(target_extends, fact);
                     if !source_params.is_empty() && !is_repeated {
+                        let reads = self.in_progress_variance_reads;
                         let around = self.cond_origin(source).2;
                         let inferred = self.infer_from_types_comparing(
                             &source_params,
@@ -5646,6 +5689,9 @@ impl<'p, 's> Checker<'p, 's> {
                         );
                         mapper = self.mapper_from(&source_params, &inferred);
                         source_extends = self.instantiate(source_extends, mapper);
+                        if maps_to_itself && self.in_progress_variance_reads == reads {
+                            self.task_facts.add(target_extends, fact);
+                        }
                     }
                     if self.is_identical(source_extends, target_extends) {
                         let (sc, tc) = (self.cond_check(source), self.cond_check(target));

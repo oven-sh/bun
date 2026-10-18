@@ -50,7 +50,7 @@ impl CryptoClass for Crypto {
                 .into());
         };
 
-        random_data(array_buffer.byte_slice_mut());
+        random_data(global, array_buffer.byte_slice_mut());
 
         Ok(array)
     }
@@ -93,13 +93,14 @@ pub(crate) fn timing_safe_equal<'a>(
     Ok(bun_boringssl::c::constant_time_eq(buf1, buf2))
 }
 
-fn random_data(slice: &mut [u8]) {
+fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
     const ENTROPY_CACHE_FAST_PATH_MAX: usize = bun_jsc::RareData::EntropyCache::SIZE / 8;
     match slice.len() {
         0 => {}
         // 512 bytes or less we reuse from the same cache as UUID generation.
         1..=ENTROPY_CACHE_FAST_PATH_MAX => {
-            let src = VirtualMachine::get()
+            let src = global
+                .bun_vm()
                 .as_mut()
                 .rare_data()
                 .entropy_slice(slice.len());

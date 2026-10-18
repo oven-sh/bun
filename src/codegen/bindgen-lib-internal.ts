@@ -146,6 +146,8 @@ export function indent(text: string, by: number): string {
 }
 
 /** C++ statements that engage `optional`, a `std::optional`, then fill what it holds: `fill` is given a name for that. */
+const cppThenCheck = (statement: string, check: string) => (check ? `${statement}\n${check}` : statement);
+
 export function cppEmplace(optional: string, fill: (target: string) => string): string {
   const [first, ...rest] = optional.split(/\W+/);
   const target = `${first}${rest.map(part => part[0].toUpperCase() + part.slice(1)).join("")}Value`;
@@ -261,9 +263,9 @@ export abstract class Type {
   get convertsInPlace(): boolean {
     return false;
   }
-  /** C++ statements that convert `value` into `target`, which names an object that was just default-constructed. */
-  cppConvertInto(target: string, value: string, ctx: string, name: string): string {
-    return `${target} = ${this.cppConvert(value, ctx, name)};`;
+  /** C++ statements that convert `value` into `target`, just default-constructed. `check` returns if an exception is pending and follows what can throw; a caller that returns next passes "". */
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    return cppThenCheck(`${target} = ${this.cppConvert(value, ctx, name)};`, this.conversionThrows ? check : "");
   }
 
   abstract layout(): Layout;
@@ -674,8 +676,11 @@ export class Utf8Type extends Type {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string, ctx: string): string {
-    return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, "a string"_s);`;
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    return cppThenCheck(
+      `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, "a string"_s);`,
+      check,
+    );
   }
   cppAssign(target: string, value: unknown): string {
     assert(typeof value === "string", `${util.inspect(value)} is not a string`);
@@ -766,7 +771,8 @@ export class BytesType extends Type {
       refuseStringObject: refuse.includes("stringObject"),
     };
     const members = Object.entries(options).flatMap(([name, value]) => (value ? [`.${name} = true`] : []));
-    const sink = this.#isView ? "JSBytesView" : "JSBlobOrStringOrBuffer";
+    const takesString = options.fromString || options.toStringOtherwise;
+    const sink = !this.#isView ? "JSBlobOrStringOrBuffer" : takesString ? "JSBytesView" : "JSBlobOrBufferView";
     return `Bun::Bindgen::IDLBytes<Bun::Bindgen::${sink}, Bun::Bindgen::BytesOptions { ${members.join(", ")} }>`;
   }
   get tsType(): string {
@@ -786,7 +792,7 @@ export class BytesType extends Type {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string, ctx: string): string {
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
     const spelling = { string: ["a string"], buffer: ["ArrayBuffer", "ArrayBufferView"], blob: ["Blob"] };
     const expected = (["string", "buffer", "blob"] as const)
       .filter(kind => this.#options.from.includes(kind))
@@ -794,15 +800,16 @@ export class BytesType extends Type {
     if (!this.#options.from.includes("string")) expected[0] = `${/^A/.test(expected[0]) ? "an" : "a"} ${expected[0]}`;
     const last = expected.pop();
     const list = expected.length > 0 ? `${expected.join(", ")} or ${last}` : last!;
-    return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, ${asciiLiteral(list)});`;
+    const convert = `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, ${asciiLiteral(list)})`;
+    return check ? `if (${convert})\n    ${check}` : `${convert};`;
   }
   cppReadLast(target: string, value: string): string[] {
     if (!this.#isView) return [];
     if (this.#options.shared === "copied")
       return [
-        `std::optional<WTF::MallocSpan<uint8_t>> ${target}Copy;`,
-        `${target}.${this.#options.held === "borrowed" ? "readCopyingShared" : "copyIfShared"}(*globalObject, ${value}, ${target}Copy);`,
-        `RETURN_IF_EXCEPTION(scope, {});`,
+        `Bun::Bindgen::BytesCopy ${target}Copy;`,
+        `if (${target}.${this.#options.held === "borrowed" ? "readCopyingShared" : "copyIfShared"}(*globalObject, ${value}, ${target}Copy)) [[unlikely]]`,
+        `    RETURN_IF_EXCEPTION(scope, {});`,
       ];
     return this.#options.held === "borrowed" ? [`${target}.read(${value});`] : [];
   }
@@ -1075,14 +1082,14 @@ export class OptionalType extends Type {
     return this.inner.cppReadLast(target, value);
   }
   /** What converts in place is null when default-constructed. A pointer to a class instance, which does not, is not. */
-  cppConvertInto(target: string, value: string, ctx: string, name: string): string {
-    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name);
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name, check);
     const present = {
       optional: `!${value}.isUndefined()`,
       nullable: `!${value}.isUndefinedOrNull()`,
       falsyAsNull: `${value}.toBoolean(globalObject)`,
     }[this.modifier];
-    const convert = (slot: string) => this.inner.cppConvertInto(slot, value, ctx, name);
+    const convert = (slot: string) => this.inner.cppConvertInto(slot, value, ctx, name, check);
     const body = this.inner.nullRepresentation === "optional" ? cppEmplace(target, convert) : convert(target);
     return `if (${present}) {\n${indent(body, 4)}\n}`;
   }
@@ -1189,12 +1196,12 @@ export class DefaultType extends Type {
   get convertsInPlace(): boolean {
     return this.inner.convertsInPlace;
   }
-  cppConvertInto(target: string, value: string, ctx: string, name: string): string {
-    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name);
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name, check);
     return `if (${this.cppIsAbsent(value)}) {
 ${indent(this.cppAssign(target, this.value), 4)}
 } else {
-${indent(this.inner.cppConvertInto(target, value, ctx, name), 4)}
+${indent(this.inner.cppConvertInto(target, value, ctx, name, check), 4)}
 }`;
   }
   cppAssign(target: string, value: unknown): string {
@@ -1469,8 +1476,8 @@ export class DictionaryType extends NamedType {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string, ctx: string): string {
-    return `Bun::Bindgen::convertDictionaryInto(*globalObject, ${value}, ${target}, ${ctx});`;
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    return cppThenCheck(`Bun::Bindgen::convertDictionaryInto(*globalObject, ${value}, ${target}, ${ctx});`, check);
   }
   /** Every JS name read, in order. */
   get names(): string[] {
@@ -1575,8 +1582,11 @@ export class UnionType extends NamedType {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string, ctx: string): string {
-    return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target});`;
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    return cppThenCheck(
+      `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target});`,
+      check,
+    );
   }
   get tsType(): string {
     return this.alternatives.map(a => a.type.tsType).join(" | ");

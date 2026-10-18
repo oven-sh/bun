@@ -24,7 +24,7 @@ bool checkInMemoryBlob(JSGlobalObject& globalObject, JSValue value)
     return true;
 }
 
-static ALWAYS_INLINE std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value, bool& isShared)
+static ALWAYS_INLINE std::span<const uint8_t> bytesAndIsShared(JSValue value, bool& isShared)
 {
     std::span<const uint8_t> bytes;
     if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
@@ -48,10 +48,15 @@ static ALWAYS_INLINE std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value,
 std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value)
 {
     bool isShared = false;
-    return bytesOfBlobOrBuffer(value, isShared);
+    return bytesAndIsShared(value, isShared);
 }
 
-static bool isSharedBuffer(JSValue value)
+std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value, bool& isShared)
+{
+    return bytesAndIsShared(value, isShared);
+}
+
+bool isSharedBuffer(JSValue value)
 {
     if (auto* view = dynamicDowncast<JSArrayBufferView>(value))
         return view->isShared();
@@ -60,37 +65,19 @@ static bool isSharedBuffer(JSValue value)
     return false;
 }
 
-void JSBytesView::copyIfShared(JSGlobalObject& globalObject, JSValue argument, std::optional<MallocSpan<uint8_t>>& copy)
+std::span<const uint8_t> copyBytes(JSGlobalObject& globalObject, std::span<const uint8_t> bytes, BytesCopy& copy)
 {
-    if (!m_isBlobOrBuffer || !isSharedBuffer(argument))
-        return;
-    m_bytes = bytesOfBlobOrBuffer(argument);
-    copyBytes(globalObject, copy);
-}
-
-void JSBytesView::readCopyingShared(JSGlobalObject& globalObject, JSValue argument, std::optional<MallocSpan<uint8_t>>& copy)
-{
-    if (!m_isBlobOrBuffer)
-        return;
-    bool isShared = false;
-    m_bytes = bytesOfBlobOrBuffer(argument, isShared);
-    if (isShared)
-        copyBytes(globalObject, copy);
-}
-
-void JSBytesView::copyBytes(JSGlobalObject& globalObject, std::optional<MallocSpan<uint8_t>>& copy)
-{
-    if (m_bytes.empty())
-        return;
+    if (bytes.empty())
+        return bytes;
     // Not a Vector, which holds less than a buffer can.
-    copy = MallocSpan<uint8_t>::tryMalloc(m_bytes.size());
+    copy = MallocSpan<uint8_t>::tryMalloc(bytes.size());
     if (!*copy) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(getVM(&globalObject));
         throwOutOfMemoryError(&globalObject, scope);
-        return;
+        return bytes;
     }
-    memcpySpan(copy->mutableSpan(), m_bytes);
-    m_bytes = copy->span();
+    memcpySpan(copy->mutableSpan(), bytes);
+    return copy->span();
 }
 
 }

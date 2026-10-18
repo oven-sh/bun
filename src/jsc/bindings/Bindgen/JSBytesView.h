@@ -8,24 +8,25 @@ namespace Bun::Bindgen {
 
 // The bytes of a BufferSource or of a Blob whose bytes are in memory, where they are now. The data is not null.
 std::span<const uint8_t> bytesOfBlobOrBuffer(JSC::JSValue);
+std::span<const uint8_t> bytesOfBlobOrBuffer(JSC::JSValue, bool& isShared);
+bool isSharedBuffer(JSC::JSValue);
+
+// Optional: ~MallocSpan calls free, of null too.
+using BytesCopy = std::optional<WTF::MallocSpan<uint8_t>>;
+// The bytes of `copy`, which become those given. Allocating it can throw.
+std::span<const uint8_t> copyBytes(JSC::JSGlobalObject&, std::span<const uint8_t>, BytesCopy& copy);
 
 // Whether it is a Blob. Throws for one whose bytes are not in memory: a file.
 bool checkInMemoryBlob(JSC::JSGlobalObject&, JSC::JSValue);
 
-// The UTF-8 of a string, or the bytes of a Blob or a buffer where they are, which only JavaScript and a thread that writes a shared buffer change.
-class JSBytesView {
+// The bytes of a Blob or a buffer where they are, which only JavaScript and a thread that writes a shared buffer change.
+class JSBlobOrBufferView {
     WTF_FORBID_HEAP_ALLOCATION;
-    WTF_MAKE_NONCOPYABLE(JSBytesView);
-    WTF_MAKE_NONMOVABLE(JSBytesView);
+    WTF_MAKE_NONCOPYABLE(JSBlobOrBufferView);
+    WTF_MAKE_NONMOVABLE(JSBlobOrBufferView);
 
 public:
-    // Not `= default`: see JSStringUTF8View.
-    JSBytesView() {}
-
-    void initialize(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
-    {
-        m_string.initialize(globalObject, string);
-    }
+    JSBlobOrBufferView() = default;
 
     void initializeAsBlobOrBuffer()
     {
@@ -40,24 +41,57 @@ public:
             m_bytes = bytesOfBlobOrBuffer(argument);
     }
 
-    // The bytes of a shared buffer become those of `copy`. Allocating it can throw.
-    // Optional: ~MallocSpan calls free, of null too.
-    void copyIfShared(JSC::JSGlobalObject&, JSC::JSValue argument, std::optional<WTF::MallocSpan<uint8_t>>& copy);
+    // The bytes of a shared buffer become those of `copy`. Whether it copied, which can throw.
+    ALWAYS_INLINE bool copyIfShared(JSC::JSGlobalObject& globalObject, JSC::JSValue argument, BytesCopy& copy)
+    {
+        if (!m_isBlobOrBuffer || !isSharedBuffer(argument)) [[likely]]
+            return false;
+        m_bytes = copyBytes(globalObject, bytesOfBlobOrBuffer(argument), copy);
+        return true;
+    }
+
     // `read` and `copyIfShared` in one look at the buffer.
-    void readCopyingShared(JSC::JSGlobalObject&, JSC::JSValue argument, std::optional<WTF::MallocSpan<uint8_t>>& copy);
+    ALWAYS_INLINE bool readCopyingShared(JSC::JSGlobalObject& globalObject, JSC::JSValue argument, BytesCopy& copy)
+    {
+        if (!m_isBlobOrBuffer)
+            return false;
+        bool isShared = false;
+        m_bytes = bytesOfBlobOrBuffer(argument, isShared);
+        if (!isShared) [[likely]]
+            return false;
+        m_bytes = copyBytes(globalObject, m_bytes, copy);
+        return true;
+    }
 
     // Null data for a Blob or a buffer that was neither read nor copied: Rust reads it, each time it borrows the bytes.
+    std::span<const uint8_t> bytes() const LIFETIME_BOUND { return m_bytes; }
+
+protected:
+    bool isBlobOrBuffer() const { return m_isBlobOrBuffer; }
+
+private:
+    std::span<const uint8_t> m_bytes;
+    bool m_isBlobOrBuffer { false };
+};
+
+// Those, or the UTF-8 of a string.
+class JSBytesView : public JSBlobOrBufferView {
+public:
+    // Not `= default`: see JSStringUTF8View.
+    JSBytesView() {}
+
+    void initialize(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
+    {
+        m_string.initialize(globalObject, string);
+    }
+
     std::span<const uint8_t> bytes() const LIFETIME_BOUND
     {
-        return m_isBlobOrBuffer ? m_bytes : m_string.bytes();
+        return isBlobOrBuffer() ? JSBlobOrBufferView::bytes() : m_string.bytes();
     }
 
 private:
-    void copyBytes(JSC::JSGlobalObject&, std::optional<WTF::MallocSpan<uint8_t>>& copy);
-
     JSStringUTF8View m_string;
-    std::span<const uint8_t> m_bytes;
-    bool m_isBlobOrBuffer { false };
 };
 
 // The string, or null for a Blob or a buffer, which Rust reads, copies or pins from the argument itself.

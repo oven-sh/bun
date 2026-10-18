@@ -66,7 +66,8 @@ impl TextDecoder {
         saw_error: &mut bool,
         code_unit: u16,
     ) {
-        if let Some(lead_surrogate) = self.lead_surrogate.take() {
+        if let Some(lead_surrogate) = self.lead_surrogate {
+            self.lead_surrogate = None;
             if u16_is_trail(code_unit) {
                 // TODO: why is this here?
                 // const code_point = strings.u16GetSupplementary(lead_surrogate, code_unit);

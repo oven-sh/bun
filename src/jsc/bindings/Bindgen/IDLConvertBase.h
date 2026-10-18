@@ -71,6 +71,10 @@ private:
     const WTF::ASCIILiteral m_name;
 };
 
+// For a context made in the argument list of the conversion that takes it.
+template<typename Ctx>
+Ctx& asLvalue(Ctx&& ctx LIFETIME_BOUND) { return static_cast<Ctx&>(ctx); }
+
 // A value of the wrong type throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)`.
 struct NodeArgumentContext : Detail::ContextBase<NodeArgumentContext> {
     using ElementContext = Detail::ElementOf<NodeArgumentContext>;

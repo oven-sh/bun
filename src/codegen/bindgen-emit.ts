@@ -236,7 +236,7 @@ function cppConvertToAlternative(type: UnionType, candidates: readonly number[])
 }
 RETURN_IF_EXCEPTION(scope, void());`;
       if (alternative instanceof UnitType) return `result.tag = ${i};\nreturn;`;
-      const convert = (target: string) => alternative.cppConvertInto(target, "value", "ctx", "");
+      const convert = (target: string) => alternative.cppConvertInto(target, "value", "ctx", "", "");
       return `result.tag = ${i};
 scope.release();
 ${alternative.convertsInPlace ? cppEmplace(member, convert) : convert(member)}
@@ -461,6 +461,10 @@ template<> std::optional<${type.cpp}> WebCore::parseEnumeration<${type.cpp}>(JSC
 `;
 }
 
+/** Made of literals, so it is static and a call stores nothing for it. */
+const cppStaticContext = (variable: string, context: string) =>
+  `[[maybe_unused]] static constinit auto ${variable} = Bun::Bindgen::${context};`;
+
 function cppSourceForDictionary(type: DictionaryType): string {
   if (!type.accepted) return "";
   let nameIndex = 0;
@@ -470,7 +474,7 @@ function cppSourceForDictionary(type: DictionaryType): string {
     );
     const qualified = `${type.name}.${member.name}`;
     const lines = [
-      `[[maybe_unused]] auto ctx${i} = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(qualified)} };`,
+      cppStaticContext(`ctx${i}`, `LiteralConversionContext { ${asciiLiteral(qualified)} }`),
       `JSC::JSValue value${i} = ${first}`,
       ...others.map(read => `if (value${i}.isUndefined()) {\n${indent(`value${i} = ${read}`, 4)}\n}`),
     ];
@@ -479,8 +483,15 @@ function cppSourceForDictionary(type: DictionaryType): string {
     ctx${i}.throwRequired(*globalObject, scope);
     return;
 }`);
-    lines.push(member.type.cppConvertInto(`result.${member.fieldName}`, `value${i}`, `ctx${i}`, qualified));
-    if (member.type.conversionThrows) lines.push("RETURN_IF_EXCEPTION(scope, void());");
+    lines.push(
+      member.type.cppConvertInto(
+        `result.${member.fieldName}`,
+        `value${i}`,
+        `ctx${i}`,
+        qualified,
+        "RETURN_IF_EXCEPTION(scope, void());",
+      ),
+    );
     return `    {\n${indent(lines.join("\n"), 8)}\n    }`;
   });
   const count = type.names.length;
@@ -490,7 +501,7 @@ template<> void Bun::Bindgen::convertDictionaryInto<${type.cpp}>(JSC::JSGlobalOb
     auto* globalObject = &lexicalGlobalObject;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    [[maybe_unused]] auto ctx = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(type.name)} };
+    ${cppStaticContext("ctx", `LiteralConversionContext { ${asciiLiteral(type.name)} }`)}
     auto* object = value.getObject();
 ${
   type.nonObjectAsEmpty
@@ -551,10 +562,21 @@ const overloadSuffix = (fn: FunctionDefinition, signature: Signature) =>
 const thunkSymbol = (fn: FunctionDefinition, signature: Signature) =>
   `Bun__Bindgen__${fn.origin!.namespace}__${fn.name.replace(/^_+/, "")}${overloadSuffix(fn, signature)}`;
 
-/** Lines that declare `variable` as what `value` converts to. */
-function cppDeclareConverted(type: Type, variable: string, value: string, ctx: string, name: string): string[] {
-  if (!type.convertsInPlace) return [`auto ${variable} = ${type.cppConvert(value, ctx, name)};`];
-  return [`${implementationType(type)} ${variable};`, ...type.cppConvertInto(variable, value, ctx, name).split("\n")];
+/** Lines that declare `variable` as what `value` converts to. `check` is that of `cppConvertInto`. */
+function cppDeclareConverted(
+  type: Type,
+  variable: string,
+  value: string,
+  ctx: string,
+  name: string,
+  check: string,
+): string[] {
+  if (!type.convertsInPlace)
+    return [`auto ${variable} = ${type.cppConvert(value, ctx, name)};`, ...(type.conversionThrows ? [check] : [])];
+  return [
+    `${implementationType(type)} ${variable};`,
+    ...type.cppConvertInto(variable, value, ctx, name, check).split("\n"),
+  ];
 }
 
 /** Converts the arguments, then returns what `symbol(globalObject, ...leading, ...converted)` returns. */
@@ -564,21 +586,27 @@ function cppCallBody(signature: Signature, symbol: string, leading: readonly str
   const readLast: string[] = [];
   signature.args.forEach(({ name, type, expected }, i) => {
     lines.push(`JSC::EnsureStillAliveScope argument${i} = callFrame->argument(${i});`);
+    let ctx = `ctx${i}`;
     if (typeof expected === "string") {
-      lines.push(
-        `[[maybe_unused]] auto ctx${i} = Bun::Bindgen::ArgumentMessageContext { ${asciiLiteral(name)}, ${asciiLiteral(expected)} };`,
-      );
+      lines.push(cppStaticContext(ctx, `ArgumentMessageContext { ${asciiLiteral(name)}, ${asciiLiteral(expected)} }`));
     } else if (expected) {
       lines.push(`static constexpr WTF::ASCIILiteral expected${i}[] = { ${expected.map(asciiLiteral).join(", ")} };`);
-      lines.push(
-        `[[maybe_unused]] auto ctx${i} = Bun::Bindgen::NodeArgumentContext { ${asciiLiteral(name)}, expected${i}, argument${i}.value() };`,
-      );
+      // It holds the argument, so it is made where a conversion takes it: an absent argument makes none.
+      ctx = `Bun::Bindgen::asLvalue(Bun::Bindgen::NodeArgumentContext { ${asciiLiteral(name)}, expected${i}, argument${i}.value() })`;
     } else {
-      lines.push(`[[maybe_unused]] auto ctx${i} = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(name)} };`);
+      lines.push(cppStaticContext(ctx, `LiteralConversionContext { ${asciiLiteral(name)} }`));
     }
     readLast.push(...type.cppReadLast(`converted${i}`, `argument${i}.value()`));
-    lines.push(...cppDeclareConverted(type, `converted${i}`, `argument${i}.value()`, `ctx${i}`, name));
-    if (type.conversionThrows) lines.push(`RETURN_IF_EXCEPTION(scope, {});`);
+    lines.push(
+      ...cppDeclareConverted(
+        type,
+        `converted${i}`,
+        `argument${i}.value()`,
+        ctx,
+        name,
+        "RETURN_IF_EXCEPTION(scope, {});",
+      ),
+    );
   });
   lines.push(...readLast);
   const args = signature.args.map(({ type }, i) => {
@@ -725,9 +753,8 @@ ${cppPrologue}
     }
     JSC::EnsureStillAliveScope ensureThisStillAlive { thisObject };
     JSC::EnsureStillAliveScope ensureValueStillAlive { JSC::JSValue::decode(encodedValue) };
-    [[maybe_unused]] auto ctx = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(`${type.name}.${getter.name}`)} };
-    ${cppDeclareConverted(getter.type, "value", "ensureValueStillAlive.value()", "ctx", getter.name).join("\n    ")}
-    RETURN_IF_EXCEPTION(scope, false);
+    ${cppStaticContext("ctx", `LiteralConversionContext { ${asciiLiteral(`${type.name}.${getter.name}`)} }`)}
+    ${cppDeclareConverted(getter.type, "value", "ensureValueStillAlive.value()", "ctx", getter.name, "RETURN_IF_EXCEPTION(scope, false);").join("\n    ")}
     RELEASE_AND_RETURN(scope, ${setSymbol}(globalObject, thisObject, ${toExtern("value")}));
 }
 `;

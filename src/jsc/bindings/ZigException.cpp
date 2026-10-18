@@ -595,9 +595,12 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                 if (!stack.isEmpty()) {
 
                     V8StackTraceIterator iterator(stack);
-                    // The message can have lines that look like frames. It is in the header, so before any frame.
+                    // The name and the message can have lines that look like frames. They are in the header, so before any frame.
+                    WTF::String name = except.name.toWTFString(BunString::ZeroCopy);
+                    if (stack.startsWith(name))
+                        iterator.offset = name.length();
                     WTF::String message = except.message.toWTFString(BunString::ZeroCopy);
-                    if (size_t messageStart = stack.find(message); messageStart != WTF::notFound && messageStart <= stack.find("\n    at "_s))
+                    if (size_t messageStart = stack.find(message, iterator.offset); messageStart != WTF::notFound && messageStart <= stack.find("\n    at "_s, iterator.offset))
                         iterator.offset = messageStart + message.length();
                     const uint8_t frame_count = except.stack.frames_cap;
 

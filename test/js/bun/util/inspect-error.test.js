@@ -535,6 +535,11 @@ test("lines of the message that look like stack frames are not printed as stack 
   renamed.name = "Renamed";
   expect(print(renamed, "Renamed")).toBe(`Renamed: ${message}\n      at this file\n`);
 
+  const named = new Error("my message");
+  named.name = message;
+  named.stack;
+  expect(print(named, message)).toBe(`${message}: my message\n      at this file\n`);
+
   // Two frames: a single lost frame would be made up again from `line` and `column`.
   function reword() {
     const err = new Error("my message");

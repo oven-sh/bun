@@ -155,7 +155,7 @@ describe.concurrent("native binlink optimization", () => {
       await using install = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: "pipe",
+        stdout: "ignore",
         stdin: "ignore",
         stderr: "pipe",
         env,

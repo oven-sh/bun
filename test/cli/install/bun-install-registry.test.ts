@@ -5777,7 +5777,12 @@ describe.concurrent("binaries", () => {
       }
     });
 
-    // `bunx <package>` starts the file of the package itself when another package has the name.
+    // `bunx <package>` starts the file of the package itself when another package has the name. So the file gets
+    // what a linked bin gets: the mode, and a `#!` line without a carriage return.
+    const claimWithCRLF = (dir: string, name: string) => ({
+      ...claim(dir, name),
+      [`${dir}/claim.js`]: "#!/usr/bin/env node\r\n",
+    });
     test
       .skipIf(isWindows)
       .each<[title: string, linker: string, files: Record<string, object | string>, loser: string]>([
@@ -5786,14 +5791,17 @@ describe.concurrent("binaries", () => {
           "hoisted",
           {
             "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: direct },
-            ...claim("packages/aaa", "aaa"),
+            ...claimWithCRLF("packages/aaa", "aaa"),
           },
           "packages/aaa/claim.js",
         ],
         [
           "a file: directory",
           "hoisted",
-          { "package.json": { name: "foo", dependencies: { ...direct, aaa: "file:./aaa" } }, ...claim("aaa", "aaa") },
+          {
+            "package.json": { name: "foo", dependencies: { ...direct, aaa: "file:./aaa" } },
+            ...claimWithCRLF("aaa", "aaa"),
+          },
           "node_modules/aaa/claim.js",
         ],
         [
@@ -5802,7 +5810,7 @@ describe.concurrent("binaries", () => {
           {
             "package.json": { name: "foo", workspaces: ["packages/*"] },
             "packages/app/package.json": { name: "app", dependencies: { ...direct, aaa: "workspace:*" } },
-            ...claim("packages/aaa", "aaa"),
+            ...claimWithCRLF("packages/aaa", "aaa"),
           },
           "packages/aaa/claim.js",
         ],
@@ -5825,11 +5833,12 @@ describe.concurrent("binaries", () => {
         });
         const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(err).not.toContain("error:");
-        expect({ run, ownerExecute: statSync(join(packageDir, loser)).mode & 0o100, exitCode }).toEqual({
+        expect({
           run,
-          ownerExecute: 0o100,
-          exitCode: 0,
-        });
+          ownerExecute: statSync(join(packageDir, loser)).mode & 0o100,
+          file: readFileSync(join(packageDir, loser), "utf8"),
+          exitCode,
+        }).toEqual({ run, ownerExecute: 0o100, file: "#!/usr/bin/env node\n", exitCode: 0 });
         chmodSync(join(packageDir, loser), 0o644);
       }
     });

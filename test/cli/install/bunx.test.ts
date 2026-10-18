@@ -2653,6 +2653,38 @@ describe("a package in node_modules", () => {
       });
     });
 
+    // A node_modules folder above the project does not make a package of the project an installed one.
+    it.concurrent("the bin of a workspace package that is not built, in a project below a node_modules", async () => {
+      using box = sandbox(undefined, {
+        cwd: {
+          node_modules: {
+            parent: {
+              "package.json": JSON.stringify({ name: "parent", workspaces: ["packages/*"] }),
+              packages: {
+                mycli: {
+                  "package.json": JSON.stringify({ name: "mycli", version: "1.0.0", bin: { mycli: "dist/cli.js" } }),
+                },
+              },
+              node_modules: {},
+            },
+          },
+        },
+      });
+      const project = join(box.cwd, "node_modules", "parent");
+      symlinkSync(join("..", "packages", "mycli"), join(project, "node_modules", "mycli"));
+
+      expect(await box.run(["--no-install", "mycli"], { cwd: project })).toEqual({
+        stdout: "",
+        stderr: notFound(
+          "mycli",
+          "node_modules/mycli/dist/cli\\.js",
+          "mycli is a package of this project, and its bin is not built",
+        ),
+        exitCode: 1,
+        requests: [],
+      });
+    });
+
     it.concurrent("a root postinstall that calls the bin of a workspace package before its build", async () => {
       using registry = await localRegistry(fixturePackage("mycli", "9.9.9", "mycli"));
       using box = sandbox(registry, {
@@ -2739,6 +2771,41 @@ describe("a package in node_modules", () => {
       requests: [],
     });
   });
+
+  // The file is not there when the bins are linked. The install makes it executable after the script.
+  it.concurrent.todoIf(isWindows)(
+    "after an install, a package without the entry in .bin whose install script writes the bin",
+    async () => {
+      const gen = (version: string): FixturePackage => ({
+        name: "zzz-gen",
+        version,
+        bin: { tool: "cli.js" },
+        scripts: { postinstall: "node build.js" },
+        files: {
+          "build.js": `require("fs").writeFileSync("cli.js", ${JSON.stringify(echoBin(`zzz-gen ${version}`))});\n`,
+        },
+      });
+      using registry = await localRegistry(fixturePackage("aaa-first", "1.0.0", "tool"), gen("1.0.0"), gen("2.0.0"));
+      using box = sandbox(registry, {
+        cwd: {
+          "package.json": JSON.stringify({
+            name: "app",
+            dependencies: { "aaa-first": "1.0.0", "zzz-gen": "1.0.0" },
+            trustedDependencies: ["zzz-gen"],
+          }),
+        },
+      });
+      expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
+      expect(join(box.cwd, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "aaa-first", "cli.js"));
+
+      expect(await box.run(["zzz-gen", "arg"])).toEqual({
+        stdout: "zzz-gen 1.0.0 arg\n",
+        stderr: "",
+        exitCode: 0,
+        requests: [],
+      });
+    },
+  );
 
   it.concurrent.todoIf(isWindows)("after an install, a workspace package whose bin name a dependency has", async () => {
     using registry = await localRegistry(
@@ -3281,8 +3348,11 @@ describe("paths that do not fit in the path buffer", () => {
     using box = sandbox(undefined, { cwd: { node_modules: { "long-bin": { "package.json": packageJson } } } });
     expect(await box.run(["--no-install", "long-bin"])).toMatchObject({
       stdout: "",
+      // On Windows no bin runs without its shim, so the package counts as not in the project.
       stderr: expect.stringMatching(
-        /PathTooLong|Could not find an existing 'long-bin' binary to run\.|could not find the bin of long-bin/,
+        isWindows
+          ? /PathTooLong|Could not find an existing 'long-bin' binary to run\./
+          : /could not find the bin of long-bin/,
       ),
       exitCode: 1,
     });

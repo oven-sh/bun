@@ -40,8 +40,8 @@ enum InProject {
     Absent,
     Run(ZBox),
     NotExecutable(ZBox),
-    /// `realpath` of the bin's file failed. `is_installed`: the package is in a `node_modules`
-    /// folder, and is not a link to a folder of the project.
+    /// `realpath` of the bin's file failed. `is_installed`: the package is a folder in a
+    /// `node_modules`, and is not a link to a folder of the project.
     Unresolved {
         file: ZBox,
         err: bun_sys::Error,
@@ -468,6 +468,7 @@ impl BunxCommand {
                 None => Self::find_without_executable_file(
                     transpiler,
                     &package_json,
+                    package_name,
                     &bin_dir,
                     &bin.name,
                     file_path,
@@ -483,6 +484,7 @@ impl BunxCommand {
     fn find_without_executable_file(
         transpiler: &mut Transpiler,
         package_json: &ZStr,
+        package_name: &[u8],
         bin_dir: &[u8],
         bin_name: &[u8],
         file: Vec<u8>,
@@ -510,7 +512,8 @@ impl BunxCommand {
             Err(err) => InProject::Unresolved {
                 file,
                 err,
-                is_installed: strings::contains(real_dir, b"/node_modules/"),
+                is_installed: (real_dir.strip_suffix(package_name))
+                    .is_some_and(|parent| parent.ends_with(b"/node_modules/")),
             },
         }
     }

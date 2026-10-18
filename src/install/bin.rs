@@ -959,11 +959,16 @@ impl<'a> Linker<'a> {
             if seen.contains_key(abs_dest.as_bytes()) {
                 // The name is taken, and `bunx <this package>` starts the file itself.
                 #[cfg(not(windows))]
-                if let Ok(target_stat) = sys::stat(abs_target)
-                    && !(target_needs_resolved_containment_check
-                        && self.resolved_target_parent_escapes_package_dir(abs_target))
-                {
-                    Self::make_executable(abs_target, &target_stat);
+                match sys::stat(abs_target) {
+                    Ok(target_stat) => {
+                        if !(target_needs_resolved_containment_check
+                            && self.resolved_target_parent_escapes_package_dir(abs_target))
+                        {
+                            Self::make_executable(abs_target, &target_stat);
+                        }
+                    }
+                    // A script of the package can still write the file.
+                    Err(_) => self.skipped_due_to_missing_bin = true,
                 }
                 return;
             }

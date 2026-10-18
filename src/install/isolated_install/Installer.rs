@@ -7,10 +7,10 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::EscapeControlChars;
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::platform::{Loose, Posix};
+use bun_paths::platform::{Auto, Loose, Posix};
 use bun_paths::{
-    self as paths, AbsPath, AbsPathBuf, PathBuf, PathError, PathZ, RelPathBuf, SubPathBuf, View,
-    sub_path,
+    self as paths, AbsPath, AbsPathBuf, OSAbsPathBuf, OSPathBuf, PathBuf, PathError, PathKind,
+    PathZ, RelPathBuf, SubPathBuf, sub_path,
 };
 use bun_sys::{self as sys, Fd};
 use bun_threading::{UnboundedQueue, WaitGroup, thread_pool};
@@ -38,7 +38,7 @@ use crate::{
 #[cfg(target_os = "macos")]
 use super::file_cloner::FileCloner;
 use super::file_copier::FileCopier;
-use super::hardlinker::{Hardlinker, OsAbsPathBuf, OsPathBuf};
+use super::hardlinker::Hardlinker;
 use super::path_error;
 use super::store::{self, Store};
 use super::store::{EntryColumns as _, NodeColumns as _};
@@ -727,7 +727,7 @@ impl<'a> Installer<'a> {
         is_store_copy
     }
 
-    /// Deletes the `append_installed_marker` file first, because `delete_tree` can stop midway.
+    /// Deletes the installed marker first, because `delete_tree` can stop midway.
     fn delete_local_store_package_in_place(&self, entry_id: StoreEntryId) {
         let mut path = AbsPathBuf::init_top_level_dir();
         self.append_store_path(&mut path, entry_id);
@@ -1547,9 +1547,9 @@ impl<'a> Installer<'a> {
             let top_level_dir = top_level_dir
                 .as_path()
                 .map_err(path_error(sys::Tag::open))?;
-            let mut src = OsAbsPathBuf::from_long_path(top_level_dir);
-            src.join::<Loose>(path);
-            let mut dest = OsPathBuf::init();
+            let mut src = OSAbsPathBuf::from_long_path(top_level_dir);
+            src.join::<Auto>(path);
+            let mut dest = OSPathBuf::init();
             self.append_store_path(&mut dest, entry_id);
 
             let mut hardlinker =
@@ -1575,13 +1575,13 @@ impl<'a> Installer<'a> {
             sys::set_file_offset(folder_dir, 0)?;
 
             #[cfg(windows)]
-            let final_path = |room: &mut [u16]| {
-                // SAFETY: FFI — `folder_dir` is an open handle; `room` is writable for its length.
+            let final_path = |buf: &mut [u16]| {
+                // SAFETY: FFI — `folder_dir` is an open handle; `buf` is writable for its length.
                 let len = unsafe {
                     bun_sys::windows::GetFinalPathNameByHandleW(
                         folder_dir.native(),
-                        room.as_mut_ptr(),
-                        u32::try_from(room.len()).expect("int cast"),
+                        buf.as_mut_ptr(),
+                        u32::try_from(buf.len()).expect("int cast"),
                         0,
                     )
                 };
@@ -1594,9 +1594,9 @@ impl<'a> Installer<'a> {
                 Ok(len as usize)
             };
             #[cfg(windows)]
-            let src_path = OsAbsPathBuf::from_fn(final_path)?;
+            let src_path = OSAbsPathBuf::from_fn(final_path)?;
 
-            let mut dest = OsPathBuf::init();
+            let mut dest = OSPathBuf::init();
             self.append_store_path(&mut dest, entry_id);
 
             #[cfg(windows)]
@@ -1691,7 +1691,7 @@ impl<'a> Installer<'a> {
                 InstallMethod::from_u8(self.supported_backend.load(Ordering::Relaxed));
             let linked: sys::Result<()> = 'backend: loop {
                 // Rebuilt per iteration; this only re-runs once on an EXDEV/OPNOTSUPP retry.
-                let mut dest_subpath = OsPathBuf::init();
+                let mut dest_subpath = OSPathBuf::init();
                 if uses_global_store || link_in_place {
                     self.append_real_store_path(&mut dest_subpath, entry_id, Which::Staging);
                 } else {
@@ -1754,7 +1754,7 @@ impl<'a> Installer<'a> {
                         };
                         let _dir_guard = sys::CloseOnDrop::new(dir);
 
-                        let mut src = OsAbsPathBuf::from_long_path(cache_dir_path);
+                        let mut src = OSAbsPathBuf::from_long_path(cache_dir_path);
                         src.append(subpath);
 
                         let mut hardlinker =
@@ -1785,7 +1785,7 @@ impl<'a> Installer<'a> {
 
                         #[cfg(windows)]
                         let file_copier = {
-                            let mut src = OsAbsPathBuf::from_abs(cache_dir_path);
+                            let mut src = OSAbsPathBuf::from_abs(cache_dir_path);
                             src.append(subpath);
                             FileCopier::init(dir, src, dest_subpath, &[])
                         };
@@ -1863,13 +1863,10 @@ impl<'a> Installer<'a> {
         let mut dest = RelPathBuf::from(hidden_node_modules);
         dest.append_names::<Posix>(name);
 
-        // `relative_in` relates absolute paths only, so the `..` are counted by hand.
+        let is_scoped = strings::index_of_char(name, b'/').is_some();
         let mut target = RelPathBuf::init();
-        target.dot_dot();
-        if strings::index_of_char(name, b'/').is_some() {
-            target.dot_dot();
-        }
         target
+            .join::<Posix>(if is_scoped { b"../.." } else { b".." })
             .append_fmt(format_args!(
                 "{}",
                 store::entry::fmt_store_path(entry_id, store, lockfile),
@@ -1881,7 +1878,6 @@ impl<'a> Installer<'a> {
             return;
         };
 
-        #[cfg(windows)]
         #[cfg(windows)]
         let mut full_target = AbsPathBuf::init_top_level_dir();
         #[cfg(windows)]
@@ -2148,7 +2144,7 @@ impl<'a> Installer<'a> {
                 let dep_name = bundled.name.slice(string_buf);
                 let mut shipped = AbsPathBuf::init_top_level_dir();
                 shipped
-                    .join::<Loose>(folder)
+                    .join::<Auto>(folder)
                     .append(sub_path!("node_modules"))
                     .append_names::<Posix>(dep_name);
                 if !(shipped.as_path().ok())
@@ -2422,14 +2418,14 @@ impl<'a> Installer<'a> {
     /// (no trailing `/node_modules`). Pass `.staging` to get the per-process
     /// temp sibling that the build steps write into; the final `binaries`
     /// step renames staging → final.
-    pub(crate) fn set_global_store_entry_path<V: View + ?Sized>(
+    pub(crate) fn set_global_store_entry_path<V: PathKind + ?Sized>(
         &self,
         buf: &mut PathBuf<V>,
         entry_id: StoreEntryId,
         which: Which,
     ) {
         debug_assert!(self.entry_uses_global_store(entry_id));
-        buf.set_abs(self.global_store_dir());
+        buf.set_abs(self.global_store_path());
         match which {
             Which::Final => buf.append_fmt(format_args!(
                 "{}",
@@ -2453,7 +2449,7 @@ impl<'a> Installer<'a> {
         path
     }
 
-    fn global_store_dir(&self) -> &'a AbsPath {
+    fn global_store_path(&self) -> &'a AbsPath {
         self.global_store_path.unwrap()
     }
 
@@ -2505,7 +2501,7 @@ impl<'a> Installer<'a> {
                 return Ok(());
             }
         }
-        let mut old = AbsPathBuf::from(self.global_store_dir());
+        let mut old = AbsPathBuf::from(self.global_store_path());
         old.append_fmt(format_args!(
             "{}.old-{:x}",
             store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
@@ -2539,7 +2535,7 @@ impl<'a> Installer<'a> {
     /// The `StagingPath` next to a project-local entry's package directory.
     /// `buf` must be relative to the project, like the package's path. An absolute staging path
     /// could exceed the path length limit when the package's relative path does not.
-    fn append_local_staging_path<V: View + ?Sized>(
+    fn append_local_staging_path<V: PathKind + ?Sized>(
         &self,
         buf: &mut PathBuf<V>,
         entry_id: StoreEntryId,
@@ -2619,7 +2615,7 @@ impl<'a> Installer<'a> {
 
     /// Project-local path `node_modules/.bun/<storepath>` (the symlink that
     /// points at the global virtual-store entry). Relative to top-level dir.
-    pub(crate) fn append_local_store_entry_path<V: View + ?Sized>(
+    pub(crate) fn append_local_store_entry_path<V: PathKind + ?Sized>(
         &self,
         buf: &mut PathBuf<V>,
         entry_id: StoreEntryId,
@@ -2729,7 +2725,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    pub(crate) fn append_store_node_modules_path<V: View + ?Sized>(
+    pub(crate) fn append_store_node_modules_path<V: PathKind + ?Sized>(
         &self,
         buf: &mut PathBuf<V>,
         entry_id: StoreEntryId,
@@ -2749,7 +2745,7 @@ impl<'a> Installer<'a> {
     /// location of the entry's `node_modules` directory: the global virtual
     /// store for global-eligible entries, or the project-local `.bun/` path
     /// otherwise. See `Which` for when to pass `.staging` vs `.final`.
-    pub(crate) fn append_real_store_node_modules_path<V: View + ?Sized>(
+    pub(crate) fn append_real_store_node_modules_path<V: PathKind + ?Sized>(
         &self,
         buf: &mut PathBuf<V>,
         entry_id: StoreEntryId,
@@ -2765,7 +2761,7 @@ impl<'a> Installer<'a> {
 
     /// `appendStorePath` resolved to the entry's *physical* location. See
     /// `Which` for when to pass `.staging` vs `.final`.
-    pub(crate) fn append_real_store_path<V: View + ?Sized>(
+    pub(crate) fn append_real_store_path<V: PathKind + ?Sized>(
         &self,
         buf: &mut PathBuf<V>,
         entry_id: StoreEntryId,
@@ -2780,7 +2776,7 @@ impl<'a> Installer<'a> {
         self.append_store_path(buf, entry_id);
     }
 
-    pub(crate) fn append_store_path<V: View + ?Sized>(
+    pub(crate) fn append_store_path<V: PathKind + ?Sized>(
         &self,
         buf: &mut PathBuf<V>,
         entry_id: StoreEntryId,
@@ -2801,7 +2797,7 @@ impl<'a> Installer<'a> {
     }
 
     /// `append_store_path` for an entry whose package is a copy in the project's store.
-    fn append_local_store_package_path<V: View + ?Sized>(
+    fn append_local_store_package_path<V: PathKind + ?Sized>(
         &self,
         buf: &mut PathBuf<V>,
         entry_id: StoreEntryId,
@@ -2876,7 +2872,7 @@ struct BinLinks {
 }
 
 fn append_dependency_link_name(
-    dest: &mut PathBuf<impl View + ?Sized>,
+    dest: &mut PathBuf<impl PathKind + ?Sized>,
     dep_name: &[u8],
     entry_node_modules_name: Option<&[u8]>,
 ) {
@@ -2889,7 +2885,7 @@ fn append_dependency_link_name(
 }
 
 /// Where the `link:` dependency `target` points. `check_link_entries` has set `global_link_dir`.
-pub(crate) fn set_link_target<V: View + ?Sized>(
+pub(crate) fn set_link_target<V: PathKind + ?Sized>(
     buf: &mut PathBuf<V>,
     global_link_dir: &[u8],
     target: &[u8],
@@ -2905,7 +2901,7 @@ pub(crate) fn set_link_target<V: View + ?Sized>(
 
 /// The next install skips a project-local package that has this file. A discard deletes it first.
 pub(crate) fn append_installed_marker(
-    package: &mut PathBuf<impl View + ?Sized>,
+    package: &mut PathBuf<impl PathKind + ?Sized>,
     tag: ResolutionTag,
     patch_info: &PatchInfo,
 ) {
@@ -2923,7 +2919,7 @@ pub(crate) fn append_installed_marker(
 }
 
 /// Best effort: a path that could not be built names nothing on disk.
-fn delete_tree(path: &PathBuf<impl View<Unit = u8> + ?Sized>) {
+fn delete_tree(path: &PathBuf<impl PathKind<Unit = u8> + ?Sized>) {
     if let Ok(path) = path.as_path() {
         let _ = Fd::cwd().delete_tree(path.slice());
     }
@@ -2972,14 +2968,14 @@ fn os_path(path: &[paths::OSPathChar]) -> bun_core::fmt::FormatOSPath<'_> {
     )
 }
 
-fn os_path_of<'a, V: View<Unit = paths::OSPathChar> + ?Sized>(
+fn os_path_of<'a, V: PathKind<Unit = paths::OSPathChar> + ?Sized>(
     path: &'a PathBuf<V>,
 ) -> bun_core::fmt::FormatOSPath<'a> {
     os_path(path.as_path().map_or(&[], |path| path.slice()))
 }
 
 #[cold]
-fn print_link_error(what: &str, err: &sys::Error, from: &dyn core::fmt::Display, to: &OsPathBuf) {
+fn print_link_error(what: &str, err: &sys::Error, from: &dyn core::fmt::Display, to: &OSPathBuf) {
     if PackageManager::verbose_install() {
         bun_core::pretty_errorln!(
             "<red><b>error<r><d>:<r>Failed to {}\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",

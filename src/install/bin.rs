@@ -9,7 +9,6 @@ use bun_core::w;
 #[cfg(not(windows))]
 use bun_paths::MAX_PATH_BYTES;
 use bun_paths::platform::Auto as PlatformAuto;
-use bun_paths::platform::Loose;
 use bun_paths::resolve_path::{self, join_abs_string_buf_z_checked as join_z_checked};
 use bun_paths::strings;
 use bun_paths::{self as path, AbsPath, AbsPathBuf, PathZ, SEP, sub_path};
@@ -1898,7 +1897,10 @@ pub(crate) fn link_free_bins(
     placed: &[(&[u8], crate::PackageID)],
 ) {
     let mut node_modules_path = AbsPathBuf::init_top_level_dir();
-    let Ok(node_modules_path) = node_modules_path.join::<Loose>(node_modules).as_path() else {
+    let Ok(node_modules_path) = node_modules_path
+        .join::<PlatformAuto>(node_modules)
+        .as_path()
+    else {
         return;
     };
 

@@ -1042,7 +1042,7 @@ impl Lockfile {
                     .map(|rule| rule.version())
                     .filter(|version| version.tag == dependency::version::Tag::Folder)
                     .map(|version| join_top_level_dir(&[version.folder().slice(buf)]))
-                    .is_some_and(|named| named.as_path().is_ok_and(|named| **named == **selected))
+                    .is_some_and(|named| named.as_path().is_ok_and(|named| named == selected))
         })
     }
 
@@ -2234,7 +2234,7 @@ pub(crate) fn linked_workspace_path_in(
 pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> bun_paths::AbsPathBuf {
     let mut path = bun_paths::AbsPathBuf::init_top_level_dir();
     for part in parts {
-        path.join::<bun_paths::platform::Auto>(part);
+        path.join::<bun_paths::platform::Loose>(part);
     }
     path
 }

@@ -12,7 +12,7 @@ use bun_install::package_manager_real::{
     package_json_write_back, package_manager_options::LogLevel, setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, ResolutionTag, migration};
-use bun_paths::platform::{Auto, Loose, Posix};
+use bun_paths::platform::{Loose, Posix};
 use bun_paths::{self as Path, AbsPathBuf, sub_path};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
@@ -53,7 +53,7 @@ impl InstalledFilter {
             .save()
             .append(sub_path!("node_modules"))
             .as_path())
-        .is_ok_and(|node_modules| bun_sys::exists(node_modules.slice()));
+        .is_ok_and(|node_modules| bun_sys::exists_z(node_modules.slice_z()));
         has_node_modules.then(|| Self {
             top_level_dir,
             store: BunStore::init(),
@@ -83,9 +83,9 @@ impl InstalledFilter {
             ResolutionTag::Workspace => {
                 let mut member = AbsPathBuf::init_top_level_dir();
                 return (member
-                    .join::<Auto>(resolution.workspace().slice(buf))
+                    .join::<Loose>(resolution.workspace().slice(buf))
                     .as_path())
-                .is_ok_and(|member| bun_sys::exists(member.slice()));
+                .is_ok_and(|member| bun_sys::exists_z(member.slice_z()));
             }
             _ => {}
         }
@@ -93,13 +93,11 @@ impl InstalledFilter {
         let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
             .name
             .slice(buf);
-        let mut path = self.top_level_dir.save();
-        let is_linked = (path
+        let is_linked = (self.top_level_dir.save())
             .join::<Loose>(dir)
             .append_names::<Posix>(alias)
-            .as_path())
-        .is_ok_and(|path| bun_sys::exists(path.slice()));
-        drop(path);
+            .as_path()
+            .is_ok_and(|path| bun_sys::exists_z(path.slice_z()));
         is_linked
             || (or_in_store
                 && self

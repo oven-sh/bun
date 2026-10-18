@@ -341,27 +341,24 @@ fn handle_path(
     let cwd = bun_paths::fs::FileSystem::instance().top_level_dir();
     // Win32 resolves `..` as the join does, which also knows `C:foo` and `\foo`.
     #[cfg(windows)]
-    let mut buf = bun_paths::path_buffer_pool::get();
-    #[cfg(windows)]
-    let path = bun_paths::resolve_path::join_abs_string_buf_z_checked::<bun_paths::platform::Auto>(
+    let path = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
         cwd,
-        &mut buf[..],
+        &mut bun_paths::path_buffer_pool::get()[..],
         &[name],
-    );
-    // The kernel resolves `..` through symlinks, so it is left in.
+    )
+    .map(bun_paths::string_paths::without_trailing_slash_windows_path)
+    .map(bun_core::ZBox::from_bytes);
+    // The kernel resolves `..` through symlinks, so it is left in. No file opens with a slash after its name.
     #[cfg(not(windows))]
-    let path = {
-        let mut relative = name.strip_prefix(b"./").unwrap_or(name).to_vec();
-        bun_paths::resolve_path::slashes_to_posix_in_place(&mut relative);
+    let path = (!name.ends_with(b"/")).then(|| {
+        let mut posix_name = name.strip_prefix(b"./").unwrap_or(name).to_vec();
+        bun_paths::resolve_path::slashes_to_posix_in_place(&mut posix_name);
         bun_core::ZBox::from_vec(if bun_paths::is_absolute_posix(name) {
-            relative
+            posix_name
         } else {
-            let cwd = bun_core::strings::without_trailing_slash(cwd);
-            [cwd, b"/", &relative].concat()
+            [cwd.strip_suffix(b"/").unwrap_or(cwd), b"/", &posix_name].concat()
         })
-    };
-    #[cfg(not(windows))]
-    let path = (!name.ends_with(b"/")).then_some(&*path);
+    });
     let Some(path) =
         path.filter(|path| !name.is_empty() && bun_sys::access(path, bun_sys::posix::F_OK).is_ok())
     else {

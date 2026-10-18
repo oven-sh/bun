@@ -5,18 +5,17 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
+#[cfg(windows)]
+use bun_paths::OSAbsPathBuf;
 use bun_paths::platform;
 use bun_paths::resolve_path;
-use bun_paths::{AbsPathBuf, Platform, SEP};
+use bun_paths::{AbsPathBuf, OSPathBuf, Platform, SEP};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
 use crate::bin;
 use crate::bun_fs::FileSystem;
 use crate::bun_json as JSON;
 use crate::dependency::{Dependency, DependencyExt as _, without_build_tag};
-#[cfg(windows)]
-use crate::isolated_install::hardlinker::OsAbsPathBuf;
-use crate::isolated_install::hardlinker::OsPathBuf;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
 use crate::isolated_install::{FileCopier, build_whole_store};
 use crate::lockfile_real::package::{Package, PackageColumns as _};
@@ -1514,14 +1513,14 @@ fn copy_cache_entry(
     // Open the cache entry before changing anything, because it may no longer exist.
     let cached_package_folder = Dir::borrow(&cache_dir).open_dir(cache_dir_subpath, ITERATE)?;
 
-    let mut dest_subpath = OsPathBuf::init();
+    let mut dest_subpath = OSPathBuf::init();
     dest_subpath.join::<platform::Auto>(to);
 
     #[cfg(windows)]
     let src_path = {
         let mut path_buf = bun_paths::w_path_buffer_pool::get();
         let cache_dir_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
-        let mut src_path = OsAbsPathBuf::init();
+        let mut src_path = OSAbsPathBuf::init();
         src_path
             .set_unchecked(&*cache_dir_path)
             .append_names::<platform::Auto>(cache_dir_subpath);

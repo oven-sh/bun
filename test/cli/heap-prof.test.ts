@@ -259,6 +259,7 @@ test("--heap-prof-name and --heap-prof-dir work together", async () => {
   expectV8HeapSnapshotShape(profile);
 });
 
+// On Windows `\\` separates, so no name holds one.
 test.skipIf(isWindows)("a backslash in the cwd, --heap-prof-dir and --heap-prof-name is part of a name", async () => {
   using dir = tempDir("heap-prof-backslash-test", {
     "pro\\j": {},
@@ -281,13 +282,12 @@ test.skipIf(isWindows)("a backslash in the cwd, --heap-prof-dir and --heap-prof-
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim()).toBe("hello");
-  expect(exitCode).toBe(0);
-
+  expect({ stdout, stderr }).toEqual({ stdout: "hello\n", stderr: "" });
   const profile = await readProfile(join(String(dir), "pro\\j", "o\\ut"), "x\\y.heapprofile");
   expectV8HeapSnapshotShape(profile);
+  expect(exitCode).toBe(0);
 });
 
 // Node parity: heap-profiler-scoped flags without --heap-prof exit 9 with

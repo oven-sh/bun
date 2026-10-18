@@ -2100,7 +2100,7 @@ impl LinkedNodeModules {
         };
         if let Some(real_path) = AbsPath::new_unchecked(&self.real_path) {
             let below = SubPathBuf::from(below);
-            path.set_abs(real_path);
+            path.set(real_path);
             if let Ok(below) = below.as_path() {
                 path.append(below);
             }

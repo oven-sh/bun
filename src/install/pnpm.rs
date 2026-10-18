@@ -755,7 +755,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 for existing_workspace_path in lockfile.workspace_paths.values() {
                     if join_top_level_dir(&[existing_workspace_path.slice(string_bytes!(lockfile))])
                         .as_path()
-                        .is_ok_and(|existing| **existing == **link_path_buf)
+                        .is_ok_and(|existing| existing == link_path_buf)
                     {
                         continue 'next_dep;
                     }

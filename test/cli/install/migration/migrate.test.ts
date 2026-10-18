@@ -792,18 +792,25 @@ describe.concurrent("a package-lock.json entry of another host without an integr
   });
 });
 
+// On Windows `\\` separates, so no name holds one.
 describe.concurrent.skipIf(isWindows)("in a project folder named with a backslash", () => {
-  const a = { "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }) };
-  test.each([
+  const rows: [
+    lock: string,
+    contents: string,
+    packageJson: object,
+    files: Record<string, string>,
+    workspaces: string[],
+  ][] = [
     ["yarn.lock", "# yarn lockfile v1\n\n", {}, {}, [""]],
     [
       "pnpm-lock.yaml",
       `lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      a:\n        specifier: workspace:*\n        version: link:packages/a\n\n  packages/a: {}\n`,
       { workspaces: ["packages/*"], dependencies: { a: "workspace:*" } },
-      a,
+      { "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }) },
       ["", "packages/a"],
     ],
-  ])("%s is migrated", async (lock, contents, packageJson, files, workspaces) => {
+  ];
+  test.each(rows)("%s is migrated", async (lock, contents, packageJson, files, workspaces) => {
     using dir = tempDir("migrate-backslash", {
       "pro\\j": {
         "package.json": JSON.stringify({ name: "root", version: "1.0.0", ...packageJson }),

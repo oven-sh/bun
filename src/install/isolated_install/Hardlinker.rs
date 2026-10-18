@@ -1,5 +1,5 @@
 use bun_alloc::AllocError;
-use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path, PathBuf, SubPath};
+use bun_paths::{OSAbsPathBuf, OSPathBuf, OSPathSlice, SubPath};
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
 use bun_sys::walker_skippable::Walker;
@@ -7,12 +7,9 @@ use bun_sys::{self as sys, EntryKind, Fd, FdExt};
 
 use super::path_error;
 
-pub(crate) type OsAbsPathBuf = PathBuf<AbsPath<OSPathChar>>;
-pub(crate) type OsPathBuf = PathBuf<Path<OSPathChar>>;
-
 pub(crate) struct Hardlinker {
-    pub(crate) src: OsAbsPathBuf,
-    pub(crate) dest: OsPathBuf,
+    pub(crate) src: OSAbsPathBuf,
+    pub(crate) dest: OSPathBuf,
     pub(crate) walker: Walker,
 }
 
@@ -24,8 +21,8 @@ fn name_too_long() -> sys::Error {
 impl Hardlinker {
     pub(crate) fn init(
         folder_dir: Fd,
-        src: OsAbsPathBuf,
-        dest: OsPathBuf,
+        src: OSAbsPathBuf,
+        dest: OSPathBuf,
         skip_dirnames: &[&OSPathSlice],
     ) -> Result<Hardlinker, AllocError> {
         Ok(Hardlinker {
@@ -46,9 +43,10 @@ impl Hardlinker {
 
     pub(crate) fn link(&mut self) -> sys::Result<()> {
         let path_error = path_error(sys::Tag::link);
-        let src = self.src.as_path().map_err(path_error)?;
         let dest = self.dest.as_path().map_err(path_error)?;
-        if crate::PackageManager::verbose_install() {
+        if crate::PackageManager::verbose_install()
+            && let Ok(src) = self.src.as_path()
+        {
             bun_core::pretty_errorln!(
                 "Hardlinking {} to {}",
                 bun_core::fmt::fmt_os_path(src.slice(), Default::default()),
@@ -60,7 +58,7 @@ impl Hardlinker {
         #[cfg(windows)]
         {
             let mut cwd_buf = bun_paths::w_path_buffer_pool::get();
-            let mut cwd = OsAbsPathBuf::init();
+            let mut cwd = OSAbsPathBuf::init();
             if let Ok(path) = sys::get_fd_path_w(Fd::cwd(), &mut cwd_buf[..]) {
                 cwd.set_unchecked(&*path);
             }

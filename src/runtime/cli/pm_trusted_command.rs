@@ -110,7 +110,7 @@ impl Blocked {
         let mut store = AbsPathBuf::init_top_level_dir();
         if linker == NodeLinker::Isolated
             && (store.append(sub_path!("node_modules/.bun")).as_path())
-                .is_ok_and(|store| bun_sys::exists(store.slice()))
+                .is_ok_and(|store| bun_sys::exists_z(store.slice_z()))
         {
             return Self::find_in_store(pm);
         }
@@ -179,7 +179,7 @@ impl Blocked {
             if !(path
                 .join::<Loose>(node_modules.relative_path.as_bytes())
                 .as_path())
-            .is_ok_and(|path| bun_sys::exists(path.slice()))
+            .is_ok_and(|path| bun_sys::exists_z(path.slice_z()))
             {
                 continue;
             }

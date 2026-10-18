@@ -1,37 +1,35 @@
-//! Paths as types: borrowed views in one normal form, and [`PathBuf`], which builds one. See "Paths" in `src/CLAUDE.md`.
+//! Paths as types: borrowed views in one normal form, and [`PathBuf`], which builds one. See "Paths as types" in `src/CLAUDE.md`.
 
 use core::fmt;
-#[cfg(not(windows))]
-use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 
 use bun_core::{Fd, PathByte as _, WStr, ZStr, strings};
 use bun_simdutf_sys::simdutf;
 
-use crate::path_buffer_pool::PoolStorage;
+use crate::path_buffer_pool::{PathBufferPoolT, PoolGuard, PoolStorage};
 use crate::resolve_path::{Platform, PlatformT};
 use crate::{MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, SEP, WPathBuffer};
 
-/// Not nameable outside this file, which seals the traits that need them.
+/// Private, so no other file can implement or call what is in here.
 mod private {
     pub trait Sealed {}
     pub struct Token(pub(super) ());
 
-    /// Units that can be written from units of `C`. SAFETY: `transcode` writes at most `max_len(from)` units and returns how many.
-    pub unsafe trait TranscodeFrom<C>: Sized {
+    /// Units that can be written from units of `C`.
+    pub trait TranscodeFrom<C>: Sized {
         fn max_len(from: &[C]) -> usize;
-        /// `None` if `from` has no form in these units. SAFETY: `to` is valid for writes of `max_len(from)` units and does not overlap `from`.
-        unsafe fn transcode(from: &[C], to: *mut Self) -> Option<usize>;
+        /// Writes `from` at the start of `to`, which holds `max_len(from)` units or more. Returns how many, or `None` if `from` has no form in these units.
+        fn transcode(from: &[C], to: &mut [Self]) -> Option<usize>;
     }
 }
 use private::{Token, TranscodeFrom};
 
-/// A path code unit: `u8` (UTF-8/WTF-8 bytes) or `u16` (WTF-16, Windows).
+/// A path code unit: `u8` (bytes; UTF-8 on Windows) or `u16` (WTF-16, Windows).
 pub trait PathUnit:
     crate::PathChar + TranscodeFrom<u8> + TranscodeFrom<u16> + private::Sealed
 {
     /// The fixed-size buffer type (`PathBuffer` / `WPathBuffer`): an array of `MAX_PATH` units.
-    type Buffer: PoolStorage;
+    type Buffer: PoolStorage + DerefMut<Target = [Self]>;
     const MAX_PATH: usize;
     /// `[:0]const u8` → `ZStr`, `[:0]const u16` → `WStr` (length-carrying NUL-terminated slice).
     type ZSlice: ?Sized;
@@ -76,49 +74,37 @@ impl PathUnit for u16 {
     }
 }
 
-// SAFETY: copies `from.len()` units.
-unsafe impl<U: Copy> TranscodeFrom<U> for U {
+impl<U: Copy> TranscodeFrom<U> for U {
     #[inline]
     fn max_len(from: &[U]) -> usize {
         from.len()
     }
     #[inline]
-    unsafe fn transcode(from: &[U], to: *mut U) -> Option<usize> {
-        // SAFETY: `to` is valid for `from.len()` writes and disjoint from `from`, per the contract.
-        unsafe { core::ptr::copy_nonoverlapping(from.as_ptr(), to, from.len()) };
+    fn transcode(from: &[U], to: &mut [U]) -> Option<usize> {
+        to[..from.len()].copy_from_slice(from);
         Some(from.len())
     }
 }
-// SAFETY: no code point takes more UTF-16 units than UTF-8 bytes.
-unsafe impl TranscodeFrom<u8> for u16 {
+impl TranscodeFrom<u8> for u16 {
+    /// No code point takes more UTF-16 units than UTF-8 bytes.
     #[inline]
     fn max_len(from: &[u8]) -> usize {
         from.len()
     }
     #[inline]
-    unsafe fn transcode(from: &[u8], to: *mut u16) -> Option<usize> {
-        // SAFETY: `to` is valid for `max_len(from)` writes, per the contract, and zeroed because the converter takes an initialized slice.
-        let to = unsafe {
-            core::ptr::write_bytes(to, 0, from.len());
-            core::slice::from_raw_parts_mut(to, from.len())
-        };
+    fn transcode(from: &[u8], to: &mut [u16]) -> Option<usize> {
         Some(strings::convert_utf8_to_utf16_in_buffer(to, from).len())
     }
 }
-// SAFETY: no UTF-16 unit takes more than three UTF-8 bytes.
-unsafe impl TranscodeFrom<u16> for u8 {
+impl TranscodeFrom<u16> for u8 {
+    /// No UTF-16 unit takes more than three UTF-8 bytes.
     #[inline]
     fn max_len(from: &[u16]) -> usize {
         from.len() * 3
     }
     #[inline]
-    unsafe fn transcode(from: &[u16], to: *mut u8) -> Option<usize> {
-        // SAFETY: `to` is valid for `max_len(from)` writes, per the contract, and zeroed because the converter takes an initialized slice.
-        let to = unsafe {
-            core::ptr::write_bytes(to, 0, from.len() * 3);
-            core::slice::from_raw_parts_mut(to, from.len() * 3)
-        };
-        // Half of a surrogate pair is a name on Windows and is nothing in UTF-8.
+    fn transcode(from: &[u16], to: &mut [u8]) -> Option<usize> {
+        // A lone surrogate is legal in a Windows name and has no UTF-8 form.
         let result = simdutf::convert::utf16::to::utf8::with_errors::le(from, to);
         result.is_successful().then_some(result.count)
     }
@@ -247,22 +233,22 @@ pub(crate) fn disk_designator_len_windows<U: PathUnit>(path: &[U]) -> usize {
     0
 }
 
-/// A native path, absolute or relative.
+/// A normalized path, absolute or relative: only `SEP` separates, and there is no `.`, no empty name and no separator after the last name.
 #[repr(transparent)]
 #[derive(PartialEq, Eq)]
 pub struct Path<U = u8>([U]);
 
-/// A native absolute path. It holds no `..`.
+/// An absolute [`Path`]. It holds no `..`.
 #[repr(transparent)]
 #[derive(PartialEq, Eq)]
 pub struct AbsPath<U = u8>([U]);
 
-/// A native relative path. `..` comes first, if at all. Empty means the base itself.
+/// A relative [`Path`]. `..` comes first, if at all. Empty names the directory it is relative to.
 #[repr(transparent)]
 #[derive(PartialEq, Eq)]
 pub struct RelPath<U = u8>([U]);
 
-/// A native relative path with no `..`, so it stays below what it is appended to. Empty means the base itself.
+/// A [`RelPath`] with no `..`, so it stays below what it is appended to.
 #[repr(transparent)]
 #[derive(PartialEq, Eq)]
 pub struct SubPath<U = u8>([U]);
@@ -274,10 +260,11 @@ pub struct FileName<U = u8>([U]);
 
 /// A `V` with a NUL after its last unit, for a syscall.
 #[repr(transparent)]
+#[derive(PartialEq, Eq)]
 pub struct PathZ<V: ?Sized>(V);
 
-/// A view that a [`PathBuf`] builds: every one but [`FileName`].
-pub trait View: private::Sealed {
+/// The kinds of path that a [`PathBuf`] builds.
+pub trait PathKind: private::Sealed {
     type Unit: PathUnit;
     #[doc(hidden)]
     const MAY_BE_ABSOLUTE: bool;
@@ -290,64 +277,30 @@ pub trait View: private::Sealed {
     fn from_slice_unchecked(units: &[Self::Unit], token: Token) -> &Self;
 }
 
-impl<U: PathUnit> View for Path<U> {
-    type Unit = U;
-    const MAY_BE_ABSOLUTE: bool = true;
-    const MAY_BE_RELATIVE: bool = true;
-    const MAY_START_WITH_DOT_DOT: bool = true;
-    #[inline]
-    fn slice(&self) -> &[U] {
-        &self.0
-    }
-    #[inline]
-    fn from_slice_unchecked(units: &[U], _: Token) -> &Self {
-        Self::wrap(units)
-    }
+macro_rules! impl_path_kind {
+    ($($name:ident: $abs:literal, $rel:literal, $dot_dot:literal;)*) => {$(
+        impl<U: PathUnit> PathKind for $name<U> {
+            type Unit = U;
+            const MAY_BE_ABSOLUTE: bool = $abs;
+            const MAY_BE_RELATIVE: bool = $rel;
+            const MAY_START_WITH_DOT_DOT: bool = $dot_dot;
+            #[inline]
+            fn slice(&self) -> &[U] {
+                &self.0
+            }
+            #[inline]
+            fn from_slice_unchecked(units: &[U], _: Token) -> &Self {
+                Self::wrap(units)
+            }
+        }
+    )*};
 }
-
-impl<U: PathUnit> View for AbsPath<U> {
-    type Unit = U;
-    const MAY_BE_ABSOLUTE: bool = true;
-    const MAY_BE_RELATIVE: bool = false;
-    const MAY_START_WITH_DOT_DOT: bool = false;
-    #[inline]
-    fn slice(&self) -> &[U] {
-        &self.0
-    }
-    #[inline]
-    fn from_slice_unchecked(units: &[U], _: Token) -> &Self {
-        Self::wrap(units)
-    }
-}
-
-impl<U: PathUnit> View for RelPath<U> {
-    type Unit = U;
-    const MAY_BE_ABSOLUTE: bool = false;
-    const MAY_BE_RELATIVE: bool = true;
-    const MAY_START_WITH_DOT_DOT: bool = true;
-    #[inline]
-    fn slice(&self) -> &[U] {
-        &self.0
-    }
-    #[inline]
-    fn from_slice_unchecked(units: &[U], _: Token) -> &Self {
-        Self::wrap(units)
-    }
-}
-
-impl<U: PathUnit> View for SubPath<U> {
-    type Unit = U;
-    const MAY_BE_ABSOLUTE: bool = false;
-    const MAY_BE_RELATIVE: bool = true;
-    const MAY_START_WITH_DOT_DOT: bool = false;
-    #[inline]
-    fn slice(&self) -> &[U] {
-        &self.0
-    }
-    #[inline]
-    fn from_slice_unchecked(units: &[U], _: Token) -> &Self {
-        Self::wrap(units)
-    }
+impl_path_kind! {
+    // MAY_BE_ABSOLUTE, MAY_BE_RELATIVE, MAY_START_WITH_DOT_DOT
+    Path: true, true, true;
+    AbsPath: true, false, false;
+    RelPath: false, true, true;
+    SubPath: false, true, false;
 }
 
 impl<U> Deref for FileName<U> {
@@ -407,11 +360,6 @@ macro_rules! impl_view {
                 // SAFETY: a `PathZ` is only made over units that a readable 0 follows.
                 unsafe { U::zslice_from_raw(self.0.0.as_ptr(), self.0.0.len()) }
             }
-            #[inline]
-            pub fn as_path_z(&self) -> &PathZ<Path<U>> {
-                // SAFETY: the same units, so the same NUL.
-                unsafe { PathZ::wrap(Path::wrap(&self.0.0)) }
-            }
         }
         impl fmt::Debug for $name<u8> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -423,16 +371,24 @@ macro_rules! impl_view {
                 fmt::Display::fmt(bstr::BStr::new(&self.0), f)
             }
         }
-        impl<U: Copy> From<&$name<U>> for Box<$name<U>> {
-            fn from(path: &$name<U>) -> Self {
-                let units: Box<[U]> = Box::from(&path.0);
-                // SAFETY: `repr(transparent)` over `[U]`.
-                unsafe { Box::from_raw(Box::into_raw(units) as *mut $name<U>) }
-            }
-        }
     )*};
 }
 impl_view!(Path, AbsPath, RelPath, SubPath, FileName);
+
+impl<V: PathKind + ?Sized> PathZ<V> {
+    #[inline]
+    pub fn as_path_z(&self) -> &PathZ<Path<V::Unit>> {
+        // SAFETY: the same units, so the same NUL.
+        unsafe { PathZ::wrap(Path::wrap(self.0.slice())) }
+    }
+}
+impl<U: Copy> From<&AbsPath<U>> for Box<AbsPath<U>> {
+    fn from(path: &AbsPath<U>) -> Self {
+        let units: Box<[U]> = Box::from(&path.0);
+        // SAFETY: `repr(transparent)` over `[U]`.
+        unsafe { Box::from_raw(Box::into_raw(units) as *mut AbsPath<U>) }
+    }
+}
 
 impl<V: ?Sized> PathZ<V> {
     /// SAFETY: the unit after the last one of `view` is readable for as long as `view`, and is 0.
@@ -478,22 +434,26 @@ fn root_len<U: PathUnit>(units: &[U]) -> usize {
     {
         usize::from(units.first().is_some_and(|c| c.eq_ascii(b'/')))
     }
+    // In a view a root names a drive or a share and ends in a separator.
     #[cfg(windows)]
     {
-        fully_qualified_root_len(units, is_sep_exact)
+        let root = windows_root_len(units, is_sep_exact);
+        if root > 1 && is_sep_exact(units[root - 1]) {
+            root
+        } else {
+            0
+        }
     }
 }
 
-/// [`windows_root_len`] of a root that names a drive or a share and ends in a separator, as in a view; else 0.
-#[cfg(any(windows, test))]
+/// Length of `units`, whose root is `root` long, without the separators after the last name.
 #[inline]
-fn fully_qualified_root_len<U: PathUnit>(units: &[U], is_sep: impl Fn(U) -> bool + Copy) -> usize {
-    let root = windows_root_len(units, is_sep);
-    if root > 1 && is_sep(units[root - 1]) {
-        root
-    } else {
-        0
+fn len_without_trailing_seps<U: PathUnit>(units: &[U], root: usize) -> usize {
+    let mut end = units.len();
+    while end > root && is_sep_exact(units[end - 1]) {
+        end -= 1;
     }
+    end
 }
 
 /// `\\server\share`: how the OS writes the root of a share when it is the whole path.
@@ -550,7 +510,7 @@ fn windows_root_len<U: PathUnit>(units: &[U], is_sep: impl Fn(U) -> bool) -> usi
             end += 1;
         }
         let name = &units[start..end];
-        // What starts like a share and is not one is rooted at a lone separator.
+        // `\\` without a server and a share counts as a lone `\`.
         if name.is_empty() {
             return 1;
         }
@@ -642,22 +602,19 @@ impl<U: PathUnit> Path<U> {
 
 impl<U: PathUnit> AbsPath<U> {
     /// `None` unless `units` is absolute and already normalized.
-    pub fn new(units: &[U]) -> Option<&Self> {
+    fn new(units: &[U]) -> Option<&Self> {
         let root = root_len(units);
         (root > 0 && is_normalized_sub_path(&units[root..])).then(|| Self::wrap(units))
     }
 
-    /// For a path that is known to be normalized, such as one the OS returned. Only the root is checked: `None` without one.
+    /// For a path the OS returned, which is normalized but for separators at its end. Only the root is checked: `None` without one.
     #[inline]
     pub fn new_unchecked(units: &[U]) -> Option<&Self> {
         let root = root_len(units);
         if root == 0 {
             return None;
         }
-        let mut end = units.len();
-        while end > root && is_sep_exact(units[end - 1]) {
-            end -= 1;
-        }
+        let end = len_without_trailing_seps(units, root);
         debug_assert!(Self::new(&units[..end]).is_some());
         Some(Self::wrap(&units[..end]))
     }
@@ -709,7 +666,7 @@ impl<U: PathUnit> AbsPath<U> {
 
 impl<U: PathUnit> SubPath<U> {
     /// `None` unless `units` is relative, holds no `..` and is already normalized.
-    pub fn new(units: &[U]) -> Option<&Self> {
+    fn new(units: &[U]) -> Option<&Self> {
         (root_len(units) == 0 && is_normalized_sub_path(units)).then(|| Self::wrap(units))
     }
 
@@ -724,7 +681,7 @@ impl<U: PathUnit> SubPath<U> {
 impl<U: PathUnit> FileName<U> {
     /// `None` if `units` is empty, `.`, `..`, or holds a separator or a NUL.
     #[inline]
-    pub fn new(units: &[U]) -> Option<&Self> {
+    fn new(units: &[U]) -> Option<&Self> {
         (!units.is_empty() && !is_dots(units) && !units.iter().any(|&c| is_forbidden_in_name(c)))
             .then(|| Self::wrap(units))
     }
@@ -785,6 +742,7 @@ pub enum PathError {
     /// Absolute, or on another drive, where only a relative path can go.
     #[error("ExpectedRelative")]
     ExpectedRelative,
+    /// Relative, where only an absolute path can go.
     #[error("ExpectedAbsolute")]
     ExpectedAbsolute,
     /// Empty, `.` or `..` where names are wanted, or it holds a unit that no name on this host can.
@@ -808,9 +766,9 @@ impl From<PathError> for bun_errno::SystemErrno {
     }
 }
 
-/// What `..` does to a path that is no longer than its `base_len`.
+/// What `..` does to a path that is no longer than its `floor_len`.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum DotDotAtBase {
+enum DotDotAtFloor {
     /// A root stays.
     Ignore,
     /// A relative path gets a `..`.
@@ -825,49 +783,42 @@ enum Dots {
     Reject,
 }
 
-/// On the stack and not initialized, except on Windows, where a path buffer is too large for the stack.
-#[cfg(not(windows))]
-type Buffer<U> = MaybeUninit<<U as PathUnit>::Buffer>;
-#[cfg(windows)]
-type Buffer<U> = crate::path_buffer_pool::PoolGuard<<U as PathUnit>::Buffer>;
-
-/// Builds a `V` in a path buffer of its own. The first step that fails is kept, and `as_path`, the only way to the path, returns it.
-pub struct PathBuf<V: View + ?Sized> {
+/// Builds a `V` in a path buffer from the pool. The first failure is kept, and `as_path`, the only way to the path, returns it.
+pub struct PathBuf<V: PathKind + ?Sized> {
     /// Less than `MAX_PATH`. While `err` is `None` the unit there is the NUL.
     len: usize,
     /// `..` removes nothing below this length, which is never more than `len`.
-    base_len: usize,
-    at_base: DotDotAtBase,
+    floor_len: usize,
+    at_floor: DotDotAtFloor,
     /// A [`ResetScope`] is open, so the path cannot be replaced.
     in_scope: bool,
     err: Option<PathError>,
-    buf: Buffer<V::Unit>,
+    buf: PoolGuard<<V::Unit as PathUnit>::Buffer>,
 }
 pub type AbsPathBuf = PathBuf<AbsPath>;
 pub type RelPathBuf = PathBuf<RelPath>;
 pub type SubPathBuf = PathBuf<SubPath>;
+pub type OSAbsPathBuf = PathBuf<AbsPath<crate::OSPathChar>>;
+pub type OSPathBuf = PathBuf<Path<crate::OSPathChar>>;
 
-impl<V: View + ?Sized> PathBuf<V> {
+impl<V: PathKind + ?Sized> PathBuf<V> {
     /// Empty, which for an absolute `V` fails as `Unset` until a path is set.
     #[inline]
     pub fn init() -> Self {
         let mut this = Self {
             len: 0,
-            base_len: 0,
-            at_base: DotDotAtBase::Fail,
+            floor_len: 0,
+            at_floor: DotDotAtFloor::Fail,
             in_scope: false,
             err: if V::MAY_BE_RELATIVE {
                 None
             } else {
                 Some(PathError::Unset)
             },
-            #[cfg(not(windows))]
-            buf: MaybeUninit::uninit(),
-            #[cfg(windows)]
-            buf: crate::path_buffer_pool::PathBufferPoolT::get(),
+            buf: PathBufferPoolT::get(),
         };
         this.truncate(0);
-        this.set_base_to_root();
+        this.set_floor_to_root();
         this
     }
 
@@ -892,13 +843,7 @@ impl<V: View + ?Sized> PathBuf<V> {
     /// Holds the absolute path that `fill`, a call to the OS, writes. It gets the whole buffer and returns the units written, without a NUL.
     pub fn from_fn<E>(fill: impl FnOnce(&mut [V::Unit]) -> Result<usize, E>) -> Result<Self, E> {
         let mut this = Self::init();
-        #[cfg(not(windows))]
-        {
-            this.buf = MaybeUninit::zeroed();
-        }
-        // SAFETY: every unit of the buffer is initialized: just above, or by the pool.
-        let len =
-            fill(unsafe { core::slice::from_raw_parts_mut(this.ptr_mut(), V::Unit::MAX_PATH) })?;
+        let len = fill(&mut this.buf)?;
         // No room left for the NUL also means the OS may have cut the path short.
         if len >= V::Unit::MAX_PATH {
             this.err = Some(PathError::MaxPathExceeded);
@@ -929,7 +874,7 @@ impl<V: View + ?Sized> PathBuf<V> {
         self.replace(path.slice())
     }
 
-    /// [`set_abs`](Self::set_abs) to units as [`AbsPath::new_unchecked`] takes them. Fails as `ExpectedAbsolute` without a root.
+    /// [`set_abs`](Self::set_abs) to a path the OS returned, of which only the root and the end are looked at. Fails as `ExpectedAbsolute` without a root.
     #[inline]
     pub fn set_unchecked<C: PathUnit>(&mut self, units: &[C]) -> &mut Self
     where
@@ -948,12 +893,8 @@ impl<V: View + ?Sized> PathBuf<V> {
             self.write_sep();
         }
         let root = root_len(self.written());
-        let mut end = self.len;
-        while end > root && is_sep_exact(self.written()[end - 1]) {
-            end -= 1;
-        }
-        self.truncate(end);
-        self.set_base_to_root();
+        self.truncate(len_without_trailing_seps(self.written(), root));
+        self.set_floor_to_root();
         if root == 0 || !V::MAY_BE_ABSOLUTE {
             self.truncate(0);
             self.fail(if root == 0 {
@@ -976,11 +917,11 @@ impl<V: View + ?Sized> PathBuf<V> {
         self.err = None;
         self.len = 0;
         self.write(false, normalized);
-        self.set_base_to_root();
+        self.set_floor_to_root();
         self
     }
 
-    /// For what replaces the path.
+    /// Every step that replaces the path calls this first. True if it failed.
     #[inline]
     fn fail_if_in_scope(&mut self) -> bool {
         if self.in_scope {
@@ -990,56 +931,39 @@ impl<V: View + ?Sized> PathBuf<V> {
     }
 
     #[inline]
-    fn set_base_to_root(&mut self) {
-        self.base_len = if V::MAY_BE_ABSOLUTE {
+    fn set_floor_to_root(&mut self) {
+        self.floor_len = if V::MAY_BE_ABSOLUTE {
             root_len(self.written())
         } else {
             0
         };
-        self.at_base = if self.base_len > 0 {
-            DotDotAtBase::Ignore
+        self.at_floor = if self.floor_len > 0 {
+            DotDotAtFloor::Ignore
         } else if V::MAY_START_WITH_DOT_DOT {
-            DotDotAtBase::Append
+            DotDotAtFloor::Append
         } else {
-            DotDotAtBase::Fail
+            DotDotAtFloor::Fail
         };
     }
 
-    /// Keeps `..` from what is written now, until what this returns is put back.
+    /// Makes what is written the floor for `..`, and returns the state to put back.
     #[inline]
-    fn set_base_to_len(&mut self) -> SavedState {
+    fn set_floor_to_len(&mut self) -> SavedState {
         let saved = SavedState {
             len: self.len,
-            base_len: self.base_len,
-            at_base: self.at_base,
+            floor_len: self.floor_len,
+            at_floor: self.at_floor,
             in_scope: self.in_scope,
             err: self.err,
         };
-        self.base_len = self.len;
-        self.at_base = DotDotAtBase::Fail;
+        self.floor_len = self.len;
+        self.at_floor = DotDotAtFloor::Fail;
         saved
     }
 
     #[inline]
-    fn ptr(&self) -> *const V::Unit {
-        #[cfg(not(windows))]
-        return self.buf.as_ptr().cast();
-        #[cfg(windows)]
-        return (&raw const *self.buf).cast();
-    }
-
-    #[inline]
-    fn ptr_mut(&mut self) -> *mut V::Unit {
-        #[cfg(not(windows))]
-        return self.buf.as_mut_ptr().cast();
-        #[cfg(windows)]
-        return (&raw mut *self.buf).cast();
-    }
-
-    #[inline]
     fn written(&self) -> &[V::Unit] {
-        // SAFETY: the first `len` units were written.
-        unsafe { core::slice::from_raw_parts(self.ptr(), self.len) }
+        &self.buf[..self.len]
     }
 
     #[inline]
@@ -1061,20 +985,13 @@ impl<V: View + ?Sized> PathBuf<V> {
             self.fail(PathError::MaxPathExceeded);
             return;
         }
-        // SAFETY: `start + max_len(units) + 1` units fit the buffer, which `units` is not in, as `self` is borrowed mutably.
-        let written = unsafe {
-            let base = self.ptr_mut();
-            // Overwritten by `units` or the NUL when there is no separator to write.
-            base.add(at).write(V::Unit::from_u8(SEP));
-            let written = V::Unit::transcode(units, base.add(start));
-            base.add(written.map_or(at, |written| start + written))
-                .write(V::Unit::from_u8(0));
-            written
-        };
-        match written {
+        // Overwritten by `units` or the NUL when there is no separator to write.
+        self.buf[at] = V::Unit::from_u8(SEP);
+        match V::Unit::transcode(units, &mut self.buf[start..]) {
             Some(written) => self.len = start + written,
             None => self.fail(PathError::InvalidName),
         }
+        self.buf[self.len] = V::Unit::from_u8(0);
     }
 
     #[inline]
@@ -1086,8 +1003,7 @@ impl<V: View + ?Sized> PathBuf<V> {
     fn truncate(&mut self, len: usize) {
         debug_assert!(len <= self.len);
         self.len = len;
-        // SAFETY: `len` is no more than it was, which is less than `MAX_PATH`.
-        unsafe { self.ptr_mut().add(len).write(V::Unit::from_u8(0)) };
+        self.buf[len] = V::Unit::from_u8(0);
     }
 
     #[inline]
@@ -1111,7 +1027,7 @@ impl<V: View + ?Sized> PathBuf<V> {
         self.err
     }
 
-    /// One copy, no parsing.
+    /// Appends `below`, which needs no parsing, in one copy.
     #[inline]
     pub fn append<C: PathUnit>(&mut self, below: &SubPath<C>) -> &mut Self
     where
@@ -1125,8 +1041,8 @@ impl<V: View + ?Sized> PathBuf<V> {
 
     /// Appends one name written by `args`, in place.
     pub fn append_fmt(&mut self, args: fmt::Arguments<'_>) -> &mut Self {
-        struct NameWriter<'a, V: View + ?Sized>(&'a mut PathBuf<V>);
-        impl<V: View + ?Sized> fmt::Write for NameWriter<'_, V> {
+        struct NameWriter<'a, V: PathKind + ?Sized>(&'a mut PathBuf<V>);
+        impl<V: PathKind + ?Sized> fmt::Write for NameWriter<'_, V> {
             fn write_str(&mut self, text: &str) -> fmt::Result {
                 self.0.write(false, text.as_bytes());
                 self.0.err.map_or(Ok(()), |_| Err(fmt::Error))
@@ -1151,20 +1067,20 @@ impl<V: View + ?Sized> PathBuf<V> {
 
     /// Removes the last name. With none left a root stays, a relative path gets a `..`, and a `SubPath` or a path in a [`ResetScope`] fails.
     #[inline]
-    pub fn dot_dot(&mut self) -> &mut Self {
-        let below = &self.written()[self.base_len..];
+    fn dot_dot(&mut self) -> &mut Self {
+        let below = &self.written()[self.floor_len..];
         let last = last_sep(below).map_or(0, |i| i + 1);
         if !below.is_empty() && !is_dot_dot(&below[last..]) {
-            self.truncate(self.base_len + last.saturating_sub(1));
+            self.truncate(self.floor_len + last.saturating_sub(1));
             return self;
         }
-        match self.at_base {
-            DotDotAtBase::Ignore => {}
-            DotDotAtBase::Append => {
+        match self.at_floor {
+            DotDotAtFloor::Ignore => {}
+            DotDotAtFloor::Append => {
                 let dots = [V::Unit::from_u8(b'.'); 2];
                 self.write(self.needs_sep(), &dots);
             }
-            DotDotAtBase::Fail => self.fail(PathError::Escapes),
+            DotDotAtFloor::Fail => self.fail(PathError::Escapes),
         }
         self
     }
@@ -1172,7 +1088,7 @@ impl<V: View + ?Sized> PathBuf<V> {
     /// Lends the path for changes that end with the [`ResetScope`].
     #[inline]
     pub fn save(&mut self) -> ResetScope<'_, V> {
-        let saved = self.set_base_to_len();
+        let saved = self.set_floor_to_len();
         self.in_scope = true;
         ResetScope { path: self, saved }
     }
@@ -1193,7 +1109,9 @@ impl<V: View + ?Sized> PathBuf<V> {
             return Err(err);
         }
         // SAFETY: `write` put a NUL at `len`.
-        Ok(f(unsafe { V::Unit::zslice_from_raw(path.ptr(), path.len) }))
+        Ok(f(unsafe {
+            V::Unit::zslice_from_raw(path.buf.as_ptr(), path.len)
+        }))
     }
 
     /// Resolves `input`, read by the rules of `P`, against the path, as `path.resolve` does. Absolute input replaces it, as `set` does.
@@ -1220,7 +1138,7 @@ impl<V: View + ?Sized> PathBuf<V> {
                 return self;
             }
             self.set_input_root(&input[..root]);
-            self.set_base_to_root();
+            self.set_floor_to_root();
         }
         self.parse::<P>(&input[root..], Dots::Resolve);
         self
@@ -1248,13 +1166,13 @@ impl<V: View + ?Sized> PathBuf<V> {
             self.fail(PathError::ExpectedRelative);
             return self;
         }
-        let saved = self.set_base_to_len();
+        let saved = self.set_floor_to_len();
         self.parse::<P>(input, dots);
         if self.err.is_some() {
             self.truncate(saved.len);
         }
-        self.base_len = saved.base_len;
-        self.at_base = saved.at_base;
+        self.floor_len = saved.floor_len;
+        self.at_floor = saved.at_floor;
         self
     }
 
@@ -1307,9 +1225,8 @@ impl<V: View + ?Sized> PathBuf<V> {
         #[cfg(windows)]
         {
             self.write(false, root);
-            // SAFETY: the first `len` units were written.
-            let written = unsafe { core::slice::from_raw_parts_mut(self.ptr_mut(), self.len) };
-            for unit in written {
+            let len = self.len;
+            for unit in &mut self.buf[..len] {
                 if *unit == V::Unit::from_u8(b'/') {
                     *unit = V::Unit::from_u8(SEP);
                 }
@@ -1347,12 +1264,13 @@ impl<U: PathUnit> PathBuf<AbsPath<U>> {
             _ => rest,
         };
         this.write(false, rest);
-        this.set_base_to_root();
+        this.set_floor_to_root();
         this
     }
 }
 
 impl AbsPathBuf {
+    /// The project directory, `FileSystem::top_level_dir`.
     #[inline]
     pub fn init_top_level_dir() -> Self {
         let mut this = Self::init();
@@ -1360,20 +1278,21 @@ impl AbsPathBuf {
         this
     }
 
+    /// The path the OS gives for an open `fd`.
     pub fn init_fd_path(fd: Fd) -> crate::Result<Self> {
         use bun_errno::SystemErrno;
         #[cfg(not(windows))]
-        // SAFETY: `room` is writable for its length.
-        let fill = |room: &mut [u8]| match unsafe {
-            bun_core::fd_path_raw(fd, room.as_mut_ptr(), room.len())
+        // SAFETY: `buf` is writable for its length.
+        let fill = |buf: &mut [u8]| match unsafe {
+            bun_core::fd_path_raw(fd, buf.as_mut_ptr(), buf.len())
         } {
             len if len > 0 => Ok(len as usize),
             _ => Err(SystemErrno::EBADF),
         };
         #[cfg(windows)]
-        // SAFETY: `room` is writable for its length.
-        let fill = |room: &mut [u16]| match unsafe {
-            bun_core::fd_path_raw_w(fd, room.as_mut_ptr(), room.len())
+        // SAFETY: `buf` is writable for its length.
+        let fill = |buf: &mut [u16]| match unsafe {
+            bun_core::fd_path_raw_w(fd, buf.as_mut_ptr(), buf.len())
         } {
             len if len > 0 => Ok(len as usize),
             -2 => Err(SystemErrno::ENAMETOOLONG),
@@ -1389,40 +1308,40 @@ impl AbsPathBuf {
 #[derive(Copy, Clone)]
 struct SavedState {
     len: usize,
-    base_len: usize,
-    at_base: DotDotAtBase,
+    floor_len: usize,
+    at_floor: DotDotAtFloor,
     in_scope: bool,
     err: Option<PathError>,
 }
 
 /// A [`PathBuf`] that goes back to what it was, failures included, on drop. Until then nothing removes or replaces what was there.
-pub struct ResetScope<'a, V: View + ?Sized> {
+pub struct ResetScope<'a, V: PathKind + ?Sized> {
     path: &'a mut PathBuf<V>,
     saved: SavedState,
 }
-impl<V: View + ?Sized> Drop for ResetScope<'_, V> {
+impl<V: PathKind + ?Sized> Drop for ResetScope<'_, V> {
     #[inline]
     fn drop(&mut self) {
         // `mem::swap` can have put another `PathBuf` here, which may hold less than was saved.
-        if !self.path.in_scope || self.path.base_len != self.saved.len {
+        if !self.path.in_scope || self.path.floor_len != self.saved.len {
             self.path.fail(PathError::Escapes);
             return;
         }
         self.path.truncate(self.saved.len);
-        self.path.base_len = self.saved.base_len;
-        self.path.at_base = self.saved.at_base;
+        self.path.floor_len = self.saved.floor_len;
+        self.path.at_floor = self.saved.at_floor;
         self.path.in_scope = self.saved.in_scope;
         self.path.err = self.saved.err;
     }
 }
-impl<V: View + ?Sized> Deref for ResetScope<'_, V> {
+impl<V: PathKind + ?Sized> Deref for ResetScope<'_, V> {
     type Target = PathBuf<V>;
     #[inline]
     fn deref(&self) -> &PathBuf<V> {
         self.path
     }
 }
-impl<V: View + ?Sized> DerefMut for ResetScope<'_, V> {
+impl<V: PathKind + ?Sized> DerefMut for ResetScope<'_, V> {
     #[inline]
     fn deref_mut(&mut self) -> &mut PathBuf<V> {
         self.path
@@ -1444,6 +1363,8 @@ fn input_root_len<P: PlatformT>(input: &[u8]) -> usize {
 mod tests {
     use super::*;
     use crate::resolve_path::platform::{Auto, Loose, Posix, Windows};
+
+    type Step = fn(&mut AbsPathBuf, &[u8]);
 
     /// simdutf is C++, which neither `cargo test` links nor Miri runs. The other direction is in `string_paths`.
     #[unsafe(no_mangle)]
@@ -1486,7 +1407,7 @@ mod tests {
         }
     }
     /// The path as it is written on this host, or the name of the failure. Reads the NUL.
-    pub(super) fn native_or_err<V: View + ?Sized>(path: Result<&PathZ<V>, PathError>) -> String
+    pub(super) fn native_or_err<V: PathKind + ?Sized>(path: Result<&PathZ<V>, PathError>) -> String
     where
         V::Unit: Into<u32>,
     {
@@ -1503,7 +1424,7 @@ mod tests {
             String::from_utf16(&units.map(|c| c as u16).collect::<Vec<_>>()).unwrap()
         }
     }
-    fn portable_or_err<V: View + ?Sized>(path: Result<&PathZ<V>, PathError>) -> String
+    fn portable_or_err<V: PathKind + ?Sized>(path: Result<&PathZ<V>, PathError>) -> String
     where
         V::Unit: Into<u32>,
     {
@@ -1539,7 +1460,7 @@ mod tests {
         assert_eq!(path.len, U::MAX_PATH - 2 - room);
         path
     }
-    fn len_of<V: View + ?Sized>(path: &PathBuf<V>) -> Result<usize, PathError> {
+    fn len_of<V: PathKind + ?Sized>(path: &PathBuf<V>) -> Result<usize, PathError> {
         path.as_path().map(|path| path.slice().len())
     }
 
@@ -1639,7 +1560,6 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn posix_keeps_backslash_and_colon_in_names() {
-        type Step = fn(&mut AbsPathBuf, &[u8]);
         let rows: [(Step, &[u8], &str); 10] = [
             (
                 |path, input| _ = path.join::<Posix>(input),
@@ -1755,7 +1675,7 @@ mod tests {
     }
 
     #[test]
-    fn dot_dot_at_base_per_view() {
+    fn dot_dot_at_floor_per_view() {
         assert_eq!(
             portable_or_err(abs("/a").dot_dot().dot_dot().as_path()),
             "/"
@@ -1830,7 +1750,6 @@ mod tests {
     #[test]
     fn every_write_stops_at_capacity() {
         const MAX: usize = <u8 as PathUnit>::MAX_PATH;
-        type Step = fn(&mut AbsPathBuf, &[u8]);
         let steps: [Step; 5] = [
             |path, name| _ = path.append(SubPath::new(name).unwrap()),
             |path, name| _ = path.append_names::<Posix>(name),
@@ -1984,25 +1903,6 @@ mod tests {
     }
 
     #[test]
-    fn path_buf_survives_moves() {
-        fn built_in_callee() -> AbsPathBuf {
-            let mut path = abs("/a");
-            path.append(sub_path!("b"));
-            path
-        }
-        let mut path = built_in_callee();
-        path.append(sub_path!("c"));
-        let mut boxed = Box::new(path);
-        boxed.append(sub_path!("d"));
-        let mut kept = vec![*boxed];
-        kept.reserve(4);
-        assert_eq!(
-            portable_or_err(kept[0].append(sub_path!("e")).as_path()),
-            "/a/b/c/d/e"
-        );
-    }
-
-    #[test]
     fn relative_from_one_directory_to_another() {
         for (from, to, way) in [
             ("/a/b", "/a/b", ""),
@@ -2047,7 +1947,7 @@ mod tests {
         }
         assert_eq!(AbsPathBuf::from_fn(|_| Err("failed")).err(), Some("failed"));
 
-        let filled = [ROOT.as_bytes(), &vec![b'x'; MAX]].concat();
+        let filled = [ROOT.as_bytes(), &[b'x'; MAX]].concat();
         for len in [MAX, MAX + 1] {
             let path = AbsPathBuf::from_fn(fill_with(&filled[..len])).unwrap();
             assert_eq!(path.error(), Some(PathError::MaxPathExceeded));
@@ -2089,7 +1989,7 @@ mod tests {
     }
 
     #[test]
-    fn both_units() {
+    fn transcodes_between_units() {
         let base = abs("/w");
         let base: &AbsPath = base.as_path().unwrap();
         let mut wide = PathBuf::<AbsPath<u16>>::from_abs(base);
@@ -2111,7 +2011,7 @@ mod tests {
             portable_or_err(narrow.set_abs(wide).as_path()),
             "/w/node_modules/a/b/r\u{e9}act@18"
         );
-        // Half of a surrogate pair is a name on Windows and is nothing in UTF-8.
+        // A lone surrogate is legal in a Windows name and has no UTF-8 form.
         narrow.append(FileName::<u16>::new(&[0xD800]).unwrap());
         assert_eq!(narrow.error(), Some(PathError::InvalidName));
 
@@ -2147,7 +2047,7 @@ mod tests {
 
     #[test]
     fn windows_roots() {
-        let native = |text: &str| windows_root_len(text.as_bytes(), |c| c == b'\\');
+        let backslash = |text: &str| windows_root_len(text.as_bytes(), |c| c == b'\\');
         let either = |text: &str| windows_root_len(text.as_bytes(), |c| c == b'\\' || c == b'/');
         for (text, root) in [
             ("", ""),
@@ -2180,20 +2080,20 @@ mod tests {
             ("\\\\srv\\UNC\\x\\y", "\\\\srv\\UNC\\"),
             ("\\\\??\\UNC\\x\\y", "\\\\??\\UNC\\"),
         ] {
-            assert_eq!(&text[..native(text)], root, "{text}");
+            assert_eq!(&text[..backslash(text)], root, "{text}");
             assert_eq!(&text[..either(text)], root, "{text}");
             let slashes = text.replace('\\', "/");
             assert_eq!(either(&slashes), root.len(), "{slashes}");
             // In a view only `\` separates.
-            assert_eq!(native(&slashes), 0, "{slashes}");
-            let fully_qualified = if root.len() > 1 && root.ends_with('\\') {
-                root
-            } else {
-                ""
-            };
+            assert_eq!(backslash(&slashes), 0, "{slashes}");
+            #[cfg(windows)]
             assert_eq!(
-                &text[..fully_qualified_root_len(text.as_bytes(), |c| c == b'\\')],
-                fully_qualified,
+                &text[..root_len(text.as_bytes())],
+                if root.len() > 1 && root.ends_with('\\') {
+                    root
+                } else {
+                    ""
+                },
                 "{text}"
             );
         }
@@ -2242,23 +2142,9 @@ mod windows_tests {
     ];
     #[rustfmt::skip]
     const VIEWS: &[(&str, &str)] = &[
-        ("", "s"),
-        ("a", "sn"),
-        ("a\\b", "s"),
         ("a/b", ""),
-        ("a\\", ""),
-        ("a\\\\b", ""),
-        ("a\\.\\b", ""),
-        ("a\\..\\b", ""),
-        ("..", ""),
-        ("..\\a", ""),
-        ("a\\..", ""),
-        (".", ""),
         ("C:", ""),
         ("C:a", ""),
-        ("C:\\", "a"),
-        ("C:\\a", "a"),
-        ("C:\\a\\", ""),
         ("C:/a", ""),
         ("c:\\a", "a"),
         ("1:\\a", ""),

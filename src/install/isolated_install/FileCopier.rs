@@ -2,28 +2,25 @@
 use core::ptr;
 
 use bun_alloc::AllocError;
+use bun_paths::{self, OSPathBuf, OSPathSlice};
 #[cfg(windows)]
-use bun_paths::SubPath;
-use bun_paths::{self, OSPathSlice};
+use bun_paths::{OSAbsPathBuf, SubPath};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
-#[cfg(windows)]
-use super::hardlinker::OsAbsPathBuf;
-use super::hardlinker::OsPathBuf;
 use super::path_error;
 
 pub(crate) struct FileCopier {
     #[cfg(windows)]
-    pub(crate) src_path: OsAbsPathBuf,
-    pub(crate) dest_subpath: OsPathBuf,
+    pub(crate) src_path: OSAbsPathBuf,
+    pub(crate) dest_subpath: OSPathBuf,
     pub(crate) walker: Walker,
 }
 
 impl FileCopier {
     pub(crate) fn init(
         src_dir: Fd,
-        #[cfg(windows)] src_path: OsAbsPathBuf,
-        dest_subpath: OsPathBuf,
+        #[cfg(windows)] src_path: OSAbsPathBuf,
+        dest_subpath: OSPathBuf,
         skip_dirnames: &[&OSPathSlice],
     ) -> Result<FileCopier, AllocError> {
         Ok(FileCopier {
@@ -103,7 +100,7 @@ impl FileCopier {
 
                 match entry.kind {
                     EntryKind::Directory => {
-                        // SAFETY: FFI — both `z()` are NUL-terminated WStrs.
+                        // SAFETY: FFI — both `slice_z()` are NUL-terminated WStrs.
                         if unsafe {
                             bun_sys::windows::CreateDirectoryExW(
                                 src.slice_z().as_ptr(),

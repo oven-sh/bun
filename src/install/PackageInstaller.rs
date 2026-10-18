@@ -586,6 +586,12 @@ fn print_package_version<'a>(
 }
 
 impl<'a> PackageInstaller<'a> {
+    fn node_modules_path(&self) -> AbsPathBuf {
+        let mut path = AbsPathBuf::init();
+        path.join::<platform::Auto>(self.node_modules.path.as_slice());
+        path
+    }
+
     // BACKREF accessors: do not hold a `_mut` result across a call that derives another one.
     #[inline]
     pub(crate) fn manager(&self) -> &'a PackageManager {
@@ -700,11 +706,8 @@ impl<'a> PackageInstaller<'a> {
         let lockfile = self.lockfile();
         let manager = self.manager_mut();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
-        let mut node_modules_path = AbsPathBuf::init();
-        let Ok(node_modules_path) = node_modules_path
-            .join::<platform::Auto>(self.node_modules.path.as_slice())
-            .as_path()
-        else {
+        let node_modules_path = self.node_modules_path();
+        let Ok(node_modules_path) = node_modules_path.as_path() else {
             return;
         };
         let mut is_behind_link = (!lockfile.is_importer_tree_id(tree_id)).then_some(false);
@@ -2451,10 +2454,8 @@ impl<'a> PackageInstaller<'a> {
                     && self.metas[package_id as usize].has_install_script()
                 {
                     // `hasInstallScript` is a false positive when binding.gyp is not published.
-                    let mut folder_path = AbsPathBuf::init();
-                    folder_path
-                        .join::<platform::Auto>(self.node_modules.path.as_slice())
-                        .append_names::<platform::Posix>(alias.slice(string_buf!()));
+                    let mut folder_path = self.node_modules_path();
+                    folder_path.append_names::<platform::Posix>(alias.slice(string_buf!()));
 
                     let count = self.get_installed_package_scripts_count(
                         alias.slice(string_buf!()),
@@ -2603,10 +2604,8 @@ impl<'a> PackageInstaller<'a> {
         let (alias, alias_hash) = (dep.name, dep.name_hash);
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
 
-        let mut folder_path = AbsPathBuf::init();
-        folder_path
-            .join::<platform::Auto>(self.node_modules.path.as_slice())
-            .append_names::<platform::Posix>(alias.slice(string_buf));
+        let mut folder_path = self.node_modules_path();
+        folder_path.append_names::<platform::Posix>(alias.slice(string_buf));
 
         if self
             .manager()

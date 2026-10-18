@@ -113,7 +113,7 @@ impl PmLicensesCommand {
 
         let mut path = AbsPathBuf::init_top_level_dir();
         if !(path.save().append(sub_path!("node_modules")).as_path())
-            .is_ok_and(|node_modules| bun_sys::exists(node_modules.slice()))
+            .is_ok_and(|node_modules| bun_sys::exists_z(node_modules.slice_z()))
         {
             if not_silent {
                 Output::err_generic("node_modules not found, nothing to list", ());

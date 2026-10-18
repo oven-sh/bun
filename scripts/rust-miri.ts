@@ -38,8 +38,8 @@ const repo = resolve(import.meta.dirname, "..");
 // the long poles immediately; everything after bun_hash takes seconds.
 const MIRI_CRATES = [
   "bun_collections",
-  "bun_ast",
   "bun_paths",
+  "bun_ast",
   "bun_hash",
   "bun_base64",
   "bun_bundler",
@@ -110,18 +110,18 @@ if (extraArgs.length > 0) {
 // Default set: Miri interprets one test at a time per process, so a single
 // `cargo miri test -p a -p b ...` is serial end to end. Build everything once,
 // then run one `cargo miri test -p <crate>` per crate concurrently.
-for (const crates of [
+for (const args of [
   MIRI_CRATES.flatMap(c => ["-p", c]),
   [...MIRI_WINDOWS_CRATES.flatMap(c => ["-p", c]), "--target", WINDOWS_TARGET],
 ]) {
-  console.log(`\x1b[36m[miri]\x1b[0m cargo miri test --no-run ${crates.join(" ")}`);
-  if (run("cargo", ["miri", "test", "--no-run", ...crates], { env }).status !== 0) process.exit(1);
+  console.log(`\x1b[36m[miri]\x1b[0m cargo miri test --no-run ${args.join(" ")}`);
+  if (run("cargo", ["miri", "test", "--no-run", ...args], { env }).status !== 0) process.exit(1);
 }
 
 type Job = { label: string; args: string[] };
 type Result = { label: string; ok: boolean; seconds: number; output: string };
 
-function testCrate({ label, args }: Job): Promise<Result> {
+function runJob({ label, args }: Job): Promise<Result> {
   return new Promise(done => {
     const started = Date.now();
     const chunks: Buffer[] = [];
@@ -134,6 +134,7 @@ function testCrate({ label, args }: Job): Promise<Result> {
   });
 }
 
+// The Windows runs are among the longest, so they start with the long ones.
 const queue: Job[] = [
   ...MIRI_WINDOWS_CRATES.map(crate => ({
     label: `${crate} (windows)`,
@@ -148,7 +149,7 @@ const inActions = !!process.env.GITHUB_ACTIONS;
 
 async function worker() {
   for (let job = queue.shift(); job; job = queue.shift()) {
-    const result = await testCrate(job);
+    const result = await runJob(job);
     results.push(result);
     const status = result.ok ? "\x1b[32mok\x1b[0m" : "\x1b[31mFAILED\x1b[0m";
     console.log(`\x1b[36m[miri]\x1b[0m ${result.label} ${status} ${result.seconds.toFixed(0)}s`);

@@ -357,8 +357,8 @@ pub use path_buffer_pool::os_path_buffer_pool;
 #[path = "Path.rs"]
 pub mod path;
 pub use path::{
-    AbsPath, AbsPathBuf, FileName, Path, PathBuf, PathError, PathUnit, PathZ, RelPath, RelPathBuf,
-    ResetScope, SubPath, SubPathBuf, View,
+    AbsPath, AbsPathBuf, FileName, OSAbsPathBuf, OSPathBuf, Path, PathBuf, PathError, PathKind,
+    PathUnit, PathZ, RelPath, RelPathBuf, ResetScope, SubPath, SubPathBuf,
 };
 
 /// Width-generic dirname

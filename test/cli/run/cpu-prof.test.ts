@@ -189,6 +189,7 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
+  // On Windows `\\` separates, so no name holds one.
   test.skipIf(isWindows)("a backslash in the cwd, --cpu-prof-dir and --cpu-prof-name is part of a name", async () => {
     using dir = tempDir("cpu-prof-backslash", {
       "pro\\j": {},
@@ -198,7 +199,7 @@ describe.concurrent("--cpu-prof", () => {
       cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir", "o\\ut", "--cpu-prof-name", "x\\y.cpuprofile", "-e", "1"],
       cwd: join(String(dir), "pro\\j"),
       env: bunEnv,
-      stdout: "pipe",
+      stdout: "inherit",
       stderr: "pipe",
     });
 

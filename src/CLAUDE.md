@@ -231,14 +231,14 @@ and the narrow (`u8`) variant on POSIX.
 
 ### Paths as types (`src/paths/Path.rs`)
 
-To build a path, use `PathBuf<V>` rather than offsets into a buffer. It owns one
-path buffer (inline on POSIX, from the pool on Windows), never allocates, and
-builds a view `V`. A view is a borrowed slice that is native (`SEP` only) and
-normalized (no `.`, no empty name, no trailing separator):
+To build a path, use `PathBuf<V>` rather than offsets into a buffer. It holds one
+buffer from the path buffer pool and builds a view `V`. A view is a borrowed slice
+that is normalized: only `SEP` separates, and there is no `.`, no empty name and no
+trailing separator.
 
 | View       | Holds                                   | Derefs to |
 | ---------- | --------------------------------------- | --------- |
-| `Path`     | any native path                         |           |
+| `Path`     | any normalized path                     |           |
 | `AbsPath`  | an absolute path, no `..`               | `Path`    |
 | `RelPath`  | a relative path, `..` only at the front | `Path`    |
 | `SubPath`  | a relative path with no `..`            | `RelPath` |
@@ -246,7 +246,9 @@ normalized (no `.`, no empty name, no trailing separator):
 
 Each takes a unit, `u8` by default: `AbsPath<u16>` is a wide path. `PathZ<V>` is
 a `V` followed by a NUL; `slice_z()` is what a syscall takes, `slice()` the units.
-`AbsPathBuf`, `RelPathBuf` and `SubPathBuf` name the `u8` builders.
+`AbsPathBuf`, `RelPathBuf` and `SubPathBuf` name the `u8` builders, `OSAbsPathBuf`
+and `OSPathBuf` those of the unit the host's syscalls take. A `PathBuf` builds every
+view but `FileName`: those four implement `PathKind`.
 
 Pick the entry by where the input came from:
 
@@ -255,7 +257,7 @@ Pick the entry by where the input came from:
 | a literal                                     | `append(sub_path!("node_modules/.bin"))`                                     |
 | another view                                  | `append(sub)`, `from(view)`, `set(view)`, `from_abs`/`set_abs` (either unit) |
 | a name the OS listed                          | `append(FileName::new_unchecked(name))`                                      |
-| a path the OS returned                        | `set_unchecked(units)`, `from_fn(\|room\| ..)`, `init_fd_path(fd)`           |
+| a path the OS returned                        | `set_unchecked(units)`, `from_fn(\|buf\| ..)`, `init_fd_path(fd)`            |
 | a package name or alias                       | `append_names::<Posix>(name)`: names only, no `.` or `..`                    |
 | a formatted name                              | `append_fmt(format_args!("{name}@{version}"))`                               |
 | text that must stay inside the directory      | `join_below::<P>(text)`: fails with `Escapes` or `ExpectedRelative`          |
@@ -277,8 +279,8 @@ path.append(sub_path!("node_modules")).append_names::<Posix>(alias);
 }
 ```
 
-No step returns a `Result`. The first failure (`PathError`) is kept, later steps
-do nothing, and `as_path()`, the only way to the path, returns it. `PathError`
+No step returns a `Result`. The first failure (`PathError`) is kept, and
+`as_path()`, the only way to the path, returns it. `PathError`
 converts to `bun_errno::SystemErrno` and nests in a crate's `Error` with `#[from]`.
 Inside a `ResetScope` nothing can remove or replace what was there before it.
 

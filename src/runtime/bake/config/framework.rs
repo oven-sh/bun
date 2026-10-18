@@ -126,11 +126,26 @@ impl Framework {
             .map(|rfr| bt::ReactFastRefresh {
                 import_source: rfr.import_source.as_ref().into(),
             });
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let client_page_dirs = self
+            .file_system_router_types
+            .iter()
+            .filter(|fsr| fsr.client_pages)
+            .map(|fsr| {
+                Box::<[u8]>::from(
+                    bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
+                        top_level_dir,
+                        &fsr.root,
+                    ),
+                )
+            })
+            .collect();
         bt::Framework::new(
             built_in_modules,
             server_components,
             react_fast_refresh,
             self.is_built_in_react,
+            client_page_dirs,
         )
     }
 

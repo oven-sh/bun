@@ -574,9 +574,6 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  * CryptoKeyRaw :-
  *    CryptoAlgorithmIdentifierTag <keySize:uint32_t> <keyData:byte{keySize}>
  *
- * CryptoKeyOKP :-
- *    CryptoAlgorithmIdentifierTag CryptoKeyOKPOpNameTag CryptoKeyAsymmetricTypeSubtag? <keySize:uint32_t> <keyData:byte{keySize}> // The type subtag is present for X25519 only.
- *
  * DOMPoint :-
  *        DOMPointReadOnlyTag DOMPointData
  *      | DOMPointTag DOMPointData

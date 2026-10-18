@@ -1767,7 +1767,7 @@ export interface GetterField {
   getter: Type;
   /** Also generate a setter, which takes `&mut self` (or the wrapper, with `capability: "js"`). */
   setter?: true;
-  /** Returns an internal field, and computes it while that is `undefined`. `true` declares one of the getter's name. */
+  /** Returns an internal field, and computes it while that is `undefined`. `true` declares one of the getter's name, a string names one declared elsewhere. */
   cache?: true | string;
   capability?: Capability;
   throws?: boolean;

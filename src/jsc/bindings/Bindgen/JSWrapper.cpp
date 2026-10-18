@@ -15,7 +15,7 @@ void analyzeInternalFields(JSCell* cell, HeapAnalyzer& analyzer, std::span<const
 {
     VM& vm = cell->vm();
     for (size_t i = 0; i < fields.size(); ++i) {
-        if (JSValue value = fields[i].get(); value && value.isCell())
+        if (JSValue value = fields[i].get(); value.isCell())
             analyzer.analyzePropertyNameEdge(cell, value.asCell(), Identifier::fromString(vm, names[i]).impl());
     }
 }

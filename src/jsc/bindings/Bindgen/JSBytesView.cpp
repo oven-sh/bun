@@ -32,7 +32,7 @@ static ALWAYS_INLINE std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value,
         isShared = view->isShared();
     } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value)) {
         bytes = buffer->impl()->span();
-        isShared = buffer->isShared();
+        isShared = buffer->impl()->isShared();
     } else {
         const uint8_t* data = nullptr;
         size_t length = 0;

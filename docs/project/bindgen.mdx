@@ -524,7 +524,7 @@ A property of `proto` is one of:
 | ------------------------------------------- | ------------------------------------------------------------------------ |
 | `{ args, returns, capability, throws, .. }` | a native function; `privateSymbol` keys it by a private name of `src/js` |
 | `{ getter: T, capability, throws }`         | an accessor; with `setter: true` it can be assigned                      |
-| `{ getter: T, cache: true, .. }`            | an accessor that returns an [internal field](#internalfields); no setter |
+| `{ getter: T, cache: true \| "field", .. }` | an accessor that returns an [internal field](#internalfields); no setter |
 | `{ builtin: true, length }`                 | the export of that name in `src/js/builtins/<class name>.ts`             |
 | `[{ rustName, args, .. }, ..]`              | a native function with [overloads](#overloads)                           |
 
@@ -582,7 +582,8 @@ Every field starts as `undefined`. A heap snapshot shows what it holds as a prop
 A getter with `cache: true` declares a field of its own name, with the same two functions, and
 returns it. While the field is `undefined` the getter calls Rust and stores the result, so
 `this.set_tag_field(heap, JsLocal::UNDEFINED)` makes the next read of `tag` compute it again.
-`cache: "tag"` on another getter declares nothing, and returns that same field.
+`cache: "tag"` on another getter declares nothing: it returns that field, of a getter or of
+`internalFields`, and fills it from its own Rust function.
 
 ### Staying alive
 

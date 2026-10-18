@@ -3,7 +3,6 @@ use crate::generated_bindgen::text_decoder::{
 };
 use crate::webcore::EncodingLabel;
 use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSValue};
-use bun_core::AllocError;
 use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
@@ -66,13 +65,13 @@ impl TextDecoder {
         output: &mut Vec<u16>,
         saw_error: &mut bool,
         code_unit: u16,
-    ) -> Result<(), AllocError> {
+    ) {
         if let Some(lead_surrogate) = self.lead_surrogate.take() {
             if u16_is_trail(code_unit) {
                 // TODO: why is this here?
                 // const code_point = strings.u16GetSupplementary(lead_surrogate, code_unit);
                 output.extend_from_slice(&[lead_surrogate, code_unit]);
-                return Ok(());
+                return;
             }
             output.push(UNICODE_REPLACEMENT_U16);
             *saw_error = true;
@@ -80,17 +79,16 @@ impl TextDecoder {
 
         if u16_is_lead(code_unit) {
             self.lead_surrogate = Some(code_unit);
-            return Ok(());
+            return;
         }
 
         if u16_is_trail(code_unit) {
             output.push(UNICODE_REPLACEMENT_U16);
             *saw_error = true;
-            return Ok(());
+            return;
         }
 
         output.push(code_unit);
-        Ok(())
     }
 
     #[inline(always)]
@@ -105,7 +103,7 @@ impl TextDecoder {
     fn decode_utf16<const BIG_ENDIAN: bool, const FLUSH: bool>(
         &mut self,
         bytes: &[u8],
-    ) -> Result<(Vec<u16>, bool), AllocError> {
+    ) -> (Vec<u16>, bool) {
         let mut output: Vec<u16> = Vec::with_capacity(bytes.len() / 2);
 
         let mut remain = bytes;
@@ -122,7 +120,7 @@ impl TextDecoder {
                         u16::from(lead_byte),
                         u16::from(remain[0]),
                     ),
-                )?;
+                );
                 remain = &remain[1..];
             }
         }
@@ -137,7 +135,7 @@ impl TextDecoder {
                     u16::from(remain[i]),
                     u16::from(remain[i + 1]),
                 ),
-            )?;
+            );
             i += 2;
         }
 
@@ -153,11 +151,10 @@ impl TextDecoder {
                 self.lead_surrogate = None;
                 output.push(UNICODE_REPLACEMENT_U16);
                 saw_error = true;
-                return Ok((output, saw_error));
             }
         }
 
-        Ok((output, saw_error))
+        (output, saw_error)
     }
 
     /// Feeds one chunk to the encoding_rs decoder shared across a stream's
@@ -370,9 +367,9 @@ impl TextDecoder {
                 };
 
                 let (mut decoded, saw_error) = if big_endian {
-                    self.decode_utf16::<true, FLUSH>(input)?
+                    self.decode_utf16::<true, FLUSH>(input)
                 } else {
-                    self.decode_utf16::<false, FLUSH>(input)?
+                    self.decode_utf16::<false, FLUSH>(input)
                 };
 
                 if saw_error && self.fatal {
@@ -579,7 +576,7 @@ pub(crate) extern "C" fn TextDecoder__decodeForStream(
         // escape this call.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
-    // SAFETY: a host function of the stream called this, and `this` is the live decoder of its cell.
+    // SAFETY: the stream's transform or flush algorithm called this with no `JsScope` borrowed, and holds the cell of `this`.
     unsafe {
         JsScope::with(global.as_mut_ptr(), |cx| {
             (*this)

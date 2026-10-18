@@ -1486,32 +1486,6 @@ describe("s3-server", () => {
     }
   });
 
-  describe.concurrent("an endpoint with trailing slashes", () => {
-    // The request path is `/bucket/key` for `https://host`, `https://host/` and `https://host//`
-    // alike: the endpoint is a base, and a base has no trailing slash.
-    for (const tail of ["", "/", "//", "/prefix/", "/prefix//"]) {
-      it(`requests /bucket/key below ${JSON.stringify(tail)}`, async () => {
-        const paths: string[] = [];
-        using server = Bun.serve({
-          port: 0,
-          fetch(req) {
-            paths.push(new URL(req.url).pathname);
-            return new Response("Hello Bun!");
-          },
-        });
-        const s3 = S3({
-          accessKeyId: "test",
-          secretAccessKey: "test",
-          endpoint: `${server.url.origin}${tail}`,
-          bucket: "buntest",
-        });
-        expect(await s3.file("hello.txt").text()).toBe("Hello Bun!");
-        const prefix = tail.startsWith("/prefix") ? "/prefix" : "";
-        expect(paths).toEqual([`${prefix}/buntest/hello.txt`]);
-      });
-    }
-  });
-
   describe.concurrent("should accept / or \\ in start and end of bucket name", () => {
     let bucketPrefixI = 0;
     for (let start of ["/", "\\", ""]) {

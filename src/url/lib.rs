@@ -204,7 +204,9 @@ pub struct URL<'a> {
     pub href: &'a [u8],
     pub origin: &'a [u8],
     pub password: &'a [u8],
+    /// The path and the query, as written: `//a//b?x=1`. The HTTP client sends it as the request-target.
     pub pathname: &'a [u8],
+    /// The path without the query, with one leading `/` and no trailing `/`: `/a//b`. `/x` collapses to `/`.
     pub path: &'a [u8],
     pub port: &'a [u8],
     pub protocol: &'a [u8],
@@ -389,7 +391,7 @@ impl<'a> URL<'a> {
         };
         let Some(url) = normalized else {
             return Some(S3Endpoint {
-                host_with_path: Box::from(strings::trim_right(as_written.host_with_path(), b"/")),
+                host_with_path: Box::from(as_written.host_with_path()),
                 is_http: as_written.is_http(),
             });
         };
@@ -398,7 +400,7 @@ impl<'a> URL<'a> {
         let mut host_with_path = url.hostname().to_owned_slice();
         let pathname = url.pathname();
         let path = pathname.to_utf8();
-        host_with_path.extend_from_slice(strings::trim_right(path.slice(), b"/"));
+        host_with_path.extend_from_slice(strings::without_suffix_comptime(path.slice(), b"/"));
         Some(S3Endpoint {
             host_with_path: host_with_path.into_boxed_slice(),
             is_http,

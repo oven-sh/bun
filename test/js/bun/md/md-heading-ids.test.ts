@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const Markdown = Bun.markdown;
 
@@ -323,6 +325,32 @@ describe("autolinkHeadings option", () => {
       }
     }
     expect(wrong).toEqual([]);
+  });
+
+  // Each example of the spec that is one line is the text of a heading here.
+  test.each([
+    ["spec.txt", {}],
+    ["spec-gfm.txt", {}],
+    ["spec-permissive-autolinks.txt", { autolinks: true }],
+    ["spec-wiki-links.txt", { wikiLinks: true }],
+    ["regressions.txt", {}],
+  ] as const)("%s: a heading gets the link to itself when it has no <a> start tag", (file, options) => {
+    const spec = readFileSync(join(import.meta.dir, file), "utf8").replace(/\r\n?/g, "\n");
+    const examples = Array.from(spec.matchAll(/^`{32} example\n(.*)\n\.$/gm), match =>
+      match[1].replaceAll("\u2192", "\t"),
+    );
+
+    const wrong: string[] = [];
+    for (const example of examples) {
+      const md = `<a href="p">p</a> [q](r)\n\n## ${example}\n`;
+      const withIds = Markdown.html(md, { ...options, headings: { ids: true } });
+      const withLinks = Markdown.html(md, { ...options, headings: true });
+
+      const [, before, id, content] = /^([^]*<h2 id="([^"]*)">)([^]*)<\/h2>\n$/.exec(withIds)!;
+      const expected = /<a[ \t\n\r\f\v/>]/i.test(content) ? withIds : `${before}<a href="#${id}">${content}</a></h2>\n`;
+      if (withLinks !== expected || linksInLinks(withLinks) !== linksInLinks(withIds)) wrong.push(example);
+    }
+    expect({ examples: examples.length > 0, wrong }).toEqual({ examples: true, wrong: [] });
   });
 
   test("autolink with deduplication", () => {

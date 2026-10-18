@@ -376,6 +376,23 @@ pub(crate) enum FailureReport {
     Errored,
 }
 
+/// The download of a package failed, and the registry has not said yet whether the manifest that
+/// named its tarball still holds. See `enqueue::revalidate_failed_tarball`.
+pub(crate) struct HeldTarballFailure {
+    pub(crate) task_id: Task::Id,
+    pub(crate) dependency_id: DependencyID,
+    pub(crate) package_id: PackageID,
+    pub(crate) name: Box<[u8]>,
+    /// What the failure logs if it is final.
+    pub(crate) msgs: Vec<bun_ast::Msg>,
+    /// What the extract task logged. `run_tasks` prints the log of a task when the task ends, so
+    /// this one is printed when the failure is reported.
+    pub(crate) task_log: bun_ast::Log,
+    /// For `fail_update_requests`, if the download is required: no attempt got an answer about
+    /// the package.
+    pub(crate) is_unanswered: bool,
+}
+
 /// A dependency that `LookAhead` follows.
 pub(crate) struct Wanted {
     /// The name in package.json, the version range, and the name in the registry. They share a
@@ -619,6 +636,8 @@ pub struct PackageManager {
     pub(crate) held_messages: Option<Vec<(HeldAbout, Vec<bun_ast::Msg>)>>,
     pub(crate) manifest_failures:
         HashMap<Task::Id, ManifestFailure, bun_collections::IdentityContext<Task::Id>>,
+    // Failed downloads that wait for the registry's manifest. `run_tasks` settles them.
+    pub(crate) held_tarball_failures: Vec<HeldTarballFailure>,
     pub(crate) look_ahead: LookAhead,
     pub(crate) remote_packages: RemotePackages,
 
@@ -1767,6 +1786,7 @@ fn allocate_package_manager(
         wr!(kept_patched_text, Vec::new());
         wr!(held_messages, None);
         wr!(manifest_failures, HashMap::default());
+        wr!(held_tarball_failures, Vec::new());
         wr!(look_ahead, LookAhead::default());
         wr!(remote_packages, RemotePackages::default());
         wr!(dedupe_report, None);

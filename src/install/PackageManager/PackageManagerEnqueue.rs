@@ -341,6 +341,7 @@ fn enqueue_download(
         dependency_id,
         &package,
         authorization,
+        false,
     )? {
         // reshaped for borrowck — `task: &mut NetworkTask` borrows
         // `*this` (pool slot); reborrow as raw so `this.network_tarball_batch`
@@ -912,10 +913,12 @@ fn enqueue_manifest_download(
 }
 
 /// A stale edge confirms a stale manifest with a 304. True while this run's one full request runs.
+/// `why` is for `--verbose`.
 fn refetch_stale_manifest(
     this: &mut PackageManager,
     name: &[u8],
     is_optional: bool,
+    why: &str,
 ) -> crate::Result<bool> {
     use crate::network_task::ManifestOrigin;
     if this.options.offline == OfflineMode::Offline {
@@ -930,12 +933,331 @@ fn refetch_stale_manifest(
     }
     if verbose_install() {
         bun_core::pretty_errorln!(
-            "Enqueue package manifest for download, the cached one lacks the version: {}",
+            "Enqueue package manifest for download, {}: {}",
+            why,
             bstr::BStr::new(name)
         );
     }
     enqueue_manifest_download(this, task_id, name, None, is_optional)?;
     Ok(true)
+}
+
+/// What became of a download that failed.
+pub(crate) enum Revalidation {
+    /// The failure counts.
+    Final,
+    /// The registry is being asked for the manifest of this package. The failure waits in
+    /// `PackageManager::held_tarball_failures` for the answer.
+    Held(PackageID),
+    /// The registry names another tarball or another hash, and that download has started.
+    Redone,
+}
+
+/// What this run has from the registry about a manifest.
+enum ManifestAnswer {
+    /// Nothing yet: no request was made, or a 304 confirmed the copy in the cache.
+    Unasked,
+    /// A request is running.
+    Pending,
+    /// The document.
+    Document,
+    /// A request that failed.
+    Failed,
+}
+
+fn manifest_answer(this: &PackageManager, name: &[u8]) -> ManifestAnswer {
+    use crate::network_task::ManifestOrigin;
+    use crate::package_manifest_map::Value;
+    let task_id = Task::Id::for_manifest(name);
+    let Some(entry) = this.network_dedupe_map.get(&task_id) else {
+        return ManifestAnswer::Unasked;
+    };
+    if entry.manifest == ManifestOrigin::Registry {
+        return ManifestAnswer::Document;
+    }
+    if entry.failed || this.manifest_failures.contains_key(&task_id) {
+        return ManifestAnswer::Failed;
+    }
+    // A conditional request leaves the expired copy in its place until the answer arrives.
+    let name_hash = Semver::string::Builder::string_hash(name);
+    let is_confirmed = matches!(
+        this.manifests.hash_map.get(&name_hash),
+        Some(Value::Manifest(copy)) if copy.name() == name
+    );
+    if entry.manifest == ManifestOrigin::Cache && is_confirmed {
+        ManifestAnswer::Unasked
+    } else {
+        ManifestAnswer::Pending
+    }
+}
+
+/// The download of an npm package failed for good. The URL and the hash of its tarball may come
+/// from a copy of the manifest that the registry has replaced since: a registry other than
+/// registry.npmjs.org can move its tarballs, or pack a version again. So before the failure
+/// counts, the registry is asked for the manifest once, without conditional headers. What bun.lock
+/// says about a package is never asked about: `DedupeMapEntry::from_manifest`.
+#[cold]
+#[inline(never)]
+pub(crate) fn revalidate_failed_tarball(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    tarball: &ExtractTarball,
+    url: &[u8],
+    // The server of `url` sent no response, or a status that says to try again later.
+    got_no_answer: bool,
+) -> Revalidation {
+    let from_manifest =
+        (this.network_dedupe_map.get(&task_id)).is_some_and(|entry| entry.from_manifest);
+    if !from_manifest {
+        return Revalidation::Final;
+    }
+    let Some(package_id) = package_of_tarball(this, tarball) else {
+        return Revalidation::Final;
+    };
+    let name = tarball.name.slice();
+    let scope = this.options.scope_for_package_name(name);
+    // A version that registry.npmjs.org has published keeps its tarball and its hash.
+    if scope.url_hash == *Npm::Registry::DEFAULT_URL_HASH
+        // The registry itself is down or busy: a request for the manifest would end the same way.
+        || (got_no_answer
+            && package_manager_real::options::same_origin(
+                &bun_url::URL::parse(url),
+                &scope.url.url(),
+            ))
+    {
+        return Revalidation::Final;
+    }
+    match manifest_answer(this, name) {
+        ManifestAnswer::Failed => Revalidation::Final,
+        ManifestAnswer::Pending => Revalidation::Held(package_id),
+        ManifestAnswer::Document => redo_tarball(this, task_id, tarball.dependency_id, package_id),
+        ManifestAnswer::Unasked => request_manifest_for_tarball(this, task_id, name, package_id),
+    }
+}
+
+/// What follows for `held` from the manifest request that it waits for. `Held` while that runs.
+#[cold]
+pub(crate) fn resume_failed_tarball(
+    this: &mut PackageManager,
+    held: &package_manager_real::HeldTarballFailure,
+) -> Revalidation {
+    match manifest_answer(this, &held.name) {
+        ManifestAnswer::Failed => Revalidation::Final,
+        ManifestAnswer::Pending => Revalidation::Held(held.package_id),
+        ManifestAnswer::Document => {
+            redo_tarball(this, held.task_id, held.dependency_id, held.package_id)
+        }
+        // A 304 answered a request that another dependency had made.
+        ManifestAnswer::Unasked => {
+            request_manifest_for_tarball(this, held.task_id, &held.name, held.package_id)
+        }
+    }
+}
+
+fn request_manifest_for_tarball(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    name: &[u8],
+    package_id: PackageID,
+) -> Revalidation {
+    let is_optional = !this.is_network_task_required(task_id);
+    const WHY: &str = "the tarball that the cached one names failed";
+    match refetch_stale_manifest(this, name, is_optional, WHY) {
+        Ok(true) => Revalidation::Held(package_id),
+        Ok(false) | Err(_) => Revalidation::Final,
+    }
+}
+
+/// The package that this run resolved from a manifest and that `tarball` is for.
+fn package_of_tarball(this: &PackageManager, tarball: &ExtractTarball) -> Option<PackageID> {
+    if tarball.resolution.tag != ResolutionTag::Npm {
+        return None;
+    }
+    let lockfile = &*this.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let name_hash = Semver::string::Builder::string_hash(tarball.name.slice());
+    let version = tarball.resolution.npm().version;
+    let resolutions = lockfile.packages.items_resolution();
+    let metas = lockfile.packages.items_meta();
+    // bun.lock can have the same version with another URL or hash. That package comes first.
+    let ids = lockfile.package_index.get(&name_hash)?.as_slice();
+    ids.iter().copied().rfind(|&id| {
+        let resolution = &resolutions[id as usize];
+        resolution.tag == ResolutionTag::Npm
+            && resolution.npm().version.eql(version)
+            && resolution.npm().url.slice(buf) == tarball.url.slice()
+            && metas[id as usize].integrity == tarball.integrity
+    })
+}
+
+/// Downloads the tarball again if the registry's document has another URL or hash for it.
+fn redo_tarball(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    dependency_id: DependencyID,
+    package_id: PackageID,
+) -> Revalidation {
+    let package = *this.lockfile.packages.get(package_id as usize);
+    let name = this.lockfile.str(&package.name).to_vec();
+    let Some(manifest) = (this.manifests)
+        .by_name_hash_in_memory(&name, package.name_hash)
+        .map(|manifest| manifest.clone())
+    else {
+        return Revalidation::Final;
+    };
+    correct_packages_without_download(this, &manifest, &name, package_id);
+    let Some((url, integrity)) = registry_dist(this, &manifest, package_id) else {
+        return Revalidation::Final;
+    };
+    set_dist(this, package_id, &url, integrity);
+    if verbose_install() {
+        bun_core::pretty_errorln!(
+            "Enqueue package for download again, the registry names another tarball: {}",
+            bstr::BStr::new(&name)
+        );
+    }
+
+    // The new download is as required as the one that failed.
+    let is_required = this.is_network_task_required(task_id);
+    let _ = this.network_dedupe_map.remove(&task_id);
+    let package = *this.lockfile.packages.get(package_id as usize);
+    let task: *mut NetworkTask = match run_tasks::generate_network_task_for_tarball(
+        this,
+        task_id,
+        &url,
+        is_required,
+        dependency_id,
+        &package,
+        Authorization::AllowAuthorization,
+        true,
+    ) {
+        Ok(Some(task)) => task,
+        Ok(None) | Err(_) => return Revalidation::Final,
+    };
+    enqueue_network_task(this, task);
+    Revalidation::Redone
+}
+
+/// The URL and the hash that the registry's document has for a package, if they are not the
+/// package's own and the document describes the same package otherwise. A version that was
+/// published again with other dependencies is not what this run resolved.
+fn registry_dist(
+    this: &mut PackageManager,
+    manifest: &Npm::PackageManifest,
+    package_id: PackageID,
+) -> Option<(Vec<u8>, Integrity)> {
+    let package = *this.lockfile.packages.get(package_id as usize);
+    let found = manifest.find_by_version(package.resolution.npm().version)?;
+    if !manifest.is_in_bounds(found.package) {
+        return None;
+    }
+    // A new resolution does not take a version that was published again inside the age gate.
+    let excludes = this.options.minimum_release_age_excludes;
+    if let Some(min_age_ms) = this.options.minimum_release_age_ms
+        && !manifest.should_exclude_from_age_filter(excludes)
+        && manifest.is_version_blocked_by_age_filter(found, min_age_ms, excludes)
+    {
+        return None;
+    }
+    let url = manifest.str(&found.package.tarball_url);
+    let integrity = found.package.integrity;
+    if url == this.lockfile.str(&package.resolution.npm().url)
+        && integrity == package.meta.integrity
+    {
+        return None;
+    }
+
+    // `from_npm` appends the rows of the package that the document describes. They are compared
+    // and dropped again.
+    let log_level = this.options.log_level;
+    let lockfile = &mut *this.lockfile;
+    let rows = lockfile.buffers.dependencies.len();
+    let extern_strings = lockfile.buffers.extern_strings.len();
+    let described = Package::from_npm(
+        lockfile,
+        &mut bun_ast::Log::init(),
+        log_level,
+        manifest,
+        found.version,
+        found.package,
+        Features::NPM,
+    );
+    let is_same = described.is_ok_and(|described| {
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let bin_strings = lockfile.buffers.extern_strings.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let (has, gets) = (
+            package.dependencies.get(dependencies),
+            described.dependencies.get(dependencies),
+        );
+        package.meta.arch == described.meta.arch
+            && package.meta.os == described.meta.os
+            && package.meta.libc == described.meta.libc
+            && package.meta.has_install_script == described.meta.has_install_script
+            && crate::bin_real::Bin::eql(
+                &package.bin,
+                &described.bin,
+                buf,
+                bin_strings,
+                buf,
+                bin_strings,
+            )
+            && has.len() == gets.len()
+            && has.iter().zip(gets).all(|(has, gets)| {
+                has.name_hash == gets.name_hash
+                    && has.behavior == gets.behavior
+                    && has.version.literal.slice(buf) == gets.version.literal.slice(buf)
+            })
+    });
+    lockfile.buffers.dependencies.truncate(rows);
+    lockfile.buffers.resolutions.truncate(rows);
+    lockfile.buffers.extern_strings.truncate(extern_strings);
+    is_same.then(|| (url.to_vec(), integrity))
+}
+
+fn set_dist(this: &mut PackageManager, package_id: PackageID, url: &[u8], integrity: Integrity) {
+    let url = this.lockfile.string_buf().append(url).unwrap_or_oom();
+    let packages = &mut this.lockfile.packages;
+    packages.items_resolution_mut()[package_id as usize]
+        .npm_mut()
+        .url = url;
+    packages.items_meta_mut()[package_id as usize].integrity = integrity;
+}
+
+/// The registry's document is in memory because a download failed. The other packages of that
+/// name which this run resolved from the copy in the cache, and did not download, get the URL and
+/// the hash of the document as well: bun.lock is written from them.
+fn correct_packages_without_download(
+    this: &mut PackageManager,
+    manifest: &Npm::PackageManifest,
+    name: &[u8],
+    failed: PackageID,
+) {
+    // `Some` while `bun install` resolves. Only then does `loaded_package_count` tell which
+    // packages bun.lock gave, and only `bun install` writes a lockfile.
+    if this.held_messages.is_none() {
+        return;
+    }
+    let name_hash = Semver::string::Builder::string_hash(name);
+    let Some(ids) = this.lockfile.package_index.get(&name_hash) else {
+        return;
+    };
+    for id in ids.as_slice().to_vec() {
+        if id == failed || id < this.lockfile.loaded_package_count {
+            continue;
+        }
+        let resolution = this.lockfile.packages.items_resolution()[id as usize];
+        if resolution.tag != ResolutionTag::Npm
+            // A download that runs or has ended used the URL and the hash that the package has.
+            || (this.network_dedupe_map)
+                .contains(&Task::Id::for_npm_package(name, resolution.npm().version))
+        {
+            continue;
+        }
+        if let Some((url, integrity)) = registry_dist(this, manifest, id) {
+            set_dist(this, id, &url, integrity);
+        }
+    }
 }
 
 #[cold]
@@ -2394,6 +2716,7 @@ fn bind_row_without_manifest(
                         ..Package::default()
                     },
                     Authorization::NoAuthorization,
+                    false,
                 ) {
                     // --offline miss: already reported (if required) / skipped (if optional)
                     Err(ForTarballError::Offline) => return Ok(()),
@@ -3161,6 +3484,7 @@ fn tarball_task(
         dependency_id,
         package,
         Authorization::AllowAuthorization,
+        true,
     )?;
     Ok(Some(ResolvedPackageTask::NetworkTask(
         task.expect("unreachable"),
@@ -3248,7 +3572,8 @@ fn get_or_put_resolved_package_with_find_result(
 
     // A damaged file in the cache is fetched again.
     if !manifest.is_in_bounds(find_result.package) {
-        if refetch_stale_manifest(this, manifest.name(), behavior.is_optional())? {
+        const WHY: &str = "the cached one is damaged";
+        if refetch_stale_manifest(this, manifest.name(), behavior.is_optional(), WHY)? {
             return Ok(None);
         }
         return Err(crate::Error::PackageFailedToParse);
@@ -3583,8 +3908,9 @@ fn get_or_put_resolved_package(
                 Some(r) => r,
                 None => 'instead_of_latest: {
                     // An unmet peer only warns.
+                    const WHY: &str = "the cached one lacks the version";
                     if !behavior.is_peer()
-                        && refetch_stale_manifest(this, name_str, behavior.is_optional())?
+                        && refetch_stale_manifest(this, name_str, behavior.is_optional(), WHY)?
                     {
                         return Ok(None);
                     }
@@ -4330,7 +4656,7 @@ impl PackageManager {
 
     /// Logs copies of `msgs`, all as errors or all as warnings.
     #[cold]
-    fn log_copies(&mut self, msgs: &[bun_ast::Msg], kind: bun_ast::Kind) {
+    pub(crate) fn log_copies(&mut self, msgs: &[bun_ast::Msg], kind: bun_ast::Kind) {
         let log = self.log_mut();
         for msg in msgs {
             match kind {

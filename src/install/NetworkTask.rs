@@ -123,6 +123,9 @@ pub struct DedupeMapEntry {
     /// re-scheduling the entire network task (and its retry cycle) a second time.
     pub(crate) failed: bool,
     pub(crate) manifest: ManifestOrigin,
+    /// A tarball whose URL and hash this run took from a registry manifest, not from bun.lock. If
+    /// the download fails, `enqueue::revalidate_failed_tarball` may ask the registry again.
+    pub(crate) from_manifest: bool,
     /// The event loop iteration in which a runtime lookup of this manifest found nothing, or in
     /// which the task failed.
     pub(crate) missed_in: Option<u64>,

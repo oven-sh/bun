@@ -1,7 +1,7 @@
-import { file, spawn } from "bun";
+import { file, spawn, write } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { lstatSync, readdirSync, rmSync } from "fs";
-import { access, writeFile } from "fs/promises";
+import { access, readdir, rm, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -25,6 +25,7 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry";
+import { startNpmjs } from "./migration/migration-harness";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -1499,6 +1500,534 @@ describe.concurrent("a failed download that several dependencies share", () => {
       expect(await p.install(root)).toEqual(installed);
       p.loseTarball("baz", "1.0.0");
       expect(await p.install(root)).toEqual(leftOut);
+    });
+  });
+});
+
+// A cached manifest also says where the tarball of a version is and what its hash is. A registry other than
+// registry.npmjs.org can move its tarballs or pack a version again.
+describe.concurrent("a tarball that moved or was packed again after the manifest was cached", () => {
+  const sri = (bytes: Uint8Array) => `sha512-${new Bun.CryptoHasher("sha512").update(bytes).digest("base64")}`;
+
+  /**
+   * Serves `moving-pkg` 1.0.0 and 1.1.0, which depend on `leaf`, and `wrapper` 1.0.0, which depends on `moving-pkg`
+   * 1.0.0. The tarball of `moving-pkg` 0.9.0 is not an archive. `state` can change between installs. `requests` has
+   * the path of every request for a tarball of `moving-pkg`, and `manifest` with the If-None-Match header of every
+   * request for its manifest.
+   */
+  function serveMovingRegistry() {
+    const state = {
+      /** The registry names the tarballs at `/new/`, and `/old/` answers 404. */
+      moved: false,
+      /** Each tarball has one more file. */
+      packedAgain: false,
+      /** No tarball is there, whatever the manifest says. */
+      gone: false,
+      /** A request for a tarball gets a 503. */
+      busy: false,
+      /** A request for the manifest gets a 500. */
+      noManifest: false,
+      /** Another server that the tarballs at `/old/` are named at. */
+      oldOrigin: undefined as string | undefined,
+      /** What each version depends on. */
+      dependencies: { leaf: "1.0.0" } as Record<string, string>,
+      /** When each version was published. */
+      time: "2020-01-01T00:00:00.000Z",
+    };
+    const requests: string[] = [];
+    const pack = (name: string, version: string, dependencies: object, more: Record<string, string> = {}) =>
+      new Bun.Archive(
+        { "package/package.json": JSON.stringify({ name, version, dependencies }), ...more },
+        { compress: "gzip" },
+      ).bytes();
+    const packed = new Map<string, Promise<Uint8Array>>();
+    const notAnArchive = Promise.resolve(new TextEncoder().encode("this is not an archive"));
+    function tarball(version: string) {
+      if (version === "0.9.0") return notAnArchive;
+      const key = JSON.stringify([version, state.packedAgain, state.dependencies]);
+      const more = state.packedAgain ? { "package/again.txt": "packed again" } : {};
+      if (!packed.has(key)) packed.set(key, pack("moving-pkg", version, state.dependencies, more));
+      return packed.get(key)!;
+    }
+    /** What the manifest says about the tarball of a version. */
+    async function dist(version: string, origin = server.url.origin) {
+      const at = state.moved ? `${origin}/new` : `${state.oldOrigin ?? origin}/old`;
+      return { tarball: `${at}/moving-pkg-${version}.tgz`, integrity: sri(await tarball(version)) };
+    }
+    let tarballAsked: PromiseWithResolvers<void> | undefined;
+    async function serveTarball(pathname: string) {
+      const [, folder, version] = pathname.match(/^\/(old|new)\/moving-pkg-(.+)\.tgz$/) ?? [];
+      if (!version) return undefined;
+      requests.push(pathname);
+      tarballAsked?.resolve();
+      if (state.busy) return new Response("busy", { status: 503 });
+      if (state.gone || folder !== (state.moved ? "new" : "old")) return new Response("not here", { status: 404 });
+      return new Response(await tarball(version));
+    }
+    const others: Record<string, { dependencies: object; tarball: Promise<Uint8Array> }> = {
+      leaf: { dependencies: {}, tarball: pack("leaf", "1.0.0", {}) },
+      wrapper: {
+        dependencies: { "moving-pkg": "1.0.0" },
+        tarball: pack("wrapper", "1.0.0", { "moving-pkg": "1.0.0" }),
+      },
+    };
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const name = pathname.match(/^\/(leaf|wrapper)(-1\.0\.0\.tgz)?$/);
+        if (name) {
+          const { dependencies, tarball } = others[name[1]];
+          if (name[2]) return new Response(await tarball);
+          const dist = { tarball: `${origin}/${name[1]}-1.0.0.tgz`, integrity: sri(await tarball) };
+          const version = { name: name[1], version: "1.0.0", dependencies, dist };
+          return Response.json({ name: name[1], versions: { "1.0.0": version }, "dist-tags": { latest: "1.0.0" } });
+        }
+        const served = await serveTarball(pathname);
+        if (served) return served;
+        if (pathname !== "/moving-pkg") return new Response("not found", { status: 404 });
+
+        const ifNoneMatch = request.headers.get("if-none-match");
+        requests.push(`manifest ${ifNoneMatch}`);
+        if (state.noManifest) return new Response("no manifest", { status: 500 });
+        await tarballAsked?.promise;
+        const versions: Record<string, object> = {};
+        for (const version of ["0.9.0", "1.0.0", "1.1.0"]) {
+          versions[version] = {
+            name: "moving-pkg",
+            version,
+            dependencies: state.dependencies,
+            dist: await dist(version, origin),
+          };
+        }
+        const body = JSON.stringify({
+          name: "moving-pkg",
+          versions,
+          "dist-tags": { latest: "1.1.0" },
+          time: { "0.9.0": state.time, "1.0.0": state.time, "1.1.0": state.time },
+        });
+        const etag = `"${Bun.hash(body)}"`;
+        if (ifNoneMatch === etag) return new Response(null, { status: 304, headers: { etag } });
+        return new Response(body, { headers: { etag, "content-type": "application/json" } });
+      },
+    });
+    return {
+      server,
+      state,
+      requests,
+      dist,
+      serveTarball,
+      /** From now on, a request for the manifest gets its answer after the next request for a tarball. */
+      answerManifestAfterTarball: () => void (tarballAsked = Promise.withResolvers()),
+      [Symbol.dispose]: () => void server.stop(true),
+    };
+  }
+
+  /** What a command logged, what it left in `node_modules/moving-pkg`, and what bun.lock has for `moving-pkg`. */
+  async function run(cwd: string, cmd: string[], extraEnv: Record<string, string> = {}) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache"), ...extraEnv },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lockfile = file(join(cwd, "bun.lock"));
+    const packages: Record<string, string[]> = (await lockfile.exists())
+      ? Bun.JSONC.parse(await lockfile.text()).packages
+      : {};
+    return {
+      out,
+      messages: err.split("\n").filter(line => /^(error|warn):/.test(line)),
+      exitCode,
+      // name@version, tarball URL, integrity
+      locked: Object.values(packages)
+        .filter(row => row[0].startsWith("moving-pkg@"))
+        .map(row => [row[0], row[1], row[3]])
+        .sort(),
+      installed: await readdir(join(cwd, "node_modules", "moving-pkg")).then(
+        files => files.sort(),
+        () => null,
+      ),
+    };
+  }
+
+  /** The process that asked for the manifest of `moving-pkg` has written its copy before it ended. */
+  async function expectManifestInCache(cwd: string) {
+    const cache = join(cwd, ".bun-cache");
+    const names = (await readdir(cache)).filter(name => name.endsWith(".npm"));
+    const copies = await Promise.all(names.map(name => file(join(cache, name)).bytes()));
+    expect(copies.filter(copy => Buffer.from(copy).includes("moving-pkg-1.1.0.tgz"))).toHaveLength(1);
+  }
+
+  /** Leaves the manifest of `moving-pkg` in the cache, and the tarball of the version that the project asks for. */
+  async function cacheManifest(cwd: string, args: string[] = [], extraEnv: Record<string, string> = {}) {
+    expect(await run(cwd, ["install", ...args], extraEnv)).toMatchObject({ messages: [], exitCode: 0 });
+    await expectManifestInCache(cwd);
+    await Promise.all([
+      rm(join(cwd, "node_modules"), { recursive: true, force: true }),
+      rm(join(cwd, "bun.lock"), { force: true }),
+    ]);
+  }
+
+  /** A project that installs from `registry` and writes bun.lock as text. */
+  const project = (files: Record<string, string>, registry: string) =>
+    tempDir("moved-tarball-", {
+      ...files,
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry, saveTextLockfile: true } }),
+    });
+
+  const depends = (spec: string, group = "dependencies") =>
+    JSON.stringify({ name: "root", [group]: { "moving-pkg": spec } });
+  // A copy that is past its time is what an exact version is taken from without a request.
+  const expired = { BUN_MANIFEST_CACHE: "1" };
+  const integrityFailed = [
+    "error: Integrity check failed for tarball: moving-pkg",
+    "error: IntegrityCheckFailed extracting tarball from moving-pkg",
+  ];
+
+  describe.each(["moved", "packedAgain"] as const)("%s", change => {
+    it.each([
+      { to: depends("1.0.0"), args: [], extraEnv: expired },
+      { to: depends("1.0.0"), args: ["--linker", "isolated"], extraEnv: expired },
+      { to: depends("1.0.0"), args: ["--force"], extraEnv: {} },
+      { to: depends("1.0.0"), args: ["--prefer-offline"], extraEnv: {} },
+      // It used to be left out with a warning, and bun.lock kept the tarball that was not there.
+      { to: depends("1.0.0", "optionalDependencies"), args: [], extraEnv: expired },
+      // While a copy is fresh, a range is resolved from it without a request too.
+      { to: depends("~1.0.0"), args: [], extraEnv: {} },
+      { to: depends("~1.0.0", "optionalDependencies"), args: ["--linker", "isolated"], extraEnv: {} },
+      { to: JSON.stringify({ name: "root", dependencies: { wrapper: "1.0.0" } }), args: [], extraEnv: expired },
+    ])("$to $args", async ({ to, args, extraEnv }) => {
+      using registry = serveMovingRegistry();
+      using dir = project({ "package.json": depends("1.1.0") }, registry.server.url.href);
+      await cacheManifest(String(dir));
+
+      registry.state[change] = true;
+      await write(join(String(dir), "package.json"), to);
+      registry.requests.length = 0;
+      const dist = await registry.dist("1.0.0");
+      expect(await run(String(dir), ["install", ...args], extraEnv)).toMatchObject({
+        messages: [],
+        exitCode: 0,
+        locked: [["moving-pkg@1.0.0", dist.tarball, dist.integrity]],
+        installed: change === "moved" ? ["package.json"] : ["again.txt", "package.json"],
+      });
+      // The tarball that the copy names, the manifest without conditional headers, the tarball that it names.
+      expect(registry.requests).toEqual(["/old/moving-pkg-1.0.0.tgz", "manifest null", new URL(dist.tarball).pathname]);
+    });
+  });
+
+  it("bun add of an exact version", async () => {
+    using registry = serveMovingRegistry();
+    using dir = project({ "package.json": depends("1.1.0") }, registry.server.url.href);
+    await cacheManifest(String(dir));
+
+    registry.state.moved = true;
+    await write(join(String(dir), "package.json"), JSON.stringify({ name: "root" }));
+    registry.requests.length = 0;
+    const dist = await registry.dist("1.0.0");
+    expect(await run(String(dir), ["add", "moving-pkg@1.0.0"], expired)).toMatchObject({
+      messages: [],
+      exitCode: 0,
+      locked: [["moving-pkg@1.0.0", dist.tarball, dist.integrity]],
+      installed: ["package.json"],
+    });
+    expect(registry.requests).toEqual(["/old/moving-pkg-1.0.0.tgz", "manifest null", "/new/moving-pkg-1.0.0.tgz"]);
+  });
+
+  it("the server that had the tarballs is gone", async () => {
+    using registry = serveMovingRegistry();
+    const old = Bun.serve({
+      port: 0,
+      fetch: async request => (await registry.serveTarball(new URL(request.url).pathname)) ?? new Response(null),
+    });
+    try {
+      registry.state.oldOrigin = old.url.origin;
+      using dir = project({ "package.json": depends("1.1.0") }, registry.server.url.href);
+      await cacheManifest(String(dir));
+
+      await old.stop(true);
+      registry.state.moved = true;
+      await write(join(String(dir), "package.json"), depends("1.0.0"));
+      registry.requests.length = 0;
+      const dist = await registry.dist("1.0.0");
+      expect(await run(String(dir), ["install"], expired)).toMatchObject({
+        messages: [],
+        exitCode: 0,
+        locked: [["moving-pkg@1.0.0", dist.tarball, dist.integrity]],
+        installed: ["package.json"],
+      });
+      expect(registry.requests).toEqual(["manifest null", "/new/moving-pkg-1.0.0.tgz"]);
+    } finally {
+      await old.stop(true);
+    }
+  });
+
+  it("another version of the package, which is in the cache, gets the new URL in bun.lock too", async () => {
+    using registry = serveMovingRegistry();
+    const workspace = (name: string, version: string) =>
+      JSON.stringify({ name, dependencies: { "moving-pkg": version } });
+    using dir = project(
+      {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/a/package.json": workspace("a", "1.1.0"),
+      },
+      registry.server.url.href,
+    );
+    await cacheManifest(String(dir));
+
+    registry.state.moved = true;
+    await write(join(String(dir), "packages", "b", "package.json"), workspace("b", "1.0.0"));
+    registry.requests.length = 0;
+    const [first, second] = await Promise.all([registry.dist("1.0.0"), registry.dist("1.1.0")]);
+    expect(await run(String(dir), ["install"], expired)).toMatchObject({
+      messages: [],
+      exitCode: 0,
+      locked: [
+        ["moving-pkg@1.0.0", first.tarball, first.integrity],
+        ["moving-pkg@1.1.0", second.tarball, second.integrity],
+      ],
+    });
+    expect(registry.requests).toEqual(["/old/moving-pkg-1.0.0.tgz", "manifest null", "/new/moving-pkg-1.0.0.tgz"]);
+  });
+
+  // --force asks whether the copy still holds for the range, and takes the exact version from it at once.
+  it.each([
+    {
+      change: "moved",
+      messages: (_: string) => [],
+      requests: ["/new/moving-pkg-1.0.0.tgz", "/old/moving-pkg-1.0.0.tgz"],
+    },
+    {
+      change: "gone",
+      messages: (origin: string) => [`error: GET ${origin}/old/moving-pkg-1.0.0.tgz - 404`],
+      // The 304 says that the copy holds, so the request without conditional headers follows.
+      requests: ["/old/moving-pkg-1.0.0.tgz", "manifest null"],
+    },
+  ] as const)("the tarball fails while another dependency asks for the manifest: $change", async cell => {
+    using registry = serveMovingRegistry();
+    const workspace = (name: string, spec: string) => JSON.stringify({ name, dependencies: { "moving-pkg": spec } });
+    using dir = project(
+      {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/a/package.json": workspace("a", "1.1.0"),
+      },
+      registry.server.url.href,
+    );
+    await cacheManifest(String(dir));
+
+    registry.state[cell.change] = true;
+    registry.answerManifestAfterTarball();
+    await Promise.all([
+      write(join(String(dir), "packages", "a", "package.json"), workspace("a", "1.0.0")),
+      write(join(String(dir), "packages", "b", "package.json"), workspace("b", "~1.0.0")),
+    ]);
+    registry.requests.length = 0;
+    const messages = cell.messages(registry.server.url.origin);
+    expect(await run(String(dir), ["install", "--force"])).toMatchObject({
+      messages,
+      exitCode: messages.length ? 1 : 0,
+    });
+    // One request for the manifest has the etag of the copy. The tarball is asked for at the same time.
+    const conditional = registry.requests.filter(request => /^manifest "/.test(request));
+    expect(conditional).toHaveLength(1);
+    expect(registry.requests.filter(request => request !== conditional[0]).sort()).toEqual([...cell.requests]);
+  });
+
+  it("an import that the runtime installs", async () => {
+    using registry = serveMovingRegistry();
+    using dir = project({}, registry.server.url.href);
+    const requireVersion = (version: string) =>
+      run(String(dir), ["--install=force", "-e", `console.log(require("moving-pkg@${version}/package.json").version)`]);
+    expect(await requireVersion("1.1.0")).toMatchObject({ out: "1.1.0\n", messages: [], exitCode: 0 });
+    await expectManifestInCache(String(dir));
+
+    registry.state.moved = true;
+    registry.requests.length = 0;
+    expect(await requireVersion("1.0.0")).toMatchObject({ out: "1.0.0\n", messages: [], exitCode: 0 });
+    expect(registry.requests).toEqual(["/old/moving-pkg-1.0.0.tgz", "manifest null", "/new/moving-pkg-1.0.0.tgz"]);
+  });
+
+  describe("the failure stays", () => {
+    it.each([
+      {
+        name: "the registry names the same tarball",
+        change: { gone: true },
+        args: [],
+        messages: (origin: string) => [`error: GET ${origin}/old/moving-pkg-1.0.0.tgz - 404`],
+        requests: ["/old/moving-pkg-1.0.0.tgz", "manifest null"],
+      },
+      {
+        name: "the registry does not give the manifest",
+        change: { gone: true, noManifest: true },
+        args: [],
+        messages: (origin: string) => [`error: GET ${origin}/old/moving-pkg-1.0.0.tgz - 404`],
+        requests: ["/old/moving-pkg-1.0.0.tgz", "manifest null"],
+      },
+      {
+        name: "the version was published again with another range for a dependency",
+        change: { packedAgain: true, dependencies: { leaf: "^1.0.0" } },
+        args: [],
+        messages: () => integrityFailed,
+        requests: ["/old/moving-pkg-1.0.0.tgz", "manifest null"],
+      },
+      {
+        name: "the version was published again inside the minimum release age",
+        change: { packedAgain: true, time: new Date().toISOString() },
+        args: ["--minimum-release-age", "86400"],
+        messages: () => integrityFailed,
+        requests: ["/old/moving-pkg-1.0.0.tgz", "manifest null"],
+      },
+      {
+        name: "--offline",
+        change: { moved: true },
+        args: ["--offline"],
+        messages: () => ['error: --offline: "moving-pkg" is not in the cache'],
+        requests: [],
+      },
+      // The registry serves the tarball itself, so a request for the manifest would end the same way.
+      {
+        name: "the registry is busy",
+        change: { busy: true },
+        args: [],
+        messages: (origin: string) => [`error: GET ${origin}/old/moving-pkg-1.0.0.tgz - 503`],
+        requests: ["/old/moving-pkg-1.0.0.tgz"],
+      },
+      // The tarball is what the manifest says, so another manifest does not help.
+      {
+        name: "the tarball has the hash of the manifest and is not an archive",
+        version: "0.9.0",
+        change: {},
+        args: [],
+        messages: () => ["error: Fail extracting tarball from moving-pkg"],
+        requests: ["/old/moving-pkg-0.9.0.tgz"],
+      },
+    ])("$name", async ({ version = "1.0.0", change, args, messages, requests }) => {
+      using registry = serveMovingRegistry();
+      using dir = project({ "package.json": depends("1.1.0") }, registry.server.url.href);
+      await cacheManifest(
+        String(dir),
+        args.filter(arg => arg !== "--offline"),
+      );
+
+      Object.assign(registry.state, change);
+      await write(join(String(dir), "package.json"), depends(version));
+      registry.requests.length = 0;
+      const extraEnv = { ...expired, BUN_CONFIG_HTTP_RETRY_COUNT: "0" };
+      expect(await run(String(dir), ["install", ...args], extraEnv)).toMatchObject({
+        messages: messages(registry.server.url.origin),
+        exitCode: 1,
+        locked: [],
+        installed: null,
+      });
+      expect(registry.requests).toEqual(requests);
+    });
+
+    it("an import that the runtime tries twice asks for the manifest once", async () => {
+      using registry = serveMovingRegistry();
+      using dir = project({}, registry.server.url.href);
+      const requireTwice = (version: string) =>
+        run(String(dir), [
+          "--install=force",
+          "-e",
+          `for (let i = 0; i < 2; i++) {
+            try {
+              console.log(require("moving-pkg@${version}/package.json").version);
+            } catch {
+              console.log("failed");
+            }
+            await new Promise(resolve => setImmediate(resolve));
+          }`,
+        ]);
+      expect(await requireTwice("1.1.0")).toMatchObject({ out: "1.1.0\n1.1.0\n", exitCode: 0 });
+      await expectManifestInCache(String(dir));
+
+      registry.state.gone = true;
+      registry.requests.length = 0;
+      expect(await requireTwice("1.0.0")).toMatchObject({ out: "failed\nfailed\n", exitCode: 0 });
+      expect(registry.requests.filter(request => request.startsWith("manifest"))).toEqual(["manifest null"]);
+    });
+
+    // A version that registry.npmjs.org has published keeps its tarball and its hash.
+    it("a package of registry.npmjs.org", async () => {
+      const requests: string[] = [];
+      let gone = false;
+      const pack = (version: string) =>
+        new Bun.Archive(
+          { "package/package.json": JSON.stringify({ name: "moving-pkg", version }) },
+          { compress: "gzip" },
+        ).bytes();
+      const tarballs: Record<string, Promise<Uint8Array>> = { "1.0.0": pack("1.0.0"), "1.1.0": pack("1.1.0") };
+      const at = (version: string) => `https://registry.npmjs.org/moving-pkg/-/moving-pkg-${version}.tgz`;
+      const npmjs = await startNpmjs(async request => {
+        const { pathname } = new URL(request.url);
+        const version = pathname.match(/^\/moving-pkg\/-\/moving-pkg-(.+)\.tgz$/)?.[1];
+        if (version) {
+          requests.push(pathname);
+          return gone ? new Response("not here", { status: 404 }) : new Response(await tarballs[version]);
+        }
+        if (pathname !== "/moving-pkg") return new Response("not found", { status: 404 });
+        requests.push("manifest");
+        const versions: Record<string, object> = {};
+        for (const [version, bytes] of Object.entries(tarballs)) {
+          const dist = { tarball: at(version), integrity: sri(await bytes) };
+          versions[version] = { name: "moving-pkg", version, dist };
+        }
+        return Response.json({ name: "moving-pkg", versions, "dist-tags": { latest: "1.1.0" } });
+      });
+      try {
+        using dir = tempDir("npmjs-tarball-", {
+          "package.json": depends("1.1.0"),
+          "bunfig.toml": "[install]\nsaveTextLockfile = true\n",
+        });
+        const npmjsEnv = { ...npmjs.env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+        await cacheManifest(String(dir), [], npmjsEnv);
+
+        gone = true;
+        await write(join(String(dir), "package.json"), depends("1.0.0"));
+        requests.length = 0;
+        expect(await run(String(dir), ["install"], { ...npmjsEnv, ...expired })).toMatchObject({
+          messages: [`error: GET ${at("1.0.0")} - 404`],
+          exitCode: 1,
+          locked: [],
+          installed: null,
+        });
+        expect(requests).toEqual(["/moving-pkg/-/moving-pkg-1.0.0.tgz"]);
+      } finally {
+        npmjs.stop();
+      }
+    });
+
+    it("bun.lock has the package", async () => {
+      using registry = serveMovingRegistry();
+      using dir = project({ "package.json": depends("1.0.0") }, registry.server.url.href);
+      const locked = await registry.dist("1.0.0");
+      expect(await run(String(dir), ["install"])).toMatchObject({
+        messages: [],
+        exitCode: 0,
+        locked: [["moving-pkg@1.0.0", locked.tarball, locked.integrity]],
+      });
+
+      // Only the manifest stays in the cache.
+      const cache = join(String(dir), ".bun-cache");
+      const extracted = (await readdir(cache)).filter(name => name.startsWith("moving-pkg@"));
+      expect(extracted).toHaveLength(1);
+      await Promise.all([
+        rm(join(cache, extracted[0]), { recursive: true, force: true }),
+        rm(join(String(dir), "node_modules"), { recursive: true, force: true }),
+      ]);
+      registry.state.moved = true;
+      registry.requests.length = 0;
+      // What bun.lock says about a package is a promise, and the registry is not asked about it.
+      expect(await run(String(dir), ["install"], expired)).toMatchObject({
+        messages: [`error: GET ${locked.tarball} - 404`],
+        exitCode: 1,
+        locked: [["moving-pkg@1.0.0", locked.tarball, locked.integrity]],
+        installed: null,
+      });
+      expect(registry.requests).toEqual(["/old/moving-pkg-1.0.0.tgz"]);
     });
   });
 });

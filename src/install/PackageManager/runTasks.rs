@@ -20,8 +20,8 @@ use bun_install::{
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
 use super::{
-    Command, ManifestFailure, PackageInstaller, PackageManager, ProgressStrings, RemoteTurn,
-    Subcommand, TaskCallbackList,
+    Command, HeldTarballFailure, ManifestFailure, PackageInstaller, PackageManager,
+    ProgressStrings, RemoteTurn, Subcommand, TaskCallbackList,
 };
 use super::{directories, enqueue};
 use crate::isolated_install::installer as store_installer;
@@ -261,6 +261,175 @@ impl ErasedCallbacks {
         }
         None
     }
+
+    /// Whether a failed download may wait for the registry's manifest. A linker and the runtime's
+    /// module queue act on the failure at once.
+    fn revalidates_tarballs(&self) -> bool {
+        !self.has_on_extract && !self.has_on_package_download_error
+    }
+
+    /// A tarball could not be downloaded or extracted. `log` adds the message, as an error if the
+    /// flag it gets is set. A download that the registry may name another tarball for is started
+    /// again, or held until the registry has answered: `enqueue::revalidate_failed_tarball`.
+    fn fail_tarball(
+        &self,
+        manager: &mut PackageManager,
+        ctx: *mut (),
+        failed: TarballFailure<'_>,
+        log: &mut dyn FnMut(&mut PackageManager, bool),
+    ) -> crate::Result<()> {
+        use enqueue::Revalidation;
+        let TarballFailure {
+            task_id,
+            tarball,
+            err,
+            url,
+            manifest_may_be_stale,
+            got_no_answer,
+            is_unanswered,
+            mut task_log,
+        } = failed;
+        let revalidated = if manifest_may_be_stale && self.revalidates_tarballs() {
+            enqueue::revalidate_failed_tarball(manager, task_id, tarball, url, got_no_answer)
+        } else {
+            Revalidation::Final
+        };
+        let held = match revalidated {
+            Revalidation::Redone => {
+                if let Some(task_log) = task_log {
+                    task_log.reset();
+                }
+                return Ok(());
+            }
+            Revalidation::Held(package_id) => Some(package_id),
+            Revalidation::Final => None,
+        };
+
+        let name = tarball.name.slice();
+        let dependency_id = tarball.dependency_id;
+        let is_required = if held.is_some() {
+            manager.is_network_task_required(task_id)
+        } else {
+            if let Some(task_log) = task_log.as_deref_mut() {
+                print_task_log(manager, task_log)?;
+            }
+            // The mark is a no-op for `local_tarball` tasks (they never populate the map).
+            let Some(is_required) = self.dispatch_tarball_error(
+                manager,
+                ctx,
+                task_id,
+                dependency_id,
+                name,
+                &tarball.resolution,
+                err,
+                url,
+            ) else {
+                return Ok(());
+            };
+            is_required
+        };
+
+        let log_mark = manager.log_mut().msgs.len();
+        log(manager, is_required);
+        if let Some(package_id) = held {
+            let msgs = manager.take_log_since(log_mark);
+            manager.held_tarball_failures.push(HeldTarballFailure {
+                task_id,
+                dependency_id,
+                package_id,
+                name: Box::from(name),
+                msgs,
+                task_log: task_log.map(core::mem::take).unwrap_or_default(),
+                is_unanswered,
+            });
+            return Ok(());
+        }
+        fail_update_requests(
+            manager,
+            task_id,
+            name,
+            Some(dependency_id),
+            is_unanswered && is_required,
+        );
+
+        // Void-callback fallback (resolve phase): drain the `task_queue` entry too so a later
+        // install-phase `enqueuePackageForDownload` doesn't wedge on `found_existing`.
+        let _ = manager.task_queue.remove(&task_id);
+        Ok(())
+    }
+}
+
+/// A download or an extraction that ended in failure.
+struct TarballFailure<'a> {
+    task_id: Task::Id,
+    tarball: &'a ExtractTarball,
+    err: crate::Error,
+    url: &'a [u8],
+    /// The tarball is not where the manifest says, or does not have the hash that the manifest
+    /// says. An archive that has that hash and cannot be extracted is neither.
+    manifest_may_be_stale: bool,
+    /// No response arrived, or one with a status that says to try again later.
+    got_no_answer: bool,
+    /// For `fail_update_requests`, if the download is required: no attempt got an answer about
+    /// the package.
+    is_unanswered: bool,
+    /// What the extract task logged, if that has not been printed.
+    task_log: Option<&'a mut bun_ast::Log>,
+}
+
+/// Prints what a task logged. An error in it fails the install.
+fn print_task_log(manager: &mut PackageManager, log: &mut bun_ast::Log) -> crate::Result<()> {
+    if log.msgs.is_empty() {
+        return Ok(());
+    }
+    // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
+    // not `&mut Writer` (the underlying `Writer` is the FFI shape).
+    // Propagate the write error (WriteFailed) out of `run_tasks`.
+    log.print(std::ptr::from_mut(Output::error_writer()))?;
+    if log.errors > 0 {
+        manager.any_failed_to_install = true;
+    }
+    log.reset();
+    Ok(())
+}
+
+/// The registry has answered, or will not: each held download starts again or fails for good.
+#[cold]
+#[inline(never)]
+fn settle_held_tarballs(manager: &mut PackageManager) -> crate::Result<()> {
+    for held in core::mem::take(&mut manager.held_tarball_failures) {
+        match enqueue::resume_failed_tarball(manager, &held) {
+            enqueue::Revalidation::Held(_) => manager.held_tarball_failures.push(held),
+            enqueue::Revalidation::Redone => {}
+            enqueue::Revalidation::Final => fail_held_tarball(manager, held)?,
+        }
+    }
+    Ok(())
+}
+
+/// Reports a held failure as `fail_tarball` would have when the download ended.
+fn fail_held_tarball(
+    manager: &mut PackageManager,
+    mut held: HeldTarballFailure,
+) -> crate::Result<()> {
+    print_task_log(manager, &mut held.task_log)?;
+    manager.mark_network_task_failed(held.task_id);
+    let is_required = manager.is_network_task_required(held.task_id);
+    let kind = if is_required {
+        bun_ast::Kind::Err
+    } else {
+        bun_ast::Kind::Warn
+    };
+    manager.log_copies(&held.msgs, kind);
+    fail_update_requests(
+        manager,
+        held.task_id,
+        &held.name,
+        Some(held.dependency_id),
+        held.is_unanswered && is_required,
+    );
+    let _ = manager.task_queue.remove(&held.task_id);
+    Ok(())
 }
 
 /// Called from isolated_install on the main thread.
@@ -1007,103 +1176,90 @@ fn run_tasks_erased(
 
                 let Some(metadata) = task.response.metadata.as_ref().filter(|_| !download_failed)
                 else {
-                    let Some(is_required) = cb.dispatch_tarball_error(
+                    cb.fail_tarball(
                         manager,
                         extract_ctx,
-                        task.task_id,
-                        extract.dependency_id,
-                        extract.name.slice(),
-                        &extract.resolution,
-                        err,
-                        &task.url_buf,
-                    ) else {
-                        continue;
-                    };
-
-                    add_error_or_warning_pretty!(
-                        manager.log_mut(),
-                        is_required,
-                        "{} downloading tarball <b>{}@{}<r>",
-                        DownloadFailure(err.name(), &task.response),
-                        bun_core::fmt::for_terminal(bstr::BStr::new(extract.name.slice())),
-                        bun_core::fmt::for_terminal(
-                            extract
-                                .resolution
-                                .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
-                        ),
-                    );
-                    fail_update_requests(
-                        manager,
-                        task.task_id,
-                        extract.name.slice(),
-                        Some(extract.dependency_id),
-                        is_required,
-                    );
-
-                    let _ = manager.task_queue.remove(&task.task_id);
-
+                        TarballFailure {
+                            task_id: task.task_id,
+                            tarball: extract,
+                            err,
+                            url: &task.url_buf,
+                            manifest_may_be_stale: true,
+                            got_no_answer: true,
+                            is_unanswered: true,
+                            task_log: None,
+                        },
+                        &mut |manager, is_required| {
+                            add_error_or_warning_pretty!(
+                                manager.log_mut(),
+                                is_required,
+                                "{} downloading tarball <b>{}@{}<r>",
+                                DownloadFailure(err.name(), &task.response),
+                                bun_core::fmt::for_terminal(bstr::BStr::new(extract.name.slice())),
+                                bun_core::fmt::for_terminal(
+                                    extract
+                                        .resolution
+                                        .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
+                                ),
+                            );
+                        },
+                    )?;
                     continue;
                 };
 
                 let response = &metadata.response;
 
                 if response.status_code > 399 {
-                    let Some(is_required) = cb.dispatch_tarball_error(
+                    cb.fail_tarball(
                         manager,
                         extract_ctx,
-                        task.task_id,
-                        extract.dependency_id,
-                        extract.name.slice(),
-                        &extract.resolution,
-                        match response.status_code {
-                            400 => crate::Error::TarballHTTP400,
-                            401 => crate::Error::TarballHTTP401,
-                            402 => crate::Error::TarballHTTP402,
-                            403 => crate::Error::TarballHTTP403,
-                            404 => crate::Error::TarballHTTP404,
-                            405..=499 => crate::Error::TarballHTTP4xx,
-                            _ => crate::Error::TarballHTTP5xx,
+                        TarballFailure {
+                            task_id: task.task_id,
+                            tarball: extract,
+                            err: match response.status_code {
+                                400 => crate::Error::TarballHTTP400,
+                                401 => crate::Error::TarballHTTP401,
+                                402 => crate::Error::TarballHTTP402,
+                                403 => crate::Error::TarballHTTP403,
+                                404 => crate::Error::TarballHTTP404,
+                                405..=499 => crate::Error::TarballHTTP4xx,
+                                _ => crate::Error::TarballHTTP5xx,
+                            },
+                            url: &task.url_buf,
+                            manifest_may_be_stale: true,
+                            got_no_answer: retry,
+                            // The manifest just listed this version, so an error status for its
+                            // tarball counts as no answer: it says nothing about the package's
+                            // other versions.
+                            is_unanswered: true,
+                            task_log: None,
                         },
-                        &task.url_buf,
-                    ) else {
-                        continue;
-                    };
-
-                    if is_required {
-                        bun_ast::add_error_pretty!(
-                            manager.log_mut(),
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            "<r><red><b>GET<r><red> {}<d> - {}<r>",
-                            bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
-                                metadata.url.slice()
-                            )),
-                            response.status_code,
-                        );
-                    } else {
-                        bun_ast::add_warning_pretty!(
-                            manager.log_mut(),
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
-                            bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
-                                metadata.url.slice()
-                            )),
-                            response.status_code,
-                        );
-                    }
-                    fail_update_requests(
-                        manager,
-                        task.task_id,
-                        extract.name.slice(),
-                        Some(extract.dependency_id),
-                        // The manifest just listed this version, so an error status for its tarball
-                        // counts as no answer: it says nothing about the package's other versions.
-                        is_required,
-                    );
-
-                    let _ = manager.task_queue.remove(&task.task_id);
-
+                        &mut |manager, is_required| {
+                            if is_required {
+                                bun_ast::add_error_pretty!(
+                                    manager.log_mut(),
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    "<r><red><b>GET<r><red> {}<d> - {}<r>",
+                                    bun_core::fmt::EscapeControlChars(
+                                        bun_core::fmt::redacted_npm_url(metadata.url.slice())
+                                    ),
+                                    response.status_code,
+                                );
+                            } else {
+                                bun_ast::add_warning_pretty!(
+                                    manager.log_mut(),
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
+                                    bun_core::fmt::EscapeControlChars(
+                                        bun_core::fmt::redacted_npm_url(metadata.url.slice())
+                                    ),
+                                    response.status_code,
+                                );
+                            }
+                        },
+                    )?;
                     continue;
                 }
 
@@ -1163,15 +1319,14 @@ fn run_tasks_erased(
         let holds_log = task.tag == Task::Tag::PackageManifest
             && task.status == Task::Status::Fail
             && !cb.has_on_package_manifest_error;
-        if !task.log.msgs.is_empty() && !holds_log {
-            // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
-            // not `&mut Writer` (the underlying `Writer` is the FFI shape).
-            // Propagate the write error (WriteFailed) out of `run_tasks`.
-            task.log.print(std::ptr::from_mut(Output::error_writer()))?;
-            if task.log.errors > 0 {
-                manager.any_failed_to_install = true;
-            }
-            task.log.reset();
+        // The registry may have packed the version again. `fail_tarball` prints what the task
+        // logged, unless the registry names another tarball.
+        let defers_log = task.tag == Task::Tag::Extract
+            && task.status == Task::Status::Fail
+            && task.err == Some(crate::Error::IntegrityCheckFailed)
+            && cb.revalidates_tarballs();
+        if !task.log.msgs.is_empty() && !holds_log && !defers_log {
+            print_task_log(manager, &mut task.log)?;
         }
 
         match task.tag {
@@ -1312,34 +1467,29 @@ fn run_tasks_erased(
                             _ => unreachable!(),
                         }
                     };
-                    // The mark is a no-op for `local_tarball` tasks (they never populate the map).
-                    let Some(is_required) = cb.dispatch_tarball_error(
+                    cb.fail_tarball(
                         manager,
                         extract_ctx,
-                        task.id,
-                        dependency_id,
-                        alias,
-                        resolution,
-                        err,
-                        fail_url,
-                    ) else {
-                        continue;
-                    };
-
-                    add_error_or_warning_pretty!(
-                        manager.log_mut(),
-                        is_required,
-                        "{} extracting tarball from <b>{}<r>",
-                        err.name(),
-                        bun_core::fmt::for_terminal(bstr::BStr::new(alias)),
-                    );
-                    fail_update_requests(manager, task.id, alias, Some(dependency_id), false);
-
-                    // Void-callback fallback (resolve phase): drain the
-                    // `task_queue` entry too so a later install-phase
-                    // `enqueuePackageForDownload` doesn't wedge on `found_existing`.
-                    let _ = manager.task_queue.remove(&task.id);
-
+                        TarballFailure {
+                            task_id: task.id,
+                            tarball,
+                            err,
+                            url: fail_url,
+                            manifest_may_be_stale: defers_log,
+                            got_no_answer: false,
+                            is_unanswered: false,
+                            task_log: defers_log.then_some(&mut task.log),
+                        },
+                        &mut |manager, is_required| {
+                            add_error_or_warning_pretty!(
+                                manager.log_mut(),
+                                is_required,
+                                "{} extracting tarball from <b>{}<r>",
+                                err.name(),
+                                bun_core::fmt::for_terminal(bstr::BStr::new(alias)),
+                            );
+                        },
+                    )?;
                     continue;
                 }
 
@@ -1685,6 +1835,9 @@ fn run_tasks_erased(
         }
     }
 
+    if !manager.held_tarball_failures.is_empty() {
+        settle_held_tarballs(manager)?;
+    }
     Ok(())
 }
 
@@ -2080,6 +2233,8 @@ pub fn generate_network_task_for_tarball<'a>(
     dependency_id: DependencyID,
     package: &Package,
     authorization: Authorization,
+    // `DedupeMapEntry::from_manifest`
+    from_manifest: bool,
 ) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
     // Only reached when the tarball is not already extracted in the cache.
     if this.options.offline == Options::OfflineMode::Offline {
@@ -2087,9 +2242,11 @@ pub fn generate_network_task_for_tarball<'a>(
         enqueue::offline_miss(this, task_id, "", name, is_required);
         return Err(ForTarballError::Offline);
     }
-    if this.has_created_network_task(task_id, is_required) {
+    let (entry, found_existing) = this.network_task_entry(task_id, is_required);
+    if found_existing {
         return Ok(None);
     }
+    entry.from_manifest = from_manifest;
 
     // reshaped for borrowck —
     // all `&mut this` uses (cache/temp dir, pool slot) happen
@@ -2249,6 +2406,16 @@ impl PackageManager {
         task_id: Task::Id,
         is_required: bool,
     ) -> bool {
+        self.network_task_entry(task_id, is_required).1
+    }
+
+    /// The entry of a task, and whether the task was created before.
+    #[inline]
+    fn network_task_entry(
+        &mut self,
+        task_id: Task::Id,
+        is_required: bool,
+    ) -> (&mut crate::network_task::DedupeMapEntry, bool) {
         let gpe = self
             .network_dedupe_map
             .get_or_put(task_id)
@@ -2261,7 +2428,7 @@ impl PackageManager {
             gpe.value_ptr.is_required || is_required
         };
 
-        gpe.found_existing
+        (gpe.value_ptr, gpe.found_existing)
     }
 
     pub(crate) fn is_network_task_required(&self, task_id: Task::Id) -> bool {

@@ -252,7 +252,7 @@ impl FailReason {
             FailReason::ElevationRequired => "process requires elevation",
             FailReason::CreateProcessFailed => "could not create process",
             FailReason::BatchFileArgument => {
-                "an argument with one of % & | < > ^ cannot be passed to a .cmd or .bat file"
+                "cannot pass an argument containing % & | < > ^ to a .cmd or .bat file"
             }
 
             FailReason::CouldNotDirectLaunch => {

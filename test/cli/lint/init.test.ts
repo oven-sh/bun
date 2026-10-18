@@ -172,7 +172,9 @@ describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
     chmodSync(join(String(dir), "bunfig.toml"), 0o200);
     expect(await run(String(dir), command, "--init")).toEqual({
       stdout: "",
-      stderr: expect.stringMatching(/^warn: .+\n.+ are not applied\.\nerror: Cannot read bunfig\.toml: EACCES: .+\n$/),
+      stderr: expect.stringMatching(
+        /^warn: .+\nignoring settings in .+\nerror: Cannot read bunfig\.toml: EACCES: .+\n$/,
+      ),
       exitCode: 2,
     });
     chmodSync(join(String(dir), "bunfig.toml"), 0o644);
@@ -207,7 +209,9 @@ describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
     using dir = tempDir("bun-init-section", { "bunfig.toml/a.js": "a;\n" });
     expect(await run(String(dir), command, "--init")).toEqual({
       stdout: "",
-      stderr: expect.stringMatching(/^warn: .+\n.+ are not applied\.\nerror: Cannot read bunfig\.toml: E[A-Z]+: .+\n$/),
+      stderr: expect.stringMatching(
+        /^warn: .+\nignoring settings in .+\nerror: Cannot read bunfig\.toml: E[A-Z]+: .+\n$/,
+      ),
       exitCode: 2,
     });
   });

@@ -780,6 +780,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         Some(wide)
     }
 
+    /// Whether the walk followed a symlink to reach the directory that contains the latest match.
+    pub fn followed_link(&self) -> bool {
+        !self.walker.followed_links.is_empty()
+    }
+
     pub fn next(&mut self) -> Result<Maybe<Option<MatchedPath>>, Error> {
         'outer: loop {
             // Note: reshaped for borrowck — take/replace iter_state where needed.

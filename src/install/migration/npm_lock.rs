@@ -155,14 +155,40 @@ struct Migrator<'a> {
     probe: Vec<u8>,
     url: Vec<u8>,
     patched: String,
+    /// Indexes of the entries that have no integrity and whose tarball URL is under neither the
+    /// configured registry nor the default one.
+    unverifiable: Vec<u32>,
     silent: bool,
+    verbose: bool,
     /// `npm-shrinkwrap.json` or `package-lock.json`, for warnings.
     lockfile_name: &'static str,
+}
+
+/// Returns the packages that still have no integrity. An empty URL does not find them all, because
+/// an `unverifiable` entry that was merged into a bundled copy's package has that copy's URL.
+fn unverified_packages(migrator: &Migrator<'_>) -> Vec<PackageID> {
+    let packages = migrator.this.packages.slice();
+    let (resolutions, metas) = (packages.items_resolution(), packages.items_meta());
+    let without_url = (0..resolutions.len() as PackageID).filter(|&id| {
+        let res = &resolutions[id as usize];
+        res.tag == resolution::Tag::Npm && res.npm().url.is_empty()
+    });
+    let mut ids: Vec<PackageID> = (migrator.unverifiable.iter())
+        .map(|&j| migrator.entry_package_ids[j as usize])
+        .filter(|&id| id != INVALID_PACKAGE_ID)
+        .chain(without_url)
+        .filter(|&id| !metas[id as usize].integrity.tag.is_supported())
+        .collect();
+    bun_collections::index_sort::sort_slice_unstable_by(&mut ids, |a, b| a.cmp(b));
+    ids.dedup();
+    ids
 }
 
 pub(super) fn migrate_packages(
     this: &mut Lockfile,
     manager: &mut PackageManager,
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
     packages_properties: &[E::PropertyJSON],
     workspace_map: Option<&WorkspaceMap>,
     lockfile_name: &'static str,
@@ -177,6 +203,7 @@ pub(super) fn migrate_packages(
     index.reserve(entry_count);
 
     let silent = manager.options.log_level.is_silent();
+    let verbose = manager.options.log_level.is_verbose();
     let mut migrator = Migrator {
         this,
         manager,
@@ -192,7 +219,9 @@ pub(super) fn migrate_packages(
         probe: Vec::new(),
         url: Vec::new(),
         patched: String::new(),
+        unverifiable: Vec::new(),
         silent,
+        verbose,
         lockfile_name,
     };
 
@@ -214,13 +243,57 @@ pub(super) fn migrate_packages(
 
     migrator.warn_unreachable();
 
+    // These packages now come from the configured registry, so use the integrity in its manifests.
+    let unverified = unverified_packages(&migrator);
+    if !unverified.is_empty() {
+        (migrator.this).fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
+            migrator.manager,
+            false, // update_os_cpu
+            true,  // fill_integrity
+            Some(&unverified),
+        )?;
+        if let Some(&refused) = unverified_packages(&migrator).first() {
+            let entry = (migrator.unverifiable.iter())
+                .find(|&&j| migrator.entry_package_ids[j as usize] == refused);
+            log.add_error_fmt(
+                Some(source),
+                entry.map_or(bun_ast::Loc::EMPTY, |&j| {
+                    packages_properties[j as usize].key_loc
+                }),
+                format_args!(
+                    "missing integrity, and configured registry has none for this version"
+                ),
+            );
+            return Err(Error::InvalidNPMLockfile);
+        }
+    }
+
+    if let Some((&first, more)) = migrator.unverifiable.split_first() {
+        let entry = &packages_properties[first as usize];
+        let resolved = entry_object(entry).get(b"resolved");
+        let url = resolved.and_then(|url| url.as_str()).unwrap_or_default();
+        let more = match more.len() {
+            0 => String::new(),
+            count => format!(", and {count} more"),
+        };
+        log.add_warning_fmt(
+            Some(source),
+            entry.key_loc,
+            format_args!(
+                "missing integrity, downloading from configured registry instead of {}{}",
+                bun_core::fmt::for_terminal(bstr::BStr::new(url)),
+                more,
+            ),
+        );
+    }
+
     if !migrator.patched.is_empty() {
         bun_core::warn!(
-            "skipped npm patches for {} from {}",
+            "skipping npm patches for {} from {}",
             migrator.patched,
             lockfile_name,
         );
-        bun_core::note!("bun patch \\<pkg\\>");
+        bun_core::note!("recreate them with bun patch \\<pkg\\>");
     }
 
     #[cfg(debug_assertions)]
@@ -310,7 +383,8 @@ impl<'a> Migrator<'a> {
             if !self.patched.is_empty() {
                 self.patched.push_str(", ");
             }
-            let _ = write!(self.patched, "\"{}\"", bstr::BStr::new(name));
+            let name = bun_core::fmt::escape_control_chars(name);
+            let _ = write!(self.patched, "\"{name}\"");
         }
 
         let mut meta = lockfile::Meta {
@@ -350,7 +424,7 @@ impl<'a> Migrator<'a> {
             ..lockfile::Meta::default()
         };
 
-        let res = self.entry_resolution(
+        let mut res = self.entry_resolution(
             j,
             pkg,
             key,
@@ -379,7 +453,10 @@ impl<'a> Migrator<'a> {
                 )
                 && !meta.integrity.tag.is_supported()
             {
-                return Err(Error::InvalidNPMLockfile);
+                // A tarball from that host could not be verified. With an empty URL, the package is
+                // downloaded from the configured registry instead.
+                res.npm_mut().url = SemverString::default();
+                self.unverifiable.push(j);
             }
         }
 
@@ -712,8 +789,8 @@ impl<'a> Migrator<'a> {
                 else {
                     if !self.silent {
                         bun_core::warn!(
-                            "skipped \"{}@{}\" from {}: unsupported version specifier",
-                            bstr::BStr::new(name),
+                            "skipping \"{}@{}\" from {}: unsupported version specifier",
+                            bun_core::fmt::escape_control_chars(name),
                             bun_core::fmt::for_terminal(bstr::BStr::new(spec)),
                             self.lockfile_name,
                         );
@@ -788,13 +865,22 @@ impl<'a> Migrator<'a> {
                         }
                         None => self.build_or_get(t, through_link, version_tag)?,
                     },
+                    // Left out of the lockfile, so `bun install` resolves it like a newly added
+                    // dependency. `--frozen-lockfile` resolves nothing new, so it keeps the edge.
+                    None if is_local
+                        && behavior.is_peer()
+                        && !behavior.is_optional_peer()
+                        && !self.manager.options.enable.frozen_lockfile() =>
+                    {
+                        continue;
+                    }
                     None if behavior.is_peer() || behavior.contains(Behavior::OPTIONAL) => {
                         INVALID_PACKAGE_ID
                     }
                     None => {
-                        if !has_entry && !self.silent {
+                        if !has_entry && self.verbose {
                             bun_core::warn!(
-                                "skipped \"{}@{}\" from package-lock.json: no entry for this dependency of \"{}\"",
+                                "skipping \"{}@{}\" from package-lock.json: no entry for this dependency of \"{}\"",
                                 bun_core::fmt::for_terminal(bstr::BStr::new(name)),
                                 bun_core::fmt::for_terminal(bstr::BStr::new(spec)),
                                 bun_core::fmt::for_terminal(bstr::BStr::new(if key.is_empty() {
@@ -855,11 +941,11 @@ impl<'a> Migrator<'a> {
                 .copied()
                 .filter(|&t| !self.link_entries.is_set(t as usize));
             let Some(t) = target else {
-                if !self.silent {
+                if self.verbose {
                     bun_core::warn!(
-                        "workspace \"{}\" ({}) is not in {}; resolving it from package.json",
-                        bstr::BStr::new(&ws.name),
-                        bstr::BStr::new(path),
+                        "workspace \"{}\" ({}) not in {}, resolving from package.json",
+                        bun_core::fmt::escape_control_chars(&ws.name),
+                        bun_core::fmt::escape_control_chars(path),
                         self.lockfile_name,
                     );
                 }
@@ -958,10 +1044,10 @@ impl<'a> Migrator<'a> {
         self.skipped_external.set(t as usize);
         if !self.silent {
             bun_core::warn!(
-                "skipped \"{}\" from {}: transitive folder dependency \"{}\" is outside the project",
-                bstr::BStr::new(name),
+                "skipping \"{}\" from {}: transitive folder dependency \"{}\" is outside the project",
+                bun_core::fmt::escape_control_chars(name),
                 self.lockfile_name,
-                bstr::BStr::new(self.entries[t as usize].key.slice()),
+                bun_core::fmt::escape_control_chars(self.entries[t as usize].key.slice()),
             );
         }
         self.shadow(t);
@@ -977,10 +1063,10 @@ impl<'a> Migrator<'a> {
 
     /// The edge is dropped: the install resolves it from its declarer's `file:` spec.
     fn skip_copied_folder(&mut self, t: u32, name: &[u8]) {
-        if !self.silent && !self.shadowed.is_set(t as usize) {
+        if self.verbose && !self.shadowed.is_set(t as usize) {
             bun_core::warn!(
-                "skipped \"{}\" from {}: a folder npm copied (--install-links)",
-                bstr::BStr::new(name),
+                "skipping \"{}\" from {}: folder copied by npm (--install-links)",
+                bun_core::fmt::escape_control_chars(name),
                 self.lockfile_name,
             );
         }
@@ -1015,7 +1101,7 @@ impl<'a> Migrator<'a> {
     }
 
     fn warn_unreachable(&self) {
-        if self.silent {
+        if !self.verbose {
             return;
         }
         let mut count: usize = 0;
@@ -1033,7 +1119,8 @@ impl<'a> Migrator<'a> {
                 if count > 1 {
                     list.push_str(", ");
                 }
-                let _ = write!(list, "\"{}\"", bstr::BStr::new(entry.key.slice()));
+                let key = bun_core::fmt::escape_control_chars(entry.key.slice());
+                let _ = write!(list, "\"{key}\"");
             }
         }
         if count == 0 {
@@ -1043,7 +1130,7 @@ impl<'a> Migrator<'a> {
             let _ = write!(list, " and {} more", count - 5);
         }
         bun_core::warn!(
-            "skipped {} {} {} not depended on by any package: {}",
+            "skipping {} unused {} {}: {}",
             count,
             self.lockfile_name,
             if count == 1 { "entry" } else { "entries" },

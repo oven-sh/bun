@@ -165,9 +165,7 @@ impl Checker<'_, '_> {
     /// the blocks of those that are no expressions in `blocks_too_large_for_flow_analysis`.
     fn check_flow_too_deep(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // The limit is 2000 levels. A walk nests at most once per flow node, and once for the
-        // condition that `checkIfExpressionRefinesParameter` synthesizes.
-        if bound.flow_places < 2000 {
+        if !bound.can_reach_flow_depth_limit() {
             return;
         }
         let mut reported = Node::NONE;

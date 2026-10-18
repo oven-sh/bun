@@ -282,12 +282,59 @@ pub struct Finished<'s> {
 }
 
 impl Finished<'_> {
+    /// Everything another task could notice about this task if its tables were never published, provided that is only
+    /// variances. `None`: the task also reported a diagnostic, or left something else that `Program::validate` compares.
+    ///
+    /// The tables are caches. Nothing is published after the last step of a plan, which is where most files are checked, so
+    /// no result may depend on them.
+    pub fn only_variances(&self) -> Option<impl Iterator<Item = (Sym, &[u8])>> {
+        // No `..`: whoever adds a field has to decide here whether another task can notice it.
+        let Finished {
+            step: _,
+            index: _,
+            diagnostics,
+            // Nothing reads `Program::closed_a_cycle`.
+            closed_a_cycle: _,
+            // A statistic.
+            foreign_evaluations: _,
+            order_dependent_variances,
+            listings,
+            assignments_walked,
+            // The tables, and the records their entries refer to.
+            own: _,
+            link: _,
+            tables: _,
+            buffered: _,
+        } = self;
+        (diagnostics.is_empty() && listings.is_empty() && assignments_walked.is_empty()).then(
+            || {
+                order_dependent_variances
+                    .iter()
+                    .map(|it| (it.sym, it.variances))
+            },
+        )
+    }
+
     /// Whether `Program::validate` can find the task invalid.
     pub fn can_be_invalid(&self) -> bool {
         let mut measured = self.order_dependent_variances.iter();
         measured.any(|it| it.compared | it.failed | it.inferred != 0)
             || self.assignments_walked.iter().any(|it| it.2)
             || !self.listings.is_empty()
+    }
+}
+
+impl<'s> Program<'s> {
+    /// Call before the first task. Behaves as if an earlier task had left these variances in `Finished::only_variances`.
+    pub fn assume_variances(&self, sym: Sym, variances: &[u8]) {
+        let variances = self.session.arena().alloc_slice_copy(variances);
+        self.serial_variances.lock().entry(sym).or_insert(variances);
+    }
+
+    /// Whether some task so far wrote to one of the two sets that tasks write to directly, not through their `Finished`.
+    pub fn has_notes_outside_finished(&self) -> bool {
+        !self.properties_referenced_before.lock().is_empty()
+            || !self.emit_helper_errors_of_earlier_files.lock().is_empty()
     }
 }
 

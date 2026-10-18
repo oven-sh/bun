@@ -8,6 +8,7 @@ import { renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { createRequire } from "node:module";
 import { join } from "path";
+import { Lifetimes } from "./module-graph-lifetimes";
 
 type ModuleGraphOptions = Bun.ModuleGraphOptions;
 type ModuleGraphInstance = Bun.ModuleGraph & { import(specifier: string): Promise<any> };
@@ -160,7 +161,7 @@ describe("Bun.ModuleGraph", () => {
     }
     const before = heapStats().objectTypeCounts;
     const K = 8;
-    const graphs = [];
+    const graphs: any[][] = [];
     for (let k = 0; k < K; k++) {
       const graph = ModuleGraph();
       const ns = await graph.import(join(dir, "mod.mjs"));
@@ -195,7 +196,7 @@ describe("Bun.ModuleGraph", () => {
     });
     const origPrepare = Error.prepareStackTrace;
     try {
-      const graphs = [];
+      const graphs: any[] = [];
       for (let i = 0; i < 3; i++) {
         const m = await ModuleGraph({ env: {} }).import(join(dir, "intr.mjs"));
         expect(m.patch("g" + i)).toBe(true);
@@ -1843,7 +1844,7 @@ describe("Bun.ModuleGraph — CommonJS surface per graph", () => {
     });
     const host = await import(join(d, "entry.mjs"));
     expect(host.run()).toEqual(["host", 1, "host", 2]);
-    const results = [];
+    const results: unknown[] = [];
     for (let i = 0; i < 6; i++) {
       const g = new ModuleGraphClass({ globals: { marker: "g" + i } });
       results.push(
@@ -2677,7 +2678,7 @@ describe("Bun.ModuleGraph — scale", () => {
     const c0 = await settle();
     const first = await ModuleGraph({ env: { T: "g0" } }).import(join(dir, "root.mjs"));
     const c1 = await settle();
-    const rest = [];
+    const rest: any[] = [];
     for (let i = 1; i < 5; i++) rest.push(await ModuleGraph({ env: { T: "g" + i } }).import(join(dir, "root.mjs")));
     const c5 = await settle();
     expect([first.v, first.who, rest.map(m => m.who)]).toEqual([N, "g0", ["g1", "g2", "g3", "g4"]]);
@@ -2700,12 +2701,14 @@ describe("Bun.ModuleGraph — scale", () => {
     });
     expect(graphs.map(m => m.inc() - 1)).toEqual(graphs.map((_, i) => i + 1));
     expect(new Set(graphs.map(m => m.id)).size).toBe(50);
-    const ok = await collected(register => {
-      register(graphs[25].big);
-      graphs.forEach(m => m.quit());
-      graphs.length = 0;
+    const lifetimes = new Lifetimes();
+    const names = graphs.map((_, i) => `graph ${i}`);
+    graphs.forEach((m, i) => {
+      lifetimes.track(names[i], m.big);
+      m.quit();
     });
-    expect(ok).toBe(true);
+    graphs.length = 0;
+    expect(await lifetimes.stillAlive(...names)).toEqual([]);
     rmSync(dir, { recursive: true, force: true });
   });
   test("deep re-export chain (100 hops) and wide fan-in (1 module imported by 200) resolve per instance", async () => {
@@ -3392,7 +3395,7 @@ describe("Bun.ModuleGraph — process-global registries touched from a graph (do
     });
     const g = ModuleGraph({ env: { T: "one" } });
     const m = await g.import(join(dir, "reg.mjs"));
-    expect((await import("virt:one")).from).toBe("one"); // visible to the host: registries are per process
+    expect((await import("virt:one" as string)).from).toBe("one"); // visible to the host: registries are per process
     m.quit();
     expect((await ModuleGraph().import(join(dir, "use.mjs"))).v).toBe("one"); // and to other graphs, after the registering graph is gone
     rmSync(dir, { recursive: true, force: true });

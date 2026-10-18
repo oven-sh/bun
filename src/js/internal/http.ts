@@ -40,8 +40,18 @@ const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
+// IncomingMessage slot for the request's native response. null if the request was parsed in JS.
+const kHeaderSource = Symbol("kHeaderSource");
 // Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
 const kHandoffResponse = Symbol("kHandoffResponse");
+// Method of a server socket. Whoever takes the connection over calls it while the connection is still open.
+const kRememberPeer = Symbol("kRememberPeer");
+// Getter of a server socket: whether the native side has read bytes or the end of a tunnel's stream that it will push
+// into the socket in a task.
+const kHasQueuedReads = Symbol("kHasQueuedReads");
+// Property of a server socket: whether the connection closed before the kernel had taken everything that was written.
+// undefined until it has closed.
+const kClosedWithUnsentData = Symbol("kClosedWithUnsentData");
 const kCloseCallback = Symbol("closeCallback");
 
 // node:_http_server registers its pipelined-response machinery here at module
@@ -540,8 +550,11 @@ export {
   isTlsSymbol,
   kAbortController,
   kCloseCallback,
+  kClosedWithUnsentData,
   kHandle,
   kHandoffResponse,
+  kHasQueuedReads,
+  kHeaderSource,
   kInternalSocketData,
   kNeedDrain,
   kOnReadParsed,
@@ -550,6 +563,7 @@ export {
   kPerRequestCheckServerIdentity,
   kProxyConfig,
   kRealListen,
+  kRememberPeer,
   kRequest,
   kWaitForProxyTunnel,
   noBodySymbol,

@@ -624,7 +624,7 @@ describe.concurrent("bun test --isolate", () => {
       serve: (sock: net.Socket) => {
         sock.write(mysqlHandshakeV10());
         // Byte 3 of a packet is its sequence number.
-        sock.on("data", packet => !packet.includes("select 1") && sock.write(mysqlOkPacket(packet[3] + 1)));
+        sock.on("data", (packet: Buffer) => !packet.includes("select 1") && sock.write(mysqlOkPacket(packet[3] + 1)));
       },
       leak: redialWithSQL("mysql"),
     },

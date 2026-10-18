@@ -32,7 +32,7 @@ use crate::bun_fs as Fs;
 use crate::bun_node_fallbacks as NodeFallbackModules;
 use crate::bundle_v2::{self as bundler, BundleV2};
 use crate::cache::{Entry as CacheEntry, ExternalFreeFunction};
-use crate::html_scanner::HTMLScanner;
+use crate::html_scanner::scan_import_records;
 use crate::options::{self, Loader};
 use crate::transpiler::Transpiler;
 use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
@@ -1214,13 +1214,7 @@ pub mod parse_worker {
                 ));
             }
             Loader::Html => {
-                // scope the scanner so its `&mut log` / `&source`
-                // borrows release before `new_lazy_export_ast` re-borrows them.
-                let import_records = {
-                    let mut scanner = HTMLScanner::init(log, source);
-                    scanner.scan(&source.contents)?;
-                    scanner.import_records
-                };
+                let import_records = scan_import_records(log, source)?;
 
                 // Reuse existing code for creating the AST
                 // because it handles the various Ref and other structs we
@@ -2396,11 +2390,13 @@ pub mod parse_worker {
         // disjoint `options` field — never the whole struct — so the raw `resolver`
         // pointer (which targets `(*transpiler).resolver`) remains valid.
         let topts = unsafe { &(*transpiler).options };
-        let use_directive: UseDirective = if !is_empty && topts.server_components {
-            UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
-        } else {
-            UseDirective::None
-        };
+        // A text, JSON or markdown file can start with the same bytes as a directive.
+        let use_directive: UseDirective =
+            if !is_empty && topts.server_components && loader.is_javascript_like() {
+                UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
+            } else {
+                UseDirective::None
+            };
 
         if (use_directive == UseDirective::Client
         && task.known_target != options::Target::ServerComponentsSsr
@@ -2597,6 +2593,22 @@ pub mod parse_worker {
         } else {
             bun_ast::runtime::ServerComponentsMode::None
         };
+        // The steps after the parser do not implement these directives. They abort the process.
+        let unsupported_directive: Option<&'static [u8]> = match use_directive {
+            // Every later step that handles `UseDirective::Server` is a `todo_panic!`.
+            UseDirective::Server => Some(b"\"use server\" is not supported yet"),
+            // Only the dev server implements this mode: https://github.com/oven-sh/bun/issues/14763
+            UseDirective::Client
+                if opts.features.server_components
+                    == bun_ast::runtime::ServerComponentsMode::WrapExportsForClientReference
+                    && !topts.has_dev_server() =>
+            {
+                Some(
+                    b"\"use client\" is not supported yet in a production build unless 'framework.serverComponents.separateSSRGraph' is true",
+                )
+            }
+            UseDirective::Client | UseDirective::None => None,
+        };
 
         // `transpiler.options.framework: Option<&bake_types::Framework>`
         // vs `opts.framework: Option<&js_parser::options::Framework>` — both
@@ -2678,7 +2690,10 @@ pub mod parse_worker {
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let ast_result: core::result::Result<JSAst, AnyError> =
-            if !is_empty || loader.handles_empty_file() {
+            if let Some(message) = unsupported_directive {
+                log.add_range_error(Some(source), UseDirective::range(entry_contents), message);
+                Err(crate::Error::ParserError)
+            } else if !is_empty || loader.handles_empty_file() {
                 get_ast(
                     log,
                     transpiler,

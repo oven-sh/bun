@@ -1,4 +1,5 @@
 import { RedisClient, SQL } from "bun";
+import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { setSystemTime } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -521,7 +522,7 @@ describe("runtime timeouts are not fake timers", () => {
       stdio: "ignore",
       timeout: 50,
       killSignal: "SIGKILL",
-    });
+    }) as { signal: NodeJS.Signals | null; error?: NodeJS.ErrnoException };
     expect({ signal: result.signal, code: result.error?.code }).toEqual({ signal: "SIGKILL", code: "ETIMEDOUT" });
   });
 
@@ -594,6 +595,29 @@ describe("runtime timeouts are not fake timers", () => {
     }
   });
 });
+
+// Deadlines the runtime measures in JS (the connect-retry budget of Bun.SQL) read monotonicNowMs().
+test("monotonicNowMs() is not a mocked clock", () => {
+  const ONE_HOUR = 60 * 60 * 1000;
+  const beforeFakeTimers = timerInternals.monotonicNowMs();
+  vi.useFakeTimers();
+  const atActivation = timerInternals.monotonicNowMs();
+  vi.advanceTimersByTime(ONE_HOUR);
+  const afterAdvance = timerInternals.monotonicNowMs();
+  expect({
+    mockedTimerClock: timerInternals.timerClockMs(),
+    performanceNow: performance.now(),
+    // the mocked clocks restart from 0 on activation
+    restarted: atActivation < beforeFakeTimers,
+    advancedByTheHour: afterAdvance - atActivation >= ONE_HOUR,
+  }).toEqual({
+    mockedTimerClock: ONE_HOUR,
+    performanceNow: ONE_HOUR,
+    restarted: false,
+    advancedByTheHour: false,
+  });
+});
+
 // Bun.cron() is mockable, so a job created under fake timers lives in the fake
 // heap, and useRealTimers() / clearAllTimers() drop it with the rest. Like a
 // dropped setInterval it has to end up stopped, rather than holding the process
@@ -945,7 +969,7 @@ describe("useFakeTimers with options", () => {
   });
 
   test.each(["modern", "legacy"] as const)("useFakeTimers(%j) accepts legacy Jest string argument", implementation => {
-    expect(() => vi.useFakeTimers(implementation)).not.toThrow();
+    expect(() => vi.useFakeTimers(implementation as any)).not.toThrow();
     expect(vi.isFakeTimers()).toBe(true);
     vi.useRealTimers();
     expect(vi.isFakeTimers()).toBe(false);

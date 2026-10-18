@@ -1397,14 +1397,14 @@ struct HttpResponseData;
             }
 
             /* Break if no host header (but we can have empty string which is different from nullptr).
-             * Upgrade and CONNECT requests are exempt: Node.js dispatches them through the
-             * 'upgrade'/'connect' events before its Host requirement is enforced.
+             * node:http only: Upgrade and CONNECT requests are exempt, because Node.js dispatches
+             * them through the 'upgrade'/'connect' events before its Host requirement is enforced.
              * Checked after the Content-Length / Transfer-Encoding smuggling checks: those are
              * detected while llhttp parses the headers, whereas the Host requirement is a
              * post-completion check, so on doubly-invalid input the framing error wins (Node
              * reports e.g. HPE_INVALID_TRANSFER_ENCODING for such requests). */
             if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()
-                && !isConnectRequestLine && !req->getHeader("upgrade").data()) {
+                && !(IsNodeHttp && (isConnectRequestLine || req->getHeader("upgrade").data()))) {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
             }
 

@@ -186,6 +186,7 @@ impl FileResponseStream {
         let this_ref = unsafe { &*this };
 
         let resp = this_ref.resp.get();
+        // Arm only: the value is the response's (`server.timeout()` may have set it). The timer can be off here: uWS clears it at the last request-body chunk, the WebSocket-upgrade fetch entry never arms it, and sendfile(2) makes no uWS write that would arm it.
         resp.reset_timeout();
         resp.on_aborted(
             |p: *mut FileResponseStream, r| {
@@ -310,7 +311,6 @@ impl FileResponseStream {
         }
 
         let resp = self.resp.get();
-        resp.reset_timeout();
 
         if state == ReadState::Eof {
             self.insert_state(State::RESPONSE_DONE);
@@ -387,7 +387,6 @@ impl FileResponseStream {
             self.finish();
             return true;
         }
-        self.resp.get().reset_timeout();
         self.hold_read_ref();
         // A paused POSIX reader ignores `read()`.
         self.reader_mut().unpause();

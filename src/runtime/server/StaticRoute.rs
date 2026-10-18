@@ -400,8 +400,6 @@ impl StaticRoute {
     }
 
     fn on_writable(this: ThisPtr<Self>, write_offset: u64, resp: AnyResponse) -> bool {
-        resp.reset_timeout();
-
         if !this.on_writable_bytes(write_offset, resp) {
             return false;
         }

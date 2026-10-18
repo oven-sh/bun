@@ -3618,7 +3618,7 @@ describe("server.timeout(req, seconds) ends with its response", () => {
     let stopped = false;
     const sweeps = async (count: number) => {
       // Only an answered round trip counts: a sweep closed that connection.
-      for (let i = 0; i < count && !stopped; ) {
+      for (let i = 0; i < count && !stopped;) {
         using idle = keepAliveClient(server.port);
         if ((await idle.request(GET("/"))) === 200 && !stopped) {
           i++;
@@ -3843,6 +3843,36 @@ describe("server.timeout(req, seconds) ends with its response", () => {
       quietBody: true,
       closedByServer: [true, true, true, true],
     });
+  });
+
+  it("a WebSocket request that fetch answers is not under the 10 s of a new connection", async () => {
+    using clock = idleClock();
+    const release = Promise.withResolvers<void>();
+    let pulls = 0;
+    // 0 never ends the connection. 10 s is three sweeps.
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      websocket: { message() {} },
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async pull(controller) {
+              if (pulls++ === 0) return controller.enqueue("first");
+              await release.promise;
+              controller.enqueue("late");
+              controller.close();
+            },
+          }),
+        ),
+    });
+    using client = keepAliveClient(server.port);
+    client.send(GET("/", upgrade));
+    const first = await client.sees("first");
+    await clock.sweeps(3);
+    release.resolve();
+    const late = await client.sees("late");
+    expect({ first, late }).toEqual({ first: true, late: true });
   });
 
   it("a pending request keeps its idle timer, and the value holds while its response is pending", async () => {

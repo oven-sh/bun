@@ -19,7 +19,7 @@ const { isAnyArrayBuffer } = require("node:util/types");
 const eos = require("internal/streams/end-of-stream");
 const { kEosNodeSynchronousCallback } = eos;
 
-const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
+const normalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
 
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeMap = Array.prototype.map;

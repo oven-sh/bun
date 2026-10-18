@@ -34,9 +34,12 @@ pub use whitespace::{
 };
 #[path = "immutable/icu_collation.rs"]
 mod icu_collation;
+#[path = "immutable/icu_normalize.rs"]
+mod icu_normalize;
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;
 pub use icu_collation::{locale_compare, locale_compare_numeric_base};
+pub use icu_normalize::{NormalizationForm, normalize};
 #[path = "immutable/utf16_offsets.rs"]
 mod utf16_offsets;
 pub use utf16_offsets::Utf16OffsetTable;

@@ -42,6 +42,7 @@ template<> struct ExternTraits<int32_t> : TrivialExtern<int32_t> {};
 template<> struct ExternTraits<uint32_t> : TrivialExtern<uint32_t> {};
 template<> struct ExternTraits<uint64_t> : TrivialExtern<uint64_t> {};
 template<> struct ExternTraits<double> : TrivialExtern<double> {};
+template<> struct ExternTraits<void*> : TrivialExtern<void*> {};
 
 enum ExternNullPtr : uint8_t {};
 

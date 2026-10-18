@@ -37,6 +37,7 @@
 #include "BunObject+exports.h"
 #include "ErrorCode.h"
 #include "GeneratedBunObject.h"
+#include "GeneratedBunObjectInternals.h"
 #include "GeneratedCrypto.h"
 #include "GeneratedCryptoHasher.h"
 #include "GeneratedCsrfJsc.h"
@@ -1000,7 +1001,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     readableStreamToFormData                       WebCore::jsFunctionReadableStreamToFormData        DontDelete|Function 1
     readableStreamToJSON                           WebCore::jsFunctionReadableStreamToJSON            DontDelete|Function 1
     readableStreamToText                           WebCore::jsFunctionReadableStreamToText            DontDelete|Function 1
-    registerMacro                                  BunObject_callback_registerMacro                                    DontEnum|DontDelete|Function 1
+    registerMacro                                  Bun::Bindgen::Generated::BunObjectInternals::jsRegisterMacro        DontEnum|DontDelete|Function 1
     resolve                                        BunObject_callback_resolve                                          DontDelete|Function 1
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback

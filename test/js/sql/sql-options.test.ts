@@ -1,7 +1,8 @@
 // Where the server is: adapter-env-var-precedence.test.ts. Which file is opened: sqlite-url-parsing.test.ts.
 import { SQL } from "bun";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import path from "node:path";
 import util from "node:util";
 import { closedPort, listeningServer } from "./wire-frames";
 
@@ -380,6 +381,329 @@ describe("what the options object inherits", () => {
     expect(reads).toEqual([...new Set(reads)]);
     expect(reads.slice(0, 3).toSorted()).toEqual(["adapter", "filename", "url"]);
     expect(writes).toEqual([]);
+  });
+});
+
+describe("the error for a connection URL that cannot be parsed", () => {
+  const marker = "Hunter2Marker";
+
+  /** All that a program, a log or the print of an uncaught error can show of it, in lower case. */
+  function everythingIn(error: any): string {
+    const parts: unknown[] = [];
+    for (let e = error; e != null && parts.length < 100; e = e.cause) {
+      parts.push(String(e), e.message, e.stack, Bun.inspect(e), util.inspect(e), JSON.stringify(e));
+      for (const key of Reflect.ownKeys(Object(e))) parts.push(Bun.inspect(e[key]));
+    }
+    return parts.join("\n").toLowerCase();
+  }
+  function errorOf(make: () => unknown): any {
+    try {
+      make();
+    } catch (error) {
+      return error;
+    }
+  }
+
+  const adapters = [
+    ["postgres", "POSTGRES_URL"],
+    ["mysql", "MYSQL_URL"],
+    ["mariadb", "MARIADB_URL"],
+  ] as const;
+
+  /** Every way a connection string gets to the parser. `rest` is what stands behind the scheme. */
+  function waysIn(adapter: (typeof adapters)[number][0], variable: string, rest: string): (() => unknown)[] {
+    const url = `${adapter}://${rest}`;
+    const fromEnvironment = (name: string, options?: object) => {
+      process.env[name] = url;
+      try {
+        return new SQL(options as never);
+      } finally {
+        delete process.env[name];
+      }
+    };
+    return [
+      () => new SQL(url),
+      () => new SQL(url, { adapter }),
+      () => new SQL(rest, { adapter }),
+      () => new SQL({ url }),
+      () => new SQL({ adapter, url: rest }),
+      () => fromEnvironment("DATABASE_URL"),
+      () => fromEnvironment("TLS_DATABASE_URL", { max: 1 }),
+      () => fromEnvironment(variable),
+      () => fromEnvironment("DATABASE_URL", { hostname: "other.example" }),
+    ];
+  }
+
+  // [what is in the way, the URL behind its scheme]
+  const urls: [string, string][] = [
+    ["a port that is none", `user:${marker}@db.example:port/db`],
+    ["a port that is too high", `user:${marker}@db.example:99999/db`],
+    ["a space in the host", `user:${marker}@db example/db`],
+    ["a / in the password", `user:ab/${marker}@db.example:5432/db`],
+    ["a # in the password", `user:ab#${marker}@db.example:5432/db`],
+    ["a ? in the password", `user:ab?${marker}@db.example:5432/db`],
+    ["an @ in the password", `user:ab@${marker}@db.example:port/db`],
+    ["an @ in the password and no host", `user:ab@${marker}^`],
+    ["a space in the password", `user:ab ${marker}@db.example:port/db`],
+    ["a % in the password", `user:ab%${marker}@db.example:port/db`],
+    ["?password=", `user@db.example:port/db?password=${marker}`],
+    ["?sslpassword=", `user@db.example:port/db?sslpassword=${marker}`],
+    ["an @ in ?password=", `db example/db?password=ab@${marker}`],
+    ["an @ in ?sslpassword=", `user:ab@db.example:port/db?sslpassword=ab@${marker}`],
+    ["& in place of ?", `user@db.example:port/db&password=${marker}`],
+    ["a fragment", `user@db.example:port/db#${marker}`],
+    ["an @ in the fragment", `db example/db#ab@${marker}`],
+    ["?password= and no user", `db.example:port/db?password=${marker}`],
+    ["no @ behind the password", `user:${marker}%40db.example/db`],
+    ["nothing behind the password", `user:${marker}`],
+    ["nothing in front of the password", `:${marker}`],
+    ["only a database behind the password", `:${marker}/db`],
+    ["keywords and values", `host=db.example user=user password=${marker} dbname=db`],
+    ["keywords and values, an @ in the password", `host=db.example user=user password=ab@${marker} dbname=db`],
+    ["no user and no password", "db example/db"],
+  ];
+
+  describe.each(adapters)("%s", (adapter, variable) => {
+    test.each(urls)("%s", (_, rest) => {
+      for (const make of waysIn(adapter, variable, rest)) {
+        const error = errorOf(make);
+        expect(error).toBeInstanceOf(TypeError);
+        expect({ ...error, name: error.name, message: error.message, cause: error.cause }).toEqual({
+          name: "TypeError",
+          message: "Invalid URL",
+          code: "ERR_INVALID_URL",
+          input: `${adapter}://[REDACTED]`,
+          cause: undefined,
+        });
+        expect(everythingIn(error)).not.toContain(marker.toLowerCase());
+      }
+    });
+  });
+
+  // "~" is the secret and "HOST" a host that cannot be parsed.
+  test.each([
+    "user:~@HOST/db",
+    "~@HOST/db",
+    ":~@HOST/db",
+    "user:~",
+    ":~/db",
+    "HOST/db?password=~",
+    "user:ab@HOST/db?sslpassword=~&a=b",
+    "HOST/db#~",
+    "HOST/~",
+    "HOST/db&password=~",
+    "host=HOST user=user password=~ dbname=db",
+  ])("%s, with every separator in and around ~", position => {
+    // In two words, so that a part of it is seen as well.
+    const words = [marker.toLowerCase(), "zebra9marker"];
+    let turn = 0;
+    let errors = 0;
+    for (const host of position.includes("HOST") ? ["db.example:port", "db example", "[::1"] : [""]) {
+      for (const separator of "@/?#:% []") {
+        for (const secret of [separator + words[0], words.join(separator), words[0] + separator]) {
+          // Each in one of the 27 ways, in turn.
+          const [adapter, variable] = adapters[Math.floor(turn / 9) % adapters.length];
+          const ways = waysIn(adapter, variable, position.replace("HOST", host).replace("~", secret));
+          const error = errorOf(ways[turn++ % ways.length]);
+          // "user:?" is a host and an empty port.
+          if (!error) continue;
+          errors++;
+          const everything = everythingIn(error);
+          for (const word of words) expect(everything).not.toContain(word);
+        }
+      }
+    }
+    expect(errors).toBeGreaterThan(0);
+  });
+
+  test("is the error of new URL() in all but the input", () => {
+    const expected = errorOf(() => new URL("http://a b"));
+    const error = errorOf(() => new SQL("postgres://a b"));
+    expect(String(error)).toBe(String(expected));
+    expect(Object.keys(error)).toEqual(Object.keys(expected));
+    expect(JSON.stringify(error)).toBe(JSON.stringify({ ...expected, input: "postgres://[REDACTED]" }));
+    expect(Object.getPrototypeOf(error)).toBe(Object.getPrototypeOf(expected));
+  });
+
+  // [what the error names, the adapter, the URL]
+  test.each([
+    ["sqlite://[REDACTED]", "postgres", `sqlite://user:${marker}@db example/db`],
+    ["sqlite://[REDACTED]", "mysql", `sqlite://user:ab/${marker}@db.example/db`],
+    ["postgres://[REDACTED]", "mariadb", `postgres://user:${marker}@db.example:port/sqlite?password=${marker}`],
+    ["postgres://[REDACTED]", "postgres", `postgres://db example/sqlite?password=ab@${marker}`],
+    ["sqlite://:memory:", "postgres", "sqlite://:memory:"],
+    ["sqlite://:memory:", "mysql", `sqlite://:memory:?mode=ro#${marker}`],
+  ] as const)("the hint at the sqlite adapter names %s", (named, adapter, url) => {
+    const error = errorOf(() => new SQL(url, { adapter }));
+    expect(error.message).toBe(
+      `Invalid URL '${named}' for ${adapter}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
+    );
+    expect(error.cause).toBeUndefined();
+    expect(everythingIn(error)).not.toContain(marker.toLowerCase());
+  });
+
+  // [what is in front of the `://`, what the error names, the URL]
+  test.each([
+    [
+      "a user, a password, a host and a query",
+      "[REDACTED]",
+      `user:${marker}@db.example/db?redirect=https://example.com`,
+    ],
+    ["a user and a part of the password", "[REDACTED]", `user:${marker}://x@db.example/db`],
+    ["a user, a host and a query", "[REDACTED]", `${marker}@db.example/db?redirect=https://example.com`],
+    ["a scheme", "mongodb", `mongodb://user:${marker}@db.example/db`],
+  ])("a protocol that is not supported: %s", (_, named, url) => {
+    for (const error of [errorOf(() => new SQL(url)), errorOf(() => new SQL({ url }))]) {
+      expect(error.message).toBe(
+        `Unsupported protocol: ${named}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`,
+      );
+      expect(everythingIn(error)).not.toContain(marker.toLowerCase());
+    }
+  });
+
+  test.each<[string, unknown[]]>([
+    ["options.password", [`mysql://user@db.example/db?password=${marker}%00`]],
+    ["options.sslpassword", [`mariadb://user@db.example/db?sslpassword=${marker}%00`]],
+    ["options.anything", [`postgres://user@db.example/db?anything=${marker}%00`]],
+    ["options.connection.password", ["postgres://user@db.example/db", { connection: { password: `${marker}\0` } }]],
+  ])("a NUL in the startup parameter %s", (name, args) => {
+    const error = errorOf(() => new SQL(...(args as [string])));
+    expect(error).toMatchObject({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: `The property '${name}' must not contain null bytes. Received '[REDACTED]'`,
+    });
+    expect(everythingIn(error)).not.toContain(marker.toLowerCase());
+  });
+
+  test("when nothing catches it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "new Bun.SQL();"],
+      env: { ...bunEnv, DATABASE_URL: `postgres://user:ab/${marker}@db.example:5432/db?password=${marker}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("ERR_INVALID_URL");
+    expect(stderr).toContain('input: "postgres://[REDACTED]"');
+    expect(stderr.toLowerCase()).not.toContain(marker.toLowerCase());
+    expect(exitCode).toBe(1);
+  });
+});
+
+test("options.connection also gives what it inherits", () => {
+  expect(optionsOf("postgres://db.example/app", { connection: Object.create({ search_path: "s" }) }).query).toBe(
+    "search_path\0s\0",
+  );
+});
+
+test("the traps of a Proxy are asked for no more than the options", () => {
+  const asked: string[] = [];
+  const trap = (name: string) => () => {
+    asked.push(name);
+    throw new Error(name);
+  };
+  const options = new Proxy({}, { getPrototypeOf: trap("getPrototypeOf"), getOwnPropertyDescriptor: trap("own") });
+  expect(optionsOf("postgres://db.example/app", Object.create(options)).hostname).toBe("db.example");
+  expect(asked).toEqual([]);
+});
+
+test.each(["postgres", "mysql", "sqlite"])("%s: what is on Object.prototype is not an option", async adapter => {
+  using dir = tempDir("sql-options-prototype", {});
+  const socket = path.join(String(dir), "evil.sock");
+  const nobodyListens = await closedPort();
+  // The pool reads the parsed options again for every connection.
+  const dial =
+    adapter === "sqlite" || isWindows
+      ? ""
+      : `
+    using listener = Bun.listen({
+      unix: ${JSON.stringify(socket)},
+      socket: {
+        open() {
+          console.log("dialed the path of Object.prototype");
+          process.exit(1);
+        },
+        data() {},
+      },
+    });
+    await new Bun.SQL("${adapter}://user:secret@127.0.0.1:${nobodyListens}/app", { max: 1 }).unsafe("select 1").catch(() => {});
+
+    // A server that is still starting is dialed again, for as long as the connection timeout says.
+    let dials = 0;
+    const third = Promise.withResolvers();
+    using starting = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          if (++dials === 3) third.resolve("dials again");
+          socket.end();
+        },
+        data() {},
+      },
+    });
+    const patient = new Bun.SQL("${adapter}://user:secret@127.0.0.1:" + starting.port + "/app", { max: 1 });
+    console.log(await Promise.race([third.promise, patient.unsafe("select 1").catch(error => "gave up: " + error.code)]));
+    await patient.close({ timeout: 0 });`;
+  const src = `
+    const args = {
+      postgres: ["postgres://user:secret@db.example:5433/app?sslmode=verify-full&sslrootcert=/ca.pem&application_name=a", { max: 2, connection: { search_path: "s" } }],
+      mysql: ["mysql://user:secret@db.example:3307/app?ssl-mode=required", { max: 2 }],
+      sqlite: ["sqlite://app.db?mode=ro", {}],
+    }[${JSON.stringify(adapter)}];
+    const observed = async () => {
+      await using memory = new Bun.SQL(":memory:");
+      const fromVariables = new Bun.SQL({ adapter: ${JSON.stringify(adapter)} }).options;
+      const inherited = new Bun.SQL(args[0], Object.create({ adapter: ${JSON.stringify(adapter)}, username: "heir", readonly: true })).options;
+      return JSON.stringify([new Bun.SQL(...args).options, fromVariables, inherited,
+        new Bun.SQL(args[0], new Proxy({}, { getPrototypeOf: () => null })).options, await memory\`select \${undefined} as a_b\`]);
+    };
+    const clean = await observed();
+    Object.assign(Object.prototype, {
+      helper() {},
+      adapter: "mysql",
+      url: "postgres://evil.example/evil",
+      filename: "evil.db",
+      hostname: "evil.example",
+      host: "evil.example",
+      port: 1,
+      path: ${JSON.stringify(socket)},
+      username: "evil",
+      password: "evil",
+      database: "evil",
+      tls: false,
+      ssl: false,
+      sslmode: "disable",
+      rejectUnauthorized: false,
+      readonly: false,
+      create: true,
+      connection: { evil: "1" },
+      transform: { undefined: "evil", column: name => name.toUpperCase() },
+      connectionTimeout: 30,
+      onclose: 5,
+      DATABASE_URL: "postgres://evil.example:1",
+      MYSQL_URL: "mysql://evil.example:1",
+      SQLITE_URL: "evil.db",
+      PGOPTIONS: "-c search_path=evil",
+    });
+    const planted = await observed();
+    console.log(planted === clean ? "the same" : planted + " <- " + clean);
+
+    ${dial}
+  `;
+  const variables = { HOST: "db.example", USER: "user", PASSWORD: "secret", DATABASE: "app" };
+  const prefix = adapter === "postgres" ? "PG" : "MYSQL_";
+  const env = {
+    ...bunEnv,
+    ...Object.fromEntries(Object.entries(variables).map(([name, value]) => [prefix + name, value])),
+  };
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: dial ? "the same\ndials again" : "the same",
+    stderr: "",
+    exitCode: 0,
   });
 });
 

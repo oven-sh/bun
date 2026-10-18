@@ -470,6 +470,28 @@ static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, J
     return {};
 }
 
+// Whether `stack` begins with a frame at the `sourceURL`, `line` and `column` of `error`, which say where it was made.
+static bool beginsWithFirstFrame(JSC::VM& vm, JSC::JSObject* error, StringView stack)
+{
+    JSC::JSValue sourceURL = error->getDirect(vm, vm.propertyNames->sourceURL);
+    JSC::JSValue line = error->getDirect(vm, vm.propertyNames->line);
+    JSC::JSValue column = error->getDirect(vm, vm.propertyNames->column);
+    if (!sourceURL || !sourceURL.isString() || !line || !line.isInt32() || !column || !column.isInt32())
+        return false;
+    if (!stack.startsWith("\n    at "_s))
+        return false;
+    StringView frame = stack.substring(8, stack.find('\n', 8) - 8);
+    auto dropSuffix = [&](StringView suffix) {
+        if (!frame.endsWith(suffix))
+            return false;
+        frame = frame.left(frame.length() - suffix.length());
+        return true;
+    };
+    bool inParentheses = dropSuffix(")"_s);
+    return dropSuffix(makeString(':', line.asInt32(), ':', column.asInt32())) && dropSuffix(asString(sourceURL)->tryGetValue().data)
+        && (inParentheses ? frame.endsWith('(') : frame.isEmpty());
+}
+
 __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     JSC::ErrorInstance* err, const Vector<JSC::StackFrame>* stackTrace,
     JSC::JSValue val, PopulateStackTraceFlags flags)
@@ -599,12 +621,18 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                 if (!stack.isEmpty()) {
 
                     V8StackTraceIterator iterator(stack);
-                    // The name and the message can have lines that look like frames. They are the header, which the first frame follows.
+                    // The name and the message can have lines that look like frames. They are the header if the frame after them is the first.
                     WTF::String name = except.name.toWTFString(BunString::ZeroCopy);
                     WTF::String message = except.message.toWTFString(BunString::ZeroCopy);
-                    WTF::String header = makeString(name, name.isEmpty() || message.isEmpty() ? ""_s : ": "_s, message);
-                    if (stack.startsWith(header) && stack.hasInfixStartingAt("\n    at "_s, header.length()))
-                        iterator.offset = header.length();
+                    StringView afterHeader = stack;
+                    auto dropPrefix = [&](StringView prefix) {
+                        if (!afterHeader.startsWith(prefix))
+                            return false;
+                        afterHeader = afterHeader.substring(prefix.length());
+                        return true;
+                    };
+                    if (dropPrefix(name) && dropPrefix(name.isEmpty() || message.isEmpty() ? ""_s : ": "_s) && dropPrefix(message) && beginsWithFirstFrame(vm, obj, afterHeader))
+                        iterator.offset = stack.length() - afterHeader.length();
                     const uint8_t frame_count = except.stack.frames_cap;
 
                     except.stack.frames_len = 0;

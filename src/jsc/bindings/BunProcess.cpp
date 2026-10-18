@@ -189,6 +189,8 @@ extern "C" void Bun__closeChildIPC(JSGlobalObject*);
 
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
+extern "C" bool Bun__VirtualMachine__hasUnhandledError(void* /* BunVM */);
+extern "C" bool Bun__VirtualMachine__isInPreload(void* /* BunVM */);
 extern "C" void Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 extern "C" const char* Bun__sqlite3_version();
@@ -1610,7 +1612,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitPendingMessages, (JSGlobalObject * 
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* process = global->processObject();
-    if (!Bun__GlobalObject__connectedIPC(global))
+    // Bun ends the turn of an exception that nobody handles, ticks included. Node is gone by then.
+    if (!Bun__GlobalObject__connectedIPC(global) || Bun__VirtualMachine__hasUnhandledError(global->bunVM()))
         return JSValue::encode(jsUndefined());
     bool hasListener = hasMessageListener(global);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1647,7 +1650,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionOnNewListener, (JSGlobalObject * lexica
     return JSValue::encode(jsUndefined());
 }
 
-// The 'newListener' listener of Node's setupChannel. Native, so that process.on() does not enter the VM for it.
+// The 'newListener' listener of Node's setupChannel. Native, so that process.on() enters the VM for it only while a message is held.
 void Process::installPendingMessagesListener(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject(this->globalObject());
@@ -4506,6 +4509,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionHasUnhandledError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return JSValue::encode(jsBoolean(Bun__VirtualMachine__hasUnhandledError(defaultGlobalObject(globalObject)->bunVM())));
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionFatalException, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     // Node-compat: process._fatalException(err, fromPromise) runs the uncaught-exception
@@ -4528,7 +4536,13 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
 
     JSValue nextTick;
     if (!this->m_nextTickFunction) {
-        nextTick = this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
+        auto name = Identifier::fromString(vm, "nextTick"_s);
+        // The lazy property cannot throw: where building it fails, it is undefined for good.
+        if (!this->getDirect(vm, name)) {
+            this->constructNextTickFn(vm, defaultGlobalObject(globalObject));
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        nextTick = this->get(globalObject, name);
         RETURN_IF_EXCEPTION(scope, void());
     }
 
@@ -4637,13 +4651,13 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
-    JSNextTickQueue* nextTickQueueObject;
-    if (!globalObject->m_nextTickQueue) {
+    if (auto* nextTickFunction = this->m_nextTickFunction.get())
+        return nextTickFunction;
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSNextTickQueue* nextTickQueueObject = globalObject->m_nextTickQueue.get();
+    if (!nextTickQueueObject)
         nextTickQueueObject = JSNextTickQueue::create(globalObject);
-        globalObject->m_nextTickQueue.set(vm, globalObject, nextTickQueueObject);
-    } else {
-        nextTickQueueObject = globalObject->m_nextTickQueue.get();
-    }
 
     JSC::JSFunction* initializer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), globalObject);
 
@@ -4652,16 +4666,9 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(nextTickQueueObject);
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
 
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSC::jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
+    globalObject->m_nextTickQueue.set(vm, globalObject, nextTickQueueObject);
     if (nextTickFunction && nextTickFunction.isObject()) {
         this->m_nextTickFunction.set(vm, this, nextTickFunction.getObject());
     }
@@ -4673,7 +4680,17 @@ static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
 {
     JSGlobalObject* lexicalGlobalObject = processObject->globalObject();
     Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-    return uncheckedDowncast<Process>(processObject)->constructNextTickFn(JSC::getVM(globalObject), globalObject);
+
+    // Lazy property builder: exceptions must not propagate into reifyStaticProperty, which performs no exception check.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue nextTickFunction = uncheckedDowncast<Process>(processObject)->constructNextTickFn(vm, globalObject);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::jsUndefined();
+    }
+    return nextTickFunction;
 }
 
 static JSValue constructFeatures(VM& vm, JSObject* processObject)
@@ -5046,6 +5063,12 @@ static void emitOrHoldMessage(Zig::GlobalObject* global, JSValue message, JSValu
         return;
     auto* pending = process->m_pendingMessages.get();
     if (!pending) {
+        // The process's first tick, if a microtask queues it, runs before the other microtasks: right only for a CommonJS entry point, which can still follow a preload.
+        if (!Bun__VirtualMachine__isInPreload(global->bunVM())) {
+            process->constructNextTickFn(vm, global);
+            RETURN_IF_EXCEPTION(scope, );
+            global->resetOnEachMicrotaskTick();
+        }
         pending = JSC::constructEmptyArray(global, nullptr);
         RETURN_IF_EXCEPTION(scope, );
         process->m_pendingMessages.set(vm, process, pending);

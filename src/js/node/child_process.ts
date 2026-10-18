@@ -684,6 +684,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode = $newRustFunction("node_util_binding.rs", "etimedoutErrorCode", 0);
 const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
+const hasUnhandledError = $newCppFunction("BunProcess.cpp", "jsFunctionHasUnhandledError", 0);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1223,6 +1224,8 @@ class ChildProcess extends EventEmitter {
       this.emit("error", err);
     }
 
+    // In Node 'disconnect' comes before 'exit', so that a listener added from here on gets no kept message.
+    if (this.channel) this.channel = null;
     this.emit("exit", this.exitCode, this.signalCode);
 
     this.#maybeClose();
@@ -1576,7 +1579,8 @@ class ChildProcess extends EventEmitter {
 
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L726-L742
   #emitPendingMessages() {
-    if (!this.channel || !this.listenerCount("message")) return;
+    // Bun ends the turn of an exception that nobody handles, ticks included. Node is gone by then.
+    if (!this.channel || hasUnhandledError() || !this.listenerCount("message")) return;
     const messages = this.#pendingMessages;
     const { length } = messages;
     if (!length) return;

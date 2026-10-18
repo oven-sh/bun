@@ -2196,8 +2196,7 @@ bool Bun__deepMatch(
     // fast path for reference equality.
     if (objValue == subsetValue) return true;
 
-    // A subset object already on the path is a cycle in the pattern. The pair being compared is assumed to
-    // match. A different object at the same point is compared by full equality, as Jest does.
+    // A pattern cycle: the pair in progress matches, another object at this point needs full equality (Jest).
     for (const auto& ancestor : stack) {
         if (ancestor.second == subsetValue) {
             if (ancestor.first == objValue) return true;

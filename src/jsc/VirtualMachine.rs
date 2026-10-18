@@ -181,6 +181,11 @@ pub struct VirtualMachine {
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
+    /// `bun bake`: the plugins of `bake.config.ts`, a JS array. The dev server loads them after the
+    /// `[serve.static] plugins` of bunfig.toml.
+    pub bake_config_plugins: crate::strong::Optional,
+    /// The names of `bake_config_plugins`.
+    pub bake_config_plugin_names: Box<[Box<[u8]>]>,
     pub(crate) entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
     // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
@@ -3240,6 +3245,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_entry_point).write(MainEntryPoint::File);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
+            addr_of_mut!((*vm).bake_config_plugin_names).write(Box::default());
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
             // Left at the
@@ -5647,6 +5653,8 @@ impl VirtualMachine {
         drop(core::mem::take(&mut self.main_resolved_path));
 
         self.overridden_main.deinit();
+        self.bake_config_plugins.deinit();
+        drop(core::mem::take(&mut self.bake_config_plugin_names));
         self.pending_internal_promise.deinit();
 
         // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so

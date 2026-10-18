@@ -1097,6 +1097,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
         ctx.debug.no_clear_screen = args.flag(b"--no-clear-screen");
+        ctx.debug.watch_flag = args.flag(b"--watch");
         ctx.debug.watch_kill_signal_arg = args.option(b"--watch-kill-signal").map(Into::into);
 
         if let Some(origin) = args.option(b"--origin") {

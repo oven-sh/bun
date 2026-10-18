@@ -716,6 +716,80 @@ error: Hello World`,
     },
   });
 
+  // `require.resolve()` through the line that Bun's transpiler writes stays a lookup in the executable.
+  itBundled("bun/RequireWrittenByBunCompileResolvesEmbeddedFile", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { where, name } from "./lib/lib.js";
+        const path = where();
+        console.log(name, (await Bun.file(path).text()).trim(), path.includes("$bunfs") || path.includes("~BUN"));
+      `,
+      "/lib/lib.js": `var {require}=import.meta;import"./foo.file";export const where = () => require.resolve("./foo.file");\nexport const name = require("./config.json").name;\n`,
+      "/lib/foo.file": "abcd",
+      "/lib/config.json": `{ "name": "world" }`,
+    },
+    outfile: "dist/out",
+    run: { stdout: "world abcd true", setCwd: true },
+  });
+  // Hand-written \`import.meta.require\` gets the value of \`require\` where the output cannot evaluate it.
+  // https://github.com/oven-sh/bun/issues/9416
+  for (const target of ["node", "browser"] as const) {
+    itBundled(`bun/ImportMetaRequireTarget-${target}#9416`, {
+      files: {
+        "/entry.ts": /* js */ `
+          const events = import.meta.require("events");
+          const ref = import.meta.require;
+          const path = import.meta.require.resolve("path");
+          console.log(typeof events.EventEmitter, typeof ref, typeof path);
+        `,
+      },
+      target,
+      run: { stdout: "function function string" },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("import.meta.require");
+      },
+    });
+  }
+  itBundled("bun/ImportMetaRequireTargetBun#9416", {
+    files: {
+      "/entry.ts": /* js */ `
+        const events = import.meta.require("events");
+        const ref = import.meta.require;
+        const path = import.meta.require.resolve("path");
+        console.log(typeof events.EventEmitter, typeof ref, typeof path);
+      `,
+    },
+    target: "bun",
+    run: { stdout: "function function string" },
+    onAfterBundle(api) {
+      // Bun runs \`import.meta.require\`. A file that Bun did not write keeps it
+      // (\`.resolve\` is a lookup at run time under \`--compile\`, see #14279).
+      api.expectFile("/out.js").toContain("import.meta.require");
+    },
+  });
+  itBundled("bun/ImportMetaRequireRebundle#9416", {
+    // A bundle for bun has \`var __require = import.meta.require\`. A second build
+    // of it for node must not leave \`import.meta.require\` in the output.
+    files: {
+      "/entry.ts": /* js */ `
+        var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+        var __require = import.meta.require;
+        var f = __commonJS(function () {
+          var events = __require("events");
+          console.log(typeof events.EventEmitter);
+        });
+        f();
+      `,
+    },
+    target: "node",
+    run: { runtime: "node", stdout: "function" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("import.meta.require");
+    },
+  });
+
   // Bun writes the library, then a second build is over what it wrote.
   describe("a bundle over files that bun wrote", () => {
     const build = async (cwd: string, config: Omit<Bun.BuildConfig, "entrypoints"> & { entrypoints: string[] }) => {

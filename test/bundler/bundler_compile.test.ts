@@ -749,23 +749,6 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!", setCwd: true },
   });
-  // `require.resolve()` through the line that Bun's transpiler writes stays a lookup in the executable.
-  itBundled("compile/RequireWrittenByBunResolvesEmbeddedFile", {
-    compile: true,
-    assetNaming: "[name].[ext]",
-    files: {
-      "/entry.ts": /* js */ `
-        import { where, name } from "./lib/lib.js";
-        const path = where();
-        console.log(name, (await Bun.file(path).text()).trim(), path.includes("$bunfs") || path.includes("~BUN"));
-      `,
-      "/lib/lib.js": `var {require}=import.meta;import"./foo.file";export const where = () => require.resolve("./foo.file");\nexport const name = require("./config.json").name;\n`,
-      "/lib/foo.file": "abcd",
-      "/lib/config.json": `{ "name": "world" }`,
-    },
-    outfile: "dist/out",
-    run: { stdout: "world abcd true", setCwd: true },
-  });
   itBundled("compile/EmbeddedFileNamesPerThread", {
     compile: true,
     assetNaming: "[name].[ext]",

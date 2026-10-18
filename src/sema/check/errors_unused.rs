@@ -1019,7 +1019,6 @@ impl Checker<'_, '_> {
         if symbol.file == file || files.rank_of_file(visited) > files.rank_of_file(symbol.file) {
             return;
         }
-        // The checkers of a `checkerPool` share nothing.
         if self.referenced_properties.insert(symbol) {
             self.p.properties_referenced_before.lock().insert(symbol);
         }

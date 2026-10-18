@@ -1,9 +1,8 @@
 //! Task-local storage.
 //!
-//! During a step the published state is read-only. Everything a task creates or computes goes into
-//! stores that are fields of the `Task`: no other thread reads them, so they need no atomic
-//! operations, they are small enough to stay in the cache, and what is not passed to the barrier is
-//! freed with the task.
+//! What a task computes goes into stores that are fields of the `Task` first. No other thread reads
+//! them, so they need no atomic operations, they are small enough to stay in the cache, and what no
+//! commit publishes is freed with the task.
 //!
 //! A type, signature, mapper, component list, atom or handle that a task has created has `LOCAL`
 //! set in its id, and the rest of the id counts from 0 within the task. So results computed about
@@ -1033,7 +1032,7 @@ impl<'s> Buffer<'s> {
     }
 
     /// Keeps an entry of the task under a node for which it sees a published one. No lookup finds it:
-    /// the published entry stays what it is. It is there for the commit or the barrier, where it loses.
+    /// the published entry stays what it is. It is there for the commit, where it loses.
     #[cold]
     pub(crate) fn shadow(&mut self, slot: u32, file: u32, index: u32, raw: u32) {
         let word = node_word(file, index);

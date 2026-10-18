@@ -1,7 +1,6 @@
-//! Interned names. One table for the whole program, filled from every parser thread, and frozen
-//! while the program is checked: a text first seen during checking becomes a task-local atom of the
-//! task that encounters it (`OwnStore`), and the merge at the barrier publishes it. A task with
-//! `Sharing::Publishes` adds it to the table immediately, like a parser thread.
+//! Interned names. One table for the whole program, filled from every parser thread. A task with
+//! `Sharing::Publishes` adds a text that it first sees during checking to the table too. For any
+//! other checker such a text becomes a task-local atom (`OwnStore`).
 
 use crate::local::LOCAL;
 use crate::session::Session;
@@ -871,11 +870,8 @@ impl<'p, 's> Atoms<'p, 's> {
     fn find_published(&self, spread: u64, text: &[u8]) -> Option<Atom> {
         let Interner { tables, first, .. } = self.published;
         let is_it = |i: u32| &**tables.texts.get(i - first) == text;
-        let own = || match self.own.sharing() {
-            Sharing::Off => tables.places.find_frozen(spread, is_it),
-            // Other tasks may be adding atoms concurrently.
-            Sharing::Finds | Sharing::Publishes => tables.places.find(spread, is_it),
-        };
+        // Other tasks may be adding atoms concurrently.
+        let own = || tables.places.find(spread, is_it);
         let below = self.published.find_below(spread, text);
         below.or_else(|| own().map(Atom))
     }
@@ -886,9 +882,8 @@ impl<'p, 's> Atoms<'p, 's> {
             Some(atom) => atom,
             None if self.own.sharing() == Sharing::Publishes => {
                 self.own.count_published_atom();
-                let atom = self.published.intern_shared(spread, text);
-                self.own.wait_at(crate::jitter::Place::AtomPublished);
-                atom
+
+                self.published.intern_shared(spread, text)
             }
             None => self.own.intern_atom(spread, text),
         }

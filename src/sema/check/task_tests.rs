@@ -5,7 +5,6 @@ use super::*;
 use crate::atom::Interner;
 use crate::bind::SymbolId;
 use crate::check::commit::Commits;
-use crate::jitter::Jitter;
 use crate::local::{Found, Hashed, LOCAL, MaybeLocal, SlotNumber, spread_word};
 use crate::program::Sym;
 use crate::session::Session;
@@ -45,7 +44,6 @@ impl Holder {
 
 /// One table of each kind, and the type store that their ids belong to.
 struct Tables<'s> {
-    atoms: Interner<'s>,
     types: TypeStore<'s>,
     by_node: ByNode<Node, TypeId, Buffered, &'s Session>,
     set: ByNode<Node, (), Buffered, &'s Session>,
@@ -65,8 +63,7 @@ impl<'s> Tables<'s> {
     fn new(session: &'s Session) -> Tables<'s> {
         let bases = Bases::new_in([100, 100, 100].into_iter(), &session);
         let mut tables = Tables {
-            atoms: Interner::new_in(session),
-            types: TypeStore::new_in(session),
+            types: TypeStore::new_in(session, Interner::new_in(session)),
             by_node: ByNode::new_in(&bases, session),
             set: ByNode::new_in(&bases, session),
             by_id: ById::new_in(session),
@@ -82,7 +79,7 @@ impl<'s> Tables<'s> {
         tables.kept_by_node.set_slot(numbered(4));
         tables.members.set_slot(numbered(5));
         tables.by_key.set_slot(numbered(6));
-        (tables.members).hold_handles_of(&mut tables.shapes, Holder::shape_mut);
+        (tables.members).hold_handles_of(&tables.shapes, Holder::shape_mut);
         tables
     }
 
@@ -261,7 +258,11 @@ fn a_reference_to_a_kept_value_stays_good_while_the_task_keeps_more() {
 #[cfg_attr(miri, ignore)]
 fn a_permission_tells_whether_the_task_has_held_back_since_its_computation_began() {
     let session = Session::new();
-    let task = begin(&session, &TypeStore::new_in(&session), 0);
+    let task = begin(
+        &session,
+        &TypeStore::new_in(&session, Interner::new_in(&session)),
+        0,
+    );
     let outer = Stored::since(task.held_back());
     assert!(!task.has_held_back_since(outer));
     task.hold_back();
@@ -309,7 +310,10 @@ fn file_local_values_of_a_bit_or_two_share_a_word() {
     let mut flags = ByNode::<Node, bool, FileLocal>::new_in(&Bases::none_in(&Global), Global);
     set.set_slot(numbered(0));
     flags.set_slot(numbered(1));
-    let mut task = Task::new_in(session.arena(), &TypeStore::new_in(&session));
+    let mut task = Task::new_in(
+        session.arena(),
+        &TypeStore::new_in(&session, Interner::new_in(&session)),
+    );
     task.begin_file(FileId(3), true);
     // The nodes of the task's file have dense words. Those of another file have sparse ones.
     for file in [FileId(3), FileId(4)] {
@@ -590,7 +594,7 @@ fn begin_committing<'s>(
     index: u32,
 ) -> Task<'s> {
     let mut task = begin(session, &tables.types, index);
-    let view = commits.view(3, Jitter::default());
+    let view = commits.view(3);
     task.see_commits(view, false, 0);
     task
 }
@@ -603,7 +607,7 @@ fn begin_writing_at_once<'s>(
     index: u32,
 ) -> Task<'s> {
     let mut task = begin(session, &tables.types, index);
-    let view = commits.view(3, Jitter::default());
+    let view = commits.view(3);
     task.see_commits(view, false, 1 << 2 | 1 << 3 | 1 << 5 | 1 << 6);
     task
 }
@@ -846,25 +850,6 @@ fn a_commit_stores_what_a_key_has_by_then_and_the_first_entry_stays() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn without_stamps_an_entry_counts_as_soon_as_it_is_stored() {
-    let session = Session::new();
-    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
-    let first = begin_committing(&session, &tables, &commits, 0);
-    let mut second = begin(&session, &tables.types, 1);
-    let jitter = Jitter {
-        ignores_stamps: true,
-        ..Jitter::default()
-    };
-    second.see_commits(commits.view(3, jitter), false, 0);
-    second.begin_file(A, true);
-    assert_eq!(tables.by_node.get(&second, &(A, 1)), None);
-    tables.by_node.insert(&first, (A, 1), STRING, stored());
-    assert_eq!(commit(&tables, &commits, &first, 1), 1);
-    assert_eq!(tables.by_node.get(&second, &(A, 1)), Some(STRING));
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
 fn a_task_sees_all_that_a_commit_stores_under_the_nodes_of_a_file_or_nothing_of_it() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
@@ -1024,7 +1009,6 @@ fn nothing_that_is_bound_is_written_at_once() {
 fn what_a_task_finds_out_about_a_record_of_a_file_that_it_visits_stays_in_the_task() {
     let session = Session::new();
     let (mut tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
-    tables.types = TypeStore::ordered_by_content_in(&session, tables.atoms);
     tables.types.share_records();
     let begin_publishing = |index: u32| {
         let mut task = begin_writing_at_once(&session, &tables, &commits, index);

@@ -295,11 +295,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.reduced(target);
         }
         let is_trial = error_node.is_some();
-        // What the run with `reportErrors` prints and then discards is numbered too.
-        let is_related = match is_trial && self.hands_out_symbol_ids() {
-            true => Ok(false),
-            false => self.try_is_type_related_to(source, target, relation, is_trial),
-        };
+        let is_related = self.try_is_type_related_to(source, target, relation, is_trial);
         let (is_related, diagnostic) = match (is_related, error_node) {
             (Ok(true), _) | (_, None) => {
                 self.end_comparison(is_outermost);

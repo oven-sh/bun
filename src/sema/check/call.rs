@@ -491,8 +491,7 @@ impl<'p, 's> Checker<'p, 's> {
         } else if let Some(stored) = stored
             && !is_in_flow_loop(self)
         {
-            // A task that sees the call resolved also sees this: both are published at the same
-            // barrier.
+            // A task that sees the call resolved also sees this: one commit publishes both.
             if let Some(reported) = reported {
                 (self.p.call_diagnostics).insert_ref(&self.task, (file, call), reported, stored);
             }
@@ -1120,8 +1119,6 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Option<TypeId> {
-        // `getPropertyNameForKnownSymbolName`
-        self.resolve_known_symbol(b"hasInstance");
         let name = self.atoms().symbol_name(b"hasInstance");
         // `getPropertyOfType`: an index signature is not a property.
         let mut methods = Vec::new();

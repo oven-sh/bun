@@ -251,7 +251,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut pairs = stored.to_vec();
         // Clones of one declaration, and the `this` types of nested classes, have one key.
         pairs.sort_by(|x, y| {
-            (declaration(x.0).cmp(&declaration(y.0))).then_with(|| self.creation_order(x.0, y.0))
+            (declaration(x.0).cmp(&declaration(y.0))).then_with(|| self.content_order(x.0, y.0))
         });
         pairs.into()
     }
@@ -836,9 +836,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let cycles_before = self.cycles;
         let scope = self.begin_scope();
-        if self.hands_out_symbol_ids() {
-            self.get_symbol_id_of_object_type_alias(ty);
-        }
+
         self.instantiations_computed += 1;
         // See `instantiations_in_progress`. A call that stores nothing in the table doesn't need to be listed.
         let is_listed = !skips_table && self.task.writes_at_once();

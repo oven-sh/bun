@@ -531,7 +531,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn create_unreduced_union(&mut self, types: &[TypeId]) -> TypeId {
         let mut members = Flat::new();
-        let mut shortcut = self.add_in_order(&mut members, types, None);
+        let shortcut = self.add_in_order(&mut members, types, None);
         if shortcut.is_none() {
             self.add_in_id_order(&mut members, types);
         }
@@ -541,11 +541,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `addTypeToUnion`: without strictNullChecks null and undefined are never members. If there
         // are no other members the result is never.
         if !self.p.files.options.strict_null_checks {
-            let all = members.len();
             members.retain(|m| !m.is_undefined() && !m.is_null());
-            if shortcut.is_some() && members.len() != all && !self.may_lose_members(types) {
-                shortcut = None;
-            }
         }
         self.union_of_type_set(types, members, shortcut, FirstRequest::NONE)
     }
@@ -623,7 +619,6 @@ impl<'p, 's> Checker<'p, 's> {
             [only] => return (only, Inspected::Members),
             _ => {}
         }
-        let all = members.len();
         // `addTypeToUnion`: without strictNullChecks every type includes null and undefined, and
         // they are never members. If there are no other members the result is null in preference to
         // undefined, in its non-widening form if any input was non-widening
@@ -761,9 +756,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        if shortcut.is_some() && members.len() != all && !self.may_lose_members(actual) {
-            shortcut = None;
-        }
+
         let first_request = match includes_removed_pattern {
             true => FirstRequest::WITHOUT_PRIMITIVE_UNION,
             false => FirstRequest::NONE,
@@ -1550,12 +1543,6 @@ impl<'p, 's> Checker<'p, 's> {
         let Some((alias, type_arguments)) = alias else {
             return self.union_ex(types, merge_constrained);
         };
-        // `UnionOfUnionKey`
-        if let &[a, b] = types
-            && (self.is_union(a) || self.is_union(b))
-        {
-            self.get_symbol_id(alias);
-        }
         let call = UnionArguments {
             reduction: Reduction::Literal { merge_constrained },
             types,
@@ -1565,12 +1552,6 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(hash) = hash
             && let Some(known) = self.union_calls.get(hash, &call)
         {
-            // What `union_type_with_alias` does besides finding the type. An id that was asked for
-            // while `SymbolIds::is_emitting` has not been handed out.
-            if self.is_union(known) {
-                self.get_symbol_id(alias);
-            }
-
             return known;
         }
         let (union, is_kept) = self.create_union_with_alias(&call, alias, merge_constrained);
@@ -1725,9 +1706,6 @@ impl<'p, 's> Checker<'p, 's> {
             is_constrained_type_variable = true;
         }
         let alias_in_key = alias.filter(|_| !no_constraint_reduction);
-        if let Some((alias, _)) = alias_in_key {
-            self.get_symbol_id(alias);
-        }
         if includes & tf::UNION == 0 {
             let first_request = match is_constrained_type_variable {
                 _ if no_constraint_reduction || set.len() != 2 => FirstRequest::NONE,
@@ -2642,7 +2620,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `CompareTypes`: the order of the constituents of a union, and of an origin that is a union. Where tsgo falls back to the type ids,
-    /// this falls back to `creation_order`.
+    /// this falls back to `content_order`.
     #[inline]
     pub fn compare_types(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         match (self.data(a), self.data(b)) {
@@ -2654,7 +2632,7 @@ impl<'p, 's> Checker<'p, 's> {
             ) if x != y || f != g => {
                 let atoms = &self.atoms();
                 match atoms.bytes(x).cmp(atoms.bytes(y)).then_with(|| f.cmp(&g)) {
-                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b, a, b),
+                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b),
                     order => order,
                 }
             }
@@ -2667,7 +2645,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let by_value = (y.is_nan().cmp(&x.is_nan()))
                     .then_with(|| x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal));
                 match by_value.then_with(|| f.cmp(&g)) {
-                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b, a, b),
+                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b),
                     order => order,
                 }
             }
@@ -2677,15 +2655,15 @@ impl<'p, 's> Checker<'p, 's> {
                 if s != t =>
             {
                 match self.compare_symbols(s, t) {
-                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b, a, b),
+                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b),
                     order => order,
                 }
             }
             (TypeData::Intersection(_), TypeData::Intersection(_)) => {
                 let (s, t) = self.members_that_order_intersections(a, b);
-                self.compare_types_ordered_by(a, b, s, t)
+                self.compare_types_ordered_by(s, t)
             }
-            _ => self.compare_types_ordered_by(a, b, a, b),
+            _ => self.compare_types_ordered_by(a, b),
         }
     }
 
@@ -2704,31 +2682,16 @@ impl<'p, 's> Checker<'p, 's> {
         (s, t)
     }
 
-    /// `compare_types(a, b)`. `s`, `t`: see `members_that_order_intersections`.
-    fn compare_types_ordered_by(
-        &self,
-        a: TypeId,
-        b: TypeId,
-        s: TypeId,
-        t: TypeId,
-    ) -> std::cmp::Ordering {
-        let types = self.types();
-        types.take_has_ordered_by_own_id();
-        let order = self
-            .compare_types_without_ids(s, t)
-            .then_with(|| types.creation_order(s, t));
-        // Here, or further in: `mapping_in_declaration_order`.
-        if types.take_has_ordered_by_own_id() {
-            types.mark_ordered_by_id(a);
-            types.mark_ordered_by_id(b);
-        }
-        order
+    /// `CompareTypes` for `s` and `t`, which decide the order of two types. See `members_that_order_intersections`.
+    fn compare_types_ordered_by(&self, s: TypeId, t: TypeId) -> std::cmp::Ordering {
+        self.compare_types_without_ids(s, t)
+            .then_with(|| self.content_order(s, t))
     }
 
-    /// See `Types::creation_order`.
+    /// See `Types::content_order`.
     #[inline]
-    pub(super) fn creation_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
-        self.types().creation_order(a, b)
+    pub(super) fn content_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+        self.types().content_order(a, b)
     }
 
     /// `slices.BinarySearchFunc(types, t, CompareTypes)`, with its probes: where the order is not
@@ -2875,23 +2838,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// still empty, and they are to be sorted.
     ///
     /// Most of what a union is made of are unions. The members of one that has
-    /// `Types::is_sorted_run` are a sorted run, which means three things:
+    /// `Types::is_sorted_run` are a sorted run, which means two things:
     /// - Each is less than the next, and comparing the two does not set
     ///   `has_compared_without_total_order`. `CompareTypes` goes through its criteria in one order
     ///   for all types, and only the criterion that sets the flag is not transitive. So it is a
     ///   total order of all the members, and of any of them.
-    /// - If the order of two neighbors depends on ids of this task, one of them has
-    ///   `Types::is_ordered_by_id`. So a union that keeps them as neighbors is sorted again by the
-    ///   merge step, as if it had compared them itself.
     /// - None is `any` or `unknown`, which take over a union.
     ///
     /// Whatever is put together here from sorted runs is a sorted run again, because two members
     /// end up as neighbors only if they were neighbors in a run or have been compared here. A total
     /// order gives one result, so that is what `sort_type_set` gives.
     ///
-    /// Some of the members of a sorted run, in their order, are a sorted run if no comparison in the
-    /// run depended on ids of this task. Otherwise the two that depended on them may be gone, and
-    /// what is left may depend on them still: see `may_lose_members`.
+    /// Some of the members of a sorted run, in their order, are a sorted run too.
     ///
     /// `found`: see `union_of_parts`.
     fn add_in_order(
@@ -2937,16 +2895,9 @@ impl<'p, 's> Checker<'p, 's> {
         Some(shortcut)
     }
 
-    /// Whether the members of `types`, which together are a sorted run, are one without some of
-    /// them: see `add_in_order`.
-    fn may_lose_members(&self, types: &[TypeId]) -> bool {
-        let is_ordered_by_id = |member: &TypeId| self.types().is_ordered_by_id(*member);
-        !(types.iter()).any(|&ty| self.parts(ty).iter().any(is_ordered_by_id))
-    }
-
     /// The same for the members of the union `whole`, if they are known to be a sorted run.
     fn has_sorted_runs_for_parts(&self, whole: TypeId) -> bool {
-        self.types().is_sorted_run(whole) && !self.types().is_ordered_by_id(whole)
+        self.types().is_sorted_run(whole)
     }
 
     /// What `types` have of the members of the union `whole`. A type that isn't a union counts as
@@ -3259,12 +3210,10 @@ impl<'p, 's> Checker<'p, 's> {
             // A union among `actual` that is not known to be a sorted run is one if it has some of
             // these members, in this order.
             None => {
-                let mut may_lose_members = None;
                 for &ty in actual {
                     if self.is_union(ty)
                         && !types.is_sorted_run(ty)
                         && is_subsequence(self.parts(ty), members)
-                        && *may_lose_members.get_or_insert_with(|| self.may_lose_members(members))
                     {
                         types.mark_sorted_run(ty);
                     }
@@ -3284,11 +3233,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `part` may have some of the members of the union `whole`, in their order.
     fn note_part(&mut self, part: TypeId, whole: TypeId) {
         let types = self.types();
-        if part == whole
-            || !self.is_union(part)
-            || !types.is_sorted_run(whole)
-            || types.is_ordered_by_id(whole)
-        {
+        if part == whole || !self.is_union(part) || !types.is_sorted_run(whole) {
             return;
         }
         if !types.is_sorted_run(part) {

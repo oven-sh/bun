@@ -23,8 +23,7 @@ fn variable(name: &bun_core::ZStr) -> Option<String> {
     bun_core::getenv_z(name).map(text)
 }
 
-/// `--timing`: the ten tables whose shared parts use the most memory. Without `--keep` the tasks of
-/// the last step, which has most of the files, publish no entries, so theirs are not counted.
+/// `--timing`: the ten tables whose shared parts use the most memory.
 fn list_largest_tables(program: &bun_sema::check::Program) {
     let mut tables = program.table_footprints();
     tables.sort_by_key(|table| std::cmp::Reverse(table.1.touched));
@@ -254,17 +253,6 @@ fn run(args: &[String]) {
             };
             let defaults = bun_sema_driver::PlanOptions::default();
             let plan_options = bun_sema_driver::PlanOptions {
-                // `--jitter=<seed>` makes threads pause around changes to shared state. `--jitter-places=<bits>` limits
-                // the pauses to those entries of `Place::NAMES`. `--jitter-stretch=<microseconds>` makes one commit in
-                // four, or one in `--jitter-stretch-commits=<n>`, sleep that long between its phases.
-                jitter: bun_sema::jitter::Jitter {
-                    seed: number("--jitter=", 0) as u64,
-                    places: number("--jitter-places=", u32::MAX as usize) as u32,
-                    stretch: number("--jitter-stretch=", 0) as u32,
-                    stretches_one_in: number("--jitter-stretch-commits=", 4) as u32,
-                    shuffles: has("--jitter-shuffle"),
-                    ignores_stamps: has("--ignore-stamps"),
-                },
                 projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
                 ..defaults
             };

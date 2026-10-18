@@ -29,7 +29,7 @@
 //!
 //! The thresholds and size limits only decide which walks are stored and for how long. They never change a result.
 //!
-//! The memo belongs to a `Checker`, which runs one task. It's never merged at a barrier.
+//! The memo belongs to a `Checker`, which runs one task. No other task sees it.
 
 use super::super::*;
 use super::Inference;

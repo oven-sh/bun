@@ -89,8 +89,6 @@ impl<'p, 's> Checker<'p, 's> {
         alias: Sym,
         type_arguments: &[TypeId],
     ) -> TypeId {
-        // `getUnionKey`
-        self.get_symbol_id(alias);
         // `addNamedUnions`
         let is_named = match self.types().provenance(created) {
             Some(own) => match own.origin {
@@ -161,15 +159,6 @@ impl<'p, 's> Checker<'p, 's> {
                 let scope = self.bound(file).type_scope[node.idx()];
                 self.alias_symbol_for_type_node(file, scope, node)
             }),
-        }
-    }
-
-    /// `getTypeInstantiationKey` in `getObjectTypeInstantiation`: `GetSymbolId(t.alias.symbol)`.
-    pub(super) fn get_symbol_id_of_object_type_alias(&self, ty: TypeId) {
-        let is_object_type = self.types().deferred(ty).is_some()
-            || matches!(self.data(ty), TypeData::Anon { .. } | TypeData::Fns { .. });
-        if is_object_type && let Some(alias) = self.alias_symbol_of_type(ty) {
-            self.get_symbol_id(alias);
         }
     }
 
@@ -383,9 +372,6 @@ impl<'p, 's> Checker<'p, 's> {
         mapper: MapperId,
         alias: (Sym, &[TypeId]),
     ) -> TypeId {
-        if self.hands_out_symbol_ids() {
-            self.get_symbol_id_of_object_type_alias(ty);
-        }
         if self.types().deferred(ty).is_some() {
             return self.instantiate_deferred_type_reference(ty, mapper, Some(alias));
         }

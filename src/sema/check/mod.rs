@@ -148,9 +148,9 @@ struct Provisional {
     serial: u64,
 }
 
-/// Calls `$each!` with the names of the `Buffered` fields of `Program`, in the order in which a
-/// barrier may publish them: a table whose entries hold handles of another one comes after it, so
-/// `shapes` is before `members`. This is the only list: a new `Buffered` field must be added here.
+/// Calls `$each!` with the names of the `Buffered` fields of `Program`. A table whose entries hold
+/// handles of another one comes after it, so `shapes` is before `members`. This is the only list:
+/// a new `Buffered` field must be added here.
 macro_rules! buffered_fields {
     ($each:ident) => {
         $each!(
@@ -204,19 +204,17 @@ pub(crate) type AssignedSignature = (Option<SigId>, bool);
 pub struct Program<'s> {
     /// The arenas that the program and everything computed from it are in.
     pub session: &'s Session,
-    /// Whether a query of any task has been circular. Written at a barrier, from
-    /// `Finished::closed_a_cycle`.
+    /// True if a query of any task has been circular. Set at a commit, from `Task::closed_a_cycle`.
     pub closed_a_cycle: AtomicBool,
-    /// `Finished::order_dependent_variances` of the valid tasks so far: the first value in serial order for each symbol. Written at a
-    /// barrier (`Program::validate`) or at a commit, read on a cache miss in `variances_worker`. Any thread adds to this
-    /// map and the next one, so they are on the regular heap: `release`.
+    /// `Task::order_dependent_variances` of the valid commits so far: the first value for each symbol. Written at a commit,
+    /// read on a cache miss in `variances_worker`. Any thread adds to this map, so it's on the regular heap: `release`.
     serial_variances: Guarded<FxHashMap<Sym, &'s [u8]>>,
     /// See `commit`.
     commits: commit::Commits<'s>,
     /// `Checker::referenced_properties` of all tasks. The task that checks the file of a
     /// declaration does not see what another one has marked, so `finish_file` takes back what it
     /// has reported. A union: it does not depend on which task comes first.
-    /// Tasks write to this set and the next one directly. Add any other such field to `has_notes_outside_finished`.
+    /// Tasks write to this set and the next one directly.
     properties_referenced_before: Guarded<crate::util::FxHashSet<Sym>>,
     /// What `check_external_emit_helpers_of_later_files` has reported, of all tasks. `finish_file`
     /// keeps the first of each. It does not depend on which task comes first.
@@ -549,11 +547,7 @@ impl<'s> Program<'s> {
         let scopes = bases(|m| m.bound.scopes.len());
         let type_params = bases(|m| m.hir.type_params.len());
         let symbols = bases(|m| m.bound.symbols.len());
-        let shares_at_once = files.options.shares_at_once;
-        let mut types = match files.options.orders_types_by_content || shares_at_once {
-            true => TypeStore::ordered_by_content_in(session, files.atoms),
-            false => TypeStore::new_in(session),
-        };
+        let mut types = TypeStore::new_in(session, files.atoms);
         let arena = session.arena();
         let auto_array_type =
             types.publish_constant(match files.global_type_of_arity(known::Array, 1) {
@@ -570,9 +564,7 @@ impl<'s> Program<'s> {
                     arena,
                 )),
             });
-        if shares_at_once {
-            types.share_records();
-        }
+        types.share_records();
         let mut program = Program {
             session,
             closed_a_cycle: Default::default(),
@@ -727,11 +719,7 @@ impl<'s> Program<'s> {
 
     pub fn checker(&self) -> Checker<'_, 's> {
         let arena = self.session.arena();
-        let mut task = Task::new_in(arena, &self.types);
-        if self.types.shares_records() {
-            task.own.set_sharing(Sharing::Finds);
-        }
-        task.own.set_jitter(self.commits.jitter);
+        let task = Task::new_in(arena, &self.types);
 
         Checker {
             p: self,
@@ -935,7 +923,6 @@ impl<'s> Program<'s> {
             links: Default::default(),
             signature_links: Default::default(),
             has_compared_without_total_order: std::cell::Cell::new(false),
-            symbol_ids: None,
             parsed_again_for_await: None,
             flow_analysis_disabled: Vec::new(),
             inline_level: 0,
@@ -1789,8 +1776,6 @@ pub struct Checker<'p, 's> {
     signature_links: signature_links::SignatureLinks<'p>,
     /// Set by `compare_type_names` where `CompareTypes` is not transitive.
     has_compared_without_total_order: std::cell::Cell<bool>,
-    /// `Some`: this checker hands out symbol ids. See check/symbol_ids.rs.
-    symbol_ids: Option<std::cell::RefCell<symbol_ids::SymbolIds>>,
     /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
     /// Computed on first use.
     parsed_again_for_await: Option<Vec<StmtId>>,

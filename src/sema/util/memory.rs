@@ -328,7 +328,7 @@ impl<T, L: Length, A: Allocator + Clone> Drop for Stable<T, L, A> {
     }
 }
 
-/// A vector that several threads fill at a barrier. One thread reserves a range of elements, then
+/// A vector that several threads fill. One thread reserves a range of elements, then
 /// each reserved element is written exactly once, by any thread.
 pub(crate) trait Fill<T> {
     /// # Safety

@@ -1,4 +1,4 @@
-//! Commits: how tasks share what they compute while they run, without steps and barriers.
+//! Commits: how tasks share what they compute while they run.
 //!
 //! Every thread takes the next task of one list. What a task stores goes to its own part of the tables, as ever, and the
 //! key goes to a log (`crate::local::Log`). From time to time, while nothing is in progress in it, and when it ends, the
@@ -23,7 +23,7 @@
 //! - **The file that a task visits does not change during the visit.** Its number is noted when the visit begins and kept to
 //!   the end (`View::pin`). What the task stores itself it finds in its own part.
 //! - **A commit is valid or nothing of it is stored.** Some results depend on which of two evaluations came first in their
-//!   checker, and `Program::validate` says which. The serial order that a commit is compared with is the order of the
+//!   checker, and `Program::is_invalid` says which. The serial order that a commit is compared with is the order of the
 //!   commits. What is thrown away is what the task has done since its last commit. It ends then, and the files that it had not
 //!   checked to the end by that commit go to the last round.
 //! - **A task that gives up at a limit is not believed** (`Checker::note_gave_up`). How far from a limit a computation
@@ -73,7 +73,6 @@
 
 use super::task::{Ended, Task, tables_of, tables_written_at_once};
 use super::{Checker, Program};
-use crate::jitter::{Jitter, Place};
 use crate::local::{Log, node_word};
 use crate::node::Node;
 use crate::program::{FileId, Sym};
@@ -95,8 +94,6 @@ pub(super) struct Commits<'s> {
     rings: Guarded<Vec<Ring>>,
     /// `tables_written_at_once`
     at_once: u128,
-    /// Every checker gets a copy.
-    pub(super) jitter: Jitter,
 }
 
 /// In an arena, so that a task can refer to it.
@@ -142,7 +139,6 @@ impl<'s> Commits<'s> {
             },
             rings: Guarded::default(),
             at_once: tables_written_at_once(),
-            jitter: Jitter::default(),
         }
     }
 
@@ -154,7 +150,7 @@ impl<'s> Commits<'s> {
     }
 
     /// For a task that begins. `files`: how many the program has.
-    pub(super) fn view(&self, files: usize, jitter: Jitter) -> View<'s> {
+    pub(super) fn view(&self, files: usize) -> View<'s> {
         View {
             numbers: self.numbers,
             of_files: vec![Cell::new(0); files].into_boxed_slice(),
@@ -164,7 +160,6 @@ impl<'s> Commits<'s> {
             compared_with_pinned: Cell::new(0),
             oldest_pin: Cell::new(u32::MAX),
             own: RefCell::default(),
-            ignores_stamps: jitter.ignores_stamps,
             times_unsettled: Cell::new(0),
         }
     }
@@ -179,7 +174,6 @@ impl<'s> Commits<'s> {
         number: u32,
         ring: Option<Ring>,
     ) -> u64 {
-        let (jitter, commit) = (task.own.jitter(), u64::from(number));
         let mut stored = 0;
         self.numbers.begun.store(number, Ordering::Release);
         // Before the first entry: whoever finds one finds this.
@@ -187,31 +181,16 @@ impl<'s> Commits<'s> {
             self.rings.lock().push(Ring { number, ..ring });
             self.numbers.with_a_ring.store(number, Ordering::Release);
         }
-        jitter.stretch(commit);
         for &[slot, key] in &log.of_records {
             if let Some(table) = tables.get(slot as usize) {
                 stored += u64::from(table.store_logged(task, u64::from(key), number));
-                task.own.wait_at(Place::EntryStored);
             }
         }
-        jitter.stretch(commit);
-        if jitter.order(0).is_some() {
-            (log.of_nodes).shared_sort_by_key(|&[slot, file, index]| {
-                jitter.order(node_word(file, index) ^ u64::from(slot) << 56)
-            });
-        }
-        let half = log.of_nodes.len() / 2;
-        for (at, &[slot, file, index]) in log.of_nodes.iter().enumerate() {
-            if at == half {
-                jitter.stretch(commit);
-            }
+        for &[slot, file, index] in &log.of_nodes {
             if let Some(table) = tables.get(slot as usize) {
                 stored += u64::from(table.store_logged(task, node_word(file, index), number));
-                task.own.wait_at(Place::EntryStored);
             }
         }
-        jitter.stretch(commit);
-        task.own.wait_at(Place::CommitEnds);
         self.numbers.stored.store(number, Ordering::Release);
         stored
     }
@@ -241,8 +220,6 @@ pub(crate) struct View<'s> {
     oldest_pin: Cell<u32>,
     /// The numbers of the commits of the task, ascending.
     own: RefCell<Vec<u32>>,
-    /// `Jitter::ignores_stamps`
-    ignores_stamps: bool,
     /// How many times `state` has found a commit storing.
     times_unsettled: Cell<u32>,
 }
@@ -259,9 +236,6 @@ impl View<'_> {
 
     #[inline(never)]
     fn touch(&self, file: FileId) -> u32 {
-        if self.ignores_stamps {
-            return u32::MAX;
-        }
         let stored = self.numbers.stored.load(Ordering::Acquire);
         if let Some(of_file) = self.of_files.get(file.idx()) {
             of_file.set(stored + 1);
@@ -288,7 +262,7 @@ impl View<'_> {
     /// Whether the task is visiting `file`, so that what it sees there stays the same until it visits another file.
     #[inline]
     pub(crate) fn is_pinned(&self, file: FileId) -> bool {
-        self.pinned.get() == file.0 && !self.ignores_stamps
+        self.pinned.get() == file.0
     }
 
     /// The task begins to visit `file`.
@@ -392,11 +366,6 @@ pub(super) enum NotShared {
 }
 
 impl<'s> Program<'s> {
-    /// Before the first checker.
-    pub fn set_jitter(&mut self, jitter: Jitter) {
-        self.commits.jitter = jitter;
-    }
-
     /// See `Claims`. The caller is about to begin an outermost measurement of the variances of `sym`: it is not measuring,
     /// so it has no claim. `may_claim`: whether its result has a chance to be shared.
     pub(super) fn claim_variances(&self, sym: Sym, may_claim: bool) -> VarianceClaim<'s> {
@@ -488,13 +457,13 @@ impl<'s> Program<'s> {
         })
     }
 
-    /// `Program::validate` for what one task has noted, against the commits so far.
-    /// - Variances and listings: against every commit, as `validate` compares with every earlier step. A task notes only
-    ///   what it has computed, which it does only if it has found nothing. The variances that it has noted stay noted: it
-    ///   goes on using them.
-    /// - Walks: `validate` compares with the earlier tasks of the step, because a task has seen the walks of the steps
-    ///   before, and what was evaluated along with them, from its start. Here that is so for the commits that the task
-    ///   saw in the file when it began to visit it.
+    /// True if something the task has noted contradicts an earlier commit, so that this commit must be discarded.
+    /// - Variances are compared with every earlier commit. A task notes only what it has computed, which it does only if it
+    ///   has found nothing. The variances that it has noted stay noted, because it goes on using them.
+    /// - Walks: what `markNodeAssignments` finds about a variable depends on which of the functions around the assignments
+    ///   was walked first. The task is invalid if it walked a function of the file it was visiting that contains, or is
+    ///   nested in, a function that another task walked, unless it saw that task's commit in the file when its visit
+    ///   began. Then it also saw what was evaluated along with the walk.
     fn is_invalid(&self, task: &Task<'s>, view: &View<'s>, committing: &Committing) -> bool {
         let has_other_variances = {
             let serial = self.serial_variances.lock();
@@ -549,7 +518,7 @@ impl<'s> Checker<'_, 's> {
     /// `is_alone`: no other task runs, as in the last round.
     pub fn see_commits(&mut self, is_alone: bool) {
         let files = self.p.files.modules.len();
-        let view = (self.p.commits).view(files, self.task.own.jitter());
+        let view = self.p.commits.view(files);
         // Alone it writes nothing at once: nobody is there to read it, and at a limit it stores, and replaces, what tsgo
         // does.
         let at_once = match is_alone {
@@ -557,8 +526,6 @@ impl<'s> Checker<'_, 's> {
             false => self.p.commits.at_once,
         };
         self.task.see_commits(view, is_alone, at_once);
-        self.task.own.count_places_from(self.task.number());
-        self.task.own.wait_at(Place::TaskBegins);
     }
 
     /// For a task that sees commits: a greater number than last time if a commit may have added to the tables in between.
@@ -700,7 +667,6 @@ impl<'s> Checker<'_, 's> {
             }
         });
         self.withhold_until_the_file_ends(&mut log, is_between_files);
-        self.task.own.wait_at(Place::CommitBegins);
         let asked = Instant::now();
         let mut committing = p.commits.committing.lock();
         let entered = Instant::now();

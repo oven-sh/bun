@@ -4,12 +4,8 @@
 //! - Reported with no query in progress, by a pass of `check_file`: it belongs to the task, and is
 //!   reported.
 //! - Reported inside a query: it belongs to the query. A hit on its entry reports nothing, but
-//!   several tasks of one step can each have evaluated it. At the barrier, with tasks in plan
-//!   order, it is reported iff no earlier task has reported under that query. No entry is needed
-//!   for that: a step whose entries no later step reads sends only its diagnostics to the barrier.
-//! - The texts of two tasks for one error can differ: union members are ordered by id, and the ids
-//!   of task-local types are in the order in which that task created them (`'A | B'`, `'B | A'`).
-//!   The first task's text is reported. tsc's can be the other one.
+//!   several tasks can each have evaluated it. The first task that commits a diagnostic under the
+//!   query reports. What later tasks commit under it is dropped (`Program::publish_reported`).
 //!
 //! `add_diagnostic` pushes onto `Checker::reported`. The diagnostics of a frame are the suffix from
 //! `QueryFrame::reported_from`.
@@ -20,8 +16,8 @@
 //! - the result depends on an incomplete flow-loop type (`taint_from`): they stay, and belong to
 //!   the enclosing frame.
 //!
-//! `Program::publish_diagnostics` moves the diagnostics of a task to the buffers of their files
-//! (`Sink`). `Program::finish_file` reads the buffer of a file after the last barrier.
+//! A commit moves the diagnostics of a task to the buffers of their files (`Sink`).
+//! `Program::finish_file` reads the buffer of a file after the last task has ended.
 //!
 //! Diagnostics that belong to the task and are located in the file of its `check_file` stay in
 //! `reported` until that ends, and go to `finish_file`.
@@ -30,7 +26,7 @@
 //! `Reported::deferred` in place of the arguments. So it belongs to the task or to a query, and is
 //! dropped with a frame, like a diagnostic. `produce_type_not_iterable_errors` creates the message.
 //!
-//! A diagnostic that leaves its task is settled (`Checker::settle`): every field that only the HIR
+//! A diagnostic that leaves its task is settled (`Checker::settled`): every field that only the HIR
 //! of its file can provide has been filled in. The HIR of a file that nothing imports is freed at
 //! the end of its task, and `finish_file` reads no HIR.
 
@@ -304,7 +300,7 @@ fn is_same_in_every_task(q: Query) -> bool {
 }
 
 impl super::Program<'_> {
-    /// `publish_diagnostics`, also for a commit. `task`: `Task::number`.
+    /// Moves what a task has reported to the buffers of the files. Called in a commit. `task` is `Task::number`.
     pub(super) fn publish_reported(&self, task: u64, reported: Logged) {
         let mut owners = self.sink.owners.lock();
         for (owner, diagnostic) in reported {
@@ -454,7 +450,7 @@ impl Checker<'_, '_> {
                     Arg::Sym(symbol) => self.write_symbol(&mut out, symbol),
                     Arg::Prop(prop) => self.write_prop(&mut out, prop),
                     Arg::Sig(signature) => self.write_signature(&mut out, signature),
-                    Arg::Atom(name) => out.extend_from_slice(&self.symbol_name_with_id(name)),
+                    Arg::Atom(name) => out.extend_from_slice(self.atoms().bytes(name)),
                     Arg::Number(number) => out.extend_from_slice(bun_core::fmt::itoa(
                         &mut bun_core::fmt::ItoaBuf::new(),
                         number,
@@ -818,13 +814,14 @@ impl Checker<'_, '_> {
         if self.task.is_planned() {
             self.task.diagnostics.push((owner, diagnostic));
         } else if let Some(diagnostic) = self.settled(diagnostic, &mut Default::default()) {
-            // The diagnostics buffered by a task outside the plan are dropped with it, so nothing
-            // competes for its entries.
+            // A checker without a task shares no entries, so no other task reports under its queries.
             self.p.push_diagnostic(diagnostic);
         }
     }
 
-    /// `collects_later` for a task of the plan, which other tasks precede in no particular order.
+    /// `getBindAndCheckDiagnosticsWithChecker`: a file's diagnostics are those that the checker has for it right after
+    /// `checkSourceFile`. True if what is reported now for `file` is reported by then. Other tasks run before this one in
+    /// no particular order.
     /// The check of a file asks for the queries about its own syntax. So what is reported now is
     /// reported no later than the first of these files is checked: that of the task, and those
     /// whose syntax `owner` and the queries in progress are about. Any file can be the first to ask
@@ -908,7 +905,7 @@ impl Checker<'_, '_> {
             && !self.is_asked_by_check_in_time(owner, &self.stack, file)
     }
 
-    /// `take_diagnostics` for a commit. What belongs to a query goes with the entry of the query, which the commit stores.
+    /// Takes the diagnostics that a commit publishes. What belongs to a query goes with the entry of the query, which the commit stores.
     /// What belongs to the task goes when the file is checked to the end (`is_between_files`): if the task is lost before,
     /// whoever checks the file again reports it.
     /// `None`: not now. A callback among them has not been called, which `check_file` does at the end of the file.

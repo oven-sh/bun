@@ -1815,11 +1815,6 @@ impl<'p, 's> Checker<'p, 's> {
         lookup: TableLookup,
         visited: &mut Vec<(Sym, Table)>,
     ) -> Vec<Sym> {
-        // `symbolTableIDFromMembers` and the like, then `symId`.
-        if let Table::TypeMembers(of) | Table::Exports(of) | Table::ResolvedExports(of) = table {
-            self.get_symbol_id(of);
-        }
-        self.get_symbol_id(symbol);
         if visited.contains(&(symbol, table)) {
             return Vec::new();
         }

@@ -499,8 +499,8 @@ impl<A: Allocator + Clone, const N: usize> GrowingPlaces<A, N> {
         read()
     }
 
-    /// `find`, during a step: no thread inserts, and the barrier before the step has ordered the
-    /// earlier inserts. Plain loads.
+    /// `find` while no thread inserts. Something must have ordered the earlier inserts before this
+    /// call. Plain loads.
     #[inline]
     pub(crate) fn find_frozen(&self, spread: u64, is_it: impl FnMut(u32) -> bool) -> Option<u32> {
         self.places.find(spread, Ordering::Relaxed, is_it)
@@ -593,7 +593,7 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone, const N: usize> ShardedMa
             .map(|i| &list.get(i).1)
     }
 
-    /// `get_ref`, during a step: see `GrowingPlaces::find_frozen`. `spread`: `spread_hash(key)`.
+    /// `get_ref` while no thread inserts: see `GrowingPlaces::find_frozen`. `spread`: `spread_hash(key)`.
     #[inline]
     pub(crate) fn get_frozen(&self, spread: u64, key: &K) -> Option<&V> {
         let list = self.list(spread);
@@ -612,8 +612,7 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone, const N: usize> ShardedMa
     }
 
     /// Inserts `value` unless `key` already has a value. Returns true if `value` was inserted.
-    /// `spread` must be `spread_hash(key)`. Runs in a commit, or at a barrier on the one thread
-    /// that fills the shard of `spread`.
+    /// `spread` must be `spread_hash(key)`.
     pub(crate) fn add_if_absent(&self, spread: u64, key: &K, value: V) -> bool
     where
         K: Clone,

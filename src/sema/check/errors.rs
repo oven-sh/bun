@@ -57,7 +57,7 @@ impl Checked {
 }
 
 impl Program<'_> {
-    /// The errors of `file`, after the last barrier. It runs no query and reads no HIR.
+    /// Returns the errors of `file`. Call it after the last task has ended. It runs no query and reads no HIR.
     pub fn finish_file(&self, file: FileId, checked: Checked) -> Vec<Explained> {
         let mut out = Vec::new();
         if let Some(semantic) = checked.semantic {
@@ -162,7 +162,7 @@ pub(super) struct CheckedLeaves {
 impl Checker<'_, '_> {
     /// Drops the memos of this checker that are keyed by a node of `file`, which `is_leaf` and has
     /// been checked: no other file refers to it, so nothing evaluates one of its nodes again. A
-    /// task of the last step checks dozens of such files. The capacity stays for the next one.
+    /// task checks dozens of such files. The capacity stays for the next one.
     ///
     /// A sweep costs time proportional to the memo's size, however few entries it drops, and the
     /// number of entries kept for other files only grows. So the nodes of several files are dropped
@@ -359,16 +359,14 @@ impl Checker<'_, '_> {
         self.report_unresolved_identifiers();
         // `GetDeclarationDiagnostics`: no comment directive suppresses these, and plain JavaScript
         // gets them too.
-        // A diagnostic located in another file goes to the buffer of that file at the barrier.
+        // A diagnostic located in another file goes to the buffer of that file at the next commit.
         let reported = std::mem::take(&mut self.reported).into_iter();
         let (semantic, elsewhere): (Vec<_>, Vec<_>) = reported.partition(|d| d.file == file);
         self.reported = elsewhere;
         self.log_reported_from(0);
         let emits_later = !self.emits_first();
-        let was_emitting = self.set_symbol_ids_emitting(emits_later);
         self.is_type_checked = emits_later;
         let declaration = self.get_declaration_diagnostics(file);
-        self.set_symbol_ids_emitting(was_emitting);
         self.is_type_checked = true;
         let mut directives = Directives::default();
         let semantic = semantic.into_iter();

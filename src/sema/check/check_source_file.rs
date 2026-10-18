@@ -25,11 +25,10 @@ use smallvec::SmallVec;
 /// are subtracted too.
 const TASK_STACK: usize = 3 << 20;
 
-/// The barrier after a step. `finished`: the tasks of that step, in task order. No task is running.
 impl<'s> Program<'s> {
     /// True if a walk that the task made while visiting the file contains an earlier walk or is
-    /// nested in one. `walked` is the task's `Finished::assignments_walked`. `earlier` lists the
-    /// walks of the valid tasks before it.
+    /// nested in one. `walked` is the task's `Task::assignments_walked`. `earlier` lists the walks
+    /// of earlier commits.
     pub(super) fn has_walked_across_earlier_walk(
         &self,
         walked: &[(FileId, Node, bool)],
@@ -48,7 +47,7 @@ impl<'s> Program<'s> {
 }
 
 impl<'s> Checker<'_, 's> {
-    /// Called at the start of a task, or of a checker outside the plan. See `TASK_STACK`.
+    /// Call this before the checker is used. See `TASK_STACK`.
     pub fn begin_stack_budget(&mut self) {
         let left = bun_core::StackCheck::init().remaining();
         assert!(
@@ -58,16 +57,12 @@ impl<'s> Checker<'_, 's> {
         self.set_stack_limit(TASK_STACK);
     }
 
-    /// Called before `check_file`. `step` counts from 0. `index`: the position of the task in its
-    /// step, in task order.
-    /// `is_read_later`: whether anything will read what this task publishes. If not, only its
-    /// diagnostics go to the barrier.
-    /// A checker for which this is not called is outside the plan: its writes are dropped with it.
-    pub fn begin_task(&mut self, step: u32, index: u32) {
-        self.task.begin(step, index);
-        if self.p.types.shares_records() {
-            self.task.own.set_sharing(Sharing::Publishes);
-        }
+    /// Call this before `check_file`. `round` counts from 0, and no other task of the round has `index`. Without this
+    /// call the checker shares nothing: its writes are dropped with it.
+    pub fn begin_task(&mut self, round: u32, index: u32) {
+        self.task.begin(round, index);
+        self.task.own.set_sharing(Sharing::Publishes);
+
         self.order_dependent.clear();
         self.order_dependent_filter = 0;
         self.constraints_of_this_task.clear();
@@ -121,8 +116,7 @@ impl<'s> Checker<'_, 's> {
 
     /// Runs `checkSourceFile` on the task's file and throws its diagnostics away. For a file that `check_file` skips because
     /// it reports no semantic errors (`// @ts-nocheck`, JavaScript without `checkJs`), when lint rules are about to ask for
-    /// its types out of source order. As in `check_statements_ahead`, a diagnostic that belongs to a query stays with
-    /// that query's entry.
+    /// its types out of source order. A diagnostic that belongs to a query stays with that query's entry.
     pub(super) fn check_source_file_and_report_nothing(&mut self, file: FileId) {
         let (reported, logged) = (self.reported.len(), self.task.diagnostics.len());
         self.is_type_checked = false;

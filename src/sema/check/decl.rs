@@ -2529,8 +2529,6 @@ impl<'p, 's> Checker<'p, 's> {
         let members: Vec<TypeId> = member_types.iter().map(|it| it.1).collect();
         let union = self.union(&members);
         let enum_type = if self.is_union(union) {
-            // `getUnionKey`
-            self.get_symbol_id(sym);
             self.with_alias(union, sym, &[])
         } else {
             union
@@ -3785,7 +3783,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     _ => self.unique_symbol_declaration(file, m, name),
                 };
-                self.new_unique_es_symbol_type(symbol, name)
+                self.intern(TypeData::UniqueSymbol { symbol, name })
             }
             _ => TypeId::SYMBOL,
         }
@@ -3948,9 +3946,9 @@ impl<'p, 's> Checker<'p, 's> {
         let alias = files.resolve_entity(file, scope, &names, SymFlags::ALIAS)?;
         // In `a.b` the first name is resolved as a namespace, as it was before.
         if names.len() == 1 {
-            // Written to the same buffer as `type_node_types[(file, node)]`, so both are published
-            // at the same barrier: a task that hits that entry sees the mark, and a task that
-            // misses it reaches this code itself.
+            // Written to the same buffer as `type_node_types[(file, node)]`, so one commit publishes
+            // both: a task that hits that entry sees the mark, and a task that misses it reaches
+            // this code itself.
             for &part in files.parts(alias).iter() {
                 (self.p.symbol_reference_links).insert(&self.task, part, (), Stored::new());
             }
@@ -4177,11 +4175,7 @@ impl<'p, 's> Checker<'p, 's> {
             let declared = self.declared_type(sym);
             let mapper = self.mapper_from(&params, &args);
             return match alias {
-                Some(alias) => {
-                    // `getTypeAliasInstantiationKey`
-                    self.get_symbol_id(alias.0);
-                    self.instantiate_with_alias(declared, mapper, alias)
-                }
+                Some(alias) => self.instantiate_with_alias(declared, mapper, alias),
                 None => self.type_alias_instantiation(declared, mapper),
             };
         }

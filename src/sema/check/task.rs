@@ -1,25 +1,15 @@
-//! Tasks, steps and barriers (bulk-synchronous parallel).
+//! Tasks.
 //!
-//! Checking runs in steps. During a step the published state is read-only. A task reads only the
-//! published state and what it owns, and writes only to what it owns. So its result is a function
-//! of the program and of the published state at the start of its step.
+//! A task checks some files on one thread, with one `Checker`. It reads the shared tables and what it owns, and it writes
+//! to what it owns. `super::commit` describes how its results reach the shared tables while other tasks run.
 //!
-//! A `Task` owns its stores: the records it creates (`crate::types::OwnStore`, ids with `LOCAL`),
-//! the task-local parts of the `Buffered` tables (the buffer), the entries of the `FileLocal`
-//! tables, its diagnostics. There is no thread-local state.
-//!
-//! At the end of a task, on its own thread, `Task::finish` extracts what is to be published,
-//! compactly, and frees the rest. At the barrier after a step, the link step assigns a published id
-//! to every task-local id that survives (`Program::link`), and then `publish` applies the tasks'
-//! entries in task order, with every key and value rewritten through the link (`follow`). The first
-//! entry for a key wins.
-//!
-//! The other way to run tasks, without steps and barriers, is in `super::commit`.
+//! A `Task` owns its stores: the records it creates and doesn't publish (`crate::types::OwnStore`, ids with `LOCAL`),
+//! the task-local parts of the `Buffered` tables (the buffer), the entries of the `FileLocal` tables, and its
+//! diagnostics. There is no thread-local state.
 
 use super::commit::View;
 use super::sink::Reported;
 use super::{Program, Query};
-use crate::jitter::Place;
 use crate::local::{Buffer, FileLocalTables, SlotNumber};
 use crate::node::Node;
 use crate::program::{FileId, Sym};
@@ -63,7 +53,7 @@ pub struct Open;
 
 /// One per `Checker`.
 pub struct Task<'s> {
-    /// The step, and the index of the task in it. `None`: the task is outside the plan.
+    /// The round, and a number that no other task of the round has. `None` until `begin`.
     place: Option<(u32, u32)>,
     /// The file that the task is visiting.
     pub file: Option<FileId>,
@@ -73,9 +63,10 @@ pub struct Task<'s> {
     pub(super) diagnostics: Vec<(Option<Query>, Reported)>,
     /// Whether a query of this task has re-entered itself.
     pub(super) closed_a_cycle: bool,
-    /// See `Finished::order_dependent_variances`.
+    /// See `OrderDependent`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
-    /// See `Finished::assignments_walked`. It is added to under `&Checker`.
+    /// The functions and source files that `markNodeAssignments` has walked in this task (`Program::assignments_marked`),
+    /// and whether the task was visiting the file. See `Program::is_invalid`. Added to under `&Checker`.
     pub(super) assignments_walked: RefCell<Vec<(FileId, Node, bool)>>,
     /// See `hold_back`.
     held_back: Cell<u64>,
@@ -116,7 +107,7 @@ pub struct Task<'s> {
 }
 
 impl<'s> Task<'s> {
-    /// A task outside the plan. It reads the published state, and what it writes is dropped with it.
+    /// Returns a task that shares nothing. It reads the shared tables, and whatever it writes is dropped with it.
     /// `arena`: of the calling thread, which runs the task. `types`: the published records.
     pub(super) fn new_in(arena: &'s Arena, types: &TypeStore<'s>) -> Task<'s> {
         Task {
@@ -148,30 +139,27 @@ impl<'s> Task<'s> {
         }
     }
 
-    /// Puts the task into the plan. `step` counts from 0. `index`: the index of the task in its
-    /// step, in task order. Everything the task owned before is dropped, so no id with `LOCAL` and
-    /// no reference from a kept table may be live.
-    /// `is_read_later`: whether anything will read what the task publishes. If not, `finish`
-    /// returns only the diagnostics.
-    pub fn begin(&mut self, step: u32, index: u32) {
+    /// Starts the task. `round` counts from 0, and no other task of the round has `index`. Drops everything the task
+    /// owned before, so no id with `LOCAL` and no reference from a kept table may be live.
+    pub fn begin(&mut self, round: u32, index: u32) {
         debug_assert!(
             self.own.is_empty(),
             "created before `begin`: the id would dangle"
         );
         self.drop_everything();
-        self.place = Some((step, index));
+        self.place = Some((round, index));
     }
 
-    /// `begin` has been called: the entries the task buffers go to a barrier.
+    /// True once `begin` has been called.
     #[inline]
     pub fn is_planned(&self) -> bool {
         self.place.is_some()
     }
 
-    /// A number that no other task of the plan has.
+    /// Returns a number that no other task has.
     pub(super) fn number(&self) -> u64 {
-        (self.place).map_or(u64::MAX, |(step, index)| {
-            u64::from(step) << 32 | u64::from(index)
+        (self.place).map_or(u64::MAX, |(round, index)| {
+            u64::from(round) << 32 | u64::from(index)
         })
     }
 
@@ -368,8 +356,8 @@ impl<'s> Task<'s> {
         ]);
     }
 
-    /// Whether the task has noted a listing or a walk for which its next commit can find it invalid
-    /// (`Finished::can_be_invalid`), or is lost. What it has computed since then may depend on that.
+    /// True if the task has noted a walk that can make its next commit invalid, or is already discarded. What it has
+    /// computed since then may depend on that.
     pub(super) fn may_be_thrown_away(&self) -> bool {
         self.assignments_walked.borrow().iter().any(|it| it.2) || self.is_lost()
     }
@@ -424,7 +412,6 @@ impl<'s> Task<'s> {
         self.file_local.get_mut().begin_file(file.0);
         if let Some(view) = &self.view {
             view.pin(file);
-            self.own.wait_at(Place::FileBegins);
         }
     }
 
@@ -447,7 +434,7 @@ impl<'s> Task<'s> {
         self.waits.set([Duration::ZERO; 3]);
         (self.at_once_unless_stopped, self.at_once) = (0, Cell::new(0));
         self.logged_before_the_stop.set(usize::MAX);
-        // Outside the plan it publishes nothing.
+        // A task that hasn't begun publishes nothing.
         let sharing = self.own.sharing().min(Sharing::Finds);
         self.own.clear();
         self.own.set_sharing(sharing);
@@ -559,7 +546,7 @@ const TABLES_OF_RECORDS: [&str; 29] = [
 ];
 
 /// The tables to which a task that commits writes at once (`Task::may_write_at_once`), as a bit set by slot: those that are
-/// keyed by a record and hold results. Not `listed_properties`: which list an intersection keeps is compared at a commit.
+/// keyed by a record and hold results.
 pub(super) fn tables_written_at_once() -> u128 {
     let more = ["relations", "type_param_constraints", "type_param_defaults"];
     let mut set = 0;
@@ -626,7 +613,7 @@ pub(super) fn number_tables(program: &mut Program) {
     }
     super::buffered_fields!(each);
     super::file_local_fields!(each);
-    (program.members).hold_handles_of(&mut program.shapes, super::shape::CachedMembers::shape_mut);
+    (program.members).hold_handles_of(&program.shapes, super::shape::CachedMembers::shape_mut);
 }
 
 #[cfg(test)]

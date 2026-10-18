@@ -8,8 +8,8 @@
 //!
 //! The rule is the same as in `links`: a part is cached once deriving it again would compute nothing and return the
 //! same value for the rest of the task.
-//! - All of this belongs to one checker, and therefore to one task. None of it is passed to a barrier, and no id in it
-//!   outlives the task.
+//! - All of this belongs to one checker, and therefore to one task. None of it is shared, and no id in it outlives
+//!   the task.
 //! - A return type is cached if it's in `Program::resolved_return_types`, or if it's `instantiate(declared, mapper)`
 //!   with `declared` in `Program::fn_return_types`. Nothing in progress may be about to overwrite the entry: the query
 //!   that writes it isn't on the stack, and the mapper passes `is_mapper_idle`. The derivation runs under

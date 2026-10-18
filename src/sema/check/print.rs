@@ -1991,14 +1991,6 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         ty: TypeId,
         identity: Option<Identity>,
     ) -> ControlFlow<Node, TypeVisit> {
-        match identity {
-            Some(Identity::Origin(origin)) => self.c.get_symbol_id_of_origin(origin),
-            Some(Identity::Instance(symbol)) => self.c.get_symbol_id(symbol),
-            Some(Identity::Function(file, function)) => {
-                self.c.get_symbol_id_of_function(file, function);
-            }
-            Some(Identity::Node(..) | Identity::Declaration(..) | Identity::Type(_)) | None => {}
-        }
         let key = self
             .enclosing_declaration
             .map(|at| (at, self.enclosing_expression, ty, self.flags));
@@ -2266,8 +2258,6 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `getNameOfSymbolAsWritten`. `is_initial`: `FlagsInInitialEntityName`.
     fn name_of_symbol_as_written(&mut self, symbol: Sym, is_initial: bool) -> Vec<u8> {
-        // `remappedSymbolReferences`
-        self.c.get_symbol_id(symbol);
         let files = self.c.files();
         let decls = files.decls_of(symbol);
         let name = files.symbol(symbol).name;
@@ -2324,8 +2314,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `EscapeInternalSymbolName`. The text of most internal names ends with `=` here, where the
     /// original starts with `InternalSymbolNamePrefix`.
     fn escape_internal_symbol_name(&self, name: Atom) -> Vec<u8> {
-        let text = self.c.symbol_name_with_id(name);
-        let text = &text[..];
+        let text = self.c.atoms().bytes(name);
         let rest = match name {
             known::anonymous_function
             | known::object_literal
@@ -2483,7 +2472,6 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `lookupTypeParameterNodes`, as they are printed. No symbol of a chain is instantiated
     /// (`lookupInstantiatedTypeArgumentNodes`).
     fn lookup_type_parameter_nodes(&mut self, chain: &[Sym], index: usize) -> Vec<u8> {
-        self.c.get_symbol_id(chain[index]);
         if self.type_parameter_symbol_list.contains(&chain[index]) {
             return Vec::new();
         }
@@ -3184,7 +3172,6 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `getNameOfSymbolAsWritten(typeParameter.symbol)`
     fn name_of_type_parameter(&self, parameter: TypeId) -> Vec<u8> {
-        self.c.get_symbol_id_of_type_parameter(parameter);
         if let TypeData::TypeParam(file, tp, _) = *self.c.data(parameter)
             && !self.c.is_renamed_type_param(parameter)
         {
@@ -4686,7 +4673,6 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `getNameOfSymbolAsWritten` for a property.
     fn name_of_property_as_written(&mut self, whole: &Prop) -> Vec<u8> {
-        self.c.get_symbol_id_of_property(whole);
         let prop = first_declared(whole).unwrap_or(whole);
         match &prop.source {
             PropSource::Literal(file, property) => {
@@ -5595,9 +5581,6 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `serializeReturnTypeForSignature`
     fn return_type_node(&mut self, signature: SigId, try_reuse: bool) -> Node {
         let declaration = self.c.sig_decl(signature).map(|of| (of.0, of.1));
-        if let Some((file, function)) = declaration {
-            self.c.get_symbol_id_of_function(file, function);
-        }
         let enclosing = self.enclosing_symbol_types.iter().rev();
         let enclosing = enclosing
             .map(|entry| (Some(entry.0), entry.1))

@@ -643,12 +643,6 @@ pub struct Options {
     /// Each file is emitted before it is checked. Not a TypeScript option: its tests read types and
     /// symbols from such a program.
     pub emits_first: bool,
-    /// Where TypeScript orders two types by their ids, they are ordered by what they are made of
-    /// (`crate::types::TypeStore::ordered_by_content_in`). Not a TypeScript option.
-    pub orders_types_by_content: bool,
-    /// A task publishes what it creates when it creates it (`crate::types::TypeStore::share_records`). The types are
-    /// ordered as with `orders_types_by_content` then. Not a TypeScript option.
-    pub shares_at_once: bool,
     /// `GetCurrentDirectory`
     pub current_directory: Vec<u8>,
     /// Where `lib.*.d.ts` are.

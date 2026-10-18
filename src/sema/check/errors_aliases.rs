@@ -1459,7 +1459,7 @@ impl Checker<'_, '_> {
     // ───────────────────────────── comment directives ─────────────────────────────
 
     /// TS2578 for each `@ts-expect-error` of `file`, fully built. `finish_file` reports those whose
-    /// directive suppressed nothing, which is known only after the last barrier. Built at the end
+    /// directive suppressed nothing, which is known only after the last task has ended. Built at the end
     /// of `check_file`: the report step runs no query and reads no HIR.
     pub(super) fn expected_errors(&mut self, file: FileId) -> Vec<Reported> {
         let hir = self.hir(file);

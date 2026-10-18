@@ -133,8 +133,8 @@ pub(super) struct Key(TypeId, TypeId, u8);
 const GENERIC_KEY: u8 = 0x80;
 
 impl Key {
-    /// After the merge at the barrier the same two references hash differently, so the entry is
-    /// useless to other tasks.
+    /// True if the hash includes a task-local id. Another task hashes the same two references differently, so the entry
+    /// is useless to it.
     #[inline]
     fn is_hash_of_own_ids(self) -> bool {
         self.2 & GENERIC_KEY != 0 && self.0.is_local()
@@ -1377,9 +1377,6 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
-        // `EnumRelationKey`
-        self.get_symbol_id(source);
-        self.get_symbol_id(target);
         if let Some(&is_related) = self.enum_relation.get(&(source, target))
             && (is_related || error_reporter.is_none())
         {
@@ -2732,8 +2729,7 @@ impl<'p, 's> Checker<'p, 's> {
                 &[]
             });
         }
-        // The value of the first task in serial order, for a task that is retried (`Program::validate`). For a task that
-        // commits, also what a measurement that has ended has shared: `commit::Claims`.
+        // The value of the first valid commit, and what a measurement that has ended has shared: `commit::Claims`.
         let serial = self.p.serial_variances.lock().get(&sym).copied();
         if let Some(variances) = serial {
             return self.take_shared_variances(sym, variances);
@@ -2753,12 +2749,10 @@ impl<'p, 's> Checker<'p, 's> {
         // Only a thread that is not measuring claims or waits: see `commit::Claims` for why.
         let mut has_claim = false;
         if self.task.commits() && !self.in_variance_computation {
-            self.task.own.wait_at(crate::jitter::Place::Claim);
             let asked = std::time::Instant::now();
             let claim = self.p.claim_variances(sym, cuts == 0);
             let none = std::time::Duration::ZERO;
             self.task.count_waits([none, none, asked.elapsed()]);
-            self.task.own.wait_at(crate::jitter::Place::Claim);
             match claim {
                 VarianceClaim::Known(variances) => {
                     return self.take_shared_variances(sym, variances);
@@ -2958,9 +2952,7 @@ impl<'p, 's> Checker<'p, 's> {
         // What was measured inside can be whole where the outermost result is not.
         let reason = reason.or_else(|| is_open.then_some(NotShared::Open));
         let claimed = has_claim.then_some((sym, reason));
-        self.task.own.wait_at(crate::jitter::Place::VariancesShared);
         let not_registered = self.p.share_variances(measured, may_share, claimed);
-        self.task.own.wait_at(crate::jitter::Place::VariancesShared);
         for (sym, variances) in not_registered {
             if self.order_dependent.contains_key(&sym) {
                 continue;
@@ -4106,7 +4098,7 @@ impl<'p, 's> Checker<'p, 's> {
         let flags = relation as u8 | state << 4;
         // tsgo orders the pair by id. The order decides how `generic_relation_key` numbers the type parameters.
         let is_swapped =
-            relation == Relation::Identity && self.creation_order(source, target).is_gt();
+            relation == Relation::Identity && self.content_order(source, target).is_gt();
         let (source, target) = if is_swapped {
             (target, source)
         } else {
@@ -4139,7 +4131,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.relation_key(source, target, relation, state, false);
         }
         let flags = relation as u8 | state << 4;
-        if relation == Relation::Identity && self.creation_order(source, target).is_gt() {
+        if relation == Relation::Identity && self.content_order(source, target).is_gt() {
             (Key(target, source, flags), false)
         } else {
             (Key(source, target, flags), false)

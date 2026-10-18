@@ -1654,8 +1654,8 @@ fn run_one(
         return None;
     }
 
-    // What is found in each file. An invalid task is retried, so a file can be visited twice: the
-    // last visit replaces the first, in place.
+    // What is found in each file. A discarded task's files are rechecked, so a file can be visited
+    // twice: the last visit replaces the first, in place.
     type Sections = Vec<(bun_sema::program::FileId, Vec<Walked>)>;
     let sections: Guarded<Sections> = Guarded::new(Vec::new());
     let write_unit = |checker: &mut bun_sema::check::Checker<'_, '_>,
@@ -2329,7 +2329,7 @@ impl Drop for Watched {
 }
 
 /// `[--bundle=file] --lib=<dir> --testlib=<dir> [--only=substring] [--every=n [--first=i]] [--threads=n] [--report=file]
-/// [--out=dir] [--types-and-symbols] [--declarations] [--traces] [--content-order] [--share-at-once]
+/// [--out=dir] [--types-and-symbols] [--declarations] [--traces]
 /// <name>=<tests>=<baselines>=<file with the names of all the baselines> ..`
 ///
 /// With `--bundle`, the directories and the file with the names are paths in it.

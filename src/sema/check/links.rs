@@ -9,8 +9,8 @@
 //!
 //! A part is cached only when deriving it again would compute nothing and return the same value for the rest of the
 //! task. Skipping the derivation is then unobservable, except for the two effects described at the end. The rules:
-//! - The cache belongs to one checker, and so to one task. Other tasks can't see it, it's never merged at a barrier,
-//!   and none of its ids outlive the task. A task publishes the same things with and without it.
+//! - The cache belongs to one checker, and so to one task. Other tasks can't see it, and none of its ids outlive the
+//!   task. A task publishes the same things with and without it.
 //! - A part that only needs interning is cached immediately. It depends only on the type's interning key and the
 //!   program. This covers a mapped type's type parameter and mapper, and an alias.
 //! - Any other part is `instantiate(declared, mapper)`. It's cached if both steps read a final entry (`derive_part`):

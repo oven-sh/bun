@@ -3503,7 +3503,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// tainted, except for `sym`, and `base_types` returns the stored value for them.
     #[cold]
     fn base_types_in_progress(&mut self, sym: Sym) -> List<'p, TypeId> {
-        // A checker of `checkerPool` has visited those of the earlier files that are its own.
         let own = self.task.file.filter(|_| self.found_cycle);
         let from = self.resolution_start.min(self.stack.len());
         let head = self.stack[from..]
@@ -6550,14 +6549,14 @@ impl<'p, 's> Checker<'p, 's> {
                             {
                                 // `Symbol.iterator` and the like are keyed by their name alone, so
                                 // that they name `known::sym_iterator`.
-                                return self.new_unique_es_symbol_type(
-                                    UniqueSymbolDeclaration::SymbolConstructor,
+                                return self.intern(TypeData::UniqueSymbol {
+                                    symbol: UniqueSymbolDeclaration::SymbolConstructor,
                                     name,
-                                );
+                                });
                             }
                         } else if has_unique_keyword {
                             let symbol = self.unique_symbol_declaration(file, first, name);
-                            return self.new_unique_es_symbol_type(symbol, name);
+                            return self.intern(TypeData::UniqueSymbol { symbol, name });
                         }
                     }
                     return self.type_from_node(file, member.ty);
@@ -6569,7 +6568,7 @@ impl<'p, 's> Checker<'p, 's> {
                         && self.is_symbol_or_symbol_for_call(file, member.init)
                     {
                         let symbol = UniqueSymbolDeclaration::Member(file, first);
-                        return self.new_unique_es_symbol_type(symbol, name);
+                        return self.intern(TypeData::UniqueSymbol { symbol, name });
                     }
                     let ty = self.type_of_declaration_initializer(file, member.init);
                     // `widenTypeForVariableLikeDeclaration`: a `unique symbol` belongs to the
@@ -6829,7 +6828,8 @@ impl<'p, 's> Checker<'p, 's> {
         let variable = self
             .files()
             .sym(file, self.bound(file).pat_symbol[pat.idx()]);
-        self.new_unique_es_symbol_type(UniqueSymbolDeclaration::Variable(variable), name)
+        let symbol = UniqueSymbolDeclaration::Variable(variable);
+        self.intern(TypeData::UniqueSymbol { symbol, name })
     }
 
     /// `getESSymbolLikeTypeForNode` of the declaration `call` initializes: its unique symbol if `isValidESSymbolDeclaration`,
@@ -6869,7 +6869,7 @@ impl<'p, 's> Checker<'p, 's> {
                 } else {
                     UniqueSymbolDeclaration::Member(file, m)
                 };
-                self.new_unique_es_symbol_type(symbol, name)
+                self.intern(TypeData::UniqueSymbol { symbol, name })
             }
             _ => TypeId::SYMBOL,
         }

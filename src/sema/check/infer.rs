@@ -757,7 +757,7 @@ impl<'p, 's> Checker<'p, 's> {
         matched.remove_from(sources, targets);
     }
 
-    /// `infer_from_matching` with `is_type_closely_matched_by`.
+    /// `inferFromMatchingTypes` with `isTypeCloselyMatchedBy`.
     fn infer_from_closely_matching(
         &mut self,
         n: &mut Inference,

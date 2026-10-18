@@ -5,7 +5,6 @@
 
 use crate::atom::{Atom, Interner};
 use crate::hir::{ExprId, FnId, ParamId, TypeNodeId, TypeParamId};
-use crate::jitter::{Jitter, Place};
 use crate::local::{Found, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
 use crate::session::{Arena, ArenaVec, Session};
@@ -1717,8 +1716,6 @@ pub struct TypeRecord<'s> {
     has_type_variables_in_alias_only: bool,
     /// See `Types::mark_from_type_node`.
     is_from_type_node: AtomicBool,
-    /// See `Types::mark_ordered_by_id`.
-    is_ordered_by_id: AtomicBool,
     /// See `Types::set_constrained_type_variable`: 0 until then, 1 for false, 2 for true.
     constrained_type_variable: std::sync::atomic::AtomicU8,
     /// `FirstRequest::WITHOUT_PRIMITIVE_UNION`
@@ -1828,7 +1825,7 @@ struct Summary {
     /// creation. See `fact` for the bits and `Types::add_facts` for what may be stored here. Facts
     /// learned about a task-local type aren't published with it.
     facts: AtomicU8,
-    /// The three `Rank` fields. `Rank::NONE` unless `TypeStore::orders_by_content`.
+    /// The three `Rank` fields.
     height: AtomicU32,
     place: AtomicU64,
     content: AtomicU64,
@@ -2002,7 +1999,6 @@ impl Record for TypeRecord<'_> {
             object_flags: ObjectFlags::empty(),
             has_type_variables_in_alias_only: false,
             is_from_type_node: AtomicBool::new(false),
-            is_ordered_by_id: AtomicBool::new(false),
             constrained_type_variable: AtomicU8::new(0),
             is_without_primitive_union: false,
             is_sorted_run: AtomicBool::new(false),
@@ -2013,14 +2009,13 @@ impl Record for TypeRecord<'_> {
 
 /// The published records of one kind. `find` is lock-free and doesn't write.
 ///
-/// `items` is read-only during a step. Only the merge step calls `add`.
-///
-/// In a store that `shares_records`, tasks add records while other tasks read:
+/// `add` is for the constants, before the first task. After `TypeStore::share_records`, tasks add records while other
+/// tasks read:
 /// - A task reserves a range of ids under a lock (`reserve`), then assigns them to its records one at a time. A single
 ///   counter shared by all threads would be written on every creation. Ids from different threads would also
 ///   interleave, so every table keyed by id would have cells from several threads in one cache line.
 /// - An id is final as soon as it's assigned, and doesn't reflect when its record was created. So nothing may depend on
-///   id order, which is why the store `orders_by_content`.
+///   id order, which is why types are ordered by `Types::content_order`.
 /// - `place` keeps at most one record per key at any time, so there's nothing to merge.
 struct Interned<'s, V> {
     index: Box<GrowingPlaces<&'s Session, INDEX_SHARDS>, &'s Session>,
@@ -2186,12 +2181,9 @@ impl<'s, V> Own<'s, V> {
     }
 }
 
-/// Controls whether a task finds and publishes records while other tasks run
-/// (`TypeStore::shares_records`).
+/// Controls whether a task publishes the records it creates.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Sharing {
-    /// No task publishes records while others run.
-    Off,
     /// The task finds records that other tasks publish. Records it creates stay task-local.
     Finds,
     /// The task publishes each record as it creates it, unless the record is bound.
@@ -2232,8 +2224,6 @@ pub struct OwnStore<'s> {
     /// The files that the task has visited and that nothing imports, indexed by `FileId`. No other
     /// task can reference a node or a symbol of such a file. Empty: nothing is bound.
     unimported_files: Bits,
-    /// See `Types::creation_order`.
-    has_ordered_by_own_id: Cell<bool>,
     /// See `Types::is_unresolved_name`.
     has_unresolved_names: Cell<bool>,
     /// See `Types::as_first_request`.
@@ -2249,9 +2239,6 @@ pub struct OwnStore<'s> {
     /// By kind, the records this task published that reference a node or symbol in one of `visited_files`, directly or
     /// through another record. Indexed by id.
     of_visited_files: [RefCell<Bits>; 5],
-    jitter: Jitter,
-    /// Number of times the task has reached a `Place`.
-    times_at_a_place: Cell<u64>,
     summaries: Mine<'s, Summary>,
 }
 
@@ -2270,16 +2257,13 @@ impl<'s> OwnStore<'s> {
             types: Own::new_in(arena, Some(published.types.items)),
             summaries,
             unimported_files: Bits(Vec::new()),
-            has_ordered_by_own_id: Cell::new(false),
             has_unresolved_names: Cell::new(false),
             first_request: Cell::new(FirstRequest::NONE),
-            sharing: Sharing::Off,
+            sharing: Sharing::Finds,
             ids: Default::default(),
             published: Default::default(),
             visited_files: Bits(Vec::new()),
             of_visited_files: std::array::from_fn(|_| RefCell::new(Bits(Vec::new()))),
-            jitter: Jitter::default(),
-            times_at_a_place: Cell::new(0),
         }
     }
 
@@ -2287,30 +2271,6 @@ impl<'s> OwnStore<'s> {
     pub fn set_sharing(&mut self, sharing: Sharing) {
         debug_assert!(self.is_empty());
         self.sharing = sharing;
-    }
-
-    pub fn set_jitter(&mut self, jitter: Jitter) {
-        self.jitter = jitter;
-    }
-
-    /// `task` must be unique to this task, so that no two tasks wait in the same pattern.
-    pub(crate) fn count_places_from(&self, task: u64) {
-        self.times_at_a_place.set(task << 24);
-    }
-
-    #[inline]
-    pub fn jitter(&self) -> Jitter {
-        self.jitter
-    }
-
-    /// Calls `Jitter::wait_at`. A task waits the same way in every run with the same seed.
-    #[inline]
-    pub(crate) fn wait_at(&self, place: Place) {
-        if self.jitter.seed != 0 {
-            let times = self.times_at_a_place.get().wrapping_add(1);
-            self.times_at_a_place.set(times);
-            self.jitter.wait_at(place, times);
-        }
     }
 
     #[inline]
@@ -2325,7 +2285,7 @@ impl<'s> OwnStore<'s> {
         published.set(published.get() + 1);
     }
 
-    /// Resets the store to what `new_in` returned, except for the jitter. The record tables keep their addresses and
+    /// Resets the store to what `new_in` returned. The record tables keep their addresses and
     /// part of their memory.
     pub fn clear(&mut self) {
         self.atoms.clear();
@@ -2335,17 +2295,15 @@ impl<'s> OwnStore<'s> {
         self.types.clear();
         self.summaries.clear();
         self.unimported_files.0.clear();
-        self.has_ordered_by_own_id.set(false);
         self.has_unresolved_names.set(false);
         self.first_request.set(FirstRequest::NONE);
-        self.sharing = Sharing::Off;
+        self.sharing = Sharing::Finds;
         self.ids = Default::default();
         self.published = Default::default();
         self.visited_files.0.clear();
         for records in &mut self.of_visited_files {
             records.get_mut().0.clear();
         }
-        self.times_at_a_place.set(0);
     }
 
     /// Call this before the task visits `file`.
@@ -2446,9 +2404,8 @@ fn intern_record<'s, V: Record, K>(
         }
         (record, Home::Published(id)) => {
             debug_assert!(!key_is_bound);
-            let id = published.place(spread, id, record);
-            own.wait_at(Place::RecordPublished);
-            id
+
+            published.place(spread, id, record)
         }
     }
 }
@@ -2471,8 +2428,7 @@ impl std::hash::Hash for Pairs<'_> {
 }
 
 /// Whether the type parameters are sorted by id without duplicates. That order makes equal sets of
-/// pairs intern as one mapper and lets `map` search. The merge step re-sorts the pairs: `follow`
-/// does not preserve the order of ids.
+/// pairs intern as one mapper and lets `map` search.
 #[inline]
 fn is_in_order(pairs: &[(TypeId, TypeId)]) -> bool {
     pairs.is_sorted_by(|a, b| a.0.arrival_order() < b.0.arrival_order())
@@ -2495,22 +2451,13 @@ fn put_in_order(pairs: &mut [(TypeId, TypeId)]) -> usize {
 }
 
 /// The shared store: the published types, signatures, type mappers and lists of index components.
-/// Read-only during a step: a lookup is lock-free and writes nothing. Task-local records are in the
-/// task's `OwnStore`. The only writers are `link`, at the barrier, and `Types::add_facts`.
+/// A lookup is lock-free and writes nothing. Tasks add records at any time (see `Interned`). The records that a task
+/// doesn't publish are in its `OwnStore`.
 ///
 /// - A record consists of its interning key and flags computed from the key, so it does not depend
 ///   on which task created it.
-/// - Published ids are deterministic for a given program: `link` numbers the new records by (task,
-///   index in the task's creation order). A task-local id sorts after every published one
-///   (`LOCAL`), in the task's creation order. So the order of ids is creation order, as in tsgo.
-/// - A new record never equals a published one. If everything it references were published, the
-///   lookup would have found it, and a new record that it references is in no published record. So
-///   duplicates exist only between the tasks of one step, and `link` merges them.
 /// - Anything that changes the behaviour of a type is in its interning key, or is computed from the
 ///   key.
-///
-/// In a store that `shares_records`, tasks also add records, at any time, and `link` has nothing to
-/// merge (see `Interned`). The second and third points don't apply there.
 pub struct TypeStore<'s> {
     session: &'s Session,
     types: Interned<'s, TypeRecord<'s>>,
@@ -2524,9 +2471,8 @@ pub struct TypeStore<'s> {
     string_literals: [ById<Atom, TypeId, Frozen, &'s Session>; 2],
     /// See `Types::is_unresolved_name`.
     has_unresolved_names: AtomicBool,
-    /// If `Some`, `Types::creation_order` is `Types::content_order` and every type has a `Rank`.
-    /// The interner provides the text of published atoms, which ranks are computed from.
-    texts: Option<Interner<'s>>,
+    /// Provides the text of published atoms, which ranks are computed from.
+    texts: Interner<'s>,
     /// Id ranges that tasks have returned, by pool, for `reserve_ids` to hand out again. The lock
     /// is also held while new ids are reserved.
     spare_ids: Guarded<[Vec<Placeholders<'s>>; ID_POOLS]>,
@@ -2601,9 +2547,8 @@ well_known! {
 
 impl TypeId {
     /// The id as a number, for set operations: sort to deduplicate, binary search for membership.
-    /// The id types do not implement `Ord`, so that a list stored in id order cannot be created by
-    /// accident: `follow` does not preserve that order, so the merge step has to re-sort such a
-    /// list. For creation order: `Types::creation_order`.
+    /// The id types do not implement `Ord`, so that nothing depends on id order by accident: which
+    /// of two types gets the lower id depends on timing. To order types: `Types::content_order`.
     #[inline]
     pub fn arrival_order(self) -> u32 {
         self.0
@@ -2680,17 +2625,8 @@ impl ComponentsId {
 }
 
 impl<'s> TypeStore<'s> {
-    pub fn new_in(session: &'s Session) -> Self {
-        Self::with_order_in(session, None)
-    }
-
-    /// Like `new_in`, but `Types::creation_order` is `Types::content_order` in this store. `atoms`
-    /// must be the program's interner.
-    pub fn ordered_by_content_in(session: &'s Session, atoms: Interner<'s>) -> Self {
-        Self::with_order_in(session, Some(atoms))
-    }
-
-    fn with_order_in(session: &'s Session, texts: Option<Interner<'s>>) -> Self {
+    /// `texts` must be the program's interner.
+    pub fn new_in(session: &'s Session, texts: Interner<'s>) -> Self {
         let summaries = Shared::new_in(session);
         let store = TypeStore {
             session,
@@ -2764,13 +2700,12 @@ impl<'s> TypeStore<'s> {
     }
 
     /// Adds to `summaries` those of the types with an id less than `below`, which are all stored.
-    /// Between steps, on one thread.
+    /// Before the first task, on one thread.
     fn summarize_types(&self, below: u32) {
         // `rank_of_type` needs a `Types`. An empty `OwnStore` will do, because published records
         // only reference published records.
-        let own = (self.orders_by_content() && self.summaries.len() < below)
-            .then(|| OwnStore::new_in(self.session.arena(), self));
-        let types = own.as_ref().map(|own| Types::new(self, own));
+        let own = OwnStore::new_in(self.session.arena(), self);
+        let types = Types::new(self, &own);
         for id in self.summaries.len()..below {
             // A record only references records with lower ids.
             let record = self.types.items.get(id);
@@ -2778,30 +2713,21 @@ impl<'s> TypeStore<'s> {
                 debug_assert!(member.0 < id);
                 (self.summaries.get(member.0).member_flags).load(Ordering::Relaxed)
             });
-            let rank = types.map_or(Rank::NONE, |types| types.rank_of_type(&record.created));
+            let rank = types.rank_of_type(&record.created);
             self.summaries.push(Summary::new(summary, rank));
         }
     }
 
-    /// See `Types::creation_order`.
-    #[inline]
-    pub fn orders_by_content(&self) -> bool {
-        self.texts.is_some()
-    }
-
-    /// After this call, a task with `Sharing::Publishes` publishes each record as it creates it (see `Interned`), and
-    /// `link` has nothing to merge. Call it after the last `publish_constant` and before the first task. The store must
-    /// order by content (`orders_by_content`).
+    /// After this call, a task with `Sharing::Publishes` publishes each record as it creates it (see `Interned`). Call it
+    /// after the last `publish_constant` and before the first task.
     pub fn share_records(&mut self) {
-        debug_assert!(self.orders_by_content());
         self.components.place_from_here();
         self.mappers.place_from_here();
         self.sigs.place_from_here();
         self.types.place_from_here();
     }
 
-    #[inline]
-    pub fn shares_records(&self) -> bool {
+    fn shares_records(&self) -> bool {
         self.types.first_placed != u32::MAX
     }
 
@@ -2818,7 +2744,6 @@ impl<'s> TypeStore<'s> {
         let mut ids = own.ids[pool].take();
         if ids.is_empty() {
             ids = self.reserve_ids(kind, pool);
-            own.wait_at(Place::IdsTaken);
         }
         let next = ids.take_first();
         own.ids[pool].set(ids);
@@ -3138,11 +3063,7 @@ impl<'p, 's> Types<'p, 's> {
         let is_unresolved_name = matches!(record.created.0, TypeData::UnresolvedName { .. });
         match &home {
             Home::Own { .. } => {
-                let orders_by_content = self.published.orders_by_content();
-                let rank = match orders_by_content {
-                    true => self.rank_of_type(&record.created),
-                    false => Rank::NONE,
-                };
+                let rank = self.rank_of_type(&record.created);
                 let index = self.own.summaries.push(Summary::new(summary, rank));
                 debug_assert_eq!(index | LOCAL, own_id);
                 if is_unresolved_name {
@@ -3546,17 +3467,6 @@ impl<'p, 's> Types<'p, 's> {
             ObjectFlags::HAS_ONLY_OWN_APPARENT_TYPES,
             has_only_own_apparent_types,
         );
-        // See `mark_ordered_by_id`.
-        let has_ordered_by_id = |list: &[TypeId]| {
-            let is_ordered_by_id =
-                |t: &TypeId| self.record(*t).is_ordered_by_id.load(Ordering::Relaxed);
-            list.iter().any(|t| t.is_local() && is_ordered_by_id(t))
-        };
-        let is_ordered_by_id = matches!(data, TypeData::Union(members) if has_ordered_by_id(members))
-            || matches!(
-                created.1.as_deref(),
-                Some(Provenance { origin: UnionOrigin::Union(types), .. }) if has_ordered_by_id(types)
-            );
         let first_request = self.own.first_request.get();
         let constrained_type_variable =
             if first_request.has(FirstRequest::CONSTRAINED_TYPE_VARIABLE) {
@@ -3571,7 +3481,6 @@ impl<'p, 's> Types<'p, 's> {
                 && is_union_or_intersection
                 && !flags.contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES),
             is_from_type_node: AtomicBool::new(first_request.has(FirstRequest::FROM_TYPE_NODE)),
-            is_ordered_by_id: AtomicBool::new(is_ordered_by_id),
             constrained_type_variable: std::sync::atomic::AtomicU8::new(constrained_type_variable),
             is_without_primitive_union: first_request.has(FirstRequest::WITHOUT_PRIMITIVE_UNION),
             is_sorted_run: AtomicBool::new(false),
@@ -3591,40 +3500,15 @@ impl<'p, 's> Types<'p, 's> {
         id
     }
 
-    /// The creation order of `a` and `b`, which is the order of their ids, as in tsgo. For the
-    /// places where tsgo compares ids: the final tie-break of `CompareTypes`, `t.id >= lastTypeId`
-    /// in `isDeeplyNestedType`, the swap of an identity comparison in `getRelationKey`.
-    ///
-    /// Between two published types it is final. If either is task-local, it is this task's order:
-    /// the merge step may assign the two ids in the opposite order, because one of them may be
-    /// merged with the record of a lower task. See `mark_ordered_by_id`.
-    ///
-    /// If the store `orders_by_content`, this is `content_order`, which is final for any two types,
-    /// so nothing is marked.
-    #[inline]
-    pub fn creation_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
-        if self.published.orders_by_content() {
-            return self.content_order(a, b);
-        }
-        if (a.0 | b.0) & LOCAL != 0 {
-            self.own.has_ordered_by_own_id.set(true);
-        }
-        a.0.cmp(&b.0)
-    }
-
     /// Compares `a.id` with `b.id` for `isDeeplyNestedType`, which treats a higher id as a sign of a newer instantiation,
-    /// one caused by recursion. Under `content_order` only the heights are compared. The instantiations of a recursion
+    /// one caused by recursion. Only the heights are compared. The instantiations of a recursion
     /// that steps from one literal type to the next all have the same height, and comparing their hashes would count
     /// only about half of them. The caller orders two types with the same height.
     #[inline]
     pub fn nesting_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
-        match self.published.orders_by_content() {
-            true => self.rank(a).height.cmp(&self.rank(b).height),
-            false => self.creation_order(a, b),
-        }
+        self.rank(a).height.cmp(&self.rank(b).height)
     }
 
-    /// Only valid if the store `orders_by_content`.
     #[inline]
     fn rank(&self, id: TypeId) -> Rank {
         let of = self.own.summaries.of_either(id.0);
@@ -3635,10 +3519,11 @@ impl<'p, 's> Types<'p, 's> {
         }
     }
 
-    /// Orders types by `Rank`: height, then place, then hash. The result depends only on the program, whereas id order
-    /// depends on which task created what first. It's a total order, because two types with equal ranks are ordered by
-    /// `compare_contents`.
-    fn content_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+    /// The order used where tsgo compares ids: the final tie-break of `CompareTypes`, and the swap of an identity
+    /// comparison in `getRelationKey`. Orders types by `Rank`: height, then place, then hash. The result depends only on
+    /// the program, whereas id order depends on which task created what first. It's a total order, because two types
+    /// with equal ranks are ordered by `compare_contents`.
+    pub fn content_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         if a == b {
             return std::cmp::Ordering::Equal;
         }
@@ -3689,7 +3574,7 @@ impl<'p, 's> Types<'p, 's> {
         if atom.is_own() {
             return self.own.atom_bytes(atom);
         }
-        (self.published.texts.as_ref()).map_or(&[][..], |texts| texts.bytes(atom))
+        self.published.texts.bytes(atom)
     }
 
     fn rank_of_type(&self, created: &Made) -> Rank {
@@ -3707,35 +3592,10 @@ impl<'p, 's> Types<'p, 's> {
         }
     }
 
-    /// Whether `creation_order` has been called with a task-local type since the last call to this
-    /// function.
-    #[inline]
-    pub fn take_has_ordered_by_own_id(&self) -> bool {
-        self.own.has_ordered_by_own_id.replace(false)
-    }
-
-    /// The position of `id` among the members of a union was decided using `creation_order` of
-    /// task-local types. Every union created with such a member, however it is created, is marked
-    /// too (`new_record`), and the merge step re-sorts its members and its origin by the published
-    /// ids.
-    pub fn mark_ordered_by_id(&self, id: TypeId) {
-        if id.0 & LOCAL != 0 {
-            let record = self.record(id);
-            record.is_ordered_by_id.store(true, Ordering::Relaxed);
-        }
-    }
-
-    /// See `mark_ordered_by_id`. Always false for a published type.
-    #[inline]
-    pub fn is_ordered_by_id(&self, id: TypeId) -> bool {
-        id.0 & LOCAL != 0 && self.record(id).is_ordered_by_id.load(Ordering::Relaxed)
-    }
-
     /// Marks the union `id` as a sorted run: its members can be merged with another union's members
     /// instead of being sorted again. See `Checker::add_in_order` for the conditions. The mark is
-    /// permanent. It depends only on the members, and when the merge step re-sorts them it sorts
-    /// the same set. So any task may set the mark at any time, even on a published record, and it's
-    /// published with the record. An unmarked union may qualify too. It's just sorted the slow way.
+    /// permanent and depends only on the members. So any task may set the mark at any time, even on
+    /// a published record. An unmarked union may qualify too. It's just sorted the slow way.
     #[inline]
     pub fn mark_sorted_run(&self, id: TypeId) {
         let record = self.record(id);
@@ -3770,7 +3630,6 @@ impl<'p, 's> Types<'p, 's> {
 
     pub fn intern(&self, mut data: TypeData<'s>) -> TypeId {
         self.drop_flag_without_effect(&mut data);
-        let shares_records = self.published.shares_records();
         let literal = match data {
             TypeData::StringLit { value, fresh } if !value.is_own() => {
                 Some((value, &self.published.string_literals[usize::from(fresh)]))
@@ -3781,9 +3640,7 @@ impl<'p, 's> Types<'p, 's> {
             && let Some(id) = known.get(&value)
         {
             // Another task may have just inserted it (see below). The fence makes that task's earlier writes visible.
-            if shares_records {
-                std::sync::atomic::fence(Ordering::Acquire);
-            }
+            std::sync::atomic::fence(Ordering::Acquire);
             return id;
         }
         // `getFreshTypeOfLiteralType` creates the fresh type from the regular one, and bigint
@@ -3803,7 +3660,6 @@ impl<'p, 's> Types<'p, 's> {
         }
         let id = self.intern_new((data, None));
         if let Some((value, known)) = literal
-            && shares_records
             && !id.is_local()
         {
             known.insert(value, id);
@@ -3915,8 +3771,7 @@ impl<'p, 's> Types<'p, 's> {
     /// `ObjectFlagsFromTypeNode`: `id` is the type of a type node. `first_new_type_id` was taken
     /// before it was resolved. `createTypeReferenceEx`
     /// sets the flags only on a type that it creates: one that an instantiation created earlier is
-    /// unchanged. If two tasks of a step create the type, the record of the lower task is
-    /// published, with its flag.
+    /// unchanged.
     pub fn mark_from_type_node(&self, id: TypeId, first_new_type_id: NewTypes) {
         if id.0 & LOCAL == 0 {
             return;
@@ -4996,7 +4851,7 @@ trait Hashing: Visitor {
     fn unordered<T: Follow>(&mut self, items: &[T]);
 }
 
-/// See `content_of_type`.
+/// Visits a type's key for a hash that doesn't depend on ids. A union is visited as a set.
 fn visit_type_as_content<V: Hashing>(created: &Made, content: &mut V) {
     match &created.0 {
         data @ TypeData::Union(members) => {
@@ -5411,13 +5266,13 @@ mod tests {
         let orders = [true, false].map(|is_reversed| {
             let session = Session::new();
             let atoms = Interner::new_in(&session);
-            let store = TypeStore::ordered_by_content_in(&session, atoms);
+            let store = TypeStore::new_in(&session, atoms);
             let own = OwnStore::new_in(session.arena(), &store);
             let types = Types::new(&store, &own);
             let (a, b) = make(types, &atoms, is_reversed);
             assert_ne!(a, b);
-            let orders = [types.creation_order(a, b), types.compare_contents(a, b)];
-            let reverse = [types.creation_order(b, a), types.compare_contents(b, a)];
+            let orders = [types.content_order(a, b), types.compare_contents(a, b)];
+            let reverse = [types.content_order(b, a), types.compare_contents(b, a)];
             assert_eq!(orders.map(std::cmp::Ordering::reverse), reverse);
             assert!(orders.iter().all(|order| order.is_ne()));
             orders
@@ -5450,7 +5305,7 @@ mod tests {
     #[test]
     fn a_type_comes_after_what_it_is_made_of() {
         let session = Session::new();
-        let store = TypeStore::ordered_by_content_in(&session, Interner::new_in(&session));
+        let store = TypeStore::new_in(&session, Interner::new_in(&session));
         let own = OwnStore::new_in(session.arena(), &store);
         let types = Types::new(&store, &own);
         // Create outer types before inner ones where possible: `keyof keyof number` is created before `keyof string`.
@@ -5463,14 +5318,14 @@ mod tests {
             (TypeId::NUMBER, outer),
             (of_string, outer),
         ] {
-            assert!(types.creation_order(part, whole).is_lt());
-            assert!(types.creation_order(whole, part).is_gt());
+            assert!(types.content_order(part, whole).is_lt());
+            assert!(types.content_order(whole, part).is_gt());
             assert!(types.nesting_order(whole, part).is_gt());
             assert!(types.nesting_order(part, whole).is_lt());
         }
         // Same height.
         assert!(types.nesting_order(of_string, of_number).is_eq());
-        assert!(types.creation_order(outer, outer).is_eq());
+        assert!(types.content_order(outer, outer).is_eq());
     }
 
     #[test]
@@ -5565,7 +5420,7 @@ mod tests {
     #[test]
     fn a_union_has_one_rank_however_its_members_are_ordered() {
         let session = Session::new();
-        let store = TypeStore::ordered_by_content_in(&session, Interner::new_in(&session));
+        let store = TypeStore::new_in(&session, Interner::new_in(&session));
         let own = OwnStore::new_in(session.arena(), &store);
         let types = Types::new(&store, &own);
         let rank_of = |members: [TypeId; 3]| {
@@ -5579,7 +5434,7 @@ mod tests {
     }
 
     fn sharing_store<'s>(session: &'s Session, atoms: Interner<'s>) -> TypeStore<'s> {
-        let mut store = TypeStore::ordered_by_content_in(session, atoms);
+        let mut store = TypeStore::new_in(session, atoms);
         store.share_records();
         store
     }

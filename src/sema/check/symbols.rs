@@ -5994,10 +5994,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Iter3 {
         // `getPropertyNameForKnownSymbolName`
         let name = if is_async {
-            self.resolve_known_symbol(b"asyncIterator");
             known::sym_async_iterator
         } else {
-            self.resolve_known_symbol(b"iterator");
             known::sym_iterator
         };
         let Some((method, false)) = self.declared_property(ty, name) else {

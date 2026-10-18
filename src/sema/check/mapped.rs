@@ -875,11 +875,7 @@ impl<'p, 's> Checker<'p, 's> {
                 undefined: access_flags.contains(AccessFlags::INCLUDE_UNDEFINED),
             });
             return Some(match alias {
-                Some((alias, type_arguments)) => {
-                    // `getIndexedAccessKey`
-                    self.get_symbol_id(alias);
-                    self.with_alias(deferred, alias, type_arguments)
-                }
+                Some((alias, type_arguments)) => self.with_alias(deferred, alias, type_arguments),
                 None => deferred,
             });
         }

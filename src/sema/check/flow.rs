@@ -1641,23 +1641,6 @@ impl<'p, 's> Checker<'p, 's> {
         (self.is_constant_key(file, variable)).then_some(AccessKey::Variable(variable))
     }
 
-    /// `writeFlowCacheKey`, only its calls of `writeSymbol`: for the leftmost identifier, then for
-    /// the variable of each `[k]`. A key that fails has written none.
-    fn get_symbol_ids_of_flow_reference(&mut self, reference: &Reference) {
-        let unnamed = |step: &&Step| step.name.get() == AccessedName::None;
-        let variables = reference.path.iter().filter(unnamed);
-        for written in std::iter::once(reference.root).chain(variables.map(|step| step.variable)) {
-            let symbol = match written {
-                Root::Symbol(symbol) => Some(self.files().sym(reference.file, symbol)),
-                Root::Global(name) => self.files().global(name, SymFlags::VALUE),
-                _ => None,
-            };
-            if let Some(symbol) = symbol {
-                self.get_symbol_id(symbol);
-            }
-        }
-    }
-
     /// `getFlowReferenceKey(f) != nonDottedNameCacheKey`
     fn has_flow_reference_key(&mut self, reference: &Reference) -> bool {
         let unkeyed = match reference.unkeyed {
@@ -6100,7 +6083,6 @@ impl<'p, 's> Checker<'p, 's> {
             return is_checked;
         }
         let rank = files.rank_of_file(file);
-        // A checker of a `checkerPool` has its own marks, and checks only its own files.
         let is_ahead = (self.task.file).is_some_and(|visited| files.rank_of_file(visited) > rank);
         if is_ahead {
             marked.insert(&self.task, (file, Node::NONE), false, Stored::new());
@@ -6861,9 +6843,7 @@ impl<'p, 's> Checker<'p, 's> {
                         Some(has_key) => has_key,
                         None => {
                             let has_key = self.has_flow_reference_key(&walk.reference);
-                            if has_key && self.hands_out_symbol_ids() {
-                                self.get_symbol_ids_of_flow_reference(&walk.reference);
-                            }
+
                             walk.has_reference_key = Some(has_key);
                             has_key
                         }

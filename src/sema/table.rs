@@ -54,8 +54,8 @@ pub trait Cell: Zeroed + Sync + Send {
     type Raw: Copy + PartialEq + Default;
     fn widen(raw: Self::Raw) -> u64;
     fn narrow(raw: u64) -> Self::Raw;
-    /// A plain load. No cell is written while tasks run, and a barrier has ordered the earlier
-    /// writes.
+    /// A relaxed load, for a table that no thread is writing. The caller orders earlier writes
+    /// before it.
     fn load(&self) -> Self::Raw;
     /// Returns the value the cell holds afterwards: `raw`, or the value that was already there.
     fn put_if_empty(&self, raw: Self::Raw) -> Self::Raw;
@@ -257,7 +257,7 @@ macro_rules! packed_ids {
         }
     )*};
 }
-/// Files and nodes are numbered before the first step. For `ByKey` keys that contain one alongside
+/// Files and nodes are numbered before the first task. For `ByKey` keys that contain one alongside
 /// an id.
 impl MaybeLocal for FileId {
     #[inline]
@@ -390,15 +390,14 @@ pub trait Policy {
     const SLOT: u32 = NO_SLOT;
 }
 
-/// Written before the first step or at a barrier. Read-only while tasks run, so `get` is plain
-/// loads. For the tables of the loader, the merge step and the type store. Several threads of a
-/// merge step can fill one concurrently: a cell is written with a compare-and-swap, and the first
-/// value wins. A barrier separates every read from a write by another thread.
+/// Not buffered: `insert` writes the shared cell with a compare-and-swap, and the first value wins,
+/// so several threads can fill one table concurrently. `get` is plain loads, so the caller orders
+/// another thread's write before its read. For the tables of the loader and the type store.
 pub struct Frozen;
 
-/// The default for a field of `Program`. The table holds the shared part, which only `publish`
-/// writes, at a barrier. A task's stores go to its task-local part (`crate::local::Half`), which no
-/// other task sees. `Task::finish` passes it to the barrier.
+/// The default for a field of `Program`. A task's stores go to its task-local part
+/// (`crate::local::Half`), which no other task sees. The table holds the shared part. Commits write
+/// to it (`Publish::store_logged`), and so does `insert` where `Task::may_write_at_once` allows it.
 pub struct Buffered<W: Location = AtRunTime>(PhantomData<fn() -> W>);
 
 /// Where a task has the task-local part of a `Buffered` table.
@@ -616,8 +615,7 @@ impl<K: NodeKey, A: Alloc> ByNode<K, RawWord, Frozen, A> {
 }
 
 /// The index of a value in an indirect table. With `LOCAL`: in the task-local part. A handle is not
-/// a value: it is not an id of the type store, and the merge of a task has no mapping for it. See
-/// `ByIdIndirect::hold_handles_of`.
+/// a value: it is not an id of the type store. See `ByIdIndirect::hold_handles_of`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Handle(pub u32);
 packed_ids!(Handle);
@@ -700,7 +698,8 @@ pub struct ByIdIndirect<I, T, P: Policy = Frozen, A: Alloc = Global> {
     handles: ById<I, Handle, P, A>,
     kept: AppendVec<T, A>,
     in_task: Slot<IndirectInTask<T>>,
-    holding: Holding<T>,
+    /// See `hold_handles_of`.
+    held_handle: Option<fn(&mut T) -> &mut Handle>,
 }
 
 impl<I: Id, T, P: Policy, A: Alloc + Default> Default for ByIdIndirect<I, T, P, A> {
@@ -715,7 +714,7 @@ impl<I: Id, T, P: Policy, A: Alloc> ByIdIndirect<I, T, P, A> {
             handles: ById::new_in(alloc.clone()),
             kept: AppendVec::new_in(alloc),
             in_task: Slot::NONE,
-            holding: Holding::default(),
+            held_handle: None,
         }
     }
 }
@@ -840,17 +839,16 @@ impl<I: Id, V: Packed, A: Alloc> ById<I, V, Frozen, A> {
     }
 }
 
-// ───────────────────────────── `Buffered`: during a step ─────────────────────────────
+// ───────────────────────────── `Buffered`: what a task reads and writes ─────────────────────────────
 //
-// `get`: a hit on a published entry is one plain load. The shared part is read-only during a step,
-// and the barrier before the step has ordered the writes to it, so the load is relaxed. The
-// task-local part is queried only if the cell is empty. An id with `LOCAL` has no shared cell: it
-// is looked up in the dense task-local part.
+// `get`: a hit on a published entry is one load. The task-local part is queried only if the cell is
+// empty. An id with `LOCAL` has no shared cell: it is looked up in the dense task-local part.
 // `insert`: stores into the task-local part. It does not overwrite an existing entry, published or
 // not, and returns the stored value, which `get` returns from then on.
 // `rewrite`: replaces the task-local entry. A published entry is unchanged.
 //
-// For a task that sees commits (`Task::view`) the shared part is written while it reads, so its loads are `Acquire`, and:
+// A checker without a task runs while nothing commits, so its loads are relaxed. For a task that sees commits
+// (`Task::view`) the shared part is written while it reads, so its loads are `Acquire`, and:
 // - A published entry can turn up at any time. `get` returns it from then on, also if the task has an entry of its own by
 //   then.
 // - An entry under a node or a symbol that a commit has stored which the task does not see in that file counts as absent,
@@ -1147,10 +1145,8 @@ impl<I: Id, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ById<I, V, Buffe
         if own != 0 && self.seen(task, number) == 0 {
             return own;
         }
-        task.own.wait_at(crate::jitter::Place::BeforeEntry);
-        let held = self.cells.cell(number).put_if_empty(raw);
-        task.own.wait_at(crate::jitter::Place::AfterEntry);
-        held
+
+        self.cells.cell(number).put_if_empty(raw)
     }
 }
 
@@ -1333,8 +1329,8 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
             return self.handles.insert_for_this_task(task, key, kept);
         }
         // A handle with `LOCAL` means nothing to another task.
-        let holds_own = (self.holding.holds)
-            .is_some_and(|(_, field)| field(&mut value).local_number().is_some());
+        let holds_own =
+            (self.held_handle).is_some_and(|field| field(&mut value).local_number().is_some());
         if !is_for_all || holds_own {
             if is_for_all {
                 task.hold_back();
@@ -1362,18 +1358,16 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
         self.insert_ref(task, key, value, stored).1.clone()
     }
 
-    /// The values of this table hold handles of `held`, in the field that `field` returns. So an
-    /// entry of this table is passed to the barrier only if the entry of `held` is, and one thread
-    /// applies `held` and then this table, and stores the winning handle into the field. `held`
-    /// comes before this table in `buffered_fields!`. Call after `set_slot`.
+    /// The values of this table hold handles of `held`, in the field that `field` returns. A value
+    /// whose handle is task-local stays in the task. `held` comes before this table in
+    /// `buffered_fields!`. Call after `set_slot`.
     pub(crate) fn hold_handles_of<J: Id, U, X: Location>(
         &mut self,
-        held: &mut ByIdIndirect<J, U, Buffered<X>, A>,
+        held: &ByIdIndirect<J, U, Buffered<X>, A>,
         field: fn(&mut T) -> &mut Handle,
     ) {
         assert!(held.handles.slot < self.handles.slot);
-        held.holding.is_held = true;
-        self.holding.holds = Some((held.handles.slot, field));
+        self.held_handle = Some(field);
     }
 }
 
@@ -1403,9 +1397,7 @@ where
         if stays_in_task(task, key) {
             return Err(false);
         }
-        task.own.wait_at(crate::jitter::Place::BeforeEntry);
         let is_first = self.published.add_if_absent(spread, key, value);
-        task.own.wait_at(crate::jitter::Place::AfterEntry);
         if is_first {
             return Ok(value);
         }
@@ -1495,9 +1487,8 @@ where
             .ok_or(spread)
     }
 
-    /// `insert`, for a key for which `get_or_hash` has returned `spread` in this task: nothing is
-    /// published during a step, so it is still not among the published entries. If a commit has
-    /// stored one in the meantime, `get` returns that one from now on.
+    /// `insert`, for a key for which `get_or_hash` has returned `spread` in this task. If a commit
+    /// has stored an entry in the meantime, `get` returns that one from now on.
     #[inline]
     pub fn insert_absent(
         &self,
@@ -1517,9 +1508,9 @@ where
     }
 }
 
-// ───────────────────────────── `Buffered`: the end of a task, and the barrier ─────────────────────────────
+// ───────────────────────────── `Buffered`: commits ─────────────────────────────
 
-/// The interface of a `Buffered` table used by `Task::finish` and `publish`.
+/// The interface of a `Buffered` table that a commit uses.
 pub(crate) trait Publish<'s>: Sync {
     fn slot(&self) -> u32;
 
@@ -1529,13 +1520,10 @@ pub(crate) trait Publish<'s>: Sync {
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool;
 }
 
-/// The shared part of a table with one cell per key, as used at the end of a task and at the
-/// barrier. In an entry passed to the barrier a key is one number: the index of the node in the
-/// concatenation of all nodes, or the number of the id.
+/// The shared part of a table with one cell per key, as a commit uses it. A key of the shared part
+/// is one number: the index of the node in the concatenation of all nodes, or the number of the id.
 pub(crate) trait Dense: Sync {
     type Value: Packed<Cell = AtomicU32>;
-    /// The type that a key passed to the barrier represents, for the digest.
-    type Key: Follow;
     fn table_slot(&self) -> u32;
     /// 0: nothing.
     fn load(&self, key: u32) -> u32;
@@ -1554,8 +1542,6 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
     for ByNode<K, V, Buffered<W>, A>
 {
     type Value = V;
-    /// The numbering of files and nodes is deterministic for a given program.
-    type Key = u32;
 
     fn table_slot(&self) -> u32 {
         self.slot
@@ -1610,7 +1596,6 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
     for ById<I, V, Buffered<W>, A>
 {
     type Value = V;
-    type Key = I;
 
     fn table_slot(&self) -> u32 {
         self.slot
@@ -1677,8 +1662,7 @@ fn store_logged_handle<D: Dense<Value = Handle>>(
     store_logged_cell(handles, task, key, number)
 }
 
-/// A table whose values fit in a cell. The entries passed to the barrier: `Vec<(u32, u32)>`, a key
-/// and a packed value.
+/// A table whose values fit in a cell.
 impl<'s, D: Dense<Value: Follow>> Publish<'s> for D {
     fn slot(&self) -> u32 {
         self.table_slot()
@@ -1686,28 +1670,6 @@ impl<'s, D: Dense<Value: Follow>> Publish<'s> for D {
 
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool {
         store_logged_cell(self, task, key, number)
-    }
-}
-
-/// How the handles of one indirect table are translated inside the values of another:
-/// `ByIdIndirect::hold_handles_of`.
-///
-/// `finish` of the held table records which task-local handles are passed to the barrier, and at
-/// which index. `finish` of the holder drops an entry whose handle is not passed, and otherwise
-/// stores the index into the field, with `LOCAL`. `apply` of the held table stores the published
-/// handle in `handles[task][place]`: that of the entry if it won, else the winner's. `apply` of the
-/// holder, which the same thread calls next, stores that handle into the field.
-struct Holding<T> {
-    is_held: bool,
-    holds: Option<(u32, fn(&mut T) -> &mut Handle)>,
-}
-
-impl<T> Default for Holding<T> {
-    fn default() -> Self {
-        Holding {
-            is_held: false,
-            holds: None,
-        }
     }
 }
 

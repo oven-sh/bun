@@ -25,7 +25,6 @@ use bun_sema::check::{
 };
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
-use bun_sema::jitter::Jitter;
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{
@@ -442,14 +441,11 @@ const RUNS_PER_THREAD: usize = 4;
 /// How a request is run.
 #[derive(Clone, Copy)]
 pub struct PlanOptions {
-    /// For tests of `shares_at_once` and `has_no_steps`.
-    pub jitter: Jitter,
     /// How many projects of a `tsc -b` run are loaded or checked at the same time, at most, if each reads the sources of
     /// what it references. Otherwise four times as many. Each occupies memory.
     pub projects_at_once: usize,
     /// `Request::after_file` is only called for the files that are checked, not at the end for the
-    /// declaration files and the JSON files that are not. Then nothing reads what the last step
-    /// publishes, so it publishes nothing. The declaration files of the project itself, which are
+    /// declaration files and the JSON files that are not. The declaration files of the project itself, which are
     /// not in the default library or in `node_modules`, count as checked even with `skipLibCheck`,
     /// which still means that nothing is reported for them.
     pub after_file_is_for_checked_files: bool,
@@ -503,7 +499,6 @@ pub struct PlanOptions {
 impl Default for PlanOptions {
     fn default() -> PlanOptions {
         PlanOptions {
-            jitter: Jitter::default(),
             projects_at_once: 4,
             after_file_is_for_checked_files: false,
             checks_only_named: false,
@@ -895,7 +890,7 @@ pub struct Request<'a> {
     /// Of all loaded files, only those whose path contains this are checked. For investigating one
     /// file of a large project.
     pub only: Option<&'a [u8]>,
-    /// The order in which the tasks of a step are started. 1: the largest first. Any other odd
+    /// The order in which the files are queued. 1: the largest first. Any other odd
     /// number: by index * `order` (mod 2^32), a fixed permutation. The output does not depend on
     /// it. For tests of that property.
     pub order: u32,
@@ -914,8 +909,8 @@ pub struct Request<'a> {
     /// Called with it again when all of it is checked.
     pub checked: Option<&'a (dyn Fn(&Program) + Sync)>,
     /// Called for each file right after it is checked, on the thread that checked it, while the types that are local to the file
-    /// are still alive. The way to read the type of every expression without `retains_everything`. An invalid task is retried
-    /// (`Program::validate`), so this can be called more than once for a file: the last call counts.
+    /// are still alive. The way to read the type of every expression without `retains_everything`. A discarded task's files are
+    /// rechecked, so this can be called more than once for a file: the last call counts.
     pub after_file: Option<&'a (dyn Fn(&mut bun_sema::check::Checker<'_, '_>, FileId) + Sync)>,
     /// Called with the path and the text of each declaration file that a project of a `tsc -b` run
     /// emits for the projects that reference it.
@@ -3828,8 +3823,6 @@ fn check_named_files(
         || request.loaded.is_some()
         || request.checked.is_some()
         || request.after_file.is_some();
-    project.options.orders_types_by_content = true;
-    project.options.shares_at_once = true;
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that is allocated in it, so it is dropped last.
@@ -3877,7 +3870,6 @@ fn check_named_files(
     // at once. `Program::release` frees the little that is on the regular heap.
     let files = session.arena().alloc(files);
     let root = session.arena().alloc(Program::new(session, files));
-    root.set_jitter(request.plan_options.jitter);
     let program: &Program = root;
     report.files_loaded = program.files.modules.len();
     report.load_time = started.elapsed();
@@ -4005,8 +3997,8 @@ fn check_named_files(
     report.files_checked = to_check.len();
     // `SkipTypeChecking`: besides its syntax, such a file only has what `Emit` reports, which is
     // called after the semantic and the global diagnostics of the whole program are collected. So
-    // these files come after the plan, or before it under `Options::emits_first`. If there are no
-    // others, the plan is theirs.
+    // these files come after the type-checked ones, or before them under `Options::emits_first`. If
+    // there are no others, they go through the queue themselves.
     // A `Checker` is about 30 KB. Boxing keeps this function's stack frame small.
     let boxed_checker = || Box::new(program.checker());
     let checker = boxed_checker();
@@ -4147,7 +4139,7 @@ fn check_named_files(
     }
     let free_trees = |files: Vec<FileId>| {
         for file in files {
-            // SAFETY: the only task that reads the HIR has ended and will not be retried.
+            // SAFETY: the only task that reads the HIR has ended, and its files won't be rechecked.
             unsafe { program.files.free_tree(file) };
         }
     };
@@ -4231,7 +4223,7 @@ fn check_named_files(
         _ => threads,
     };
     let rounds: Guarded<Vec<RoundReport>> = Guarded::new(Vec::new());
-    // For every task since the last barrier: wall time, the number of files, the index of the first file.
+    // For every task of the round: wall time, the number of files, the index of the first file.
     let task_times: Guarded<Vec<(Duration, usize, usize)>> = Guarded::new(Vec::new());
     // The files of the tasks that were lost.
     let lost: Guarded<Vec<usize>> = Guarded::new(Vec::new());
@@ -4347,7 +4339,6 @@ fn check_named_files(
             lost.swap_remove(at);
             Some(file)
         };
-        // As in `run_round`.
         let is_read_afterwards = request.retains_everything
             || request.after_file.is_some()
                 && !request.plan_options.after_file_is_for_checked_files;

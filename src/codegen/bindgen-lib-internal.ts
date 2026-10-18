@@ -209,13 +209,6 @@ export abstract class Type {
   get conversionThrows(): boolean {
     return true;
   }
-  /** A value it refuses is reported by the conversion context, which is what `expected` words. */
-  get reportsThroughContext(): boolean {
-    const convert = this.convertsInPlace
-      ? this.cppConvertInto("target", "value", "\0", "", "")
-      : this.cppConvert("value", "\0", "");
-    return this.conversionThrows && convert.includes("\0");
-  }
   /** Holds a JS value: the Rust type is branded with the call. */
   get holdsJSValue(): boolean {
     return this.dependencies.some(type => type.holdsJSValue);
@@ -1668,7 +1661,6 @@ export class Signature {
     for (const [name, types] of Object.entries(expected)) {
       assert(name in args, `expected: ${name} is not an argument`);
       assert(types.length > 0, `expected: ${name} expects nothing`);
-      assert(args[name].reportsThroughContext, `expected: ${name} is of a type that does not use it`);
     }
     this.returns = options.returns ?? new UnitType("undefined");
     this.capability = options.capability ?? "none";

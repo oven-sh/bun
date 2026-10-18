@@ -11,6 +11,8 @@ std::span<char8_t> JSStringUTF8View::tryAllocate(size_t size)
     if (size <= m_inlineBuffer.size())
         return m_inlineBuffer;
     m_heapBuffer.reset(static_cast<char8_t*>(WTF::UniqueArrayMalloc::tryMalloc(size)));
+    if (!m_heapBuffer)
+        return {};
     return { m_heapBuffer.get(), size };
 }
 

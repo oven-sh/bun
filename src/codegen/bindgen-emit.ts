@@ -590,7 +590,9 @@ function cppCallBody(signature: Signature, symbol: string, leading: readonly str
     if (typeof expected === "string") {
       lines.push(cppStaticContext(ctx, `ArgumentMessageContext { ${asciiLiteral(name)}, ${asciiLiteral(expected)} }`));
     } else if (expected) {
-      lines.push(`static constexpr WTF::ASCIILiteral expected${i}[] = { ${expected.map(asciiLiteral).join(", ")} };`);
+      lines.push(
+        `[[maybe_unused]] static constexpr WTF::ASCIILiteral expected${i}[] = { ${expected.map(asciiLiteral).join(", ")} };`,
+      );
       // It holds the argument, so it is made where a conversion takes it.
       ctx = `Bun::Bindgen::asLvalue(Bun::Bindgen::NodeArgumentContext { ${asciiLiteral(name)}, expected${i}, argument${i}.value() })`;
     } else {

@@ -1,0 +1,20 @@
+--- a/lsqpack.c
++++ b/lsqpack.c
+@@ -4039,7 +4039,16 @@
+                 read_ctx->hbrc_parse = parse_header_data;
+                 read_ctx->hbrc_parse_ctx_u.data.state
+                                                 = DATA_STATE_NEXT_INSTRUCTION;
+-                if (end - buf)
++                /* bun: a field section can have no field lines (RFC 9204
++                 * Section 4.5), and lsqpack_enc_end_header() writes one for
++                 * an empty header list.  When the prefix is the whole block,
++                 * let parse_header_data() finish it.  LQRHS_NEED here becomes
++                 * LQRHS_ERROR in qdec_read_header(), and lsquic then closes
++                 * the connection with H3 error 0x200.  Not fixed upstream.
++                 * The refusal is recorded in
++                 * https://github.com/litespeedtech/ls-qpack/issues/90#issuecomment-5472689782
++                 */
++                if (end - buf || read_ctx->hbrc_size == 0)
+                     return parse_header_data(dec, read_ctx, buf, end - buf);
+                 else
+                     return LQRHS_NEED;

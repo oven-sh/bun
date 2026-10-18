@@ -117,10 +117,14 @@ public:
             String load;
         };
         Vector<ModuleMockWithTurn> moduleMocksWithTurn = {};
-        // Reactions that giveTurns() left behind carry the number it had then, and do nothing if it has moved on.
-        unsigned turnsGiven = 0;
+        // The reactions that rankWaitingModuleMocks() leaves behind carry the number it had then, and do nothing if it has moved on.
+        unsigned timesRanked = 0;
+        // How many loads it found that were still being fetched. The end of each ranks again.
+        unsigned loadsBeingFetched = 0;
+        // A load has been asked for that it doesn't know of.
+        bool hasNewLoad = false;
         bool willGiveTurns = false;
-        // Since the waiting mocks were ranked, a module has left the registry, so a load may be fetching it again, or another load asks for one of them.
+        // Something has happened that the ranks don't know of: a mock or a factory asks for a module, or a module has left the registry.
         bool ranksAreStale = false;
         WTF::UncheckedKeyHashSet<String> modulesGivenTimeToRequestImports = {};
         // The first module of each load that import() or a factory started, oldest first.

@@ -3758,7 +3758,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
     if (isImportCall) [[unlikely]] {
         globalObject->onLoadPlugins.keyOfImportCall = resolved;
-        globalObject->onLoadPlugins.modulesAskedFor.add(resolved);
+        if (globalObject->onLoadPlugins.modulesAskedFor.add(resolved).isNewEntry)
+            globalObject->onLoadPlugins.hasNewLoad = true;
     }
     return resolvedKey;
 }

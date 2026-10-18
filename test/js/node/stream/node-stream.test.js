@@ -1434,6 +1434,66 @@ describe("webstreams adapters (Node v26 sync)", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  // The adapter must not touch its controller once the web side is done.
+  // Both cases throw from an event handler, so user code cannot catch them.
+  // Upstream: nodejs/node#64161 and nodejs/node#62773.
+  describe.concurrent("adapter does not throw after the web side is done", () => {
+    it("Duplex.toWeb: closing the writer of a half-open duplex after the readable ended", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            import { Duplex } from "node:stream";
+            const duplex = new Duplex({
+              allowHalfOpen: false,
+              read() {},
+              write(chunk, encoding, callback) { callback(); },
+              final(callback) { setImmediate(callback); },
+            });
+            const { readable, writable } = Duplex.toWeb(duplex);
+            duplex.push(null);
+            duplex.on("close", () => console.log("close event"));
+            const { done } = await readable.getReader().read();
+            await writable.getWriter().close();
+            console.log("close resolved, done:" + done);
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: stdout, err: stderr }).toEqual({ out: "close resolved, done:true\nclose event\n", err: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    it("Readable.toWeb: buffered data that flows after cancel()", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            import { PassThrough, Readable } from "node:stream";
+            const source = new PassThrough({ highWaterMark: 4 });
+            const reader = Readable.toWeb(source, { strategy: { highWaterMark: 1 } }).getReader();
+            for (let i = 0; i < 8; i++) source.write("xxxx");
+            reader.read();
+            await Promise.resolve();
+            source.on("close", () => console.log("close event"));
+            await reader.cancel();
+            for (let i = 0; i < 8; i++) source.write("yyyy");
+            console.log("cancel resolved, destroyed:" + source.destroyed);
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: stdout, err: stderr }).toEqual({ out: "cancel resolved, destroyed:true\nclose event\n", err: "" });
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 for (const size of [0x10, 0xffff, 0x10000, 0x1f000, 0x20000, 0x20010, 0x7ffff, 0x80000, 0xa0000, 0xa0010]) {

@@ -21,31 +21,62 @@ describe.skipIf(isWindows)("process.stdout/stderr with no FileSink", () => {
   };
   const EPIPE6 = ["EPIPE", "EPIPE", "EPIPE", "EPIPE", "EPIPE", "EPIPE"];
 
+  // Runs a scenario whose writes fail: the parent closes its end of the stream before the child writes.
+  async function withReaderGone(which: "stdout" | "stderr", scenario: string) {
+    await using proc = Bun.spawn({
+      cmd: atFdLimit(fixture, which, scenario),
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [data, report] = which === "stdout" ? [proc.stdout, proc.stderr] : [proc.stderr, proc.stdout];
+    await data.cancel();
+    proc.stdin.write("go");
+    await proc.stdin.end();
+    const [output, exitCode] = await Promise.all([report.text(), proc.exited]);
+    return { report: reportIn(output), exitCode };
+  }
+
   test.each(["stdout", "stderr"] as const)(
     "process.%s: every write gets its callback when the reader is gone",
     async which => {
-      await using proc = Bun.spawn({
-        cmd: atFdLimit(fixture, which, "failed-writes"),
-        env: bunEnv,
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
+      expect(await withReaderGone(which, "failed-writes")).toEqual({
+        report: { type: "fs", sink: false, callbacks: EPIPE6, errors: ["EPIPE", "EPIPE"], writableLength: 0 },
+        exitCode: 0,
       });
-      const [data, report] = which === "stdout" ? [proc.stdout, proc.stderr] : [proc.stderr, proc.stdout];
-      await data.cancel();
-      proc.stdin.write("go");
-      await proc.stdin.end();
-      const [output, exitCode] = await Promise.all([report.text(), proc.exited]);
-      expect(reportIn(output)).toEqual({
-        type: "fs",
-        sink: false,
-        callbacks: EPIPE6,
-        errors: ["EPIPE", "EPIPE"],
-        writableLength: 0,
-      });
-      expect(exitCode).toBe(0);
     },
   );
+
+  // Node never runs these end() callbacks: its reset leaves errorEmitted set, and end() waits on it.
+  test("process.stdout: end() after a failed write finishes and stays final", async () => {
+    expect(await withReaderGone("stdout", "failed-write-then-end")).toEqual({
+      report: {
+        type: "fs",
+        sink: false,
+        callbacks: ["EPIPE", "ERR_STREAM_WRITE_AFTER_END"],
+        errors: ["EPIPE", "ERR_STREAM_WRITE_AFTER_END"],
+        end: null,
+        finished: null,
+        writableEnded: true,
+      },
+      exitCode: 0,
+    });
+  });
+
+  test("process.stdout: end() after a failed corked batch finishes", async () => {
+    expect(await withReaderGone("stdout", "failed-batch-then-end")).toEqual({
+      report: {
+        type: "fs",
+        sink: false,
+        callbacks: ["EPIPE", "EPIPE", "EPIPE"],
+        errors: ["EPIPE", "EPIPE", "EPIPE"],
+        end: null,
+        writableEnded: true,
+      },
+      exitCode: 0,
+    });
+  });
 
   // Pinned for a stream with a FileSink in process-stdout-write-after-end.test.ts.
   test("process.stdout: a write after a finished end() is rejected", async () => {
@@ -163,22 +194,23 @@ describe.skipIf(isWindows)("process.stdout/stderr with no FileSink", () => {
   });
 
   // Bun.file(1).writer() puts O_NONBLOCK on the stdout description and stays open, so the stream meets EAGAIN once
-  // the pipe is full. The parent starts to read only after the child has begun its write.
+  // the pipe is full. The parent starts to read only after the child has reported, just before its write.
   test("process.stdout: a write larger than a non-blocking pipe waits for the reader", async () => {
     const size = 1 << 20;
     const script = /* js */ `
       const fs = require("fs");
       void fs.WriteStream;
-      const writer = Bun.file(1).writer();
+      globalThis.writer = Bun.file(1).writer();
       const held = [];
       try {
         for (;;) held.push(fs.openSync("/dev/null", "r"));
       } catch {}
       const stdout = process.stdout;
       for (const fd of held) fs.closeSync(fd);
-      fs.writeSync(2, "writing\\n");
+      const sink = Object.getOwnPropertySymbols(stdout).some(s => s.description === "kWriteStreamFastPath");
+      fs.writeSync(2, JSON.stringify({ type: stdout._type, sink }) + "\\n");
       stdout.write(Buffer.alloc(${size}, "x"));
-      process.exit(writer ? 0 : 1);
+      process.exit(0);
     `;
     await using proc = Bun.spawn({
       cmd: atFdLimit("-e", script),
@@ -190,9 +222,10 @@ describe.skipIf(isWindows)("process.stdout/stderr with no FileSink", () => {
     let stderr = "";
     for await (const chunk of proc.stderr) {
       stderr += Buffer.from(chunk).toString();
-      if (stderr.includes("writing\n")) break;
+      if (/\{"type":.*\n/.test(stderr)) break;
     }
     const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+    expect(reportIn(stderr)).toEqual({ type: "fs", sink: false });
     expect(stdout.length).toBe(size);
     expect(Buffer.from(stdout).equals(Buffer.alloc(size, "x"))).toBe(true);
     expect(exitCode).toBe(0);

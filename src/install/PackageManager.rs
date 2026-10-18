@@ -562,9 +562,9 @@ pub struct PackageManager {
     pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
     // The required peer dependencies that have to agree on a version, as (name hash, dependency,
-    // the package that declares it), sorted by name. `enqueue::index_peer_askers` fills this and the
-    // next two fields.
-    pub(crate) peer_askers: Option<Vec<(PackageNameHash, DependencyID, PackageID)>>,
+    // the package that declares it, true if no package provides it anywhere), sorted by name.
+    // `enqueue::index_peer_askers` fills this and the next two fields.
+    pub(crate) peer_askers: Option<Vec<(PackageNameHash, DependencyID, PackageID, bool)>>,
     // The names that the root package resolves to a folder, a tarball or a git repository.
     pub(crate) local_in_root: Vec<PackageNameHash>,
     // Every `npm:` alias as (name hash, the package that declares it, the package it resolved to).

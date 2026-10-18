@@ -4179,10 +4179,10 @@ fn local_rows(
         .map(move |id| deps[id].name_hash)
 }
 
-/// Fills `peer_askers` with the required peer dependencies that no package provides, of every
-/// package that is in the tree without counting peers. Resolving peers does not change that list,
-/// because all of those packages are resolved before the first peer is. Also fills `local_in_root` and `alias_rows`, which are
-/// final by then for the same reason.
+/// Fills `peer_askers` with the required peer dependencies that no package provides in at least one
+/// place, of every package that is in the tree without counting peers. Resolving peers does not
+/// change that list, because all of those packages are resolved before the first peer is. Also
+/// fills `local_in_root` and `alias_rows`, which are final by then for the same reason.
 fn index_peer_askers(this: &mut PackageManager) {
     if this.peer_askers.is_some() {
         return;
@@ -4207,7 +4207,7 @@ fn index_peer_askers(this: &mut PackageManager) {
             let dep = &deps[id as usize];
             if dep.behavior.is_peer() {
                 if !dep.behavior.is_optional_peer() {
-                    askers.push((dep.name_hash, id, owner as PackageID));
+                    askers.push((dep.name_hash, id, owner as PackageID, false));
                 }
             } else if dep.version.try_npm().is_some_and(|npm| npm.is_alias)
                 && resolutions[id as usize] != invalid_package_id
@@ -4218,6 +4218,8 @@ fn index_peer_askers(this: &mut PackageManager) {
     }
     bun_collections::index_sort::sort_vec_by(&mut askers, |a, b| a.0.cmp(&b.0));
     // As in pnpm, only the packages that nobody provides the peer for have to agree on a version.
+    // A package that has a provider in one place and none in another uses the provider's version,
+    // but the others still have to agree with its range, because they can be loaded together.
     // A project's own peer dependency is resolved like one of its regular dependencies.
     let packages = lockfile.packages.items_resolution();
     let mut unprovided = Vec::new();
@@ -4225,10 +4227,18 @@ fn index_peer_askers(this: &mut PackageManager) {
         .chunk_by(|a, b| a.0 == b.0)
         .filter(|named| named.len() > 1)
     {
-        let missing = reachable::packages_without_peer_provider(lockfile, resolutions, named[0].0);
-        unprovided.extend(named.iter().copied().filter(|&(_, _, owner)| {
-            packages[owner as usize].tag == ResolutionTag::Npm && missing.is_set(owner as usize)
-        }));
+        let name_hash = named[0].0;
+        let nowhere = reachable::packages_without_peer_provider(lockfile, resolutions, name_hash);
+        let somewhere =
+            reachable::packages_reached_without_peer_provider(lockfile, resolutions, name_hash);
+        unprovided.extend(
+            (named.iter().copied())
+                .filter(|&(_, _, owner, _)| {
+                    packages[owner as usize].tag == ResolutionTag::Npm
+                        && somewhere.is_set(owner as usize)
+                })
+                .map(|(name, id, owner, _)| (name, id, owner, nowhere.is_set(owner as usize))),
+        );
     }
     this.peer_askers = Some(unprovided);
     this.alias_rows = aliases;
@@ -4273,7 +4283,7 @@ fn alias_of_every_dependent(
 fn peer_askers(
     this: &PackageManager,
     name_hash: PackageNameHash,
-) -> &[(PackageNameHash, DependencyID, PackageID)] {
+) -> &[(PackageNameHash, DependencyID, PackageID, bool)] {
     let askers = this.peer_askers.as_deref().unwrap_or_default();
     let start = askers.partition_point(|asker| asker.0 < name_hash);
     let count = askers[start..].partition_point(|asker| asker.0 == name_hash);
@@ -4292,7 +4302,7 @@ fn ranges_of_every_asker(
     let deps = lockfile.buffers.dependencies.as_slice();
     let mut ranges: Vec<dependency::Version> = Vec::new();
     let mut row_counts = false;
-    for &(_, id, _) in peer_askers(this, peer.name_hash) {
+    for &(_, id, _, has_no_provider) in peer_askers(this, peer.name_hash) {
         let dep = &deps[id as usize];
         let Some(range) = crate::dedupe::effective_npm_range(lockfile, id, dep) else {
             continue;
@@ -4300,7 +4310,7 @@ fn ranges_of_every_asker(
         if range.npm().is_alias {
             continue;
         }
-        row_counts |= id == row;
+        row_counts |= id == row && has_no_provider;
         if !(ranges.iter()).any(|seen| seen.literal.eql(range.literal, buf, buf)) {
             ranges.push(range);
         }

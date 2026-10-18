@@ -2581,6 +2581,34 @@ describe.concurrent("adding an unrelated package doesn't split a plugin from its
   });
 });
 
+// web provides host@2 to its own hostdom. Nothing provides it in ui, where hostdom needs host@2 and refs needs host@1.
+// No version satisfies both, so refs shares host@2 instead of getting a second copy.
+test.concurrent.each(["hoisted", "isolated"])(
+  "packages in one workspace share a copy of a peer that another workspace provides to one of them (%s)",
+  async linker => {
+    using server = await serveGraph({
+      host: { "1.5.0": {}, "2.1.0": {} },
+      hostdom: { "2.1.0": { peerDependencies: { host: "^2.1.0" } } },
+      refs: { "1.0.0": { peerDependencies: { host: "^1.0.0" } } },
+    });
+    using tmp = tempDir("hoist-peer-in-two-workspaces", {
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "${linker}"\n`,
+      "package.json": JSON.stringify({ name: "root", workspaces: ["pk/*"] }),
+      "pk/web/package.json": JSON.stringify({ name: "web", dependencies: { host: "2.1.0", hostdom: "2.1.0" } }),
+      "pk/ui/package.json": JSON.stringify({
+        name: "ui",
+        dependencies: { refs: "1.0.0" },
+        devDependencies: { hostdom: "2.1.0" },
+      }),
+    });
+    const dir = String(tmp);
+    await run(dir, "install");
+    const hosts = Object.entries(await lockfileTree(dir)).filter(([, resolution]) => resolution.startsWith("host@"));
+    expect(hosts).toEqual([["host", "host@2.1.0"]]);
+    await run(dir, "install", "--frozen-lockfile");
+  },
+);
+
 test.concurrent("a package stays under the host that bundles the version that its peer accepts", async () => {
   const host = {
     name: "host",

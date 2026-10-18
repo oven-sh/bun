@@ -3080,8 +3080,9 @@ pub(crate) fn resolve_peer_dep_version_based(
     )
 }
 
-/// For each package name: the packages that have no provider for a peer dependency on that name,
-/// and their required peer dependencies on it, one per distinct range. Filled on demand.
+/// For each package name: the packages that have no provider for a peer dependency on that name, and
+/// the required peer dependencies on it that have no provider in at least one place, one per
+/// distinct range. Filled on demand.
 #[derive(Default)]
 pub(crate) struct PeerRangeCache(
     core::cell::RefCell<HashMap<PackageNameHash, (DynamicBitSet, Box<[DependencyID]>)>>,
@@ -3135,9 +3136,14 @@ impl PeerRanges<'_> {
         let resolutions = lockfile.buffers.resolutions.as_slice();
         let missing =
             super::reachable::packages_without_peer_provider(lockfile, resolutions, name_hash);
+        let somewhere = super::reachable::packages_reached_without_peer_provider(
+            lockfile,
+            resolutions,
+            name_hash,
+        );
         let mut rows: Vec<(u64, DependencyID)> = Vec::new();
         for (owner, list) in lockfile.packages.items_dependencies().iter().enumerate() {
-            if !missing.is_set(owner) || packages[owner].tag != ResolutionTag::Npm {
+            if !somewhere.is_set(owner) || packages[owner].tag != ResolutionTag::Npm {
                 continue;
             }
             for id in list.begin()..list.end() {

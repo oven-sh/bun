@@ -253,6 +253,36 @@ pub(crate) fn packages_without_peer_provider(
     provided
 }
 
+/// Returns the packages that nothing provides a peer dependency on `name_hash` for in at least one
+/// place where they're used: the ones that can be reached from the root without passing a provider.
+pub(crate) fn packages_reached_without_peer_provider(
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+    name_hash: PackageNameHash,
+) -> DynamicBitSet {
+    let lists = lockfile.packages.items_dependencies();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let mut seen = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
+    let mut reached = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
+    let mut stack: Vec<PackageID> = Vec::new();
+    if mark(&mut seen, 0) {
+        stack.push(0);
+    }
+    while let Some(id) = stack.pop() {
+        if peer_provider(lockfile, resolutions, id, name_hash).is_some() {
+            continue;
+        }
+        reached.set(id as usize);
+        let list = lists[id as usize];
+        for row in list.begin() as usize..list.end() as usize {
+            if !dependencies[row].behavior.is_peer() && mark(&mut seen, resolutions[row]) {
+                stack.push(resolutions[row]);
+            }
+        }
+    }
+    reached
+}
+
 fn mark(seen: &mut DynamicBitSet, id: PackageID) -> bool {
     let index = id as usize;
     if seen.is_set_allow_out_of_bound(index, true) {

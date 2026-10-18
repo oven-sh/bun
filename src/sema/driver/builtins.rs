@@ -1220,7 +1220,7 @@ impl Properties<'_, '_, '_> {
             ExprKind::String(name) => Some(name),
             ExprKind::Template { exprs } if exprs.is_empty() => Some(hir.id_at(hir.template_texts(exprs), 0)),
             ExprKind::Number(_) => None,
-            _ => self.checker.borrow_mut().fold_constant_string(self.file, e).map(|folded| folded.0),
+            _ => self.checker.borrow_mut().fold_constant_string(self.file, e).map(|folded| if folded.0.is_own() { Atom::NONE } else { folded.0 }),
         }
     }
 

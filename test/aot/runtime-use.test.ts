@@ -504,6 +504,15 @@ describe.concurrent("the names of properties", () => {
   });
 
   test.each([
+    ["in brackets", `console.log(given["zqx" + "vwk"]);`],
+    ["in a constant", `const key = "zqx" + "vwk";\nconsole.log(given[key]);`],
+    ["in a pattern", `const { ["zqx" + "vwk"]: value } = given;\nconsole.log(value);`],
+    ["for Reflect.get", `console.log(Reflect.get(given, "zqx" + "vwk"));`],
+  ])("strings that are joined to a name that is written nowhere stand for any property: %s", async (_, text) => {
+    expect((await property(text)).any).toBe(true);
+  });
+
+  test.each([
     ["__lookupGetter__", `console.log(given.__lookupGetter__("a"));`],
     ["__lookupSetter__", `console.log(given.__lookupSetter__("a"));`],
   ])("any accessor may be taken out with %s", async (_, text) => {

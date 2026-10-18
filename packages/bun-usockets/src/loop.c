@@ -235,6 +235,7 @@ int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct 
         us_free(loop->data.send_buf);
 #ifdef LIBUS_USE_LIBUV
         us_timer_close(loop->data.sweep_timer, 0);
+        us_timer_close(loop->data.connect_timer, 0);
 #endif
         return -1;
     }

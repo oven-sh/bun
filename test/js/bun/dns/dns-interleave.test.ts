@@ -256,6 +256,67 @@ describe.concurrent("connection attempt delay (RFC 8305 §5)", () => {
     },
     20_000,
   );
+
+  // A server pays for every address the client dials. The first address of a
+  // healthy name connects inside the attempt delay, so the client never opens
+  // (and then resets) a connection to the others.
+  test("a name with three addresses costs the server one connection per dial", async () => {
+    const { out, stderr, exitCode, signal } = await run(/* js */ `
+      let accepted = 0;
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open() { accepted++; },
+          data(socket) { socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok"); },
+          error() {},
+        },
+      });
+      const port = server.port;
+      const host = "he-census-" + port + ".test";
+      dnsCacheSeed(host, ["127.0.0.1", "127.0.0.1", "127.0.0.1"]);
+      // The listener accepts in arrival order. Once it answers this dial to
+      // the literal address, it has accepted every connection opened before.
+      async function acceptedSinceLastCall() {
+        await (await fetch("http://127.0.0.1:" + port + "/")).text();
+        const count = accepted - 1;
+        accepted = 0;
+        return count;
+      }
+
+      const dials = 10;
+      for (let i = 0; i < dials; i++) {
+        await (await fetch("http://" + host + ":" + port + "/")).text();
+      }
+      const viaFetch = await acceptedSinceLastCall();
+
+      for (let i = 0; i < dials; i++) {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        await Bun.connect({
+          hostname: host,
+          port,
+          socket: {
+            open(socket) { socket.write("GET / HTTP/1.1\\r\\nHost: census\\r\\n\\r\\n"); },
+            data() {},
+            close() { resolve(); },
+            error(socket, err) { reject(err); },
+            connectError(socket, err) { reject(err); },
+          },
+        });
+        await promise;
+      }
+      const viaConnect = await acceptedSinceLastCall();
+
+      console.log(JSON.stringify({ ok: true, dials, viaFetch, viaConnect }));
+      process.exit(0);
+    `);
+    expect({ out, stderr, exitCode, signal }).toEqual({
+      out: { ok: true, dials: 10, viaFetch: 10, viaConnect: 10 },
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  });
 });
 
 // Loopback: the connect-path resolver asks getaddrinfo with AI_ADDRCONFIG, and

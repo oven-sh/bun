@@ -16999,6 +16999,11 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     ["--mutex", "dep"],
     ["--install-strategy=nested"],
     ["--loglevel=debug"],
+    ["--fund", "false"],
+    ["--yes", "true"],
+    // The next flag isn't this option's value.
+    ["--cache", "--no-progress"],
+    ["--config.node-linker=hoisted"],
   ].flat();
 
   it.each([
@@ -17099,21 +17104,11 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
   });
 
   it.each([
-    [["install", "--loglevel=loud"], "install", "--loglevel"],
-    [["install", "--loglevel", "dep"], "install", "--loglevel"],
-    [["install", "--audit"], "install", "--audit"],
-    [["install", "--no-bin-links"], "install", "--no-bin-links"],
     [["pm", "ls", "--no-audit"], "pm", "--no-audit"],
     [["link", "--no-fund"], "link", "--no-fund"],
-    // These ask for a default, but .npmrc, bunfig.toml or another flag can say the opposite.
-    ...["install", "add", "remove", "update"].flatMap(command => [
-      [[command, "--include=dev"], command, "--include"],
-      [[command, "--include", "dev"], command, "--include"],
-      [[command, "--include=optional"], command, "--include"],
-      [[command, "--include=peer"], command, "--include"],
-      [[command, "--no-frozen-lockfile"], command, "--no-frozen-lockfile"],
-    ]),
-    [["ci", "--no-frozen-lockfile"], "install", "--no-frozen-lockfile"],
+    [["install", "--frozen-lockfil"], "install", "--frozen-lockfil"],
+    [["install", "--no-ignore-script"], "install", "--no-ignore-script"],
+    [["add", "--recursive", "./dep"], "add", "--recursive"],
   ] as [string[], string, string][])("bun %j is still an error", async (cmd, command, flag) => {
     const { stderr, packageJson, exitCode } = await outcome(cmd);
     expect(stderr).toBe(

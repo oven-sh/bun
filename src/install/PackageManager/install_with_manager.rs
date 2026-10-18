@@ -521,6 +521,29 @@ pub fn install_with_manager(
                         pinned_rows = transitive.enqueue(manager)?;
                     }
 
+                    // Split this into two passes because the below may allocate memory or invalidate pointers
+                    let unmapped =
+                        |manager: &PackageManager, workspaces: bool| -> Vec<DependencyID> {
+                            (mapping.iter().enumerate())
+                                .filter(|&(_, &mapped)| mapped == invalid_package_id)
+                                .map(|(i, _)| off + i as DependencyID)
+                                .filter(|&row| {
+                                    let row = &manager.lockfile.buffers.dependencies[row as usize];
+                                    row.behavior.is_workspace() == workspaces
+                                })
+                                .collect()
+                        };
+                    let has_new_rows = manager.summary.add > 0 || manager.summary.update > 0;
+                    // Workspaces come first. A `catalog:` dependency that gets re-resolved below can
+                    // only link to a workspace that the root's own dependency on it has resolved.
+                    if has_new_rows {
+                        let _ = manager.get_cache_directory();
+                        let _ = manager.get_temporary_directory();
+                        for row in unmapped(manager, true) {
+                            enqueue_row(manager, row);
+                        }
+                    }
+
                     if invalidates_rows {
                         let catalogs_changed = manager.summary.catalogs_changed;
                         let mut catalog_overridden: Vec<PackageNameHash> = Vec::new();
@@ -545,15 +568,9 @@ pub fn install_with_manager(
                         });
                     }
 
-                    // Split this into two passes because the below may allocate memory or invalidate pointers
-                    if manager.summary.add > 0 || manager.summary.update > 0 {
-                        let _ = manager.get_cache_directory();
-                        let _ = manager.get_temporary_directory();
-
-                        for (i, _) in (mapping.iter().enumerate())
-                            .filter(|&(_, &mapped)| mapped == invalid_package_id)
-                        {
-                            enqueue_row(manager, off + i as DependencyID);
+                    if has_new_rows {
+                        for row in unmapped(manager, false) {
+                            enqueue_row(manager, row);
                         }
                     }
 

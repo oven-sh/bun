@@ -4006,12 +4006,12 @@ fn installed_version_in_ranges(
     })
 }
 
-/// Returns the package that the nearest package above `row`'s owner depends on under this name. As
-/// in pnpm, that package provides the peer even if its version is out of range. For example, every
-/// library under a workspace that depends on `react@17` uses `react@17`.
+/// Returns the package that `row`'s owner, or the nearest package above it, depends on under this
+/// name. As in pnpm, that package provides the peer even if its version is out of range. For example,
+/// every library under a workspace that depends on `react@17` uses `react@17`.
 ///
-/// "Above" follows regular dependencies only. A project's own peer dependencies also provide,
-/// because they're installed like its regular ones.
+/// Returns `None` if the owner is also used somewhere that has no provider. It needs a version in
+/// range there.
 fn peer_provided_from_above(
     lockfile: &Lockfile::Lockfile,
     name_hash: PackageNameHash,
@@ -4020,47 +4020,45 @@ fn peer_provided_from_above(
     let deps = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let lists = lockfile.packages.items_dependencies();
-    let packages = lockfile.packages.items_resolution();
     let owner = lockfile.get_parent_pkg_of_dependency(row)?;
+    // A project's own peer dependency doesn't provide for itself.
+    let own = lists[owner as usize];
+    if let Some(own) = (own.begin() as usize..own.end() as usize).find(|&id| {
+        deps[id].name_hash == name_hash
+            && !deps[id].behavior.is_peer()
+            && (resolutions[id] as usize) < lists.len()
+    }) {
+        return Some(resolutions[own]);
+    }
+    if reachable::packages_without_peer_provider(lockfile, resolutions, name_hash)
+        .is_set(owner as usize)
+    {
+        return None;
+    }
 
-    let mut seen = DynamicBitSet::init_empty(packages.len()).unwrap_or_oom();
-    let mut level = DynamicBitSet::init_empty(packages.len()).unwrap_or_oom();
+    let mut seen = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
+    let mut level = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
     seen.set(owner as usize);
     level.set(owner as usize);
     loop {
-        let mut above = DynamicBitSet::init_empty(packages.len()).unwrap_or_oom();
-        let mut provided = None;
+        let mut above = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
         let mut any_above = false;
         for (parent, list) in lists.iter().enumerate() {
-            let rows = list.begin() as usize..list.end() as usize;
             if seen.is_set(parent)
-                || !rows.clone().any(|id| {
-                    !deps[id].behavior.is_peer()
-                        && level.is_set_allow_out_of_bound(resolutions[id] as usize, false)
-                })
+                || !(list.begin() as usize..list.end() as usize)
+                    .any(|id| level.is_set_allow_out_of_bound(resolutions[id] as usize, false))
             {
                 continue;
+            }
+            if let Some(provider) =
+                reachable::peer_provider(lockfile, resolutions, parent as PackageID, name_hash)
+            {
+                let provided = resolutions[provider as usize];
+                return ((provided as usize) < lists.len()).then_some(provided);
             }
             seen.set(parent);
             above.set(parent);
             any_above = true;
-            let is_project = matches!(
-                packages[parent].tag,
-                ResolutionTag::Root | ResolutionTag::Workspace
-            );
-            let provides = |id: &usize, peer: bool| {
-                let dep = &deps[*id];
-                dep.name_hash == name_hash
-                    && dep.behavior.is_peer() == peer
-                    && !dep.behavior.is_optional_peer()
-                    && (resolutions[*id] as usize) < packages.len()
-            };
-            provided = provided
-                .or_else(|| rows.clone().find(|id| provides(id, false)))
-                .or_else(|| rows.clone().find(|id| is_project && provides(id, true)));
-        }
-        if let Some(id) = provided {
-            return Some(resolutions[id]);
         }
         if !any_above {
             return None;
@@ -4110,9 +4108,9 @@ fn local_rows(
         .map(move |id| deps[id].name_hash)
 }
 
-/// Fills `peer_askers` with the required peer dependencies of every package that is in the tree
-/// without counting peers. Resolving peers does not change that list, because all of those packages
-/// are resolved before the first peer is. Also fills `local_in_root` and `alias_rows`, which are
+/// Fills `peer_askers` with the required peer dependencies that no package provides, of every
+/// package that is in the tree without counting peers. Resolving peers does not change that list,
+/// because all of those packages are resolved before the first peer is. Also fills `local_in_root` and `alias_rows`, which are
 /// final by then for the same reason.
 fn index_peer_askers(this: &mut PackageManager) {
     if this.peer_askers.is_some() {
@@ -4148,7 +4146,20 @@ fn index_peer_askers(this: &mut PackageManager) {
         }
     }
     bun_collections::index_sort::sort_vec_by(&mut askers, |a, b| a.0.cmp(&b.0));
-    this.peer_askers = Some(askers);
+    // As in pnpm, only the packages that nobody provides the peer for have to agree on a version.
+    // A project's own peer dependency is resolved like one of its regular dependencies.
+    let packages = lockfile.packages.items_resolution();
+    let mut unprovided = Vec::new();
+    for named in askers
+        .chunk_by(|a, b| a.0 == b.0)
+        .filter(|named| named.len() > 1)
+    {
+        let missing = reachable::packages_without_peer_provider(lockfile, resolutions, named[0].0);
+        unprovided.extend(named.iter().copied().filter(|&(_, _, owner)| {
+            packages[owner as usize].tag == ResolutionTag::Npm && missing.is_set(owner as usize)
+        }));
+    }
+    this.peer_askers = Some(unprovided);
     this.alias_rows = aliases;
 }
 
@@ -4197,8 +4208,8 @@ fn peer_askers(
     &askers[start..start + count]
 }
 
-/// Returns the distinct ranges of every package that has a peer dependency on this name. Returns an
-/// empty list if the range of `row` alone should decide.
+/// Returns the distinct ranges of the packages that have to agree with `row` on a version of this
+/// peer dependency. Returns an empty list if the range of `row` alone should decide.
 fn ranges_of_every_asker(
     this: &PackageManager,
     peer: &Dependency,

@@ -407,6 +407,49 @@ describe.concurrent("basic", () => {
     await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
   });
 
+  // The registry also has a `no-deps` package. `leaf` is a catalog entry that the workspace itself uses.
+  test.concurrent.each(["hoisted", "isolated"])(
+    "a catalog: dependency still links to a workspace after another catalog entry changes (%s)",
+    async linker => {
+      const packageJson = (leaf: string) =>
+        JSON.stringify({ name: "mono", workspaces: { packages: ["packages/*"], catalog: { "no-deps": "*", leaf } } });
+      using dir = writeRegistryProject(
+        {
+          "package.json": packageJson("1.0.0"),
+          "packages/web/package.json": JSON.stringify({ name: "web", dependencies: { "no-deps": "catalog:" } }),
+          "packages/no-deps/package.json": JSON.stringify({
+            name: "no-deps",
+            version: "0.1.0",
+            dependencies: { leaf: "catalog:" },
+          }),
+        },
+        catalogRegistry.url.href,
+      );
+      const packageDir = String(dir);
+      const linked = () =>
+        realpath(join(packageDir, "packages", "web", "node_modules", "no-deps")).catch(() =>
+          realpath(join(packageDir, "node_modules", "no-deps")),
+        );
+      const install = async () => {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--linker", linker],
+          cwd: packageDir,
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(await linked()).toBe(await realpath(join(packageDir, "packages", "no-deps")));
+        expect(exitCode).toBe(0);
+      };
+
+      await install();
+      await write(join(packageDir, "package.json"), packageJson("2.0.0"));
+      await install();
+    },
+  );
+
   test.concurrent("catalog and catalogs.default may split different packages between them", async () => {
     const { packageDir } = await registry.createTestDir({
       files: {

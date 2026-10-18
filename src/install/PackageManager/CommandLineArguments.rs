@@ -397,6 +397,7 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--save-exact", AliasOf(b"--exact")),
     (b"--save-optional", AliasOf(b"--optional")),
     (b"--save-peer", AliasOf(b"--peer")),
+    (b"--save-catalog", AliasOf(b"--catalog")),
     (b"--no-optional", AliasOf(b"--omit=optional")),
     (b"--ignore-optional", AliasOf(b"--omit=optional")),
     // Not `--production`, because `--production` also freezes the lockfile.
@@ -462,7 +463,7 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     b"prefer-dedupe", b"prefer-online", b"prefer-workspace-packages", b"progress", b"pure-lockfile",
     b"rebuild-bundle", b"refresh-lockfile", b"resolution-only",
     b"resolve-peers-from-workspace-root", b"reverse", b"runtime", b"save-build", b"save-bundle",
-    b"save-catalog", b"save-types", b"scripts-prepend-node-path", b"shared-workspace-lockfile",
+    b"save-types", b"scripts-prepend-node-path", b"shared-workspace-lockfile",
     b"shrinkwrap", b"side-effects-cache", b"skip-integrity-check", b"sort", b"stream",
     b"strict-allow-scripts", b"strict-peer-dependencies", b"strict-peer-deps", b"strict-semver",
     b"strict-ssl", b"symlink", b"tilde", b"timing", b"trust-lockfile", b"unicode",
@@ -488,6 +489,8 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     b"user-agent", b"userconfig", b"virtual-store-dir", b"workspace-concurrency",
     b"workspace-packages",
     ],
+    // pnpm's `--config.<setting>=<value>`
+    prefixes: &[b"config."],
 };
 
 /// `bun update` accepts these flags too, but there they select which dependencies to update, so no

@@ -533,7 +533,6 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// Workspace package ids that are hoisting barriers (self-contained node_modules).
     pub(crate) self_contained: Vec<PackageID>,
     pub(crate) peer_probes: PeerProbes,
-    pub(crate) peer_ranges: bun_lock::PeerRangeIndex,
     /// The first row of each name in each tree, which is what `hoist_dependency` looks for.
     pub(crate) placed: Placed,
     /// A later dependency replaced a row, so a row no longer tells which dependency placed it.
@@ -561,11 +560,13 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
 }
 
 /// The peer dependencies of the package that's being hoisted, each with the package it loads under
-/// that name from the highest folder checked so far. The bit set caches which packages have peers.
+/// that name from the highest folder checked so far. The bit set caches which packages have peers,
+/// and the range cache is for `Builder::peer_by_version`.
 #[derive(Default)]
 pub(crate) struct PeerProbes(
     Vec<(DependencyID, Option<PackageID>)>,
     Option<DynamicBitSet>,
+    bun_lock::PeerRangeCache,
 );
 
 impl PeerProbes {
@@ -791,10 +792,11 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         let lockfile = self.lockfile();
         bun_lock::resolve_peer_dep_version_based(
             &self.dependencies[dep_id as usize],
-            bun_lock::PeerRanges {
-                index: &self.peer_ranges,
-                dependencies: self.dependencies,
-            },
+            Some(bun_lock::PeerRanges {
+                cache: &self.peer_probes.2,
+                lockfile,
+                resolutions: &*self.resolutions,
+            }),
             &lockfile.catalogs,
             &lockfile.package_index,
             &lockfile.overrides,

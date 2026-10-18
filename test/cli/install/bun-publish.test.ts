@@ -3872,7 +3872,7 @@ describe.concurrent("--recursive and --filter", () => {
       const [flag] = flags.split(" ");
       expect(err).toBe(
         `error: refusing to publish: ${flag} must come after "publish"\n` +
-          `note: use bun publish ${flag}, or bun run publish to run the "publish" script\n`,
+          `note: use bun publish ${flag}, or bun run --filter='*' publish to run "publish" scripts\n`,
       );
       expect(published(out)).toEqual([]);
       expect(registry.asked).toEqual([]);

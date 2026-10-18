@@ -4,7 +4,8 @@ use crate::lockfile::package::{Meta, PackageColumns as _};
 use crate::lockfile_real::Lockfile;
 use crate::npm::{Architecture, Libc, OperatingSystem};
 use crate::package_manager::WorkspaceFilter;
-use crate::{DependencyID, PackageID, PackageManager};
+use crate::resolution::Tag as ResolutionTag;
+use crate::{DependencyID, PackageID, PackageManager, PackageNameHash};
 use bun_collections::DynamicBitSet;
 use bun_core::UnwrapOrOom;
 
@@ -187,6 +188,64 @@ pub(crate) fn required_without(
 }
 
 // Out-of-range ids (invalid_package_id) are treated as already seen.
+/// Returns the dependency of `owner` that provides `name_hash` to the packages below it. Any regular
+/// dependency does. So does a peer dependency of the root or of a workspace, resolved or not,
+/// because it's installed like one of the project's regular dependencies.
+pub(crate) fn peer_provider(
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+    owner: PackageID,
+    name_hash: PackageNameHash,
+) -> Option<DependencyID> {
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let packages = lockfile.packages.items_resolution();
+    let is_project = matches!(
+        packages[owner as usize].tag,
+        ResolutionTag::Root | ResolutionTag::Workspace
+    );
+    let list = lockfile.packages.items_dependencies()[owner as usize];
+    (list.begin() as usize..list.end() as usize)
+        .filter(|&id| {
+            let dep = &deps[id];
+            dep.name_hash == name_hash
+                && if dep.behavior.is_peer() {
+                    is_project && !dep.behavior.is_optional_peer()
+                } else {
+                    (resolutions[id] as usize) < packages.len()
+                }
+        })
+        .min_by_key(|&id| deps[id].behavior.is_peer())
+        .map(|id| id as DependencyID)
+}
+
+/// Returns the packages that have to find a peer dependency on `name_hash` by themselves: the ones
+/// that can be reached from the root without going through a package that provides it. This is how
+/// pnpm decides which peer dependencies are missing.
+pub(crate) fn packages_without_peer_provider(
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+    name_hash: PackageNameHash,
+) -> DynamicBitSet {
+    let lists = lockfile.packages.items_dependencies();
+    let mut seen = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
+    let mut without_provider = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
+    let mut stack: Vec<PackageID> = vec![0];
+    seen.set(0);
+    while let Some(id) = stack.pop() {
+        if peer_provider(lockfile, resolutions, id, name_hash).is_some() {
+            continue;
+        }
+        without_provider.set(id as usize);
+        let list = lists[id as usize];
+        for row in list.begin() as usize..list.end() as usize {
+            if mark(&mut seen, resolutions[row]) {
+                stack.push(resolutions[row]);
+            }
+        }
+    }
+    without_provider
+}
+
 fn mark(seen: &mut DynamicBitSet, id: PackageID) -> bool {
     let index = id as usize;
     if seen.is_set_allow_out_of_bound(index, true) {

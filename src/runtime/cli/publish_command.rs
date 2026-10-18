@@ -419,7 +419,7 @@ impl PublishCommand {
                 (bun_fmt::escape_control_chars(flag),),
             );
             bun_core::note!(
-                "use <b>bun publish {}<r>, or <b>bun run publish<r> to run the \"publish\" script",
+                "use <b>bun publish {}<r>, or <b>bun run --filter='*' publish<r> to run \"publish\" scripts",
                 bun_fmt::escape_control_chars(flag)
             );
             Global::crash();

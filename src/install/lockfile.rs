@@ -1648,13 +1648,6 @@ impl Lockfile {
             Vec::new()
         };
 
-        let peer_ranges = bun_lock::PeerRangeIndex::collect(
-            self.buffers.dependencies.as_slice(),
-            &self.catalogs,
-            &self.overrides,
-            self.buffers.string_bytes.as_slice(),
-        );
-
         // Lets the `&mut buffers.resolutions` split-borrow below coexist with `Builder::lockfile`.
         let lockfile_ref = bun_ptr::ParentRef::<Lockfile>::new(&*self);
         let mut builder = tree::Builder::<METHOD> {
@@ -1677,7 +1670,6 @@ impl Lockfile {
             list: Default::default(),
             sort_buf: Default::default(),
             peer_probes: Default::default(),
-            peer_ranges,
             // Most lookups find nothing, and a miss is cheap in a table that is at most half full.
             placed: tree::Placed::with_capacity(slice.len() * 2),
             replaced_row: false,
@@ -2381,7 +2373,7 @@ impl Lockfile {
                             || (!dep.behavior.is_optional_peer()
                                 && bun_lock::resolve_peer_dep_version_based(
                                     dep,
-                                    bun_lock::PeerRanges::NONE,
+                                    None,
                                     &self.catalogs,
                                     &self.package_index,
                                     &self.overrides,

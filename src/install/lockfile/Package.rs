@@ -844,9 +844,7 @@ impl core::fmt::Display for ChangedDependency {
         match &self.change {
             DependencyChange::Added => f.write_str(" was added")?,
             DependencyChange::Removed => f.write_str(" was removed")?,
-            DependencyChange::MovedGroup => {
-                f.write_str(" moved to a different dependency group")?
-            }
+            DependencyChange::MovedGroup => f.write_str(" is in different dependency groups")?,
             DependencyChange::PeerMeta => f.write_str(" changed in peerDependenciesMeta")?,
             DependencyChange::Range { now, before } => {
                 write!(f, " changed from {} to {}", text(before), text(now))?;

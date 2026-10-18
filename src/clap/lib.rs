@@ -393,10 +393,12 @@ pub struct ParseOptions<'a> {
 /// `unknown_long_flags_are_errors` is set.
 #[derive(Default, Clone, Copy)]
 pub struct IgnoredLongFlags {
-    /// Skips `--name`, `--no-name` and `--name=value`.
+    /// Skips `--name`, `--no-name`, `--name=value`, `--name true` and `--name false`.
     pub flags: &'static [&'static [u8]],
-    /// Skips `--name=value` and `--name value`.
+    /// Skips `--name=value` and `--name value`, unless `value` starts with a dash.
     pub options: &'static [&'static [u8]],
+    /// Skips every flag whose name starts with one of these.
+    pub prefixes: &'static [&'static [u8]],
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain

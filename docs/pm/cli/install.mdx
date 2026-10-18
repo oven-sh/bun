@@ -174,7 +174,9 @@ For reproducible installs, use `--frozen-lockfile`. Bun installs the exact versi
 bun install --frozen-lockfile
 ```
 
-`package.json` disagrees with `bun.lock` when a dependency would resolve to a different package, and also when a dependency of the root or of a workspace was added, removed, moved to another group or given another range (`^1.0.0` to `>=1.0.0`) while every package stays as locked. The same goes for `overrides` and `catalog`. Run `bun install` and commit the updated `bun.lock` to fix it. Other edits, such as a workspace's `version`, `bin` or `scripts`, `trustedDependencies` and `patchedDependencies`, do not fail the install. If the `package.json` of a `file:` directory changed its dependencies, Bun prints a warning and installs what is locked.
+`package.json` disagrees with `bun.lock` when an edit adds a package, removes one, or changes a version. The error names the first dependency that changed. Run `bun install` and commit the updated `bun.lock` to fix it.
+
+Edits that keep every package at its locked version don't fail the install. For example, you can change `^1.0.0` to `>=1.0.0`, move a dependency to another group, or add a dependency that another workspace already has. The same goes for a workspace's `version`, `bin` and `scripts`, and for `trustedDependencies` and `patchedDependencies`. If the `package.json` of a `file:` directory changed its dependencies, Bun prints a warning and installs what's locked.
 
 Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or use `bun ci`. If there is no lockfile at all, `--frozen-lockfile` installs from `package.json` without writing one.
 
@@ -496,9 +498,15 @@ Each flag can be repeated, takes `*` to allow every value, and takes `!name` to 
 
 ## Peer dependencies?
 
-Bun handles peer dependencies like Yarn: `bun install` installs them automatically. If the dependency is marked optional in `peerDependenciesMeta`, Bun uses an existing dependency if possible.
+`bun install` installs peer dependencies automatically, and picks versions the way pnpm does:
 
-If nothing else depends on the peer, Bun installs the newest version that every package asking for it accepts. Otherwise the peer reuses the copy that is already there, which can be outside its range. With `--verbose`, an install that resolves dependencies prints which package gets which copy:
+1. If a package above the one with the peer dependency depends on that name, the peer uses that version. "Above" means its parent, its parent's parent, and so on up to your workspace and the root `package.json`. This applies even if the version is out of range: if your app depends on `react@17`, every library in it uses `react@17`.
+2. Otherwise, Bun picks a version that satisfies every package with a peer dependency on that name, so they all share one copy. It prefers a version that's already installed, then the newest matching version in the registry.
+3. If no version satisfies all of them, each package gets a version that satisfies its own range.
+
+If a peer dependency is marked optional in `peerDependenciesMeta`, Bun doesn't install it, but uses a version that's already installed if there is one.
+
+With `--verbose`, an install that resolves dependencies prints every peer dependency that ended up out of range:
 
 ```txt
 warn: incorrect peer dependency "react@17.0.2": "react-dom@18.3.1" requires "react@^18.3.1"

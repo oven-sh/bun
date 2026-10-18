@@ -983,10 +983,13 @@ describe.concurrent("a remote template leaves no memory unreachable at exit", ()
     respond: (pathname: string, tarball: Uint8Array) => Response;
     /** The paths that the local server is asked for. */
     requests: string[];
-    out?: string;
-    err?: string;
+    /** A string is the whole output. */
+    out: unknown;
+    err: unknown;
     exitCode: number;
   };
+  const has = (text: string) => expect.stringContaining(text);
+  const noError = expect.not.stringContaining("error:");
   const github = "/repos/owner/template/tarball";
   const manifest = "/@bun-examples/elysia/latest";
   const list = "/bun-examples-all/latest";
@@ -1000,14 +1003,21 @@ describe.concurrent("a remote template leaves no memory unreachable at exit", ()
   const cases: [string, Case][] = [
     [
       "created from GitHub",
-      { respond: (_, tarball) => gzip(tarball), requests: [github], out: "Success! owner/template", exitCode: 0 },
+      {
+        respond: (_, tarball) => gzip(tarball),
+        requests: [github],
+        out: has("Success! owner/template loaded into dest"),
+        err: noError,
+        exitCode: 0,
+      },
     ],
     [
       "GitHub answers 503 with a body",
       {
         respond: () => new Response("down", { status: 503 }),
         requests: [github],
-        err: "GitHub returned a server error",
+        out: "",
+        err: has("error: GitHub returned a server error"),
         exitCode: 1,
       },
     ],
@@ -1016,7 +1026,8 @@ describe.concurrent("a remote template leaves no memory unreachable at exit", ()
       {
         respond: () => new Response(null, { status: 503 }),
         requests: [github],
-        err: "GitHub returned a server error",
+        out: "",
+        err: has("error: GitHub returned a server error"),
         exitCode: 1,
       },
     ],
@@ -1025,7 +1036,8 @@ describe.concurrent("a remote template leaves no memory unreachable at exit", ()
       {
         respond: () => new Response("hello", { headers: { "content-type": "text/plain" } }),
         requests: [github],
-        err: "Unexpected content type from GitHub: text/plain",
+        out: "",
+        err: has("error: Unexpected content type from GitHub: text/plain"),
         exitCode: 1,
       },
     ],
@@ -1035,7 +1047,8 @@ describe.concurrent("a remote template leaves no memory unreachable at exit", ()
         files: { "dest/index.ts": "mine" },
         respond: (_, tarball) => gzip(tarball),
         requests: [github],
-        err: "contains files that could conflict",
+        out: "",
+        err: has("error: The directory dest/ contains files that could conflict:"),
         exitCode: 1,
       },
     ],
@@ -1044,8 +1057,8 @@ describe.concurrent("a remote template leaves no memory unreachable at exit", ()
       {
         respond: notFoundThenList,
         requests: [github, list],
-        out: "bun create hello dest",
-        err: "was not found on GitHub",
+        out: has("bun create hello dest"),
+        err: has(`error: "owner/template" was not found on GitHub`),
         exitCode: 1,
       },
     ],
@@ -1055,7 +1068,8 @@ describe.concurrent("a remote template leaves no memory unreachable at exit", ()
         args: ["elysia", "dest"],
         respond: (pathname, tarball) => (pathname === manifest ? official() : new Response(tarball)),
         requests: [manifest, "/elysia.tgz"],
-        out: "Created elysia project successfully",
+        out: has("Created elysia project successfully"),
+        err: noError,
         exitCode: 0,
       },
     ],
@@ -1065,8 +1079,8 @@ describe.concurrent("a remote template leaves no memory unreachable at exit", ()
         args: ["elysia", "dest"],
         respond: notFoundThenList,
         requests: [manifest, list],
-        out: "bun create hello dest",
-        err: `"elysia" was not found`,
+        out: has("bun create hello dest"),
+        err: has(`error: "elysia" was not found`),
         exitCode: 1,
       },
     ],
@@ -1076,7 +1090,8 @@ describe.concurrent("a remote template leaves no memory unreachable at exit", ()
         args: ["elysia", "dest"],
         respond: pathname => (pathname === manifest ? official() : new Response("down", { status: 500 })),
         requests: [manifest, "/elysia.tgz"],
-        err: "Error fetching tarball: 500",
+        out: "",
+        err: has("Error fetching tarball: 500"),
         exitCode: 1,
       },
     ],
@@ -1086,7 +1101,7 @@ describe.concurrent("a remote template leaves no memory unreachable at exit", ()
   // ASAN build found a leak or ran on a slow machine: run it with `--timeout=60000` to see the report.
   it.skipIf(!isASAN).each(cases)(
     "%s",
-    async (_, { args = ["owner/template", "dest"], files = {}, respond, requests, out = "", err = "", exitCode }) => {
+    async (_, { args = ["owner/template", "dest"], files = {}, respond, requests, out, err, exitCode }) => {
       const tarball = await githubTarball("template-main", { "index.ts": "template", "package.json": "{}" });
       const requested: string[] = [];
       await using remote = await serveRemote(pathname => {
@@ -1102,12 +1117,7 @@ describe.concurrent("a remote template leaves no memory unreachable at exit", ()
         LSAN_OPTIONS: `use_registers=0:print_suppressions=0:suppressions=${join(import.meta.dirname, "../../leaksan.supp")}`,
       });
 
-      expect({ ...created, requested }).toEqual({
-        out: expect.stringContaining(out),
-        err: expect.stringContaining(err),
-        exitCode,
-        requested: requests,
-      });
+      expect({ ...created, requested }).toEqual({ out, err, exitCode, requested: requests });
     },
   );
 });

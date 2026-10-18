@@ -1057,8 +1057,7 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
         process.on("uncaughtException", error => resolve("host: " + error.code));
         const { port, close } = await host.udpPortToClose();
         const graph = new Bun.ModuleGraph({ globals: { closedPort: port }, onError: error => resolve("graph: " + error.code) });
-        const { stop } = await graph.import(import.meta.dir + "/tenant.mjs");
-        await close();
+        const { stop } = await graph.import(import.meta.dir + "/tenant.mjs").finally(close);
         console.log(await promise);
         stop();
         process.exit(0);

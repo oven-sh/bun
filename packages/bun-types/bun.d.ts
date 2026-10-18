@@ -3371,6 +3371,9 @@ declare module "bun" {
      * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
      * "sideEffects" fields. This should only be used as a temporary workaround for incorrect
      * annotations in libraries.
+     *
+     * A barrel file of a `"sideEffects": false` package then loads all of its re-exports.
+     * Packages listed in `optimizeImports` stay optimized.
      */
     ignoreDCEAnnotations?: boolean;
 
@@ -3492,7 +3495,8 @@ declare module "bun" {
      * skipped entirely.
      *
      * This is also enabled automatically for any package with
-     * `"sideEffects": false` in its `package.json`.
+     * `"sideEffects": false` in its `package.json`, unless
+     * `ignoreDCEAnnotations` is set.
      *
      * @example
      * ```ts

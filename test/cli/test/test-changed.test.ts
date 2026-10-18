@@ -171,6 +171,25 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The test runtime loads every file that a barrel re-exports, so a change
+  // to one of them can change the test. The bundler would skip b.ts here: the
+  // package is "sideEffects": false and nothing asks for `b`.
+  test("change behind an unused re-export of a barrel selects the importing test", async () => {
+    using dir = tempDir("test-changed-barrel", {
+      "package.json": JSON.stringify({ name: "barrel", type: "module", sideEffects: false }),
+      "src/index.ts": `export { a } from "./a";\nexport { b } from "./b";\n`,
+      "src/a.ts": `export const a = 1;\n`,
+      "src/b.ts": `export const b = 2;\n`,
+      "barrel.test.ts": `import { test, expect } from "bun:test";\nimport { a } from "./src/index";\ntest("barrel", () => expect(a).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "src", "b.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["barrel.test.ts"])).toEqual(["barrel.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("staged changes are picked up", async () => {
     using dir = tempDir("test-changed-staged", fixture);
     initRepo(String(dir));

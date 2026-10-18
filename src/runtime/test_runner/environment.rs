@@ -174,7 +174,7 @@ impl Environment {
                 Ok(project) => project,
                 Err(err) => return rejected(vm, err).map(Some),
             };
-            vm.set_main(path);
+            vm.set_main(Some(path));
             let _ = vm.ensure_debugger(true);
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
             // SAFETY: `vm` is the live per-thread VM.

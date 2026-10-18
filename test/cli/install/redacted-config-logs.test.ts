@@ -1057,7 +1057,7 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     expect(follows.exitCode).toBe(0);
   });
 
-  test("bun pm migrate names the entries it cannot take over", async () => {
+  test("bun pm migrate lists the entries that it can't migrate", async () => {
     using yarn = tempDir("redacted-migrate-yarn", {
       "package.json": packageJson(spec(nowhere)),
       "yarn.lock": `# yarn lockfile v1\n\n\n"direct@${spec(nowhere)}":\n  version "1.0.0"\n`,
@@ -1221,7 +1221,7 @@ describe.concurrent("the userinfo of a git URL is masked as a whole", () => {
   });
 
   // git names the URL it wants a password for, and bun passes on what git says.
-  test.skipIf(isWindows)("what git itself prints", async () => {
+  test.skipIf(isWindows)("git's own output", async () => {
     await using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -1278,7 +1278,7 @@ describe.concurrent("the userinfo of a git URL is masked as a whole", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("bun patch takes an entry of the list it prints", async () => {
+  test("bun patch accepts an entry from the list that it prints", async () => {
     const url = (userinfo: string, repo: string) => `git+https://${userinfo}@example.com/org/${repo}`;
     using repo = await hostedGitRepository([url(word, "one").slice(4), url(word, "two").slice(4)], {
       "package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),

@@ -757,7 +757,7 @@ describe.each(["hoisted", "isolated"] as const)("a member asks for a workspace t
   );
 });
 
-test.concurrent("bun add of an alias for a workspace writes what links it again", async () => {
+test.concurrent("bun add of an alias for a workspace writes a specifier that links it again", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   const app = join(packageDir, "packages", "app");
@@ -2054,7 +2054,7 @@ describe("a local devDependency whose target is missing", () => {
 
   describe.each(["hoisted", "isolated"])("%s", linker => {
     describe.each(["--production", "--omit=dev"])("%s", flag => {
-      test.concurrent.each([...Object.keys(specs), "link:./does-not-exist"])("%s is left out", async spec => {
+      test.concurrent.each([...Object.keys(specs), "link:./does-not-exist"])("%s is skipped", async spec => {
         using ctx = await setupTest();
         const manifest = { dependencies: { "no-deps": "1.0.0" }, devDependencies: { "missing-local": spec } };
 
@@ -4597,7 +4597,7 @@ describe.skipIf(isWindows)("in a workspace that's a link to a folder somewhere e
     });
   });
 
-  test.concurrent("a $PWD that is another folder does not count", async () => {
+  test.concurrent("a $PWD that points to another folder is ignored", async () => {
     expect(await install("repo/elsewhere/app", "repo/packages/lib")).toEqual(alone);
   });
 

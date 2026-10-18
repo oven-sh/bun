@@ -890,7 +890,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
     expect(exitCode).toBe(0);
   });
 
-  it.concurrent(`bun remove in a workspace takes the package out of node_modules (${linker})`, async () => {
+  it.concurrent(`bun remove in a workspace removes the package from node_modules (${linker})`, async () => {
     await using registry = serveAnyPackage();
     using dir = tempDir(`bun-remove-in-workspace-${linker}`, {
       "bunfig.toml": `[install]\nregistry = "${registry.url}"\nlinker = "${linker}"\n`,

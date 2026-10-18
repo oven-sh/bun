@@ -406,7 +406,7 @@ describe.concurrent("package.json names and versions", () => {
   });
 
   // Same as `JSON.parse`, which is how every other tool reads the package.json in the tarball.
-  test("of two equal keys the last one counts", async () => {
+  test("the last of two equal keys wins", async () => {
     using dir = tempDir("pack-equal-keys", {
       "package.json": `{
   "name": "first-name",
@@ -1242,7 +1242,7 @@ describe.concurrent("something already exists at the tarball's destination", () 
   });
 
   // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
-  test.serial.skipIf(isWindows)("a file that may be written, in a folder that may not", async () => {
+  test.serial.skipIf(isWindows)("a writable file in a read-only folder", async () => {
     using dir = tempDir("pack-over-locked", { ...files, "pkg/out/pack-over-1.0.0.tgz": "an earlier tarball" });
     using unprivileged = unprivilegedSpawnOptions(String(dir));
     await chmod(join(dir, "pkg", "out"), 0o555);
@@ -3201,14 +3201,14 @@ describe.concurrent("bundledDependencies", () => {
       expect(await packLinked({ ...chain, "b@2.0.0": {} })).toEqual({ bundled: 4, err: "", exitCode: 0 });
     });
 
-    test("in a ring, which no node_modules can hold", async () => {
+    test("in a cycle, which no node_modules layout can represent", async () => {
       const { err, exitCode } = await packLinked({ ...chain, "b@2.0.0": { a: "1.0.0" } });
       expect(err).toStartWith("error: bundled dependencies form a cycle: ");
       expect(exitCode).toBe(1);
     });
   });
 
-  test("a dependency of a bundled dependency that is not there is left out", async () => {
+  test("a missing dependency of a bundled dependency is skipped", async () => {
     using dir = tempDir("pack-bundled-dep-absent", {
       "package.json": JSON.stringify({
         name: "pack-bundled-dep-absent",
@@ -4179,7 +4179,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
   });
 
   // The usual monorepo: one .gitignore, at the root, that names the folder its packages build into.
-  test.each([".gitignore", ".npmignore"])("the %s of the workspace root does not count for a workspace", async name => {
+  test.each([".gitignore", ".npmignore"])("the %s of the workspace root doesn't apply to a workspace", async name => {
     using dir = tempDir("pack-ignore-root", {
       "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
       [name]: "node_modules\ndist\n",

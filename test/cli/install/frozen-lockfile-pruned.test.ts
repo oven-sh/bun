@@ -783,7 +783,7 @@ describe.each(linkers)("linker: %s", linker => {
     });
 
     // The missing workspace never declared the list that the lockfile still records.
-    test.concurrent("a list deleted from the root's package.json trusts nothing it named", async () => {
+    test.concurrent("a list that's deleted from the root's package.json no longer trusts anything", async () => {
       const project = await installThenPrune({ trustedDependencies: ["uses-what-bin"] }, {});
       expect(project.complete.ran).toEqual({ electron: false, "uses-what-bin": true });
       await write(

@@ -1281,7 +1281,7 @@ describe.concurrent("a step that fails leaves node_modules as it was", () => {
 // `bun patch` moves the package folder aside and moves the copy into its place. Windows can't rename a folder while a
 // file below it is open (by an editor or a dev server), and overlayfs (Docker) can't rename a folder from a lower
 // layer. In those cases, the folder's entries are moved one by one.
-describe.concurrent("a package folder that the system does not rename", () => {
+describe.concurrent("a package folder that can't be renamed", () => {
   /** Every path in node_modules, with what it holds. */
   const state = (dir: string) =>
     tree(join(dir, "node_modules")).map(path => {
@@ -1614,7 +1614,7 @@ describe.concurrent("a commit whose install is refused changes nothing", () => {
     });
 
     // No linker runs, so nothing puts the package back in the place of the copy.
-    test("--lockfile-only leaves the folder", async () => {
+    test("--lockfile-only keeps the folder", async () => {
       await using project = await installedProject({ dependencies: { "no-deps": "1.0.0" } }, { linker, globalStore });
       const { dir, env } = project;
       await bunOk(dir, env, "patch", "no-deps");
@@ -3122,7 +3122,7 @@ describe.concurrent("isolated linker with the global store", () => {
 
   // bun.lock puts nothing at the hoisted path, so `bun prune` took the copy for a package that is
   // left over and deleted it with the edits.
-  test("bun prune leaves the copy of a transitive dependency", async () => {
+  test("bun prune keeps the copy of a transitive dependency", async () => {
     await using project = await installedProject(
       { dependencies: { "one-fixed-dep": "1.0.0" } },
       { linker: "isolated", globalStore: true },
@@ -3491,7 +3491,7 @@ describe.concurrent("the patch that bun patch --commit writes", () => {
   );
 });
 
-describe.concurrent("a patch file that is not there", () => {
+describe.concurrent("a missing patch file", () => {
   const indexJs = (dir: string, name: string) => join(dir, "node_modules", name, "index.js");
   const commitEdit = async (dir: string, env: Env, name: string, edited: string) => {
     await Bun.write(indexJs(dir, name), edited);
@@ -3512,7 +3512,7 @@ describe.concurrent("a patch file that is not there", () => {
     return project;
   }
 
-  test("bun install names the command that writes it again", async () => {
+  test("bun install suggests the command that recreates it", async () => {
     await using project = await withoutPatchFiles(["basic-1"]);
     const { stderr, exitCode } = await runBun(project.dir, project.env, "install");
     expect(stderr).toEndWith(
@@ -3523,7 +3523,7 @@ describe.concurrent("a patch file that is not there", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("a --commit of the package's own text takes the entry out of package.json", async () => {
+  test("committing the unmodified package removes the entry from package.json", async () => {
     await using project = await withoutPatchFiles(["basic-1"]);
     const { dir, env } = project;
     rmSync(indexJs(dir, "basic-1"));

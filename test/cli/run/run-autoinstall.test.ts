@@ -706,7 +706,7 @@ describe.concurrent("auto-install reads the project's package.json as `bun insta
   });
 
   // The registry's copy is loaded, as without the rule.
-  describe.each(["overrides", "resolutions"])("%s with file: is passed over", field => {
+  describe.each(["overrides", "resolutions"])("%s with file: is ignored", field => {
     const files = (bunfig: string) => ({
       ...local,
       "package.json": JSON.stringify({
@@ -741,7 +741,7 @@ describe.concurrent("auto-install reads the project's package.json as `bun insta
     });
   });
 
-  test("overrides with link: is passed over", async () => {
+  test("overrides with link: is ignored", async () => {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-override-link", {
       "package.json": JSON.stringify({
@@ -1280,7 +1280,7 @@ describe.concurrent("auto-install throws when it can't do something instead of e
     expect(exitCode).toBe(0);
   });
 
-  test("no directory to extract into, said again by an import in a later turn of the event loop", async () => {
+  test("no directory to extract into, reported again by an import in a later turn of the event loop", async () => {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-no-tmpdir-again", {
       "index.js": `
@@ -1362,7 +1362,7 @@ describe.concurrent("auto-install throws when it can't do something instead of e
       }
     });
 
-    test("and holds the package, but not its manifest", async () => {
+    test("and has the package, but not its manifest", async () => {
       using registry = fixtureRegistry();
       using dir = tempDir("autoinstall-read-only-cache-warm", {
         "index.js": optionalPackageGuards[0][1]("no-deps"),
@@ -1564,7 +1564,7 @@ describe.concurrent("a failed auto-install download does not lower the concurren
 // Without node_modules, the runtime keeps one package manager for the life of the process. A failed manifest request
 // stayed recorded in it as "already requested", so every later resolve of that name failed without a request, even
 // after the registry was healthy again.
-describe.concurrent("a failed registry lookup is asked again by the next resolve", () => {
+describe.concurrent("a failed registry lookup is retried by the next resolve", () => {
   // Fails every manifest (or tarball) request with `respond` until the script asks for /__heal.
   // The script asks for /__next between its resolves: `lookups` is one list of requests per resolve.
   function flakyRegistry(
@@ -1744,7 +1744,7 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
     expect(exitCode).toBe(0);
   });
 
-  test("a loop that never yields asks once, and again once the event loop has gone around", async () => {
+  test("a loop that never yields sends one request, and another one after the next event loop iteration", async () => {
     using registry = flakyRegistry(() => notFound());
     const { stdout, exitCode } = await run(
       registry,

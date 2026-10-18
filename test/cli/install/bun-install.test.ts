@@ -672,7 +672,7 @@ describe.concurrent("bun-install", () => {
 
   // If another package's manifest has such a dependency, it isn't this project's error. The dependency is skipped,
   // `--verbose` prints the package's name, and the registry isn't asked for `/` or `/@1.0.0`.
-  describe.each(["hoisted", "isolated"])("a dependency of a package that names no package, %s linker", linker => {
+  describe.each(["hoisted", "isolated"])("a package's dependency with an empty package name, %s linker", linker => {
     async function install(ctx: TestContext, ...args: string[]) {
       await using proc = spawn({
         cmd: [bunExe(), "install", ...args],
@@ -5531,7 +5531,7 @@ describe.concurrent("bun-install", () => {
       },
     },
   ])("a fresh install resolves $name the same", ({ files, registry, holds, packages, warnings = [] }) => {
-    it.each(holds)("when the packuments arrive as in %j", async hold => {
+    it.each(holds)("when the manifests arrive in the order %j", async hold => {
       await withContext(defaultOpts, async ctx => {
         setContextHandler(ctx, heldRegistry(ctx, [], registry, hold));
         await writeProject(ctx, files);
@@ -12491,7 +12491,7 @@ describe.concurrent.each(namesTheInstallerOwns)("a dependency named %p", key => 
   });
 });
 
-it.concurrent("installs after package.json drops a name that bun.lock still holds", async () => {
+it.concurrent("installs after package.json drops a name that bun.lock still has", async () => {
   // bun.lock as an older bun wrote it, when the key `@src` was accepted. The
   // project has since renamed that dependency. The stale name is in the file
   // that is loaded, not in the graph that is installed.
@@ -12534,7 +12534,7 @@ it.concurrent("installs after package.json drops a name that bun.lock still hold
   }).toEqual({ errors: [], linked: true, lockfileHoldsStaleName: false, exitCode: 0 });
 });
 
-it.concurrent("refuses a registry package whose own name is an entry of the installer", async () => {
+it.concurrent("refuses a registry package whose own name is reserved by the installer", async () => {
   await withContext(defaultOpts, async ctx => {
     const urls: string[] = [];
     // The alias is fine. The name that the registry serves is the one that would become the cache folder.
@@ -12560,7 +12560,7 @@ it.concurrent("refuses a registry package whose own name is an entry of the inst
   });
 });
 
-it.concurrent("still installs an alias that names no entry of the installer", async () => {
+it.concurrent("still installs an alias that isn't reserved by the installer", async () => {
   await withContext(defaultOpts, async ctx => {
     const urls: string[] = [];
     setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {} }));
@@ -14030,7 +14030,7 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
 
   // A bundled dependency ships inside the package that declares it, so adding it to the root wouldn't help, and the
   // note is omitted.
-  it("rejects the one a registry package declares as bundled, without the root remedy", async () => {
+  it("rejects the one a registry package declares as bundled, without suggesting to add it to the root", async () => {
     await withContext(defaultOpts, async ctx => {
       using dir = tempDir("bundled-local-tarball-of-registry-dep", {});
       const root = String(dir);
@@ -16833,7 +16833,7 @@ describe.concurrent("the flags of the runtime that take no value", () => {
     ["update", { dep: "./dep" }, []],
   ];
 
-  it.each(commands)("change nothing about bun %s", async (command, dependencies, args) => {
+  it.each(commands)("don't change what bun %s does", async (command, dependencies, args) => {
     const flags = await runtimeFlags();
     const plain = await outcome(dependencies, [command, ...args]);
     expect(plain.stderr).not.toContain("error:");

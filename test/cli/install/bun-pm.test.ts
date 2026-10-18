@@ -2284,14 +2284,14 @@ describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cach
     };
   }
 
-  test("--cache-dir names it", async () => {
+  test("--cache-dir sets it", async () => {
     using box = caches(`pm-cache-${action}-flag`);
     expect(await pmCache([action, "--cache-dir", box.mine], box.proj, box.spawnEnv)).toEqual(done);
     expect(await entries(box.mine)).toEqual(left);
     expect(await entries(box.envCache)).toEqual(envCacheEntries);
   });
 
-  test("~/.bunfig.toml names it", async () => {
+  test("~/.bunfig.toml sets it", async () => {
     using box = caches(`pm-cache-${action}-user-bunfig`);
     const spawnEnv = { ...box.spawnEnv, XDG_CONFIG_HOME: undefined };
     await writeFile(join(box.home, ".bunfig.toml"), `[install.cache]\ndir = ${JSON.stringify(box.mine)}\n`);
@@ -3135,7 +3135,7 @@ describe.concurrent("without a package.json", () => {
     });
   });
 
-  test("bun pm ls -g leaves out a global package that is gone from disk", async () => {
+  test("bun pm ls -g skips a global package that's missing on disk", async () => {
     using project = fresh("pm-ls-global-deleted");
     expect(await project.run("add", "-g", join(project.root, "pkg"))).toMatchObject({ exitCode: 0 });
     await rm(join(project.globalDir, "node_modules", "pkg"), { recursive: true });

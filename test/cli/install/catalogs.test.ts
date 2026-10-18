@@ -2372,7 +2372,7 @@ describe("bun add --catalog advice for a failed catalog: dependency", () => {
   const commands = ["install", "install --frozen-lockfile", "update", "add ./vendor/x", "remove y"];
 
   describe("a root package.json without workspaces", () => {
-    test.concurrent.each(commands)("bun %s names the package.json it used as the root", async command => {
+    test.concurrent.each(commands)("bun %s prints the package.json it used as the root", async command => {
       using dir = soloRoot({ dependencies: { "no-deps": "catalog:", y: "file:./vendor/y" } });
       const packageJson = await file(join(String(dir), "package.json")).text();
 
@@ -2801,7 +2801,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
     expect(registry.requests).toEqual([null]);
   });
 
-  test.each(["latest", ""])("%j names a version that the registry does not have", async spec => {
+  test.each(["latest", ""])("%j points to a version that the registry doesn't have", async spec => {
     using registry = serveMutableRegistry(["1.0.0", "1.0.1", "2.0.0-rc.1"], { latest: "1.0.2" });
     using dir = writeRegistryProject({ "package.json": depends("1.0.0") }, registry.server.url.href);
     await installUntilCached(String(dir));

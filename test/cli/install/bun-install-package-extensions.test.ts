@@ -516,7 +516,7 @@ test.concurrent("only the root package.json is read", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("what no key adds any more is unlinked from the extended package only", async () => {
+test.concurrent("a dependency that no key adds anymore is only unlinked from the extended package", async () => {
   const root = { name: "app", workspaces: ["packages/*"], dependencies: { "a-dep": "1.0.5" } };
   const { packageDir, packageJson } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },

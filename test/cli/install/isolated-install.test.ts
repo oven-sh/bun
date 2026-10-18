@@ -1088,7 +1088,7 @@ describe.skipIf(isWindows).each(["isolated", "hoisted"] as const)("links in a fi
     },
   );
 
-  test.concurrent("one that is left out is named in a warning when the folder is installed", async () => {
+  test.concurrent("one that's skipped is reported in a warning when the folder is installed", async () => {
     using outside = tempDir("folder-links-outside", { "secret.txt": "secret" });
     const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker }, files });
     const [folder, copy] = [join(packageDir, "vendor", "lib"), join(packageDir, "node_modules", "lib")];
@@ -3817,7 +3817,7 @@ describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
       return false;
     }
   });
-  test.skipIf(!otherDevice).concurrent("what cannot be moved aside is deleted", async () => {
+  test.skipIf(!otherDevice).concurrent("entries that can't be moved aside are deleted", async () => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: memberWithNestedCopy,
@@ -4326,7 +4326,7 @@ describe.concurrent("--linker flag", () => {
     expect(await file(join(webModules, ".vite", "deps", "key")).text()).toBe("warm");
   });
 
-  test("replacing the tree of another package manager takes its own dot entries along", async () => {
+  test("replacing the tree of another package manager also removes its dot entries", async () => {
     const { packageDir } = await registry.createTestDir({
       files: { "package.json": JSON.stringify({ name: "was-pnpm", dependencies: { "no-deps": "1.0.0" } }) },
     });
@@ -7509,7 +7509,7 @@ describe.concurrent("global virtual store", () => {
     expect(await readdirSorted(dirname(gvsTarget))).toEqual([basename(gvsTarget)]);
   });
 
-  test.skipIf(isWindows)("--force replaces an entry without a moment in which it is missing", async () => {
+  test.skipIf(isWindows)("--force replaces an entry atomically, so it's never missing", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
     await write(
       packageJson,
@@ -8426,7 +8426,7 @@ test.concurrent("rejects a dependency alias with more than one path component", 
   expect(exitCode).not.toBe(0);
 });
 
-test.concurrent("rejects a tarball that names itself after an entry of the installer", async () => {
+test.concurrent("rejects a tarball whose name is reserved by the installer", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   // A tarball declares its own name in its package.json. Every hoisted store

@@ -1368,9 +1368,9 @@ describe("hoisted linker: packages linked by the thread pool", () => {
   });
 
   // `scripted` sits below `a-host`, and its scripts start when that tree is done. `held-1` and
-  // `held-2` sit two levels below `b-host`, and are linked after that. Their links wait for the
+  // `lifecycle scripts keep running while the thread pool links` sit two levels below `b-host`, and are linked after that. Their links wait for the
   // second script, which bun starts when it has seen the first one end, which waits for the links.
-  test.concurrent.skipIf(!shimDir)("lifecycle scripts go on while the pool links", async () => {
+  test.concurrent.skipIf(!shimDir)("lifecycle scripts keep running while the thread pool links", async () => {
     const scripts = {
       install: `until [ -e "$STAGING_TEST_HOLD/holding" ]; do :; done`,
       postinstall: `: > "$STAGING_TEST_HOLD/released"`,

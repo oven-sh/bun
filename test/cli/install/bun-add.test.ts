@@ -2975,7 +2975,7 @@ describe("a relative local path typed from a directory below package.json", () =
   });
 
   // From `package_dir/src`, `../<name>` is `package_dir/<name>`. From `package_dir` it is `add_dir`, another package.
-  it("a path that names another package relative to package.json installs the one the cwd names", async () => {
+  it("a path that matches one package relative to package.json and another relative to the cwd installs the cwd's", async () => {
     const name = basename(add_dir);
     await writeFile(join(add_dir, "package.json"), JSON.stringify({ name: "lib", version: "1.0.0" }));
     await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "app", version: "0.0.1" }));
@@ -3138,7 +3138,7 @@ describe("-g and a relative local path", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("a path that is not there leaves the global package.json usable", async () => {
+  it("a path that doesn't exist leaves the global package.json usable", async () => {
     using dir = tempDir("bun-add-global-relative-missing", files);
     const home = String(dir);
 
@@ -3831,7 +3831,7 @@ describe("should move existing dependency when an explicit group flag is given",
     ).toBe(pkgJson({ ...root, dependencies: { BaR: "^0.0.2" } }));
   });
 
-  it("--save-prod gives way to the flag of another group", async () => {
+  it("another group's flag wins over --save-prod", async () => {
     expect(await add({ ...root, dependencies: { BaR: "^0.0.2" } }, ["--save-prod", "--dev", "BaR"])).toBe(
       pkgJson({ ...root, devDependencies: { BaR: "^0.0.2" } }),
     );
@@ -3842,7 +3842,7 @@ describe("should move existing dependency when an explicit group flag is given",
     expect(await add(initial, ["--save-prod", "--only-missing", "BaR"])).toBe(pkgJson(initial));
   });
 
-  it.each(["remove", "update", "link"])("bun %s does not know --save-prod", async command => {
+  it.each(["remove", "update", "link"])("bun %s has no --save-prod flag", async command => {
     const initial = pkgJson({ ...root, devDependencies: { BaR: "^0.0.2" } });
     await writeFile(join(package_dir, "package.json"), initial);
     await using proc = spawn({

@@ -2457,7 +2457,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("a bin whose file a s
     await expectLinked(ctx, { dependencies: { tool: "1.0.0" }, trustedDependencies: ["tool"] });
   });
 
-  test("the first package in the order of the links keeps a name", async () => {
+  test("the first package to link a bin name keeps it", async () => {
     using ctx = await setupScriptPackages(linker, {
       "a-tool": { bin: { tool: "cli.js" }, files },
       tool: { bin: { tool: "dist/tool" }, scripts: { postinstall: build }, files },
@@ -3119,7 +3119,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
 
   // The root's `dep` is a different package. With the hoisted linker, each parent has its own copy, and the first one
   // fails before the walk reaches the last.
-  test.skipIf(isWindows)("copies that the failed install had not come to", async () => {
+  test.skipIf(isWindows)("copies that the failed install hadn't reached", async () => {
     const parents = Array.from({ length: 40 }, (_, i) => `parent-${i}`);
     using ctx = await setupScriptPackages(linker, {
       scripted: { scripts: { postinstall: `echo ran >> "$RUNS" && test -z "$FAIL"` } },

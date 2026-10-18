@@ -1814,7 +1814,7 @@ describe.skipIf(isWindows)("cache directory", () => {
     expect(readdirSync(box.root).sort()).toEqual(["tool@latest", "tool@latest.lock"]);
   });
 
-  it.concurrent("a home directory that cannot be written sends it to the temp directory", async () => {
+  it.concurrent("falls back to the temp directory when the home directory isn't writable", async () => {
     using registry = await localRegistry(...toolWithDep());
     using box = sandbox(registry);
     using unprivileged = unprivilegedSpawnOptions(box.dir);
@@ -1835,7 +1835,7 @@ describe.skipIf(isWindows)("cache directory", () => {
   });
 
   // The install that bunx spawns runs in the tree, and is told which directory that is.
-  it.concurrent("a relative temp directory is as good as an absolute one", async () => {
+  it.concurrent("a relative temp directory works like an absolute one", async () => {
     using registry = await localRegistry(...toolWithDep());
     using box = sandbox(registry);
     const tmp = "../tmp";
@@ -1869,7 +1869,7 @@ describe.skipIf(isWindows)("cache directory", () => {
     expect(readdirSync(join(box.tmp, `.bunx-${uid}`))).toEqual([]);
   });
 
-  it.concurrent("a version with .. in it does not lead out of the root", async () => {
+  it.concurrent("a version with .. in it can't escape the root", async () => {
     using registry = await localRegistry();
     using box = sandbox(registry);
 
@@ -1978,7 +1978,7 @@ describe("a cached tree", () => {
     },
   );
 
-  it.concurrent("a dist-tag run does not put off the refresh of the dependencies", async () => {
+  it.concurrent("a dist-tag run doesn't delay the refresh of the dependencies", async () => {
     using registry = await localRegistry(...toolWithDep());
     using box = sandbox(registry);
     expect(await box.run(["tool@latest"])).toMatchObject({ stdout: ran, exitCode: 0 });
@@ -2078,7 +2078,7 @@ describe("a cached tree", () => {
     expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 2.0.0 calls helper 2.0.0\n", exitCode: 0 });
   });
 
-  it.concurrent("without a version, a deprecated latest is passed over, as by bun add", async () => {
+  it.concurrent("without a version, a deprecated latest is skipped, like in bun add", async () => {
     using registry = await localRegistry(fixturePackage("tool", "2.0.0", "tool"), {
       ...fixturePackage("tool", "2.1.0", "tool"),
       deprecated: "use 2.0.0",
@@ -2114,7 +2114,7 @@ describe("a cached tree", () => {
     });
 
     // On Windows the entry in .bin is a shim that exists on its own.
-    it.concurrent.skipIf(isWindows)("links a tree again that lost the file of its bin", async () => {
+    it.concurrent.skipIf(isWindows)("relinks a tree whose bin file is missing", async () => {
       using registry = await localRegistry(...toolWithDep());
       using box = sandbox(registry);
       expect(await box.run([spec])).toMatchObject({ stdout: ran, exitCode: 0 });
@@ -2289,7 +2289,7 @@ require("child_process").execFileSync(process.env.BUN_EXE, ["install"], { cwd: p
       expect(await box.run(["tool"], { env })).toMatchObject({ stdout: ran, stderr: "", exitCode: 0 });
     });
 
-    it.concurrent("nothing is used that was never installed to the end", async () => {
+    it.concurrent("a tree whose install never finished isn't used", async () => {
       using registry = await localRegistry(...toolWithDep());
       using box = sandbox(registry);
       expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
@@ -2471,7 +2471,7 @@ describe("a package in node_modules", () => {
     });
   });
 
-  it.concurrent("of several bins, the one named like the package", async () => {
+  it.concurrent("with several bins, runs the one named like the package", async () => {
     using box = sandbox();
     addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "cli");
     addLocalBin(box.cwd, "first", `console.log("first");`);
@@ -2553,7 +2553,7 @@ describe("a package in node_modules", () => {
     },
   );
 
-  it.concurrent("-p takes the package of the project", async () => {
+  it.concurrent("-p uses the project's package", async () => {
     using box = sandbox();
     addLocalPackage(box.cwd, "mypkg", "1.0.0", "lint");
     addLocalPackage(box.cwd, "other", "1.0.0", "format");
@@ -2732,20 +2732,23 @@ describe("flags", () => {
   });
 
   // BUN_OPTIONS is for every command.
-  it.concurrent.skipIf(isWindows)("what bunx does not know in BUN_OPTIONS is skipped, value included", async () => {
-    using registry = await localRegistry();
-    using box = sandbox(registry);
-    addLocalBin(box.cwd, "local-tool", `console.log("local", ...process.argv.slice(2));`);
-    symlinkSync(bunExe(), join(box.dir, "bunx"));
+  it.concurrent.skipIf(isWindows)(
+    "flags in BUN_OPTIONS that bunx doesn't know are skipped, including their values",
+    async () => {
+      using registry = await localRegistry();
+      using box = sandbox(registry);
+      addLocalBin(box.cwd, "local-tool", `console.log("local", ...process.argv.slice(2));`);
+      symlinkSync(bunExe(), join(box.dir, "bunx"));
 
-    const env = { ...box.env, BUN_OPTIONS: "--smol --preload ./preloaded.ts" };
-    expect(await box.run(["local-tool", "--nope"], { env, bunx: [join(box.dir, "bunx")] })).toEqual({
-      stdout: "local --nope\n",
-      stderr: "",
-      exitCode: 0,
-      requests: [],
-    });
-  });
+      const env = { ...box.env, BUN_OPTIONS: "--smol --preload ./preloaded.ts" };
+      expect(await box.run(["local-tool", "--nope"], { env, bunx: [join(box.dir, "bunx")] })).toEqual({
+        stdout: "local --nope\n",
+        stderr: "",
+        exitCode: 0,
+        requests: [],
+      });
+    },
+  );
 
   it.concurrent.each(["--help", "-h"])("%s prints the flags", async flag => {
     using box = sandbox();
@@ -2890,7 +2893,7 @@ describe("flags", () => {
       });
     });
 
-    it.concurrent("runs with and without it do not serve each other's tree", async () => {
+    it.concurrent("runs with and without it don't share a tree", async () => {
       using registry = await oldAndNew();
       using box = sandbox(registry);
       const gate = `--minimum-release-age=${tenDays}`;

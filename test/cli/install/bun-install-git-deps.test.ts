@@ -3885,7 +3885,7 @@ test.concurrent.each(["files", "reftable"])(
   },
 );
 
-test.concurrent("a commit is installed as its hash names it", async () => {
+test.concurrent("a commit is installed under the hash that identifies it", async () => {
   using dir = tempDir("git-dep-named-by-hash", {});
   const root = String(dir);
   const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
@@ -4252,7 +4252,7 @@ async function gitOutput(cwd: string, args: string[], stdin = "") {
   return (await proc.stdout.text()).trim();
 }
 
-test.concurrent("a path that git does not write is left out", async () => {
+test.concurrent("a path that git doesn't write is skipped", async () => {
   using dir = tempDir("git-dep-unwritable-path", { "cache/beside": "kept\n" });
   const root = String(dir);
   const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
@@ -4333,7 +4333,7 @@ test.concurrent("a git dependency keeps its executable files and the folder of a
   expect(exitCode).toBe(0);
 });
 
-test.concurrent.skipIf(isWindows)("names the version of git that is needed to a git without `restore`", async () => {
+test.concurrent.skipIf(isWindows)("reports the required git version when git has no `restore` command", async () => {
   const notACommand = "git: 'restore' is not a git command. See 'git --help'.";
   using dir = tempDir("git-dep-old-git", {
     "bin/git": `#!/bin/sh

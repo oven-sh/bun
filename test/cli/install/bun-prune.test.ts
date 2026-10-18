@@ -4111,7 +4111,7 @@ test.concurrent("hoisted: two workspaces behind links get one error each and one
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("hoisted: a file at a workspace's node_modules is no error", async () => {
+test.concurrent("hoisted: a file at a workspace's node_modules isn't an error", async () => {
   const dir = await setupWorkspaces("hoisted", {
     root: { dependencies: { "no-deps": "2.0.0" } },
     packages: { a: { dependencies: { "a-dep": "1.0.1" } } },

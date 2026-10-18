@@ -1430,7 +1430,7 @@ describe("Bun.semver.satisfies()", () => {
     ]);
   });
 
-  test("a comparator that means >=0.0.0 does not shut out a prerelease of 0.0.0", () => {
+  test("a comparator that means >=0.0.0 doesn't exclude a prerelease of 0.0.0", () => {
     // Every expectation is node-semver 7.8's answer for the same input: it reads such a comparator as any version.
     testSatisfiesTable([
       ...[
@@ -1493,7 +1493,7 @@ describe("Bun.semver.satisfies()", () => {
     ]);
   });
 
-  test("a wildcard glued to a number is not a version", () => {
+  test("a wildcard attached to a number is not a version", () => {
     testSatisfiesTable([
       ["1.2.3x", "1.2.3", false],
       ["1.2.3*", "*", false],

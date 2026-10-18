@@ -1441,7 +1441,7 @@ describe.concurrent.each(["hoisted", "isolated"])("a peer dependency on bun, %s 
     expect(await lockfile()).not.toContain('"bun@');
   });
 
-  test("takes the bun the project depends on", async () => {
+  test("uses the bun that the project depends on", async () => {
     const { run, bun } = await project({ dependencies: { "peer-on-bun": "1.0.0", bun: "1.0.0" } });
     await run(...install);
     expect(await bun()).toBe("1.0.0");
@@ -7225,7 +7225,7 @@ describe.concurrent("hoisting", async () => {
 
   // The layout decides which copy of a peer a package loads, so the range is checked against the layout, by the
   // install that resolved something (#7403).
-  describe.each(["hoisted", "isolated"] as const)("a peer served outside its range, %s linker", linker => {
+  describe.each(["hoisted", "isolated"] as const)("a peer that gets a version outside its range, %s linker", linker => {
     async function project(files: Record<string, object>) {
       const { packageDir } = await registry.createTestDir({
         bunfigOpts: { linker },
@@ -7265,7 +7265,7 @@ describe.concurrent("hoisting", async () => {
     const rootsNoDeps2 =
       'warn: incorrect peer dependency "no-deps@2.0.0": "peer-deps-fixed@1.0.0" requires "no-deps@^1.0.0"';
 
-    test("only --verbose says it", async () => {
+    test("is only reported with --verbose", async () => {
       const files = {
         "package.json": { name: "foo", dependencies: { "no-deps": "2.0.0", "peer-deps-fixed": "1.0.0" } },
       };
@@ -7295,7 +7295,7 @@ describe.concurrent("hoisting", async () => {
       expect(await peerWarnings(dir, "a-dep@1.0.1")).toEqual([rootsNoDeps2]);
     });
 
-    test("nothing is said when the copy the dependent loads is inside the range", async () => {
+    test("nothing is printed when the copy that the dependent loads is inside the range", async () => {
       const dir = await project({
         "package.json": { name: "foo", dependencies: { "one-fixed-dep": "1.0.0", "peer-deps-fixed": "1.0.0" } },
       });

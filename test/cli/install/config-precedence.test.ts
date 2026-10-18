@@ -1156,7 +1156,7 @@ describe.concurrent("directories named by config files", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("named with --config it is the user's choice", async () => {
+    test("are honored when the file is passed with --config", async () => {
       using dir = tempDir("config-global-dir-named", files);
       const root = String(dir);
       await Bun.write(join(root, "project", "bunfig.toml"), globalDirs(join(root, "g"), join(root, "b")));

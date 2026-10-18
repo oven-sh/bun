@@ -1789,7 +1789,7 @@ describe("bun pm licenses", () => {
     },
   );
 
-  test.concurrent("a package that spells its version another way than bun.lock is listed", async () => {
+  test.concurrent("a package whose version is spelled differently than in bun.lock is listed", async () => {
     const dir = clone(hoistedDir);
     patchInstalledManifest(dir, "a-dep", { version: "1.0.1+build.7", license: "MIT" });
 

@@ -749,7 +749,7 @@ describe.concurrent("the registry's npm-notice is printed", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("with the answer to --tolerate-republish", async () => {
+  test("with the response to the --tolerate-republish lookup", async () => {
     const { err, exitCode } = await publishTo(
       req => answer(200, req.method === "GET" ? { "npm-notice": notice } : {}),
       "--tolerate-republish",
@@ -927,25 +927,28 @@ describe("relative tarball path", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("names the file `bun pm pack --filename` wrote for the same path from the same cwd", async () => {
-    using dir = tempDir("publish-tarball-round-trip", {
-      "package.json": JSON.stringify({
-        name: "publish-tarball-round-trip-root",
-        version: "0.0.0",
-        workspaces: ["packages/*"],
-      }),
-      "packages/member/package.json": JSON.stringify({ name: "publish-tarball-round-trip-member", version: "1.2.3" }),
-    });
-    const memberDir = join(String(dir), "packages", "member");
-    await pack(memberDir, env, "--filename", "./x.tgz");
-    expect(await exists(join(memberDir, "x.tgz"))).toBeTrue();
-    expect(await exists(join(String(dir), "x.tgz"))).toBeFalse();
+  test.concurrent(
+    "refers to the file that `bun pm pack --filename` wrote for the same path from the same cwd",
+    async () => {
+      using dir = tempDir("publish-tarball-round-trip", {
+        "package.json": JSON.stringify({
+          name: "publish-tarball-round-trip-root",
+          version: "0.0.0",
+          workspaces: ["packages/*"],
+        }),
+        "packages/member/package.json": JSON.stringify({ name: "publish-tarball-round-trip-member", version: "1.2.3" }),
+      });
+      const memberDir = join(String(dir), "packages", "member");
+      await pack(memberDir, env, "--filename", "./x.tgz");
+      expect(await exists(join(memberDir, "x.tgz"))).toBeTrue();
+      expect(await exists(join(String(dir), "x.tgz"))).toBeFalse();
 
-    const { out, err, exitCode } = await publish(dryRunEnv, memberDir, "./x.tgz", "--dry-run");
-    expect(err).not.toContain("error:");
-    expect(out).toContain(" + publish-tarball-round-trip-member@1.2.3");
-    expect(exitCode).toBe(0);
-  });
+      const { out, err, exitCode } = await publish(dryRunEnv, memberDir, "./x.tgz", "--dry-run");
+      expect(err).not.toContain("error:");
+      expect(out).toContain(" + publish-tarball-round-trip-member@1.2.3");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 test.concurrent("can publish scoped packages", async () => {
@@ -2028,7 +2031,7 @@ describe.concurrent("`private` that is not a boolean", () => {
 });
 
 // Same as `JSON.parse`, which is how every other tool reads the package.json in the tarball.
-describe.concurrent("of two equal keys in package.json the last one counts", () => {
+describe.concurrent("the last of two equal keys in package.json wins", () => {
   const equalKeys = `{
     "name": "first-name", "version": "1.0.0", "private": true, "publishConfig": { "tag": "first" },
     "name": "equal-keys", "version": "2.0.0", "private": false, "publishConfig": { "tag": "second", "tag": "last" }
@@ -2592,7 +2595,7 @@ describe("publishConfig registry", () => {
       });
     }
 
-    test.concurrent.each(["prepublishOnly", "prepack", "prepare"])("one that %s writes counts", async script => {
+    test.concurrent.each(["prepublishOnly", "prepack", "prepare"])("one that %s writes is used", async script => {
       using configured = mockRegistry();
       using pinned = mockRegistry({ secure: true });
       using dir = scripted(
@@ -2611,7 +2614,7 @@ describe("publishConfig registry", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.concurrent("one that a script takes out does not count", async () => {
+    test.concurrent("one that a script removes isn't used", async () => {
       using configured = mockRegistry();
       using pinned = mockRegistry({ secure: true });
       using dir = scripted(
@@ -4184,7 +4187,7 @@ describe.concurrent("NODE_TLS_REJECT_UNAUTHORIZED=0", () => {
   });
 });
 
-describe.concurrent.each(unprintable)("%s is printed spelled out", (_, raw, spelled) => {
+describe.concurrent.each(unprintable)("%s is printed escaped", (_, raw, spelled) => {
   const dryRunEnv = { ...env, npm_config_registry: "http://someuser:hunter2@127.0.0.1:1/" };
   const anyUnprintable = /[\x00-\x09\x0b-\x1f\x7f-\x9f]/;
 

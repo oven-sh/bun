@@ -764,7 +764,7 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     });
 
-    it("leaves a redirect that is glued to the workspace", async () => {
+    it("doesn't change a redirect that's attached to the workspace name", async () => {
       const { dir, stderr, exitCode } = await runStart("npm run greet -w app>out.txt");
       using _ = dir;
       expect(stderr).not.toContain("--filter");
@@ -772,7 +772,7 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     });
 
-    it.skipIf(isWindows)("leaves an `npm run` that is only quoted text", async () => {
+    it.skipIf(isWindows)("doesn't change an `npm run` that's only quoted text", async () => {
       const { dir, stdout, exitCode } = await runStart("echo 'step: npm run build -w app' && echo 'ok; done'");
       using _ = dir;
       expect(stdout).toContain("-w app");

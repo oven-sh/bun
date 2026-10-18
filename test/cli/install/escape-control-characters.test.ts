@@ -469,7 +469,7 @@ test.concurrent("a NUL is kept in the source line, and is escaped in the message
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("a name that is not one", async () => {
+test.concurrent("an invalid name", async () => {
   using dir = tempDir("escape-controls-name", { "package.json": JSON.stringify({ ...app, name: `a${C1}b` }) });
   const { stdout, stderr, exitCode } = await run(String(dir), "link");
   expect(stderr).toContain(`error: invalid package name "a${C1_ESCAPED}b"\n`);
@@ -477,7 +477,7 @@ test.concurrent("a name that is not one", async () => {
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("what git says about a repository it cannot read", async () => {
+test.concurrent("git's output about a repository that it can't read", async () => {
   using dir = project("git", {});
   const repository = `git+file://${join(String(dir), `missing-${C1}.git`).replaceAll("\\", "/")}`;
   await Bun.write(join(String(dir), "package.json"), JSON.stringify({ ...app, dependencies: { dep: repository } }));

@@ -208,7 +208,7 @@ diffme@1.0.0 → diffme@2.0.0
     },
   );
 
-  test("a second argument that is no version is a package name", async () => {
+  test("a second argument that isn't a version is a package name", async () => {
     const { stdout, stderr, exitCode } = await diff(["diffme@1.0.0", "nosuchpackage"]);
     expect({ stdout, stderr: stderr.includes("nosuchpackage"), exitCode }).toEqual({
       stdout: "",
@@ -991,7 +991,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
   const LRI = "\u2066";
   const PDI = "\u2069";
 
-  test("a tarball is asked for and checked as bun install does", async () => {
+  test("a tarball is requested and verified the way bun install does it", async () => {
     const versions = ["1.0.0", "2.0.0"];
     const balls = async (body: string) =>
       Object.fromEntries(
@@ -1139,7 +1139,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(piped.stdout).toContain(`+++ b/${RLO}name${CSI_C1}.js\n`);
   });
 
-  test("a NUL byte does not make a binary of a file that is read as text", async () => {
+  test("a NUL byte doesn't turn a file that's read as text into a binary file", async () => {
     const line = "exports.a = 1;\n";
     const more = `exports.b = require("child_process");\n`;
     const text: Record<string, [string, string]> = {

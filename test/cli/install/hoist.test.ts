@@ -668,7 +668,7 @@ const installedVersion = async (packageDir: string, ...path: string[]) =>
 const hasOwnNodeModules = (packageDir: string, name: string) =>
   exists(join(packageDir, "node_modules", name, "node_modules"));
 
-test.concurrent("warns when a workspace member's peer is served by a root dependency outside its range", async () => {
+test.concurrent("warns when a workspace's peer gets a root dependency outside its range", async () => {
   const rootPackageJson = (noDeps: string) =>
     JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": noDeps } });
   const { packageDir, packageJson } = await registry.createTestDir({
@@ -1108,7 +1108,7 @@ describe.concurrent("peer dependencies decide how far a package hoists", () => {
 
 // A command that changes bun.lock knows what the previous bun.lock placed. It removes from node_modules what's no
 // longer placed, and the nested copies that are now provided from above.
-describe.concurrent("what left the tree leaves node_modules", () => {
+describe.concurrent("packages that are no longer in the tree are removed from node_modules", () => {
   const versionAt = async (...path: string[]) =>
     (await exists(join(...path, "package.json"))) ? (await file(join(...path, "package.json")).json()).version : null;
   const env = (packageDir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") });
@@ -1118,7 +1118,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
       files: Object.fromEntries(Object.entries(files).map(([path, json]) => [path, JSON.stringify(json)])),
     });
 
-  test("a member's own copy, once the member uses the version at the root", async () => {
+  test("a workspace's own copy, once the workspace uses the version at the root", async () => {
     const { packageDir } = await project({
       "package.json": { name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "2.0.0" } },
       "packages/a/package.json": { name: "a", dependencies: { "no-deps": "1.0.0" } },
@@ -1141,7 +1141,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
   });
 
   // `bun prune` is the tool for that.
-  test("not a folder in a member's node_modules that bun.lock never placed", async () => {
+  test("but not a folder in a workspace's node_modules that bun.lock never placed", async () => {
     const { packageDir, packageJson } = await project({
       "package.json": {
         name: "root",
@@ -1167,7 +1167,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
     }).toEqual({ left: null, root: "2.0.0", a: "2.0.0-by-hand" });
   });
 
-  test("not the copy of a member that --filter leaves out", async () => {
+  test("but not the copy of a workspace that --filter skips", async () => {
     const { packageDir } = await project({
       "package.json": { name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "2.0.0" } },
       "packages/a/package.json": { name: "a", dependencies: { "no-deps": "1.0.0" } },
@@ -1225,7 +1225,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
   });
 
   // bun.lock places the bundled no-deps under bundled-1, the install places nothing there.
-  test("doesn't remove what a tarball ships", async () => {
+  test("but not what a tarball ships", async () => {
     const { packageDir, packageJson } = await project({
       "package.json": { name: "root", dependencies: { "a-dep": "1.0.1", "bundled-1": "1.0.0" } },
     });
@@ -1239,7 +1239,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
   // The host needs no-deps@2.0.0 and nests it, so bun.lock places the no-deps@1.0.0 of the bundled
   // package one level further down, where the tarball ships it.
   test.each(["install", "update"])(
-    "doesn't remove what a tarball ships below the package that it bundles (bun %s)",
+    "but not what a tarball ships below the package that it bundles (bun %s)",
     async command => {
       const { packageDir, packageJson } = await project({
         "package.json": {
@@ -1265,7 +1265,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
   );
 
   // bun.lock still holds it.
-  test("not a package that an install for another platform placed", async () => {
+  test("but not a package that an install for another platform placed", async () => {
     const { packageDir, packageJson } = await project({
       "package.json": { name: "root", dependencies: { "a-dep": "1.0.1", "test-native-binlink": "1.0.0" } },
     });
@@ -1279,7 +1279,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
     ]);
   });
 
-  test("not a devDependency that --omit=dev skips", async () => {
+  test("but not a devDependency that --omit=dev skips", async () => {
     const { packageDir, packageJson } = await project({
       "package.json": {
         name: "root",
@@ -1297,7 +1297,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
   });
 
   // one-dep nests its no-deps@1.0.1. ships-no-deps declares no dependency, and its tarball holds a no-deps@1.0.0.
-  test("not the folder a new version of a package ships where the old one had a dependency", async () => {
+  test("but not the folder that a new version of a package ships where the old one had a dependency", async () => {
     const rootPackageJson = (host: string) => ({ name: "root", dependencies: { host, "no-deps": "2.0.0" } });
     const { packageDir, packageJson } = await project({ "package.json": rootPackageJson("npm:one-dep@1.0.0") });
     await runBunInstall(env(packageDir), packageDir);
@@ -2793,7 +2793,7 @@ describe("the thread pool links the same files as the main thread", () => {
   }
 
   // Nothing is deleted first in that case, so the workspaces' packages are linked over what's already there.
-  test.concurrent("the node_modules of the members were left", async () => {
+  test.concurrent("the workspaces' node_modules were kept", async () => {
     using dir = tempDir("linked-by-the-pool-over-members", { project: files({}) });
     const project = join(String(dir), "project");
     const cache = join(String(dir), "cache");

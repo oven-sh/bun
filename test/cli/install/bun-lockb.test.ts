@@ -170,7 +170,7 @@ it("bun.lockb and bun.lockb --hash read only the lockfile", async () => {
 });
 
 // `git diff` with `textconv = bun` hands over a copy of the blob as `<tmp>/<random>_bun.lockb`.
-it("prints the file it is given, whatever its name and whatever lies next to it", async () => {
+it("prints the file it's given, regardless of its name and of the files next to it", async () => {
   const [v2, other] = await Promise.all(
     ["bun.lockb.v2", "unnamed-folder-dependency.lockb"].map(name =>
       file(join(import.meta.dir, "fixtures", name)).bytes(),

@@ -644,7 +644,7 @@ describe.concurrent.each(
     locked: tgz.integrity,
   });
 
-  it("keeps the tarballs of two projects apart that depend on the same path or URL", async () => {
+  it("keeps the tarballs of two projects that depend on the same path or URL separate", async () => {
     const one = await tarball("one");
     const two = await tarball("two");
     using box = sandbox("tarball-two-projects", { one: {}, two: {} });
@@ -920,7 +920,7 @@ describe.concurrent.each(
       expect(await box.cacheEntries()).toEqual([v1.cacheEntry]);
     });
 
-    it("fails a clean install, and names no other bytes in bun.lock", async () => {
+    it("fails a clean install, and doesn't record other bytes in bun.lock", async () => {
       const { box, lockfile } = await changed("tarball-changed-clean-install");
       using _ = box;
 
@@ -1501,7 +1501,7 @@ describe.concurrent("tarball integrity metadata forms", () => {
 
 // Bun writes a hash that it can check, or none. Reading anything else as "none" would let an edit of bun.lock turn the
 // check off. For a tarball, it would also install and record whatever is there now.
-describe.concurrent("an integrity in bun.lock that is not one", () => {
+describe.concurrent("an invalid integrity in bun.lock", () => {
   const tgz = tarball({ "package.json": Buffer.from(JSON.stringify({ name: "pkg", version: "1.0.0" })) });
   const integrity = "sha512-" + createHash("sha512").update(tgz).digest("base64");
   const rows = {

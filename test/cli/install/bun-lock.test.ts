@@ -2396,7 +2396,7 @@ it.each([
 // peer was first bound to has left the project. The record only holds while nothing in the
 // file satisfies the range: once a satisfying version enters the file, loading binds the peer
 // to it by version (as a fresh install would) and the next save drops the recorded copy.
-describe("loading bun.lock keeps a peer nothing in the file satisfies where the file records it", () => {
+describe("loading bun.lock keeps a peer that no version in the file satisfies on the version that the file records", () => {
   const pkg = (nameAndVersion: string, info: object = {}) => [nameAndVersion, "", info, ""];
   const oneDep = pkg("one-dep@1.0.0", { dependencies: { "no-deps": "1.0.1" } });
   const strictPeerDep = pkg("strict-peer-dep@1.0.0", { peerDependencies: { "no-deps": "^2.0.0" } });
@@ -2706,7 +2706,7 @@ describe("loading bun.lock keeps a peer nothing in the file satisfies where the 
       );
     });
 
-    it("the peer keeps a version nothing else held when the file was loaded", async () => {
+    it("the peer keeps a version that nothing else used when the file was loaded", async () => {
       const dependencies = { "one-dep": "1.0.0", "strict-peer-dep": "1.0.0" };
       await resaveFor(
         { dependencies: { ...dependencies, "a-dep": "1.0.1" } },
@@ -3655,7 +3655,7 @@ describe("the tree a fresh install saves is the tree built with its optional pee
   // peer-target is the root's 2.0.0, and that placement binds the peer. The dup under met shares the 1.0.0 next to it,
   // which the range accepts, and doesn't rebind the peer. Rebinding it gave the dup under `unmet` a copy of 1.0.0 that
   // bun.lock didn't list. `unmet` is read first or last.
-  describe.each(["a-unmet", "z-unmet"])("the first place of a package binds its optional peer, under %s", unmet => {
+  describe.each(["a-unmet", "z-unmet"])("the first placement of a package binds its optional peer, under %s", unmet => {
     const manifests: Manifests = {
       "peer-target": { "1.0.0": {}, "2.0.0": {} },
       "dup": { "1.0.0": {}, "2.0.0": optionalPeer("peer-target", "^1.0.0") },
@@ -3700,7 +3700,7 @@ describe("the tree a fresh install saves is the tree built with its optional pee
   // either. Its row is also what puts k at the root. Moved from place to place, it changed the root's
   // k after a@2.5.0 had taken it for its own `^1.1.0`, and the tree built from bun.lock was never the
   // tree built from that one. The names decide the order of the walk.
-  it.concurrent("a row that put its package in the tree is not moved by a later place", async () => {
+  it.concurrent("a dependency that placed its package in the tree isn't rebound by a later placement", async () => {
     using registry = await serveRegistry({
       "a": {
         "1.1.0": {},
@@ -3818,7 +3818,7 @@ describe("the tree a fresh install saves is the tree built with its optional pee
 // are in the file once, so loading binds them once per printed path, and the paths can find
 // different copies of a peer; the path printed last used to win, so what an edge loaded as
 // depended on how its dependents' parents happened to sort.
-describe("loading bun.lock binds the edges of a package printed at several paths", () => {
+describe("loading bun.lock binds the dependencies of a package that's printed at several paths", () => {
   /** `path -> "name@version"` for every row of the packages object. */
   const printedPackages = (lockfile: string) =>
     Object.fromEntries(Array.from(lockfile.matchAll(/^ {4}"([^"]+)": \["([^"]+)"/gm), m => [m[1], m[2]]));

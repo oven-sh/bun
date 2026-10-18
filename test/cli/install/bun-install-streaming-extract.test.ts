@@ -1353,7 +1353,7 @@ describe.concurrent("sparse tar members", () => {
   // The members of the second size claim 4 GiB each and store 1.5 KB at most.
   const pkg = sparsePackage([300_000, 2 ** 32]);
 
-  test("buffered extract leaves of each member what npm leaves", async () => {
+  test("buffered extract writes the same files as npm for each member", async () => {
     using dir = tempDir("sparse-buffered", {
       "package.json": JSON.stringify({
         name: "app",
@@ -1371,7 +1371,7 @@ describe.concurrent("sparse tar members", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("streaming extract leaves of each member what npm leaves", async () => {
+  test("streaming extract writes the same files as npm for each member", async () => {
     const { tgz, firstPiece, members, integrity } = pkg;
 
     using dir = tempDir("sparse-streamed", {
@@ -1672,7 +1672,7 @@ describe.concurrent("gzip trailer", () => {
   const paths = ["libdeflate", "libarchive", "streaming"] as const;
   const install = async (path: (typeof paths)[number], tgz: Buffer) => (await installStreamPkg(path, tgz))[0];
 
-  test.each(paths)("a sound tarball installs (%s)", async path => {
+  test.each(paths)("a valid tarball installs (%s)", async path => {
     expect(await install(path, good)).toEqual({
       error: undefined,
       streamed: path === "streaming",
@@ -1953,7 +1953,7 @@ describe.concurrent("entries that npm skips or names differently", () => {
 
   // Two cases that do not follow npm, which loses files of archives that real tar writers make.
   // Old writers repeat the size of the file in the header of a hard link. npm takes what follows for its body.
-  test.each(paths)("the entries behind a hard link whose header states a size are extracted (%s)", async path => {
+  test.each(paths)("the entries after a hard link whose header has a size are extracted (%s)", async path => {
     const tgz = tarball(tarHeader("package/link", 5000, "1", undefined, target), ...other);
     expect((await installStreamPkg(path, tgz, { files: true }))[0]).toMatchObject({
       files: { "package.json": packageJson, "lib/index.js": "first", "other.js": "second" },

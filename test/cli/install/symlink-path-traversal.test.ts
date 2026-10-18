@@ -1474,7 +1474,7 @@ describe.concurrent("links below node_modules with the hoisted linker", () => {
 
   // A `bin` key is a free-form file name. Through a link at `.bin`, a regular file of that
   // name was unlinked and replaced by a link that dangles there.
-  it.skipIf(isWindows)("does not replace files in what node_modules/.bin leads to", async () => {
+  it.skipIf(isWindows)("does not replace files in the target of node_modules/.bin", async () => {
     using dir = tempDir("nm-bin-files", {
       "package.json": JSON.stringify({
         name: "bin-dir-symlink-app",
@@ -2123,7 +2123,7 @@ describe.concurrent.skipIf(isWindows)("the target of a link at node_modules", ()
     expect(exitCode).toBe(0);
   });
 
-  it("the hoisted linker starts nothing over because of a .bun there", async () => {
+  it("the hoisted linker doesn't reinstall everything because of a .bun there", async () => {
     using root = tempDir("nm-outside-store", {});
     const files = { ...MINE, ".bun/bin/tool": KEEP };
     const outside = await plant(String(root), files);
@@ -2140,7 +2140,7 @@ describe.concurrent.skipIf(isWindows)("the target of a link at node_modules", ()
     }
   });
 
-  it.each(["hoisted", "isolated"])("has a name that left package.json (%s)", async linker => {
+  it.each(["hoisted", "isolated"])("has a name that was removed from package.json (%s)", async linker => {
     using root = tempDir("nm-outside-left", {});
     const outside = await plant(String(root));
     const repo = await projectWith(String(root), "dep", "thesis");
@@ -2190,7 +2190,7 @@ describe.concurrent.skipIf(isWindows)("the target of a link at node_modules", ()
   });
 
   // pnpm writes its commands as files, so a project that it installed has them.
-  it.each(linkersAndFolders)("a file gives way to the link to a command (%s, %s)", async (linker, folder) => {
+  it.each(linkersAndFolders)("a file is replaced by the link to a command (%s, %s)", async (linker, folder) => {
     using root = tempDir("nm-outside-bin-file", {});
     const outside = await plant(String(root), { ...MINE, ".bin/dep": "#!/bin/sh\n", ".bin/other": KEEP });
     const repo = await workspace(String(root));

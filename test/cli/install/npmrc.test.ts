@@ -5377,7 +5377,7 @@ describe.skipIf(isWindows)("unreadable config files are skipped", () => {
   });
 
   // Linux only. macOS has no getcwd system call, and its libc can't find the path of such a directory.
-  test.skipIf(!isLinux)("nothing is said about ./bunfig.toml in a directory that cannot be searched", async () => {
+  test.skipIf(!isLinux)("nothing is printed about ./bunfig.toml in a directory that cannot be searched", async () => {
     const result = await run(["-e", "console.log(1)"], (dir, lock) => {
       writeFileSync(join(dir, "project/bunfig.toml"), "");
       lock("project");
@@ -5386,7 +5386,7 @@ describe.skipIf(isWindows)("unreadable config files are skipped", () => {
   });
 
   // The package.json beside it is refused first, so this is the one message.
-  test.skipIf(!isLinux)("nothing is said about ./.npmrc in a directory that cannot be searched", async () => {
+  test.skipIf(!isLinux)("nothing is printed about ./.npmrc in a directory that cannot be searched", async () => {
     const { stderr, exitCode } = await run(["install"], (dir, lock) => {
       writeFileSync(join(dir, "project/.npmrc"), "");
       lock("project");
@@ -5396,7 +5396,7 @@ describe.skipIf(isWindows)("unreadable config files are skipped", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("nothing is said when no config file exists", async () => {
+  test("nothing is printed when no config file exists", async () => {
     const { stderr, exitCode } = await run(["install"], () => {});
     expect(stderr).not.toContain("warn:");
     expect(exitCode).toBe(0);
@@ -5404,7 +5404,7 @@ describe.skipIf(isWindows)("unreadable config files are skipped", () => {
 });
 
 // Env files and CI matrices shared between platforms hand such values to every one of them.
-describe.concurrent("a config folder where no file can be is a missing file", () => {
+describe.concurrent("a config path that can't contain a file counts as a missing file", () => {
   /** `bun install` in `<dir>/project`, with `<dir>/home` as the home directory unless `extra` says otherwise. */
   async function install(extra: Record<string, string>, files: Record<string, string> = {}) {
     using dir = tempDir("config-folder", {

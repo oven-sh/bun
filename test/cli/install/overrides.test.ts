@@ -856,7 +856,7 @@ describe("a bun.lock written by Bun 1.4", () => {
       return { lock, dir: await project({ name: "foo", ...saved.pkg() }, { "bun.lock": lock }) };
     };
 
-    test.concurrent.each(frozen)("bun %s names the entry and the rule", async command => {
+    test.concurrent.each(frozen)("bun %s prints the entry and the rule", async command => {
       const { dir, lock } = await held();
       const { stderr, exitCode } = await bun(dir, ...command.split(" "));
       expect(stderr).toBe(

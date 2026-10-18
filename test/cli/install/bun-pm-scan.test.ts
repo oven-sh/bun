@@ -387,7 +387,7 @@ describe.concurrent("bun pm scan", () => {
     });
 
     // The text of an advisory comes from a database that strangers can write to.
-    test("control characters in an advisory are spelled out", async () => {
+    test("control characters in an advisory are escaped", async () => {
       await using dir = tempDir("scan-control-characters", {
         "package.json": leftPadPkg,
         "bun.lock": leftPadLock,

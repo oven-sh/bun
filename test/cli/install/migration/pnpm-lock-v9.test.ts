@@ -1983,7 +1983,7 @@ snapshots:
       `);
     });
 
-    test("a peer nothing in the lockfile satisfies keeps the version pnpm resolved it to", async () => {
+    test("a peer that nothing in the lockfile satisfies keeps the version that pnpm resolved it to", async () => {
       // strict-peer-dep wants no-deps@^2.0.0; pnpm resolved it to 1.0.0 (the snapshot suffix) while
       // one-dep brings in 1.0.1. Neither satisfies the range, so there is nothing to rebind the
       // peer by; binding it to the highest version present would drop pnpm's 1.0.0 from the tree.
@@ -2064,7 +2064,7 @@ snapshots:
       `);
     });
 
-    test("a peer nothing in the lockfile satisfies and pnpm left unmet is not given a copy of the highest version", async () => {
+    test("a peer that nothing in the lockfile satisfies and that pnpm left unmet doesn't get a copy of the highest version", async () => {
       // pnpm recorded no resolution for strict-peer-dep's no-deps@^2.0.0 (no snapshot suffix),
       // so in pnpm's layout the package sees whatever no-deps sits at the root: 1.0.1, hoisted
       // there from one-dep. Binding the peer to the highest version present instead (1.1.0,
@@ -2439,7 +2439,7 @@ snapshots:
       ).toBeTrue();
     });
 
-    describe("a peer pnpm left unmet is bound by the install that migrates", () => {
+    describe("a peer that pnpm left unmet is bound by the install that migrates", () => {
       // pnpm records a met peer as a suffix on the dependent's snapshot key; an unmet one (autoInstallPeers
       // off) has no suffix, so the migration has nothing to bind peer-deps-too's `no-deps` edge to. Loading
       // the migrated bun.lock binds it to the no-deps hoisted to the root, and the isolated store keys
@@ -4586,7 +4586,7 @@ patchedDependencies:
       expect(exitCode).toBe(1);
     });
 
-    test.concurrent("is not what more aliases than the stack has levels are when they do not nest", async () => {
+    test.concurrent("isn't reported for many aliases that don't nest", async () => {
       const pairs = Array.from({ length: 12_000 }, (_, i) => `  x${i}: &x${i} {z: 1}\n  y${i}: &y${i} {w: *x${i}}\n`);
       using dir = tempDir("pnpm-v9-alias-pairs", {
         "package.json": JSON.stringify({ name: "alias-pairs" }),

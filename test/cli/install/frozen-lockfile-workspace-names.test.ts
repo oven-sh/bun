@@ -595,7 +595,7 @@ describe.each(linkers)("%s linker", linker => {
   });
 
   // The range of the row accepts the workspace, or names it, and the row is bound to something else.
-  describe("a row that could link a workspace and does not", () => {
+  describe("a dependency that could link to a workspace but doesn't", () => {
     const published = { "no-deps": "^1.0.0" };
     test.concurrent.each([
       ["peerDependenciesMeta", { dependencies: published, peerDependenciesMeta: { "no-deps": { optional: true } } }],

@@ -1507,7 +1507,7 @@ describe("output lines", () => {
   async function runWithSteps(script: string, args = ["run", "--filter", "app", "go"]) {
     using dir = tempDir("filter-lines", {
       "package.json": JSON.stringify({ name: "ws-lines", workspaces: ["packages/*"] }),
-      "packages/app/package.json": JSON.stringify({ name: "app", scripts: { go: `${bunExe()} steps.js` } }),
+      "packages/app/package.json": JSON.stringify({ name: "app", scripts: { go: `"${bunExe()}" steps.js` } }),
       "packages/app/steps.js": `
         const fs = require("node:fs");
         const step = async text => {

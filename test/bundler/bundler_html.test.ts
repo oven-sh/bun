@@ -1,4 +1,8 @@
-import { describe, expect } from "bun:test";
+import type { BuildConfig, BunPlugin } from "bun";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -1077,5 +1081,439 @@ body {
       expect(htmlContent).not.toContain("site.webmanifest");
       expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
     },
+  });
+});
+
+// A browser resolves each image `src` of a web app manifest against the manifest's own URL.
+// The build gives the manifest a hashed name, so it also copies the images it names and
+// writes their new paths into the copy. Every other byte of the manifest stays as written.
+describe("web app manifest", () => {
+  /** The text of each build output, keyed by its `/`-separated path in the output folder. */
+  type Outputs = Record<string, string>;
+
+  const page = (...head: string[]) => `<!DOCTYPE html><html><head>${head.join("")}</head><body></body></html>`;
+  const link = `<link rel="manifest" href="./site.webmanifest">`;
+  const script = `<script type="module" src="./app.js"></script>`;
+
+  async function buildPage(files: Parameters<typeof tempDir>[1], config: (root: string) => Partial<BuildConfig> = () => ({})) {
+    const dir = tempDir("html-web-manifest", files);
+    const root = String(dir);
+    const outdir = join(root, "out");
+    const result = await Bun.build({
+      entrypoints: [join(root, "index.html")],
+      outdir,
+      throw: false,
+      ...config(root),
+    });
+    const outputs: Outputs = {};
+    for (const output of result.outputs) {
+      outputs[relative(outdir, output.path).replaceAll("\\", "/")] = await output.text();
+    }
+    return { root, outdir, result, outputs, logs: result.logs.map(String), [Symbol.dispose]: () => dir[Symbol.dispose]() };
+  }
+
+  /** The one output whose path matches `pattern`. */
+  function only(outputs: Outputs, pattern: RegExp): string {
+    const paths = Object.keys(outputs).filter(path => pattern.test(path));
+    expect(paths).toEqual([expect.stringMatching(pattern)]);
+    return paths[0];
+  }
+
+  const webManifest = (outputs: Outputs) => only(outputs, /(^|\/)site-[0-9a-z]+\.webmanifest$/);
+
+  /** The output that `src` names, as a browser resolves it from the manifest at `manifestPath`. */
+  const named = (manifestPath: string, src: string) => new URL(src, "http://out/" + manifestPath).pathname.slice(1);
+
+  /** Every output that is not JavaScript, sorted. */
+  const copied = (outputs: Outputs) => Object.keys(outputs).filter(path => !path.endsWith(".js")).sort();
+
+  describe("with every list", () => {
+    const files = {
+      "index.html": page(link, `<link rel="icon" href="./both.png">`),
+      "site.webmanifest": `{
+  "name": "x",
+  "start_url": "./index.html",
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png",   "sizes": "512x512" },
+    { "src": "./both.png" },
+    { "src": "img/nested.png" }
+  ],
+  "screenshots": [{ "src": "./shot.png", "sizes": "640x480" }],
+  "shortcuts": [{ "name": "s", "url": "./index.html", "icons": [{ "src": "./short.png" }] }],
+  "file_handlers": [{ "action": "./index.html", "accept": {}, "icons": [{ "src": "./handler.png" }] }]
+}
+`,
+      "icon-192.png": "PNG icon-192",
+      "icon-512.png": "PNG icon-512",
+      "both.png": "PNG both",
+      "img": { "nested.png": "PNG nested" },
+      "shot.png": "PNG shot",
+      "short.png": "PNG short",
+      "handler.png": "PNG handler",
+    };
+    const literals = [
+      [`"./icon-192.png"`, "icon-192"],
+      [`"icon-512.png"`, "icon-512"],
+      [`"./both.png"`, "both"],
+      [`"img/nested.png"`, "nested"],
+      [`"./shot.png"`, "shot"],
+      [`"./short.png"`, "short"],
+      [`"./handler.png"`, "handler"],
+    ];
+
+    // Each image is copied once, only its `src` literal changes, and the page's
+    // `<link rel="icon">` names the same copy of the file they share.
+    function expectFollowed(outputs: Outputs) {
+      let expected = files["site.webmanifest"];
+      const images: string[] = [];
+      for (const [literal, name] of literals) {
+        const path = only(outputs, new RegExp(`^${name}-[0-9a-z]+\\.png$`));
+        expect(outputs[path]).toBe("PNG " + name);
+        expected = expected.replace(literal, `"./${path}"`);
+        images.push(path);
+      }
+      const manifest = webManifest(outputs);
+      expect(outputs[manifest]).toBe(expected);
+      expect(copied(outputs)).toEqual(["index.html", manifest, ...images].sort());
+      expect(outputs["index.html"]).toContain(`<link rel="icon" href="./${images[2]}">`);
+    }
+
+    test("Bun.build copies the images and writes their paths", async () => {
+      using built = await buildPage(files);
+      expect(built.logs).toEqual([]);
+      expectFollowed(built.outputs);
+    });
+
+    test("bun build copies the images and writes their paths", async () => {
+      using dir = tempDir("html-web-manifest-cli", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./index.html", "--outdir=out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: expect.stringContaining(".webmanifest"), stderr: "" });
+      const outdir = join(String(dir), "out");
+      const outputs: Outputs = {};
+      for (const entry of readdirSync(outdir, { recursive: true, withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        const path = join(entry.parentPath, entry.name);
+        outputs[relative(outdir, path).replaceAll("\\", "/")] = readFileSync(path, "utf8");
+      }
+      expectFollowed(outputs);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test("leaves every other src as written", async () => {
+    // `rooted.png` exists: only the way a `src` is written keeps it from being followed.
+    const manifest = `{
+  "icons": [
+    { "src": "/rooted.png" },
+    { "src": "https://example.com/a.png" },
+    { "src": "http://example.com/a.png" },
+    { "src": "//example.com/a.png" },
+    { "src": "data:image/png;base64,AAAA" },
+    { "src": "blob:rooted.png" },
+    { "src": "./missing.png" },
+    { "src": "missing.png" },
+    { "src": ".\\/rooted.png" },
+    { "src": "./folder" },
+    { "src": "" },
+    { "src": 1 },
+    { "sizes": "1x1" },
+    "./rooted.png"
+  ],
+  "screenshots": { "src": "./rooted.png" },
+  "shortcuts": [{ "icons": "./rooted.png" }, "./rooted.png"],
+  "file_handlers": "./rooted.png",
+  "start_url": "./rooted.png",
+  "related_applications": [{ "src": "./rooted.png" }]
+}`;
+    using built = await buildPage({
+      "index.html": page(link),
+      "site.webmanifest": manifest,
+      "rooted.png": "PNG rooted",
+      "folder": { "inner.png": "PNG inner" },
+    });
+    expect(built.logs).toEqual([]);
+    const path = webManifest(built.outputs);
+    expect(built.outputs[path]).toBe(manifest);
+    expect(copied(built.outputs)).toEqual(["index.html", path].sort());
+  });
+
+  test.each([
+    ["is not JSON", `{ "icons": [{ "src": "./a.png" }], }`],
+    ["is an array", `[{ "src": "./a.png" }]`],
+    ["is a string", `"./a.png"`],
+  ])("leaves a manifest that %s as written", async (_, manifest) => {
+    using built = await buildPage({ "index.html": page(link), "site.webmanifest": manifest, "a.png": "PNG a" });
+    expect(built.logs).toEqual([]);
+    const path = webManifest(built.outputs);
+    expect(built.outputs[path]).toBe(manifest);
+    expect(copied(built.outputs)).toEqual(["index.html", path].sort());
+  });
+
+  test("writes paths under publicPath as valid JSON", async () => {
+    const publicPath = `https://cdn.example.com/a"b/`;
+    using built = await buildPage(
+      { "index.html": page(link), "site.webmanifest": `{"icons":[{"src":"./a.png"}]}`, "a.png": "PNG a" },
+      () => ({ publicPath }),
+    );
+    const icon = only(built.outputs, /^a-[0-9a-z]+\.png$/);
+    expect(JSON.parse(built.outputs[webManifest(built.outputs)])).toEqual({ icons: [{ src: publicPath + icon }] });
+  });
+
+  test.each([
+    ["a fixed folder", "assets/[name]-[hash].[ext]", ["assets/icon", "assets/top"]],
+    ["[dir]", "[dir]/[name]-[hash].[ext]", ["pwa/icon", "top"]],
+  ])("writes paths relative to the manifest's folder: %s", async (_, asset, [icon, top]) => {
+    using built = await buildPage(
+      {
+        "index.html": page(`<link rel="manifest" href="./pwa/site.webmanifest">`),
+        "pwa": { "site.webmanifest": `{"icons":[{"src":"./icon.png"},{"src":"../top.png"}]}`, "icon.png": "PNG icon" },
+        "top.png": "PNG top",
+      },
+      () => ({ naming: { asset } }),
+    );
+    const manifest = webManifest(built.outputs);
+    const { icons } = JSON.parse(built.outputs[manifest]);
+    expect(icons.map((image: { src: string }) => named(manifest, image.src))).toEqual([
+      only(built.outputs, new RegExp(`^${icon}-[0-9a-z]+\\.png$`)),
+      only(built.outputs, new RegExp(`^${top}-[0-9a-z]+\\.png$`)),
+    ]);
+    expect(icons.map((image: { src: string }) => built.outputs[named(manifest, image.src)])).toEqual([
+      "PNG icon",
+      "PNG top",
+    ]);
+  });
+
+  // Which importer or plugin creates the manifest's module, and when, must not matter.
+  describe("follows a manifest however it was loaded", () => {
+    const manifest = `{"icons":[{"src":"./a.png"}]}`;
+    const onDisk = { "index.html": page(link), "site.webmanifest": manifest, "a.png": "PNG a" };
+    const plugin = (setup: BunPlugin["setup"]): BunPlugin[] => [{ name: "web-manifest-test", setup }];
+    const routes: [string, Parameters<typeof tempDir>[1], (root: string) => Partial<BuildConfig>][] = [
+      [
+        "from the files map",
+        {},
+        root => ({
+          files: {
+            [join(root, "index.html")]: page(link),
+            [join(root, "site.webmanifest")]: manifest,
+            [join(root, "a.png")]: "PNG a",
+          },
+        }),
+      ],
+      [
+        "after an onResolve that declines",
+        onDisk,
+        () => ({ plugins: plugin(build => build.onResolve({ filter: /.*/ }, () => undefined)) }),
+      ],
+      [
+        "after an onResolve that returns its path",
+        onDisk,
+        root => ({
+          plugins: plugin(build =>
+            build.onResolve({ filter: /webmanifest$/ }, () => ({ path: join(root, "site.webmanifest") })),
+          ),
+        }),
+      ],
+      [
+        "with an onResolve that returns the path of the image",
+        onDisk,
+        root => ({
+          plugins: plugin(build => build.onResolve({ filter: /a\.png$/ }, () => ({ path: join(root, "a.png") }))),
+        }),
+      ],
+      [
+        "from an onLoad",
+        onDisk,
+        () => ({
+          plugins: plugin(build =>
+            build.onLoad({ filter: /webmanifest$/ }, () => ({ contents: manifest, loader: "file" })),
+          ),
+        }),
+      ],
+      [
+        "from an onLoad that awaits defer()",
+        onDisk,
+        () => ({
+          plugins: plugin(build =>
+            build.onLoad({ filter: /webmanifest$/ }, async ({ defer }) => {
+              await defer();
+              return { contents: manifest, loader: "file" };
+            }),
+          ),
+        }),
+      ],
+      ...[["app.js", "index.html"], ["index.html", "app.js"]].map(
+        (entrypoints): (typeof routes)[number] => [
+          `when ${entrypoints[0]} is the first of two entry points that reach it`,
+          { ...onDisk, "app.js": `import url from "./site.webmanifest"; console.log(url);` },
+          root => ({ entrypoints: entrypoints.map(file => join(root, file)) }),
+        ],
+      ),
+    ];
+
+    test.each(routes)("%s", async (_, files, config) => {
+      using built = await buildPage(files, config);
+      expect(built.logs).toEqual([]);
+      const icon = only(built.outputs, /^a-[0-9a-z]+\.png$/);
+      expect(built.outputs[icon]).toBe("PNG a");
+      expect(built.outputs[webManifest(built.outputs)]).toBe(`{"icons":[{"src":"./${icon}"}]}`);
+    });
+  });
+
+  // A copied file is also a module whose default export is its URL.
+  describe("a script that imports the manifest gets its URL", () => {
+    const files = {
+      "index.html": page(link, script),
+      "site.webmanifest": `{"icons":[{"src":"./a.png"}]}`,
+      "a.png": "PNG a",
+    };
+    const shapes: [string, string, Partial<BuildConfig>][] = [
+      ["import", `import url from "./site.webmanifest"; console.log(url);`, {}],
+      ["import *", `import * as ns from "./site.webmanifest"; console.log(ns.default);`, {}],
+      ["require()", `export {}; console.log(require("./site.webmanifest"));`, {}],
+      ["import()", `console.log((await import("./site.webmanifest")).default);`, {}],
+      ["import() with splitting", `console.log((await import("./site.webmanifest")).default);`, { splitting: true }],
+    ];
+
+    test.each(shapes)("%s", async (_, app, config) => {
+      using built = await buildPage({ ...files, "app.js": app }, () => config);
+      expect(built.logs).toEqual([]);
+      const manifest = webManifest(built.outputs);
+      const icon = only(built.outputs, /^a-[0-9a-z]+\.png$/);
+      expect(built.outputs[manifest]).toBe(`{"icons":[{"src":"./${icon}"}]}`);
+
+      // The script that the emitted page loads.
+      const [, entry] = built.outputs["index.html"].match(/<script type="module" crossorigin src="\.\/([^"]+)">/)!;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(built.outdir, entry)],
+        env: bunEnv,
+        cwd: built.outdir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: `./${manifest}\n`, stderr: "", exitCode: 0 });
+    });
+  });
+
+  test("a file that a script imports as text stays text", async () => {
+    const manifest = `{"icons":[{"src":"./logo.svg"}]}`;
+    using built = await buildPage({
+      "index.html": page(link, script),
+      "site.webmanifest": manifest,
+      "logo.svg": "<svg>LOGO</svg>",
+      "app.js": `import text from "./logo.svg" with { type: "text" }; console.log(text);`,
+    });
+    expect(built.logs).toEqual([]);
+    const path = webManifest(built.outputs);
+    expect(built.outputs[path]).toBe(manifest);
+    expect(copied(built.outputs)).toEqual(["index.html", path].sort());
+    expect(Object.entries(built.outputs).filter(([, text]) => text.includes("<svg>LOGO</svg>"))).toEqual([
+      [expect.stringMatching(/\.js$/), expect.any(String)],
+    ]);
+  });
+
+  test("a file that a plugin loads as JavaScript stays out of the page", async () => {
+    const manifest = `{"icons":[{"src":"./logo.svg"}]}`;
+    using built = await buildPage(
+      {
+        "index.html": page(link, script),
+        "site.webmanifest": manifest,
+        "logo.svg": "<svg>LOGO</svg>",
+        "app.js": `console.log("app");`,
+      },
+      () => ({
+        plugins: [
+          {
+            name: "svg-as-module",
+            setup(build) {
+              build.onLoad({ filter: /\.svg$/ }, () => ({ contents: `console.log("SVG MODULE");`, loader: "js" }));
+            },
+          },
+        ],
+      }),
+    );
+    expect(built.logs).toEqual([]);
+    const path = webManifest(built.outputs);
+    expect(built.outputs[path]).toBe(manifest);
+    expect(Object.values(built.outputs).filter(text => text.includes("SVG MODULE"))).toEqual([]);
+  });
+
+  test("copies an image that CSS inlines", async () => {
+    using built = await buildPage({
+      "index.html": page(link, `<link rel="stylesheet" href="./styles.css">`),
+      "site.webmanifest": `{"icons":[{"src":"./dot.png"}]}`,
+      "styles.css": `body { background: url("./dot.png"); }`,
+      "dot.png": "PNG dot",
+    });
+    expect(built.logs).toEqual([]);
+    const icon = only(built.outputs, /^dot-[0-9a-z]+\.png$/);
+    expect(built.outputs[icon]).toBe("PNG dot");
+    expect(built.outputs[webManifest(built.outputs)]).toBe(`{"icons":[{"src":"./${icon}"}]}`);
+    expect(built.outputs[only(built.outputs, /\.css$/)]).toContain("data:image/png;base64,");
+  });
+
+  test("its name changes with the paths that it holds", async () => {
+    // Every build is in one folder: the name of a page depends on the folder it is in.
+    using dir = tempDir("html-web-manifest-names", {
+      "index.html": page(link),
+      "site.webmanifest": `{"icons":[{"src":"./a.png"}]}`,
+      "a.png": "PNG a",
+    });
+    const root = String(dir);
+    let builds = 0;
+    // The page's file name has its hash, so a change of the page's bytes shows in `names`.
+    const names = async (config: Partial<BuildConfig> = {}) => {
+      const outdir = join(root, "out" + builds++);
+      const result = await Bun.build({
+        entrypoints: [join(root, "index.html")],
+        outdir,
+        throw: false,
+        naming: { entry: "[name]-[hash].[ext]" },
+        ...config,
+      });
+      const paths = result.outputs.map(output => relative(outdir, output.path).replaceAll("\\", "/"));
+      return {
+        manifest: paths.find(path => path.endsWith(".webmanifest")),
+        page: paths.find(path => path.endsWith(".html")),
+      };
+    };
+
+    const first = await names();
+    expect(first).toEqual({
+      manifest: expect.stringMatching(/^site-[0-9a-z]+\.webmanifest$/),
+      page: expect.stringMatching(/^index-[0-9a-z]+\.html$/),
+    });
+    expect(await names()).toEqual(first);
+
+    const cdnA = await names({ publicPath: "https://a.example/" });
+    const cdnB = await names({ publicPath: "https://b.example/" });
+    expect(new Set([first.manifest, cdnA.manifest, cdnB.manifest]).size).toBe(3);
+
+    // Only the bytes of the image change. The manifest holds its path, and the page holds the manifest's.
+    writeFileSync(join(root, "a.png"), "PNG b");
+    const otherIcon = await names();
+    expect(otherIcon.manifest).not.toBe(first.manifest);
+    expect(otherIcon.page).not.toBe(first.page);
+  });
+
+  test("standalone HTML inlines it as written", async () => {
+    const manifest = `{"icons":[{"src":"./a.png"}]}`;
+    using built = await buildPage(
+      { "index.html": page(link), "site.webmanifest": manifest, "a.png": "PNG a" },
+      () => ({ compile: true, target: "browser", outdir: undefined }),
+    );
+    expect(built.logs).toEqual([]);
+    const [html] = Object.values(built.outputs);
+    const [, inlined] = html.match(/rel="manifest" href="data:application\/manifest\+json;base64,([^"]+)"/)!;
+    expect(Buffer.from(inlined, "base64").toString()).toBe(manifest);
   });
 });

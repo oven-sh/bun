@@ -294,7 +294,7 @@ it("should not list packages missing from node_modules", async () => {
   }
 });
 
-it("should error when node_modules does not exist", async () => {
+it("should list what bun.lock has when node_modules does not exist", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
   await writeFile(
@@ -330,9 +330,11 @@ it("should error when node_modules does not exist", async () => {
     stderr: "pipe",
     env,
   });
-  expect(await stderr.text()).toContain("node_modules not found");
-  expect(await stdout.text()).toBe("");
-  expect(await exited).toBe(1);
+  expect(await stderr.text()).toBe("");
+  expect(await stdout.text()).toBe(`${package_dir} node_modules (1 installed)
+└── bar@0.0.2
+`);
+  expect(await exited).toBe(0);
 });
 
 describe.concurrent("bun pm ls lists what is on disk", () => {

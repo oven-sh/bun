@@ -2108,7 +2108,7 @@ describe.concurrent("--react-compiler", () => {
           import { test } from "bun:test";
           test("which are compiled", async () => {
             const hook = "export function useDoubled(items) { return { doubled: items.map(item => item * 2) }; }";
-            const all = await import("data:text/javascript," + hook + "/*" + "-".repeat(70_000) + "*/");
+            const all = await import("data:text/javascript," + hook + "/*" + Buffer.alloc(70_000, "-") + "*/");
             ${printCompiled}
           });
         `,
@@ -3368,6 +3368,25 @@ describe.concurrent("a test file that fails to load", () => {
       stdout: expected,
       exitCode: 1,
     });
+  });
+
+  test.each([[[]], [["--parallel=2"]]])('is listed under "tests failed:" %j', async args => {
+    const { stderr, exitCode } = await runFiles(
+      {
+        "missing.test.ts": files["missing.test.ts"],
+        // The list is only printed after more than 20 passes.
+        "many.test.ts": `
+          import { test } from "bun:test";
+          for (let i = 0; i < 21; i++) test("passes " + i, () => {});
+        `,
+      },
+      ...args,
+    );
+    expect(stderr.slice(stderr.indexOf("tests failed:")).split(/\r?\n/).slice(0, 2)).toEqual([
+      "tests failed:",
+      "(fail) missing.test.ts",
+    ]);
+    expect(exitCode).toBe(1);
   });
 });
 

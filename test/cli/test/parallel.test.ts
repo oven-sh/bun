@@ -479,6 +479,57 @@ test.skipIf(isWindows)(
   isASAN || isDebug ? 60_000 : 20_000,
 );
 
+test.skipIf(isWindows)(
+  "--parallel: the JUnit report has a failure for every file that an abort cut short or left out",
+  async () => {
+    const passes = `import {test} from "bun:test"; test("passes", () => {});`;
+    using dir = tempDir("parallel-abort-junit", {
+      "a-cut-short.test.js": `import {test} from "bun:test"; import {writeFileSync} from "node:fs";
+        test("finished", () => {});
+        test("hang", async () => { writeFileSync("one-finished", ""); await new Promise(() => {}); }, 999999);`,
+      // The first worker never gets past the file above, so some of these are never started.
+      "b1.test.js": passes,
+      "b2.test.js": passes,
+      "b3.test.js": passes,
+      "b4.test.js": passes,
+      "z-fastfail.test.js": `import {test} from "bun:test"; import {existsSync} from "node:fs"; import { crash_handler } from "bun:internal-for-testing";
+        test("fastfail", async () => { while (!existsSync("one-finished")) await Bun.sleep(1); crash_handler.fastfail(); }, 999999);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--reporter=junit", "--reporter-outfile=junit.xml"],
+      env: {
+        ...bunEnv,
+        BUN_TEST_PARALLEL_SCALE_MS: "0",
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const aborted = [...stderr.matchAll(/ (\S+\.test\.js) \((aborted: [^)]+)\)/g)].map(([, file, reason]) => [
+      file,
+      reason,
+    ]);
+    expect(aborted).toContainEqual(["a-cut-short.test.js", "aborted: sibling worker panicked"]);
+    expect(aborted.map(([, reason]) => reason)).toContain("aborted: worker panicked");
+
+    const xml = await Bun.file(path.join(String(dir), "junit.xml")).text();
+    const suites = Object.fromEntries(
+      xml.split("<testsuite ").map(suite => [suite.match(/^name="([^"]+)"/)?.[1], suite]),
+    );
+    for (const [file, reason] of aborted) {
+      expect(suites[file]).toContain(`<testcase name="(aborted)"`);
+      expect(suites[file]).toContain(`message="${reason}"`);
+    }
+    expect(suites["a-cut-short.test.js"]).toContain(`<testcase name="finished"`);
+    expect(suites["a-cut-short.test.js"]).toMatch(/^name="a-cut-short.test.js" [^>]*tests="2" [^>]*failures="1"/);
+    expect(exitCode).not.toBe(0);
+  },
+  isASAN || isDebug ? 60_000 : 20_000,
+);
+
 test("--parallel prints per-test lines under their file's header", async () => {
   using dir = tempDir("parallel-output", {
     "a.test.js": `import {test,expect} from "bun:test";

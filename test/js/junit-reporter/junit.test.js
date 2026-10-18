@@ -639,10 +639,35 @@ describe("junit reporter", () => {
       `import { describe } from "bun:test";\ndescribe("group", () => {\n  throw new Error("describe broke");\n});`,
       { type: "Error", message: "describe broke", at: "broken.test.js:3" },
     ],
+    [
+      "a test file imports a module that doesn't exist",
+      [],
+      `import { test } from "bun:test";\nimport "./nowhere";\ntest("never registered", () => {});`,
+      { type: "ResolveMessage", message: expect.stringContaining("Cannot find module './nowhere'"), at: "./nowhere" },
+    ],
+    [
+      "a top-level import() finds no module",
+      [],
+      `import { test } from "bun:test";\nawait import("./nowhere");\ntest("never registered", () => {});`,
+      { type: "ResolveMessage", message: expect.stringContaining("Cannot find module './nowhere'"), at: "./nowhere" },
+    ],
+    [
+      "a test file has a syntax error",
+      [],
+      `import { test } from "bun:test";\nconst half = ;\ntest("never registered", () => {});`,
+      { type: "BuildMessage", message: "Unexpected ;", at: "broken.test.js:2:14" },
+    ],
+    [
+      "a module that a test file imports has a syntax error",
+      [],
+      `import { test } from "bun:test";\nimport "./half.js";\ntest("never registered", () => {});`,
+      { type: "BuildMessage", message: "Unexpected ;", at: "half.js:1:14" },
+    ],
   ])("reports a failed test case when %s", async (_, args, source, { type, message, at }) => {
     await using tmpDir = tempDir("junit-unhandled", {
       "package.json": "{}",
       "setup.js": `throw new TypeError("the preload broke <&>");`,
+      "half.js": `const half = ;`,
       "broken.test.js": source,
     });
     const report = async extra => {
@@ -668,6 +693,23 @@ describe("junit reporter", () => {
     expect(suite.testcase[0].failure[0]._).toContain(at);
     expect(parallel.xml).toBe(serial.xml);
     expect([serial.exitCode, parallel.exitCode]).toEqual([1, 1]);
+  });
+
+  it("creates the folder of --reporter-outfile", async () => {
+    await using tmpDir = tempDir("junit-outfile-folder", {
+      "package.json": "{}",
+      "a.test.js": `import { test } from "bun:test";\ntest("passes", () => {});`,
+    });
+    const junitPath = join(tmpDir, "reports", "unit", "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(await file(junitPath).text()).toContain(`<testcase name="passes"`);
+    expect(exitCode).toBe(0);
   });
 
   it("prints a stack frame whose source is not a file path as-is in <failure>", async () => {

@@ -59,7 +59,6 @@ pub(crate) struct Coordinator<'a> {
     pub(crate) files_done: u32,
     pub(crate) spawned_count: u32,
     pub(crate) live_workers: u32,
-    pub(crate) crashed_files: Vec<u32>,
     pub(crate) aborted: Option<u32>,
     pub(crate) stop_reason: Option<StopReason>,
     pub(crate) last_printed_dot: bool,
@@ -74,6 +73,8 @@ pub(crate) struct FileTestRecords {
     /// `TestDone` payloads past the formatted line; see `runner::decode_test_case`.
     pub(crate) tests: Vec<Box<[u8]>>,
     pub(crate) elapsed_ns: u64,
+    /// The name and message of the failing test case that stands for what the file didn't get to run.
+    pub(crate) unfinished: Option<(&'static [u8], &'static [u8])>,
 }
 
 /// Consecutive pre-`.ready` exits a worker slot tolerates before the slot
@@ -754,7 +755,7 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    fn account_unfinished(&mut self, file_idx: u32, reason: &[u8]) {
+    fn account_unfinished(&mut self, file_idx: u32, reason: &'static [u8]) {
         self.break_dots();
         bun_core::pretty_error!(
             "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
@@ -764,12 +765,18 @@ impl<'a> Coordinator<'a> {
         self.reporter.summary().fail += 1;
         self.reporter.summary().files += 1;
         self.files_done += 1;
+        if let Some(file) = self.test_records.get_mut(file_idx as usize) {
+            file.unfinished = Some((b"(aborted)", reason));
+        }
     }
 
     fn mark_crashed(&mut self, file_idx: u32, elapsed_ms: i64) {
-        self.crashed_files.push(file_idx);
         if let Some(file) = self.test_records.get_mut(file_idx as usize) {
             file.elapsed_ns = u64::try_from(elapsed_ms).unwrap_or(0) * bun_core::time::NS_PER_MS;
+            file.unfinished = Some((
+                b"(worker crashed)",
+                b"worker process crashed before reporting results",
+            ));
         }
     }
 
@@ -900,7 +907,7 @@ impl<'a> Coordinator<'a> {
 
     /// Mark every not-yet-dispatched file as failed so `drive()` can exit
     /// instead of spinning when no live worker remains to make progress.
-    fn abort_queued_files(&mut self, reason: &[u8]) {
+    fn abort_queued_files(&mut self, reason: &'static [u8]) {
         // Reachable from reap_worker/abort_on_worker_panic with the
         // caller's `w: &mut Worker` still live and used afterward; iter_mut()
         // would create a second `&mut Worker` for `w`'s slot (UB). Iterate via
@@ -927,6 +934,9 @@ impl<'a> Coordinator<'a> {
                 self.reporter.summary().fail += 1;
                 self.reporter.summary().files += 1;
                 self.files_done += 1;
+                if let Some(file) = self.test_records.get_mut(idx as usize) {
+                    file.unfinished = Some((b"(aborted)", reason));
+                }
             }
         }
         Output::flush();

@@ -389,6 +389,31 @@ impl TestFailure {
         }
     }
 
+    /// A module that can't be found or parsed throws one of these two. They are printed as log messages, with no `ZigException`.
+    #[optimize(size)]
+    pub(crate) fn record_log_message(slot: &mut Option<TestFailure>, thrown: jsc::JSValue) {
+        let (name, msg): (&[u8], _) =
+            if let Some(error) = thrown.as_class_ref::<jsc::ResolveMessage>() {
+                (b"ResolveMessage", &error.msg)
+            } else if let Some(error) = thrown.as_class_ref::<jsc::BuildMessage>() {
+                (b"BuildMessage", &error.msg)
+            } else {
+                return;
+            };
+        let failure = slot.get_or_insert_default();
+        if failure.name.is_empty() {
+            failure.name.extend_from_slice(name);
+        }
+        if failure.message.is_empty() {
+            failure.message.extend_from_slice(&msg.data.text);
+        }
+        if !failure.body.is_empty() {
+            failure.body.push(b'\n');
+        }
+        let _ = msg.write_format::<false>(&mut bun_io::AsFmt::new(&mut failure.body));
+        failure.body.push(b'\n');
+    }
+
     /// VirtualMachine::on_print_error_zig_exception thunk.
     #[optimize(size)]
     pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
@@ -702,6 +727,7 @@ impl JunitReporter {
     }
 
     /// Writes `<failure>`, or Surefire's `<flakyFailure>` / `<rerunFailure>` for a retried test.
+    #[optimize(size)]
     fn write_failure(
         &mut self,
         indent: &[u8],
@@ -958,16 +984,8 @@ impl JunitReporter {
             self.contents.extend_from_slice(b"</testsuites>\n");
         }
 
-        let mut junit_path_buf = bun_paths::path_buffer_pool::get();
-
-        junit_path_buf[..path.len()].copy_from_slice(path);
-        junit_path_buf[path.len()] = 0;
-
-        // SAFETY: junit_path_buf[path.len()] == 0 written above
-        let zpath = bun_core::ZStr::from_buf(&junit_path_buf[..], path.len());
-        match File::openat(
-            Fd::cwd(),
-            zpath,
+        match File::make_open(
+            path,
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o664,
         ) {
@@ -993,10 +1011,6 @@ impl JunitReporter {
     }
 }
 
-/// Drain the event loop after a file's tests finish, like a node process
-/// would before exiting; the vendored-node-test runner opts in via
-/// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
-/// completed async work. Off by default: bun suites keep exit-after-tests.
 /// An entry of `include` or `exclude`.
 struct ReactCompilerEntry {
     /// As written. A pattern like "**/*.stories.tsx" is matched against the file's path relative to the run directory.
@@ -1065,6 +1079,10 @@ fn react_compiler_filter(
     }))
 }
 
+/// Drain the event loop after a file's tests finish, like a node process
+/// would before exiting; the vendored-node-test runner opts in via
+/// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
+/// completed async work. Off by default: bun suites keep exit-after-tests.
 fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
@@ -3312,6 +3330,17 @@ impl TestCommand {
 
             if failed_to_load {
                 reporter.summary().fail += 1;
+                // It has no test to list under "N tests failed:".
+                if !reporter.reporters.dots && !reporter.reporters.only_failures {
+                    let failures = &mut reporter.failures_to_repeat_buf;
+                    failures.extend_from_slice(&fmt_status_text_line(
+                        bun_test::Execution::Result::Fail,
+                        Output::enable_ansi_colors_stderr(),
+                    ));
+                    let top_level_dir = FileSystem::instance().top_level_dir;
+                    let title = resolve_path::relative(top_level_dir, file_path);
+                    let _ = write!(failures, " {}\n", bstr::BStr::new(title));
+                }
 
                 if reporter.jest.bail == reporter.summary().fail {
                     reporter.print_summary();

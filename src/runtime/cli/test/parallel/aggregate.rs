@@ -27,22 +27,22 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
                 junit.record_test_case(&test).expect("oom");
             }
         }
-        if coord.crashed_files.contains(&(idx as u32)) {
-            let crashed = TestCaseReport {
+        if let Some((name, message)) = file.unfinished {
+            let unfinished = TestCaseReport {
                 file: rel,
                 scopes: Vec::new(),
-                name: b"(worker crashed)",
+                name,
                 status: TestResult::Fail,
                 assertions: 0,
                 elapsed_ns: 0,
                 line_number: 0,
                 failure: Some(TestFailure {
-                    message: b"worker process crashed before reporting results".to_vec(),
+                    message: message.to_vec(),
                     ..Default::default()
                 }),
                 earlier_failures: Vec::new(),
             };
-            junit.record_test_case(&crashed).expect("oom");
+            junit.record_test_case(&unfinished).expect("oom");
         }
         junit.end_file(Some(file.elapsed_ns)).expect("oom");
     }

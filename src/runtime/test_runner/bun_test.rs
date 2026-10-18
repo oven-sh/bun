@@ -1592,6 +1592,9 @@ impl BunTest {
         if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception = None;
             vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
+            // SAFETY: `failure_ctx` is one of the two `Option<TestFailure>` above, and the callback is done with it.
+            let slot = unsafe { &mut *failure_ctx.cast() };
+            crate::cli::test_command::TestFailure::record_log_message(slot, exception);
         }
         if let (Some(failure), Some(reporter)) = (unhandled_failure, self.reporter) {
             // SAFETY: as above.

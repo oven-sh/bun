@@ -922,6 +922,28 @@ export ${f3}
     expect(inF3).toEqual(column ? [`a.ts(4,${column}): ${message}`] : []);
   });
 
+  // The same for an error that the walk reports, not the evaluation. TypeScript caches an initializer with its parentheses.
+  test.each([
+    [`function f3() { return (num = "s"); }`, 32],
+    [`const f3 = () => num = "s";`, 25],
+    [`function f3() { return num = "s"; }`, 0],
+    [`function f3() { const v = (num = "s"); return v; }`, 0],
+    [`function f3(q = (num = "s")) { return q; }`, 0],
+  ])("reports a wrong assignment two messages deep only where tsc checks it again: %s", async (f3, column) => {
+    using dir = project({
+      "a.ts": `declare function takesNumber(n: number): number;
+declare let num: number;
+export function f1() { return takesNumber({ g: f2 }); }
+export function f2() { return takesNumber({ g: f3 }); }
+export ${f3}
+`,
+    });
+    const { stdout } = await check(dir, ["--threads", "1"]);
+    const inF3 = stdout.split("\n").filter(line => line.startsWith("a.ts(5,"));
+    const message = "error TS2322: Type 'string' is not assignable to type 'number'.";
+    expect(inF3).toEqual(column ? [`a.ts(5,${column}): ${message}`] : []);
+  });
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

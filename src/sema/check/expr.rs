@@ -485,7 +485,17 @@ impl<'p, 's> Checker<'p, 's> {
     /// `expressions_cached_discarding`.
     #[cold]
     fn note_cached_discarding(&mut self, file: FileId, e: ExprId) {
-        if self.task.file == Some(file) && self.is_checked_by_check_expression_cached(file, e) {
+        // tsc caches the expression of a `return` statement without its parentheses, so the walk checks it again. It caches
+        // an initializer with them.
+        let is_checked_again = is_parenthesized(self.hir(file), e)
+            && matches!(
+                self.bound(file).parent_of_expr(e),
+                crate::bind::Parent::Stmt(_)
+            );
+        if self.task.file == Some(file)
+            && self.is_checked_by_check_expression_cached(file, e)
+            && !is_checked_again
+        {
             self.expressions_cached_discarding.push(e);
         }
     }

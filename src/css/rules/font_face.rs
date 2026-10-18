@@ -220,19 +220,12 @@ impl UnicodeRange {
             css::Token::Dimension { .. } => return Self::parse_question_marks(input),
             css::Token::Number { .. } => {
                 let after_number = input.state();
-                let token = match input.next_including_whitespace() {
-                    Ok(vv) => vv,
-                    Err(_) => {
-                        input.reset(&after_number);
-                        return Ok(());
+                match input.next_including_whitespace() {
+                    Ok(&css::Token::Delim(c)) if c == '?' as u32 => {
+                        return Self::parse_question_marks(input);
                     }
-                };
-
-                if matches!(*token, css::Token::Delim(c) if c == '?' as u32) {
-                    return Self::parse_question_marks(input);
-                }
-                if matches!(*token, css::Token::Delim(_) | css::Token::Number { .. }) {
-                    return Ok(());
+                    Ok(&css::Token::Dimension { .. } | &css::Token::Number { .. }) => {}
+                    _ => input.reset(&after_number),
                 }
                 return Ok(());
             }

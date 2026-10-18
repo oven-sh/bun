@@ -7931,6 +7931,104 @@ describe("css tests", () => {
     );
   });
 
+  describe("unicode-range", () => {
+    // A range of decimal digits only is one number token, and whitespace after
+    // it ends the range. `U+??` and lower-case hex come only from the typed
+    // printer, so each output shows that the typed parser read the whole list.
+    minify_test(
+      "@font-face{unicode-range:U+0000-00FF, U+0131, U+2122\n}",
+      "@font-face{unicode-range:U+??,U+131,U+2122}",
+    );
+    minify_test("@font-face{unicode-range:U+0131 , U+2122}", "@font-face{unicode-range:U+131,U+2122}");
+    minify_test("@font-face{unicode-range:U+0020-007E, U+2122 }", "@font-face{unicode-range:U+20-7e,U+2122}");
+    minify_test("@font-face{unicode-range:U+1E9E, U+2122\r\n}", "@font-face{unicode-range:U+1e9e,U+2122}");
+    minify_test(
+      "@font-face{unicode-range:U+2122 /* tm */;font-family:A}",
+      "@font-face{unicode-range:U+2122;font-family:A}",
+    );
+    // The layout of the @ibm/plex style sheets: the last declaration has no `;`.
+    minify_test(
+      "@font-face {\n\tfont-family: 'IBM Plex Sans JP';\n\tunicode-range: U+0401, U+0410-044F, U+0451\n}",
+      "@font-face{font-family:IBM Plex Sans JP;unicode-range:U+401,U+410-44f,U+451}",
+    );
+
+    // The <urange> vectors of rust-cssparser (src/css-parsing-tests/urange.json):
+    // a list of ranges, and for each range [start, end] or null if it is invalid.
+    const vectors: [string, ([number, number] | null)[]][] = [
+      [
+        "u+1, U+10, U+100, U+1000, U+10000, U+100000, U+1000000",
+        [[1, 1], [16, 16], [256, 256], [4096, 4096], [65536, 65536], [1048576, 1048576], null],
+      ],
+      [
+        "u+?, u+1?, U+10?, U+100?, U+1000?, U+10000?, U+100000?",
+        [[0, 15], [16, 31], [256, 271], [4096, 4111], [65536, 65551], [1048576, 1048591], null],
+      ],
+      [
+        "u+??, U+1??, U+10??, U+100??, U+1000??, U+10000??",
+        [[0, 255], [256, 511], [4096, 4351], [65536, 65791], [1048576, 1048831], null],
+      ],
+      [
+        "u+???, U+1???, U+10???, U+100???, U+1000???",
+        [[0, 4095], [4096, 8191], [65536, 69631], [1048576, 1052671], null],
+      ],
+      ["u+????, U+1????, U+10????, U+100????", [[0, 65535], [65536, 131071], [1048576, 1114111], null]],
+      ["u+?????, U+1?????, U+10?????", [[0, 1048575], null, null]],
+      ["u+??????, U+1??????", [null, null]],
+      [
+        "U+2 , U+???",
+        [
+          [2, 2],
+          [0, 4095],
+        ],
+      ],
+      ["U+4E-9F", [[78, 159]]],
+      [
+        "u+20-3F, u+3F-3F, u+3F-3E, U+0-110000, U+0-10FFFF, U+100000-2, U+1000000-2, U+10-200000",
+        [[32, 63], [63, 63], null, null, [0, 1114111], null, null, null],
+      ],
+      ["ù+12, Ü+12, u +12, U+ 12, U+12 - 20, U+1?2, U+1?-50, U+1- 2", [null, null, null, null, null, null, null, null]],
+      ["U+26F9200D2640, U+10000-26F9200D2640", [null, null]],
+    ];
+    const ranges = vectors.flatMap(([list]) => list.split(",").map(range => range.trim()));
+    const expected = vectors.flatMap(([, values]) => values);
+
+    // What can follow a range. `U+0041-005A` prints as `U+41-5a` only when the
+    // typed parser read the whole list.
+    const endings: [string, (range: string) => string][] = [
+      ["`}`", range => `@font-face{unicode-range:U+0041-005A,${range}}`],
+      ["the end of the file", range => `@font-face{unicode-range:U+0041-005A,${range}`],
+      ["a space", range => `@font-face{unicode-range:U+0041-005A,${range} }`],
+      ["a tab", range => `@font-face{unicode-range:U+0041-005A,${range}\t}`],
+      ["a line break", range => `@font-face{unicode-range:U+0041-005A,${range}\n}`],
+      ["CR LF", range => `@font-face{unicode-range:U+0041-005A,${range}\r\n}`],
+      ["`;`", range => `@font-face{unicode-range:U+0041-005A,${range};}`],
+      ["a space and `;`", range => `@font-face{unicode-range:U+0041-005A,${range} ;}`],
+      ["a comment", range => `@font-face{unicode-range:U+0041-005A,${range}/**/}`],
+      ["a comment and a space", range => `@font-face{unicode-range:U+0041-005A,${range}/**/ }`],
+      ["`,`", range => `@font-face{unicode-range:${range},U+0041-005A}`],
+      ["a space and `,`", range => `@font-face{unicode-range:${range} ,U+0041-005A}`],
+      ["a line break and `,`", range => `@font-face{unicode-range:${range}\n,U+0041-005A}`],
+    ];
+
+    // Reads the printed list back: [start, end] of the range, or null if the
+    // list is not in the form of the typed printer.
+    function printedRange(output: string): [number, number] | null {
+      const items = /^@font-face\{unicode-range:([^}]*)\}$/.exec(output)?.[1].split(",") ?? [];
+      const range = items.find(item => item !== "U+41-5a");
+      const match = /^U\+([0-9a-f]*)(\?*)(?:-([0-9a-f]+))?$/.exec(range ?? "");
+      if (items.length !== 2 || !items.includes("U+41-5a") || !match) return null;
+      const [, digits, wildcards, end] = match;
+      if (end !== undefined) return wildcards ? null : [parseInt(digits, 16), parseInt(end, 16)];
+      const start = parseInt(digits || "0", 16) * 16 ** wildcards.length;
+      return [start, start + 16 ** wildcards.length - 1];
+    }
+
+    test.each(endings)("the rust-cssparser vectors, each range before %s", (_, sheet) => {
+      const actual = ranges.map(range => printedRange(minify_test_with_options(sheet(range), "")));
+      expect(actual).toEqual(expected);
+    });
+  });
+
   describe("font-palette-values", () => {
     minify_test(
       "@font-palette-values --x{font-family:Foo;base-palette:2}",

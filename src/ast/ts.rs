@@ -202,6 +202,24 @@ impl Metadata {
         Metadata::MDot(last)
     }
 
+    /// Two types of one variant are the same type when their written names are, as in tsc.
+    fn has_name_of<'b, F: Fn(Ref) -> &'b [u8]>(self, other: Self, load_name: F) -> bool {
+        match (self, other) {
+            (Metadata::MIdentifier(a), Metadata::MIdentifier(b)) => load_name(a) == load_name(b),
+            (Metadata::MDot(a), Metadata::MDot(b)) => {
+                let (mut a, mut b) = (Some(a), Some(b));
+                while let (Some(x), Some(y)) = (a, b) {
+                    if x.name.slice() != y.name.slice() {
+                        return false;
+                    }
+                    (a, b) = (x.left, y.left);
+                }
+                a.is_none() && b.is_none()
+            }
+            _ => true,
+        }
+    }
+
     // the logic in finish_union, merge_union, finish_intersection and merge_intersection is
     // translated from:
     // https://github.com/microsoft/TypeScript/blob/e0a324b0503be479f2b33fd2e17c6e86c94d1297/src/compiler/transformers/typeSerializer.ts#L402
@@ -232,7 +250,6 @@ impl Metadata {
         }
     }
 
-    /// Two `MIdentifier`s are the same type when they have the same name, as in tsc.
     pub fn merge_union<'b, F: Fn(Ref) -> &'b [u8]>(&mut self, left: Self, load_name: F) {
         let result = self;
         if !matches!(left, Metadata::MNone) {
@@ -242,10 +259,8 @@ impl Metadata {
 
                     _ => Metadata::MObject,
                 };
-            } else if let (Metadata::MIdentifier(r), Metadata::MIdentifier(l)) = (*result, left) {
-                if load_name(r) != load_name(l) {
-                    *result = Metadata::MObject;
-                }
+            } else if !result.has_name_of(left, load_name) {
+                *result = Metadata::MObject;
             }
         } else {
             // always take the next value if left is MNone
@@ -295,10 +310,8 @@ impl Metadata {
 
                     _ => Metadata::MObject,
                 };
-            } else if let (Metadata::MIdentifier(r), Metadata::MIdentifier(l)) = (*result, left) {
-                if load_name(r) != load_name(l) {
-                    *result = Metadata::MObject;
-                }
+            } else if !result.has_name_of(left, load_name) {
+                *result = Metadata::MObject;
             }
         } else {
             // make sure intersection of only MUnknown serializes to "undefined"

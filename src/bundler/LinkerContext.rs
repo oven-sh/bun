@@ -4022,6 +4022,11 @@ impl<'a> LinkerContext<'a> {
                     // Warn about importing from a file that is known to not have any exports
                     if status == ImportTrackerStatus::CjsWithoutExports
                         && !self.is_call_record(prev_source_index, named_import.import_record_index)
+                        && !self
+                            .graph
+                            .symbols
+                            .get_const(tracker.import_ref)
+                            .is_some_and(|symbol| symbol.only_in_type_metadata())
                     {
                         let source = self.get_source(tracker.source_index.get());
                         // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
@@ -4119,6 +4124,7 @@ impl<'a> LinkerContext<'a> {
                         // A name read off `import()` / `require()` is `undefined`
                         // at run time too, so there is nothing to say.
                         if self.is_call_record(prev_source_index, named_import.import_record_index)
+                            || symbol.only_in_type_metadata()
                         {
                         } else if self.resolver().opts.target == Target::Browser
                             && bun_resolve_builtins::Alias::has(
@@ -4673,13 +4679,15 @@ impl<'a> LinkerContext<'a> {
                         .slice();
                     if symbol.import_item_status == ImportItemStatus::Generated {
                         symbol.import_item_status = ImportItemStatus::Missing;
-                        self.log_disjoint().add_range_warning_fmt(
-                            Some(source), r,
-                            format_args!(
-                                "Import \"{}\" will always be undefined because there are multiple matching exports",
-                                bstr::BStr::new(alias),
-                            ),
-                        );
+                        if !symbol.only_in_type_metadata() {
+                            self.log_disjoint().add_range_warning_fmt(
+                                Some(source), r,
+                                format_args!(
+                                    "Import \"{}\" will always be undefined because there are multiple matching exports",
+                                    bstr::BStr::new(alias),
+                                ),
+                            );
+                        }
                     } else {
                         self.log_disjoint().add_range_error_fmt(
                             Some(source),

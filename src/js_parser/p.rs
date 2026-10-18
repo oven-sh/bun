@@ -7303,8 +7303,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    // TODO: prop.kind == .declare and prop.value == null
-
                     if prop.ts_decorators.len_u32() > 0 {
                         let descriptor_key = prop.key.expect("infallible: prop has key");
                         let loc = descriptor_key.loc;
@@ -7833,8 +7831,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             M::MPromise => ident!(b"Promise"),
             M::MIdentifier(name) => {
                 let name = self.load_name_from_ref(name);
+                let Some(e) = self.metadata_type_reference(name, false)? else {
+                    return Ok(ident!(b"Object"));
+                };
                 // The guard prints the name twice.
-                let e = self.metadata_type_reference(name, 2, false)?;
+                self.count_metadata_uses(e, 1);
                 return self.maybe_defined_helper(e);
             }
             M::MDot(last) => {
@@ -7846,9 +7847,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     part = left;
                 }
 
+                let Some(mut path) = self.metadata_type_reference(part.name.slice(), true)? else {
+                    return Ok(ident!(b"Object"));
+                };
+                if let Some(&member) = names.last()
+                    && let Some(item) =
+                        self.metadata_import_item(path, member.slice(), names.len() > 1)
+                {
+                    path = item;
+                    names.pop();
+                }
+
                 // The guard tests `a`, `a.b` and `a.b.c`, then the metadata is `a.b.c`.
-                let mut path =
-                    self.metadata_type_reference(part.name.slice(), names.len() as u32 + 2, true)?;
+                self.count_metadata_uses(path, names.len() as u32 + 1);
                 let mut test = self.check_if_defined_helper(path)?;
                 for name in names.iter().rev() {
                     path = self.new_expr(
@@ -7884,33 +7895,102 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// The type `name`, bound like an identifier at the class. The caller prints it `printed` times.
+    /// The type `name`, bound like an identifier at the class. `None`: it names a symbol the parser declares.
     fn metadata_type_reference(
         &mut self,
         name: &'a [u8],
-        printed: u32,
         is_property_access_target: bool,
-    ) -> Result<Expr, crate::Error> {
+    ) -> Result<Option<Expr>, crate::Error> {
         let result = self.find_symbol(bun_ast::Loc::EMPTY, name)?;
-        let expr = self.handle_identifier(
+        if self.is_parser_ambient(result.r#ref) {
+            // A type is not a use of `module` or `jest`: a use changes the module format.
+            self.ignore_usage(result.r#ref);
+            return Ok(None);
+        }
+        Ok(Some(
+            self.handle_identifier(
+                bun_ast::Loc::EMPTY,
+                E::Identifier::init(result.r#ref)
+                    .with_must_keep_due_to_with_stmt(result.is_inside_with_scope),
+                None,
+                IdentifierOpts::new()
+                    .with_was_originally_identifier(true)
+                    .with_is_property_access_target(is_property_access_target),
+            ),
+        ))
+    }
+
+    /// A symbol that `prepare_for_visit_pass` declares: a CommonJS variable, a global of bun:test, `hmr`.
+    fn is_parser_ambient(&self, ref_: Ref) -> bool {
+        ref_.eql(self.exports_ref)
+            || ref_.eql(self.module_ref)
+            || ref_.eql(self.require_ref)
+            || ref_.eql(self.dirname_ref)
+            || ref_.eql(self.filename_ref)
+            || ref_.eql(self.hmr_api_ref)
+            || Jest::FIELDS
+                .iter()
+                .any(|(_, field)| ref_.eql(field(&self.jest)))
+    }
+
+    /// In a bundle, `ns.member` of `import * as ns` is the import item that a written `ns.member` is.
+    fn metadata_import_item(
+        &mut self,
+        ns: Expr,
+        member: &'a [u8],
+        is_property_access_target: bool,
+    ) -> Option<Expr> {
+        let js_ast::ExprData::EIdentifier(id) = ns.data else {
+            return None;
+        };
+        if !self.options.bundle || self.dynamic_import_namespace_locals.contains_key(&id.ref_) {
+            return None;
+        }
+        let existing = self
+            .import_items_for_namespace
+            .get(&id.ref_)?
+            .get(member)
+            .map(|item| item.ref_);
+        let only_metadata = existing
+            .is_none_or(|item| self.symbols[item.inner_index() as usize].only_in_type_metadata());
+        let item = self.maybe_rewrite_property_access(
             bun_ast::Loc::EMPTY,
-            E::Identifier::init(result.r#ref)
-                .with_must_keep_due_to_with_stmt(result.is_inside_with_scope),
-            None,
-            IdentifierOpts::new()
-                .with_was_originally_identifier(true)
-                .with_is_property_access_target(is_property_access_target),
-        );
-        // `find_symbol` counted the first use.
+            ns,
+            member,
+            bun_ast::Loc::EMPTY,
+            IdentifierOpts::new().with_is_property_access_target(is_property_access_target),
+        )?;
+        if only_metadata && let js_ast::ExprData::EImportIdentifier(item) = item.data {
+            self.symbols[item.ref_.inner_index() as usize].set_only_in_type_metadata(true);
+        }
+        Some(item)
+    }
+
+    /// A written `ns.member` reuses an item that decorator metadata made: a miss is reported, at `loc`.
+    #[cold]
+    pub(crate) fn take_over_metadata_import_item(
+        &mut self,
+        ns: Ref,
+        member: &'a [u8],
+        loc: bun_ast::Loc,
+    ) {
+        let items = self.import_items_for_namespace.get_mut(&ns);
+        if let Some(item) = items.and_then(|items| items.get_mut(member)) {
+            item.loc = loc;
+            self.symbols[item.ref_.inner_index() as usize].set_only_in_type_metadata(false);
+        }
+    }
+
+    /// Counts the `extra` more times that the guard prints `expr`. `find_symbol` counted the first.
+    fn count_metadata_uses(&mut self, expr: Expr, extra: u32) {
         let ref_ = match expr.data {
             js_ast::ExprData::EIdentifier(e) => e.ref_,
             js_ast::ExprData::EImportIdentifier(e) => e.ref_,
-            _ => return Ok(expr),
+            _ => return,
         };
-        for _ in 1..printed {
+        for _ in 0..extra {
             self.record_usage(ref_);
         }
-        Ok(expr)
     }
 
     #[cold]

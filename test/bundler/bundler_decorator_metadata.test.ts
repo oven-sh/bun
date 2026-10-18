@@ -1339,7 +1339,7 @@ describe("bundler", () => {
 
   // Bun does not transpile a bundle for `--target=bun`. The metadata then reads the class in
   // its temporal dead zone, as it does when the class has another use, and as the output of
-  // tsc does.
+  // tsc does (https://github.com/oven-sh/bun/issues/7591).
   itBundled("decorator_metadata/ClassDeclaredAfterTheClassIsInItsDeadZone", {
     backend: "cli",
     target: "bun",
@@ -1386,7 +1386,9 @@ describe("bundler", () => {
     run: { stdout: "Object,Bar\n" },
   });
 
-  // Only the first part of a qualified name is an identifier.
+  // Only the first part of a qualified name is an identifier. A member of `import * as ns` is
+  // an import item, as when the code reads it: the other exports of the module are not kept, and
+  // an interface, which has no export, is not reported.
   itBundled("decorator_metadata/QualifiedName", {
     backend: "cli",
     files: {
@@ -1395,15 +1397,93 @@ describe("bundler", () => {
         import * as ns from "./ns";
         import { lib } from "./lib";
         namespace local { export namespace inner { export class Deep {} } }
-        class K { @d m(a: ns.Bar, b: ns.inner.Baz, c: lib.Qux, d: local.inner.Deep) {} }
+        class K { @d m(a: ns.Bar, b: ns.inner.Baz, c: lib.Qux, d: local.inner.Deep, e: ns.Shape) {} }
         ${names}
       `,
-      "/ns.ts": `export class Bar {}\nexport namespace inner { export class Baz {} }`,
+      "/ns.ts": `
+        export class Bar {}
+        export namespace inner { export class Baz {} }
+        export interface Shape { side: number }
+        export function unused() { return "an export that nothing names"; }
+      `,
       "/lib.ts": `export namespace lib { export class Qux {} }`,
       "/collect.ts": collect,
       "/tsconfig.json": tsconfig,
     },
-    run: { stdout: "Bar,Baz,Qux,Deep\n" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("an export that nothing names");
+    },
+    run: { stdout: "Bar,Baz,Qux,Deep,Object\n" },
+  });
+
+  itBundled("decorator_metadata/ExportDefaultClass", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        export default class K { @d m(a: K, b: Later) {} }
+        function Later() {}
+        ${names}
+      `,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { stdout: "K,Later\n" },
+  });
+
+  // A type is not a use of the CommonJS `module`: the file stays an ES module.
+  itBundled("decorator_metadata/TypeWithTheNameOfACommonJSVariable", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        interface module { id: string }
+        class K { @d m(a: module, b: exports) {} }
+        ${names}
+      `,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__commonJS");
+    },
+    run: { stdout: "Object,Object\n" },
+  });
+
+  // The member of a qualified name is not an identifier, so it does not take the name `Client`
+  // from the class.
+  itBundled("decorator_metadata/MemberNameKeepsTheClassName", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        import * as db from "./client";
+        class K { @d m(a: db.Client) {} }
+        console.log(design.paramtypes[0].name, db.Client.name);
+      `,
+      "/client.ts": `export class Client {}`,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { stdout: "Client Client\n" },
+  });
+
+  itBundled("decorator_metadata/QualifiedNameOfAnImportAlias", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        import db = require("./client");
+        namespace lib { export class Bar {} }
+        import L = lib;
+        class K { @d m(a: db.Client, b: L.Bar) {} }
+        ${names}
+      `,
+      "/client.ts": `export class Client {}`,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { stdout: "Client,Bar\n" },
   });
 
   itBundled("decorator_metadata/ExportOfAnotherNamespaceBlock", {

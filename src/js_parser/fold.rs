@@ -216,7 +216,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .get(name)
                                 .copied();
                             let ref_ = match existing {
-                                Some(loc_ref) => loc_ref.ref_,
+                                Some(loc_ref) => {
+                                    if p.symbols[loc_ref.ref_.inner_index() as usize]
+                                        .only_in_type_metadata()
+                                    {
+                                        p.take_over_metadata_import_item(id.ref_, name, name_loc);
+                                    }
+                                    loc_ref.ref_
+                                }
                                 None => {
                                     // Generate a new import item symbol in the module scope
                                     let new_ref = p.new_symbol(js_ast::symbol::Kind::Import, name);

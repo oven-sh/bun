@@ -1,4 +1,5 @@
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { join } from "node:path";
 import "reflect-metadata";
 
 describe("decorator metadata", () => {
@@ -544,6 +545,84 @@ describe("decorator metadata", () => {
     expect(Reflect.getMetadata("design:type", A.prototype, "method4")).toBe(Function);
     expect(Reflect.getMetadata("design:returntype", A.prototype, "method4")).toBeUndefined();
   });
+
+  // tsc emits design:type for a decorated `declare` field the same way it does for a
+  // regular or `abstract` field, while the field itself is still erased.
+  test("declare and abstract fields", () => {
+    const types: Record<string, unknown> = {};
+    // The design:type metadata decorator is appended after the user's decorators and
+    // decorators apply last to first, so the metadata is visible from inside d1. This
+    // is how reflect-metadata consumers (TypeORM, class-transformer, ...) read it.
+    function d1(target: object, key: string) {
+      types[key] = Reflect.getMetadata("design:type", target, key);
+    }
+    class Known {}
+
+    class A {
+      @d1
+      declare prop0: string;
+      @d1
+      declare prop1: Known;
+      @d1
+      declare prop2?: number;
+      @d1
+      // @ts-ignore
+      declare prop3;
+      @d1
+      declare readonly prop4: boolean;
+      @d1
+      declare private prop5: Known[];
+      @d1
+      // @ts-ignore
+      declare ["prop" + 6]: Known;
+      @d1
+      declare static prop7: symbol;
+      // The other modifier order is parsed differently; prettier would rewrite it to `declare static`.
+      // prettier-ignore
+      @d1
+      static declare prop8: bigint;
+      @d1
+      prop9: string = "";
+    }
+
+    abstract class B {
+      @d1
+      abstract abstract0: string;
+      @d1
+      abstract abstract1: Known;
+    }
+
+    const expected = {
+      prop0: String,
+      prop1: Known,
+      prop2: Number,
+      prop3: Object,
+      prop4: Boolean,
+      prop5: Array,
+      prop6: Known,
+      prop7: Symbol,
+      prop8: BigInt,
+      prop9: String,
+      abstract0: String,
+      abstract1: Known,
+    };
+    expect(Object.keys(types).sort()).toEqual(Object.keys(expected).sort());
+    // Compared by identity: toEqual does not tell builtin constructors such as Array and Object apart.
+    for (const [key, type] of Object.entries(expected)) {
+      expect(types[key], key).toBe(type);
+    }
+
+    // A declare field is a field, not a method: it gets design:type and nothing else.
+    expect(Reflect.getOwnMetadataKeys(A.prototype, "prop0")).toEqual(["design:type"]);
+    expect(Reflect.getOwnMetadataKeys(A, "prop7")).toEqual(["design:type"]);
+    expect(Reflect.getOwnMetadataKeys(B.prototype, "abstract0")).toEqual(["design:type"]);
+
+    // The erased fields stay erased.
+    expect(Object.keys(new A())).toEqual(["prop9"]);
+    expect(Object.getOwnPropertyNames(A.prototype)).toEqual(["constructor"]);
+    expect(Object.getOwnPropertyNames(A)).not.toContain("prop7");
+    expect(Object.getOwnPropertyNames(A)).not.toContain("prop8");
+  });
 });
 
 // The parse pass stores the name of a type. The name is bound to a symbol when the class is
@@ -567,7 +646,9 @@ describe("decorator metadata binds a type name when the class is lowered", () =>
   const head = `import { d, seen } from "./collect";\n`;
   const tail = `\nconsole.log(seen.join(" "));\n`;
 
-  type Fixture = [name: string, index: string, stdout: string];
+  // What a fixture prints, or the error that stops it.
+  type Prints = string | { error: string };
+  type Fixture = [name: string, index: string, prints: Prints];
 
   // `c ? (x) : y => { ... }` is first parsed as the arrow function `(x): y => { ... }`. That
   // parse is thrown away, so it must leave nothing behind for the names in its body.
@@ -688,6 +769,23 @@ describe("decorator metadata binds a type name when the class is lowered", () =>
        console.log(ns.same === ns.Bar);`,
       "true\nreturntype=undefined paramtypes=[Bar] type=Function\n",
     ],
+    [
+      "a qualified name with a part that is not defined",
+      `const c = false, x = 0;
+       namespace a { export namespace b { export class C {} } }
+       const make: any = c ? (x) : y => { class K { @d m(p: a.b.C, q: a.missing.C, r: Express.Multer.File) {} } return K; };
+       make(1);`,
+      "returntype=undefined paramtypes=[C,Object,Object] type=Function\n",
+    ],
+    [
+      "a type name written with an escape",
+      `const c = false, x = 0;
+       const make: any = c ? (x) : y => { class K { @d m(a: B\\u0061r, b: n\\u0073.Baz) {} } return K; };
+       class Bar {}
+       namespace ns { export class Baz {} }
+       make(1);`,
+      "returntype=undefined paramtypes=[Bar,Baz] type=Function\n",
+    ],
   ];
 
   // These need no conditional. A name that is declared after the class binds to that
@@ -760,8 +858,75 @@ describe("decorator metadata binds a type name when the class is lowered", () =>
     [
       "two union members with the same name",
       `class Bar {}
-       class K { @d m(a: Bar | Bar, b: Bar & Bar, c: Bar | null, d: undefined | Bar, e: Bar | Date) {} }`,
-      "returntype=undefined paramtypes=[Bar,Bar,Bar,Bar,Object] type=Function\n",
+       namespace ns { export class A {} export class B {} }
+       class K { @d m(a: Bar | Bar, b: Bar & Bar, c: Bar | null, d: undefined | Bar, e: Bar | Date) {} }
+       class L { @d m(a: ns.A | ns.A, b: ns.A | ns.B, c: ns.A & ns.B) {} }`,
+      "returntype=undefined paramtypes=[Bar,Bar,Bar,Bar,Object] type=Function " +
+        "returntype=undefined paramtypes=[A,Object,Object] type=Function\n",
+    ],
+    [
+      "a type predicate",
+      `import { IFoo } from "./types";
+       class Bar {}
+       class K {
+         @d a(IFoo: any): IFoo is Bar { return true }
+         @d b(): this is Bar { return true }
+         @d c(x: any): asserts x is Bar {}
+         @d e(x: any): asserts x {}
+       }`,
+      "returntype=Boolean paramtypes=[Object] type=Function returntype=Boolean paramtypes=[] type=Function " +
+        "returntype=undefined paramtypes=[Object] type=Function returntype=undefined paramtypes=[Object] type=Function\n",
+    ],
+    [
+      "a type with the name of a CommonJS variable",
+      `interface module { id: string }
+       class K {
+         @d m(a: module, b: exports, c: require, e: __dirname) {}
+         @d isLoaded(module: unknown): module is K { return true }
+       }`,
+      "returntype=undefined paramtypes=[Object,Object,Object,Object] type=Function " +
+        "returntype=Boolean paramtypes=[Object] type=Function\n",
+    ],
+    [
+      "a value import that only an array type names",
+      `import { Tag } from "./tag";
+       class K { @d tags: Tag[]; }`,
+      "type=Array\n",
+    ],
+  ];
+
+  // The limits of this change. `tscPrints` and `bundlePrints` below have what the output of tsc
+  // and the bundle print for each of these.
+  const limits: Fixture[] = [
+    // A type has no symbol in Bun, so the name of a type parameter binds to a value.
+    [
+      "a type parameter with the name of a class declared later",
+      `class Repo<Entity> { @d save(e: Entity) {} }
+       class Entity {}`,
+      "returntype=undefined paramtypes=[Entity] type=Function\n",
+    ],
+    // Bun declares the alias with `const`. tsc declares it with `var`.
+    [
+      "an import alias written after the class",
+      `namespace lib { export class Bar {} }
+       class K { @d m(a: Alias) {} }
+       import Alias = lib.Bar;`,
+      { error: "Cannot access 'Alias' before initialization" },
+    ],
+    // No metadata names `Tag`, so its import is not a use.
+    [
+      "a decorator after export default, which Bun does not apply",
+      `import { Tag } from "./tag";
+       export default @d class { constructor(a: Tag) {} }`,
+      "\n",
+    ],
+    // https://github.com/oven-sh/bun/pull/41984 renames the argument of the namespace closure.
+    [
+      "a parameter with the name of the namespace that exports the type",
+      `namespace ns { export class Bar {} }
+       namespace ns { export function f(ns: any) { class K { @d m(a: Bar) {} } return K; } }
+       ns.f({ Bar: class Other {} });`,
+      "returntype=undefined paramtypes=[Other] type=Function\n",
     ],
   ];
 
@@ -769,6 +934,7 @@ describe("decorator metadata binds a type name when the class is lowered", () =>
     "tsconfig.json": tsconfig,
     "collect.ts": collect,
     "svc.ts": `export class Svc {}\n`,
+    "tag.ts": `console.log("tag.ts is evaluated");\nexport class Tag {}\n`,
     "types.ts": `export interface IFoo { x: number }\nexport interface File { x: number }\n`,
   };
 
@@ -796,23 +962,196 @@ describe("decorator metadata binds a type name when the class is lowered", () =>
     expect(exitCode).toBe(0);
   });
 
+  // A type with the name of a global of bun:test is not a use of that global, and does not hide it.
+  test.concurrent("a type with the name of a bun:test global", async () => {
+    using dir = tempDir("decorator-metadata-jest", {
+      "tsconfig.json": tsconfig,
+      "globals.test.ts": `
+        const d: any = () => {};
+        interface Repo { find(): void }
+        @d class Consumer { constructor(readonly repo: jest.Mocked<Repo>) {} }
+        class K { @d field: jest.Mock; @d m(a: describe.Each, b: expect) {} }
+        test("the globals are bound", () => {
+          const fn = jest.fn();
+          fn(new Consumer(null!), new K());
+          expect(fn).toHaveBeenCalledTimes(1);
+          expect(typeof describe).toBe("function");
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./globals.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  async function run(cmd: string[], cwd: string) {
+    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  function expectPrints({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof run>>, prints: Prints) {
+    if (typeof prints === "string") {
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(stdout).toBe(prints);
+      expect(exitCode).toBe(0);
+    } else {
+      expect(stderr).toContain(prints.error);
+      expect(exitCode).not.toBe(0);
+    }
+  }
+
   describe.each([
     ["in a conditional's arrow body", conditional],
     ["outside a conditional", declarationOrder],
+    ["where Bun and tsc differ", limits],
   ] as const)("%s", (_group, fixtures) => {
-    test.concurrent.each(fixtures)("%s", async (_name, index, expected) => {
+    test.concurrent.each(fixtures)("%s", async (_name, index, prints) => {
       using dir = tempDir("decorator-metadata-names", { ...files, "index.ts": head + index + tail });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "index.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
+      expectPrints(await run([bunExe(), "index.ts"], String(dir)), prints);
+    });
+  });
+
+  // What the output of tsc 6.0 prints where it is not what `bun index.ts` prints.
+  const tscPrints: Record<string, Prints> = {
+    // tsc keeps the import of the interface. The interface has no export at run time.
+    "the arrow function is kept and its parameter has the name of a type-only import": {
+      error: "Export named 'IFoo' not found",
+    },
+    // tsc reads `exports` where it is defined. Bun takes a file that names `exports` for CommonJS.
+    "a type with the name of a CommonJS variable": {
+      error: "Cannot use import statement with CommonJS-only features",
+    },
+    "a type parameter with the name of a class declared later":
+      "returntype=undefined paramtypes=[Object] type=Function\n",
+    "an import alias written after the class": "returntype=undefined paramtypes=[undefined] type=Function\n",
+    "a decorator after export default, which Bun does not apply": "tag.ts is evaluated\nparamtypes=[Tag]\n",
+    "a parameter with the name of the namespace that exports the type":
+      "returntype=undefined paramtypes=[Bar] type=Function\n",
+  };
+
+  // What the bundle prints where it is not what `bun index.ts` prints. Bun moves a class to the
+  // top of a file that it runs. The bundle keeps the order, and its renamer tells `ns` from `ns`.
+  const bundlePrints: Record<string, Prints> = {
+    "a type parameter with the name of a class declared later": {
+      error: "Cannot access 'Entity' before initialization",
+    },
+    "an import alias written after the class": "returntype=undefined paramtypes=[Object] type=Function\n",
+    "a parameter with the name of the namespace that exports the type":
+      "returntype=undefined paramtypes=[Bar] type=Function\n",
+  };
+
+  // The same fixtures, transpiled by tsc and bundled by `bun build`. A debug build needs about
+  // 20 seconds to load the TypeScript compiler and seconds to run `bun check`, so these run on
+  // release builds.
+  describe.skipIf(isDebug || isASAN)("the same as", () => {
+    const all = [...conditional, ...declarationOrder, ...limits];
+
+    test.concurrent.each(all)("the output of tsc: %s", async (name, index, prints) => {
+      const ts: typeof import("typescript") = require("typescript");
+      const sources = { ...files, "index.ts": head + index + tail };
+      const transpiled: Record<string, string> = {};
+      for (const [file, source] of Object.entries(sources)) {
+        if (!file.endsWith(".ts")) continue;
+        transpiled[file.replace(/\.ts$/, ".js")] = ts.transpileModule(source, {
+          compilerOptions: {
+            experimentalDecorators: true,
+            emitDecoratorMetadata: true,
+            strictNullChecks: false,
+            target: ts.ScriptTarget.ESNext,
+            module: ts.ModuleKind.ESNext,
+          },
+        }).outputText;
+      }
+      using dir = tempDir("decorator-metadata-tsc", transpiled);
+      expectPrints(await run([bunExe(), "index.js"], String(dir)), tscPrints[name] ?? prints);
+    });
+
+    test.concurrent.each(all)("a bundle: %s", async (name, index, prints) => {
+      using dir = tempDir("decorator-metadata-bundle", { ...files, "index.ts": head + index + tail });
+      const build = await run([bunExe(), "build", "index.ts", "--target=bun", "--outdir=out"], String(dir));
+      expect(build.stderr).toBe("");
+      expectPrints(await run([bunExe(), join("out", "index.js")], String(dir)), bundlePrints[name] ?? prints);
+    });
+
+    // `bun check` reports TS1272, as tsc does, for a type that a decorated signature imports and
+    // that the output of tsc names. The metadata is a use of an import in those places only.
+    test.concurrent("the places where bun check reports TS1272: an import of a type stays", async () => {
+      const shapes: Record<string, string> = {
+        "parameter": `class K { @d m(a: IFoo) {} }`,
+        "optional-parameter": `class K { @d m(a?: IFoo) {} }`,
+        "return-type": `class K { @d m(): IFoo { return null! } }`,
+        "field": `class K { @d p: IFoo; }`,
+        "declare-field": `class K { @d declare p: IFoo; }`,
+        "static-field": `class K { @d static p: IFoo; }`,
+        "constructor": `@d class K { constructor(a: IFoo) {} }`,
+        "parameter-property": `@d class K { constructor(readonly a: IFoo) {} }`,
+        "decorated-parameter": `class K { m(@d a: IFoo) {} }`,
+        "decorated-constructor-parameter": `class K { constructor(@d a: IFoo) {} }`,
+        "getter": `class K { @d get p(): IFoo { return null! } }`,
+        "setter": `class K { @d set p(v: IFoo) {} }`,
+        "nullable": `class K { @d m(a: IFoo | null, b: undefined | IFoo) {} }`,
+        "parenthesized": `class K { @d m(a: (IFoo)) {} }`,
+        "union-of-itself": `class K { @d m(a: IFoo | IFoo) {} }`,
+        "nested-class": `function f() { class K { @d m(a: IFoo) {} } return K; }`,
+        "namespace-class": `namespace ns { export class K { @d m(a: IFoo) {} } }`,
+        "rest-parameter": `class K { @d m(...a: IFoo[]) {} }`,
+        "array": `class K { @d m(a: IFoo[]) {} }`,
+        "readonly-array": `class K { @d m(a: readonly IFoo[]) {} }`,
+        "tuple": `class K { @d m(a: [IFoo]) {} }`,
+        "union": `class K { @d m(a: IFoo | string) {} }`,
+        "intersection": `class K { @d m(a: IFoo & { y: 1 }) {} }`,
+        "type-argument": `class K { @d m(a: Promise<IFoo>, b: Array<IFoo>) {} }`,
+        "indexed-access": `class K { @d m(a: IFoo["x"]) {} }`,
+        "keyof": `class K { @d m(a: keyof IFoo) {} }`,
+        "conditional-type": `class K { @d m(a: IFoo extends object ? string : number) {} }`,
+        "function-type": `class K { @d m(a: (x: IFoo) => IFoo) {} }`,
+        "object-type": `class K { @d m(a: { x: IFoo }) {} }`,
+        "constraint": `class K { @d m<T extends IFoo>(a: T) {} }`,
+        "type-predicate": `class K { @d m(a: any): a is IFoo { return true } }`,
+        "asserts": `class K { @d m(a: any): asserts a is IFoo {} }`,
+        "member-without-decorator": `class K { m(a: IFoo) {} @d n() {} }`,
+        "overload-signature": `class K { m(a: IFoo): void; @d m(a: any) {} }`,
+        "declare-class": `declare class K { @d m(a: IFoo): void; }`,
+        "class-expression": `const K = class { @d m(a: IFoo) {} };`,
+      };
+      // tsc prints the element type of a rest parameter. Bun prints Object, which names no import.
+      const onlyTsc = ["rest-parameter"];
+      const source = (shape: string) => `import { IFoo } from "./types";\ndeclare const d: any;\n${shape}\n`;
+
+      using dir = tempDir("decorator-metadata-ts1272", {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            experimentalDecorators: true,
+            emitDecoratorMetadata: true,
+            isolatedModules: true,
+            strict: false,
+            lib: ["es5"],
+            types: [],
+          },
+        }),
+        "types.ts": `export interface IFoo { x: number }\n`,
+        ...Object.fromEntries(Object.entries(shapes).map(([name, shape]) => [`${name}.ts`, source(shape)])),
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      if (exitCode !== 0) expect(stderr).toBe("");
-      expect(stdout).toBe(expected);
-      expect(exitCode).toBe(0);
+      const { stdout } = await run([bunExe(), "check"], String(dir));
+      const reported = new Set(
+        Array.from(stdout.matchAll(/^([\w-]+)\.ts\(\d+,\d+\): error TS1272/gm), match => match[1]),
+      );
+
+      const transpiler = new Bun.Transpiler({ loader: "ts", trimUnusedImports: true, tsconfig });
+      const keepsTheImport = (shape: string) =>
+        transpiler.scan(source(shape)).imports.some(({ path }) => path === "./types");
+      const names = Object.keys(shapes);
+      expect(names.filter(name => keepsTheImport(shapes[name]))).toEqual(
+        names.filter(name => reported.has(name) && !onlyTsc.includes(name)),
+      );
     });
   });
 });

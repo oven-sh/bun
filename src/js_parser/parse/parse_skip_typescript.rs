@@ -321,6 +321,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if self.lexer.is_contextual_keyword(b"is") && !self.lexer.has_newline_before {
                         self.lexer.next()?;
                         self.skip_type_script_type(Level::Lowest)?;
+                        if GET_METADATA {
+                            **result
+                                .as_mut()
+                                .expect("infallible: GET_METADATA implies Some") =
+                                Metadata::MBoolean;
+                        }
                         return Ok(());
                     }
 
@@ -529,6 +535,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     || self.lexer.token == T::TThis)
                             {
                                 self.lexer.next()?;
+                                if GET_METADATA {
+                                    **result
+                                        .as_mut()
+                                        .expect("infallible: GET_METADATA implies Some") =
+                                        Metadata::MVoid;
+                                }
                             }
                         }
                         TsIdentKind::PrimitiveAny => {
@@ -648,6 +660,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if self.lexer.is_contextual_keyword(b"is") && !self.lexer.has_newline_before {
                         self.lexer.next()?;
                         self.skip_type_script_type(Level::Lowest)?;
+                        // The name before "is" is a parameter, not a type.
+                        if GET_METADATA && kind != TsIdentKind::Asserts {
+                            **result
+                                .as_mut()
+                                .expect("infallible: GET_METADATA implies Some") =
+                                Metadata::MBoolean;
+                        }
                         return Ok(());
                     }
 

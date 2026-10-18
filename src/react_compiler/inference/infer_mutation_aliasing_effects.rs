@@ -105,7 +105,10 @@ pub(crate) fn infer_mutation_aliasing_effects(
     };
 
     if func.fn_type == ReactFunctionType::Component {
-        // Component: at most 2 params (props, ref)
+        if env.config.components_take_two_parameters && func.params.len() > 2 {
+            let reason = "Expected React component to have not more than two parameters: one for props and for ref";
+            return Err(crate::diagnostics::cold_invariant(reason, None, func.loc).into());
+        }
         let params_len = func.params.len();
         if params_len > 0 {
             infer_param(

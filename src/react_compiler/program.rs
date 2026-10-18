@@ -6,8 +6,8 @@
 //! Port of `react_compiler/entrypoint/program.rs` walking `bun_ast` directly.
 //!
 //! The compiler is invoked **per-function, post-visit** from the parser's
-//! statement visitor (S::Function / S::Local / S::ExportDefault arms), after
-//! `visit_stmts(body)` has consumed every `scopes_in_order` entry for that
+//! `visit_stmts(body)` of a candidate function (DESIGN.md, "Hook placement"),
+//! after it has consumed every `scopes_in_order` entry for that
 //! body and resolved all identifier refs. JSX has been lowered to
 //! `E::Call { was_jsx_element: true }`. The compiled body replaces the
 //! original in place; a final `finish()` call emits the runtime import and

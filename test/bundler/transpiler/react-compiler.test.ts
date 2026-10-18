@@ -1236,6 +1236,392 @@ describe("bundler", () => {
     },
   });
 
+  // `memo` and `forwardRef` give back their first argument, so that a test can call a component as a function.
+  // `compiled(component, ...args)` says if that call reads the memo cache.
+  const reactThatCountsMemoCaches = {
+    "/node_modules/react/index.js": /* js */ `
+      exports.memo = exports.forwardRef = it => it;
+      exports.default = exports;
+    `,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      let caches = 0;
+      exports.c = n => (caches++, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+      exports.compiled = (component, ...args) => ((caches = 0), component(...args), caches > 0);
+    `,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+  };
+
+  // The Babel plugin asks each function if its parent is a call of `memo` or `forwardRef`. The port asked each
+  // statement if its value is such a call with a function as the first argument, so the function in
+  // `memo(forwardRef(fn))` was left as written, and so was each wrapper call that is not the whole value.
+  for (const [backend, minifySyntax] of [
+    ["cli", false],
+    ["api", false],
+    ["cli", true],
+  ] as const) {
+    itBundled(`react-compiler/CallbackOfMemoOrForwardRefWhereverTheCallIs-${backend}-minifySyntax=${minifySyntax}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { compiled } from "react/compiler-runtime";
+          import * as components from "./components";
+          import * as ofANamespace from "./namespace";
+          import * as typed from "./typed";
+          import { RequireLocal, RequireMember } from "./common";
+          const all = { ...components, ...components.ui, ...ofANamespace, ...typed, RequireLocal, RequireMember };
+          delete all.ui;
+          const lines = Object.entries(all).map(
+            ([name, component]) => name + (compiled(component, { a: 1 }, null) ? "" : " AS WRITTEN"),
+          );
+          console.log(lines.sort().join("\\n"));
+        `,
+        "/components.jsx": /* jsx */ `
+          import React, { forwardRef, memo } from "react";
+          import { styled } from "./styled";
+
+          // One wrapper call around the other.
+          export const MemoForwardRef = memo(forwardRef((props, ref) => <i ref={ref} title={[props.a]} />));
+          export const ReactMemoForwardRef = React.memo(
+            React.forwardRef(function Field(props, ref) {
+              return <i ref={ref} title={[props.a]} />;
+            }),
+          );
+          export const MemoForwardRefAreEqual = memo(
+            forwardRef((props, ref) => <i ref={ref} title={[props.a]} />),
+            (before, after) => before.a === after.a,
+          );
+          export const MemoMemoMemo = memo(memo(memo(props => <i title={[props.a]} />)));
+          export default memo(forwardRef((props, ref) => <i ref={ref} title={[props.a]} />));
+
+          // A wrapper call that is a part of the value.
+          export const InOtherCall = styled(forwardRef((props, ref) => <i ref={ref} title={[props.a]} />));
+          export const InObjectAssign = Object.assign(
+            forwardRef((props, ref) => <i ref={ref} title={[props.a]} />),
+            { displayName: "InObjectAssign" },
+          );
+          export const InConditional = Math.random() < 2 ? memo(props => <i title={[props.a]} />) : null;
+          export const ui = { InObject: forwardRef((props, ref) => <i ref={ref} title={[props.a]} />) };
+          ui.InAssignment = memo(props => <i title={[props.a]} />);
+          export const [InArray, AlsoInArray] = [
+            memo(props => <i title={[props.a]} />),
+            memo(props => <i title={[props.a]} />),
+          ];
+
+          // The callee is an identifier or \`React.<identifier>\`, however it is written.
+          export const EscapedName = m\\u0065mo(props => <i title={[props.a]} />);
+          export const InParentheses = (React.memo)((forwardRef)((props, ref) => <i ref={ref} title={[props.a]} />));
+
+          // The Babel plugin gives the callback no name, so it does not ask for a second parameter named like a ref.
+          export const SecondParameterNotNamedRef = forwardRef((props, r) => <i ref={r} title={[props.a]} />);
+        `,
+        "/namespace.jsx": /* jsx */ `
+          import * as React from "react";
+          export const NamespaceMemoForwardRef = React.memo(
+            React.forwardRef((props, ref) => <i ref={ref} title={[props.a]} />),
+          );
+
+          // The Babel plugin goes by the name of the callee, and takes a function at any place in the arguments.
+          const forwardRef = (first, second) => second;
+          export const SecondArgument = forwardRef(null, (props, ref) => <i ref={ref} title={[props.a]} />);
+        `,
+        "/typed.tsx": /* tsx */ `
+          import { forwardRef, memo } from "react";
+          type Props = { a: number };
+          export const TypeArguments = memo(
+            forwardRef<HTMLElement, Props>((props, ref) => <i ref={ref} title={[props.a]} />),
+          );
+          export const Cast = memo((props: Props) => <i title={[props.a]} />) as unknown as (props: Props) => unknown;
+          export const NonNull = memo(forwardRef((props: Props, ref: unknown) => <i ref={ref} title={[props.a]} />))!;
+        `,
+        "/common.jsx": /* jsx */ `
+          const React = require("react");
+          const memo = require("react").memo;
+          const forwardRef = React.forwardRef;
+          exports.RequireLocal = React.memo(React.forwardRef((props, ref) => <i ref={ref} title={[props.a]} />));
+          module.exports.RequireMember = memo(forwardRef((props, ref) => <i ref={ref} title={[props.a]} />));
+        `,
+        "/styled.js": `export const styled = it => it;`,
+        ...reactThatCountsMemoCaches,
+      },
+      reactCompiler: true,
+      target: "browser",
+      backend,
+      minifySyntax,
+      run: {
+        stdout: `
+          AlsoInArray
+          Cast
+          EscapedName
+          InArray
+          InAssignment
+          InConditional
+          InObject
+          InObjectAssign
+          InOtherCall
+          InParentheses
+          MemoForwardRef
+          MemoForwardRefAreEqual
+          MemoMemoMemo
+          NamespaceMemoForwardRef
+          NonNull
+          ReactMemoForwardRef
+          RequireLocal
+          RequireMember
+          SecondArgument
+          SecondParameterNotNamedRef
+          TypeArguments
+          default
+        `,
+      },
+    });
+  }
+
+  // A callback of `memo()` or `forwardRef()` has no name from a binding. With the name of the binding, a function
+  // expression of the same name was printed under another one, `Button2`, and that is its `Function.name`.
+  itBundled("react-compiler/CallbackOfMemoOrForwardRefKeepsItsOwnName", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { forwardRef, memo } from "react";
+        const Button = forwardRef(function Button(props, ref) {
+          return <i ref={ref} title={[props.a]} />;
+        });
+        const Card = memo(function Card(props) {
+          return <i title={[props.a]} />;
+        });
+        console.log(Button.name, Card.name);
+      `,
+      ...reactThatCountsMemoCaches,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "Button Card" },
+  });
+
+  // What the Babel plugin does not take as the callback of `memo` or `forwardRef`. `--minify-syntax` makes
+  // `React["memo"]` a dot and folds a callee, and the callee still counts as it is written.
+  for (const minifySyntax of [false, true]) {
+    itBundled(`react-compiler/NotACallbackOfMemoOrForwardRef-minifySyntax=${minifySyntax}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { compiled } from "react/compiler-runtime";
+          import * as components from "./components";
+          import * as ofANamespace from "./namespace";
+          import * as inAClass from "./class";
+          import * as typed from "./typed";
+          import afterAWrapperCallArrow from "./default-arrow";
+          import afterAWrapperCallFunction from "./default-function";
+          const all = {
+            ...components,
+            ...ofANamespace,
+            ...inAClass,
+            ...typed,
+            afterAWrapperCallArrow,
+            afterAWrapperCallFunction,
+          };
+          const lines = Object.entries(all).map(
+            ([name, component]) => name + (compiled(component, { a: 1 }, null) ? " COMPILED" : ""),
+          );
+          console.log(lines.sort().join("\\n"));
+        `,
+        "/components.jsx": /* jsx */ `
+          import React, { forwardRef, memo, memo as renamed } from "react";
+          import * as R from "react";
+          import * as other from "./other";
+          import { notReact, observer } from "./other";
+
+          // The callee is not \`memo\`, \`forwardRef\`, \`React.memo\` or \`React.forwardRef\` as written.
+          export const OtherCallee = observer(props => <i title={[props.a]} />);
+          export const RenamedImport = renamed(props => <i title={[props.a]} />);
+          export const OtherNamespace = R.memo(props => <i title={[props.a]} />);
+          export const MemberOfANamespace = other.React.memo(props => <i title={[props.a]} />);
+          export const ComputedMember = React["memo"](props => <i title={[props.a]} />);
+          export const FoldedCallee = (0, memo)(props => <i title={[props.a]} />);
+          export const FoldedConditional = (false ? memo(1) : memo)(props => <i title={[props.a]} />);
+          export const FoldedConditionalAhead = (true ? memo : memo(1))(props => <i title={[props.a]} />);
+          export const CalleeOfACall = memo(observer)(props => <i title={[props.a]} />);
+          export const MethodOfACall = React.memo(observer).call(null, props => <i title={[props.a]} />);
+          export const MethodOfMemo = React.memo.call(null, props => <i title={[props.a]} />);
+
+          // The call is optional.
+          export const OptionalCall = memo?.(props => <i title={[props.a]} />);
+          export const OptionalMember = React?.memo(props => <i title={[props.a]} />);
+          export const OptionalMemberInParentheses = (React?.memo)(props => <i title={[props.a]} />);
+
+          // The function is not a direct argument.
+          export const InOtherCall = memo(notReact(props => <i title={[props.a]} />));
+          export const InLogical = memo(forwardRef(globalThis.none || (props => <i title={[props.a]} />)));
+          export const InObject = memo({ render: props => <i title={[props.a]} /> }).render;
+
+          // The function opts out, or has no JSX and no hook.
+          export const OptOut = memo(
+            forwardRef((props, ref) => {
+              "use no memo";
+              return <i ref={ref} title={[props.a]} />;
+            }),
+          );
+          export const NoJsxAndNoHook = memo(forwardRef(props => [props.a]));
+
+          // A component takes props and a ref. The Babel plugin stops at a third parameter.
+          export const ThreeParameters = memo((props, ref, more) => <i ref={ref} title={[props.a]} />);
+
+          // The call is inside a component. The compiler takes the component and looks no further.
+          function Component(props) {
+            const Inner = memo(forwardRef((inner, ref) => <i ref={ref} title={[inner.a]} />));
+            return <Inner {...props} />;
+          }
+          export const InAComponent = Component({ a: 1 }).t;
+
+          // A function that is no component, right after a wrapper call.
+          memo(props => <i title={[props.a]} />);
+          export const afterAWrapperCall = row => <b title={[row.a]} />;
+          memo(props => <i title={[props.a]} />);
+          export const afterAWrapperCallExpression = function (row) {
+            return <b title={[row.a]} />;
+          };
+          memo(props => <i title={[props.a]} />);
+          export function afterAWrapperCallDeclaration(row) {
+            return <b title={[row.a]} />;
+          }
+        `,
+        "/namespace.jsx": /* jsx */ `
+          import * as React from "react";
+          export const ComputedMemberOfTheNamespace = React["memo"](props => <i title={[props.a]} />);
+          export const MethodOfMemoOfTheNamespace = React.memo.call(null, props => <i title={[props.a]} />);
+        `,
+        "/class.jsx": /* jsx */ `
+          // The Babel plugin goes by the name of the callee, so this is a wrapper to it.
+          const components = [];
+          const memo = component => {
+            components.push(component);
+            return () => {};
+          };
+
+          // It takes no function of a class, and the decorators of a class are a part of it.
+          class Members {
+            static member = memo(props => <i title={[props.a]} />);
+          }
+          @memo(props => <i title={[props.a]} />)
+          class Decorated {}
+          export const [ClassMember, ClassDecorator] = components;
+        `,
+        "/typed.tsx": /* tsx */ `
+          import React from "react";
+          enum Wrapper {
+            memo = "memo",
+          }
+          export const MemberByAnEnum = React[Wrapper.memo]((props: { a: number }) => <i title={[props.a]} />);
+        `,
+        "/default-arrow.jsx": /* jsx */ `
+          import { memo } from "react";
+          memo(props => <i title={[props.a]} />);
+          export default row => <b title={[row.a]} />;
+        `,
+        "/default-function.jsx": /* jsx */ `
+          import { memo } from "react";
+          memo(props => <i title={[props.a]} />);
+          export default function (row) {
+            return <b title={[row.a]} />;
+          }
+        `,
+        "/other.js": /* js */ `
+          import React from "react";
+          export { React };
+          export const observer = it => it, notReact = it => it;
+        `,
+        ...reactThatCountsMemoCaches,
+      },
+      reactCompiler: true,
+      target: "browser",
+      backend: "cli",
+      minifySyntax,
+      run: {
+        stdout: `
+          CalleeOfACall
+          ClassDecorator
+          ClassMember
+          ComputedMember
+          ComputedMemberOfTheNamespace
+          FoldedCallee
+          FoldedConditional
+          FoldedConditionalAhead
+          InAComponent
+          InLogical
+          InObject
+          InOtherCall
+          MemberByAnEnum
+          MemberOfANamespace
+          MethodOfACall
+          MethodOfMemo
+          MethodOfMemoOfTheNamespace
+          NoJsxAndNoHook
+          OptOut
+          OptionalCall
+          OptionalMember
+          OptionalMemberInParentheses
+          OtherCallee
+          OtherNamespace
+          RenamedImport
+          ThreeParameters
+          afterAWrapperCall
+          afterAWrapperCallArrow
+          afterAWrapperCallDeclaration
+          afterAWrapperCallExpression
+          afterAWrapperCallFunction
+        `,
+      },
+    });
+  }
+
+  // A wrapper call in a branch that the build drops. Its callback is not compiled, so nothing imports the runtime.
+  // `.jsx`, not `.tsx`: the TypeScript path elides unused imports and would hide a spurious one.
+  itBundled("react-compiler/CallbackOfMemoInADroppedBranch", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { memo } from "react";
+        export const Dropped = false ? memo(props => <i title={[props.a]} />) : null;
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("Dropped = null");
+      expect(out).not.toContain("react/compiler-runtime");
+    },
+  });
+
+  // For a server the compiler takes the state and the ref of a component out: `useState(5)` is `5`. The callback
+  // in `memo(forwardRef(fn))` is a component there too.
+  itBundled("react-compiler/CallbackOfMemoAndForwardRefForAServer", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { forwardRef, memo, useState, states } from "react";
+        const Field = memo(
+          forwardRef((props, ref) => {
+            const [value] = useState(5);
+            return <input ref={ref} value={value} title={props.title} />;
+          }),
+        );
+        const element = Field({ title: "a" }, null);
+        console.log(element.p.value, states(), "ref" in element.p);
+      `,
+      ...reactThatCountsMemoCaches,
+      "/node_modules/react/index.js": /* js */ `
+        let states = 0;
+        exports.memo = exports.forwardRef = it => it;
+        exports.useState = initial => (states++, [initial, () => {}]);
+        exports.states = () => states;
+      `,
+    },
+    reactCompiler: true,
+    target: "bun",
+    backend: "cli",
+    run: { stdout: "5 0 false" },
+  });
+
   // The lexer keeps the place of the flags in 16 bits. From 65,536 on the flags were taken from the wrong place, and the
   // literal came out as a comment.
   itBundled("react-compiler/RegExpWhoseFlagsBeginBehind64KB", {
@@ -2472,6 +2858,21 @@ describe("bundler", () => {
               const { isFlag } = require("./state");
               return String(isFlag());
             });
+            // The compiler is offered each function that memo() takes, and
+            // leaves this one as written: no hook call and no JSX.
+            const Compared = memo(
+              () => {
+                useEffect(() => {});
+                return "compared";
+              },
+              () => {
+                const { isFlag } = require("./state");
+                return isFlag();
+              },
+            );
+            export function memoComparer() {
+              return Compared() + " " + Compared.compare();
+            }
             export function AwaitDestructure() {
               useEffect(() => {});
               const load = async () => {
@@ -2618,7 +3019,8 @@ describe("bundler", () => {
           "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
           "/node_modules/react/index.js": /* js */ `
             export function useEffect() {}
-            export function memo(component) {
+            export function memo(component, compare) {
+              component.compare = compare;
               return component;
             }
           `,
@@ -2652,6 +3054,7 @@ describe("bundler", () => {
             ThenDestructure=true
             ThenNamespaceOfCommonJS=hello
             ThenNamespaceTwice=hello2,4,6!
+            memoComparer=compared true
             optIn=true
             plainFunction=plain
             useRequireDestructure=true

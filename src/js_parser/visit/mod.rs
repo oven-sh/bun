@@ -332,10 +332,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if self.react_compiler.is_some()
                     && self.current_scope == self.module_scope
                     && let BData::BIdentifier(id) = decl.binding.data
-                    && let Some(in_hoc) = self.react_compiler_candidate_expr(&val)
+                    && matches!(val.data, ExprData::EArrow(_) | ExprData::EFunction(_))
                 {
                     self.react_compiler_candidate_name = Some(id.r#ref);
-                    self.react_compiler_in_react_hoc = in_hoc;
                 }
                 self.visit_expr_in_out(
                     &mut val,
@@ -347,7 +346,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                 );
                 self.react_compiler_candidate_name = None;
-                self.react_compiler_in_react_hoc = false;
                 decl.value = Some(val);
                 self.decorator_class_name = prev_decorator_class_name;
 
@@ -985,7 +983,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
-        self.visit_ts_decorators(&mut class.ts_decorators);
+        if class.ts_decorators.len_u32() > 0 {
+            // The React Compiler takes no function of a class, its decorators
+            // included, and these are visited in the scope around the class.
+            let react_compiler = self.react_compiler.take();
+            self.visit_ts_decorators(&mut class.ts_decorators);
+            self.react_compiler = react_compiler;
+        }
 
         if let Some(name) = class.class_name {
             self.record_declared_symbol_in(name.ref_, is_expr);

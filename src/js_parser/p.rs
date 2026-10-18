@@ -459,12 +459,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// populated before visit pass starts; `take()`n at each post-visit
     /// hook site so a `ReactCompilerHost(&mut P)` can borrow alongside it.
     pub(crate) react_compiler: Option<Box<bun_react_compiler::ReactCompilerState>>,
-    /// Binding name from the `S::Function` / `S::Local` / `S::ExportDefault`
-    /// statement currently being visited. Set in `visit_stmt`, consumed by
-    /// `visit_func` / arrow-visit one frame down.
+    /// `Some` while the function that the visit reaches next is a compile
+    /// candidate. Set at module scope: by the statement whose value is the
+    /// function, to its binding, or by the `memo()` / `forwardRef()` call that
+    /// the function is an argument of, to `Ref::NONE`.
     pub(crate) react_compiler_candidate_name: Option<js_ast::Ref>,
-    /// Set alongside `react_compiler_candidate_name` when the candidate
-    /// expression is a `memo(...)` / `forwardRef(...)` call.
+    /// Set with `react_compiler_candidate_name` by a `memo()` / `forwardRef()` call.
     pub(crate) react_compiler_in_react_hoc: bool,
     /// See [`bun_react_compiler::PendingCompile`]. Set by `visit_func` /
     /// arrow-visit, consumed inside `visit_stmts` between visit and mangle.

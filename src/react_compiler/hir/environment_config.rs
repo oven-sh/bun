@@ -109,6 +109,10 @@ pub struct EnvironmentConfig {
     /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
     /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.
     pub dependencies_are_sorted_by_bytes: bool,
+    /// A component takes props and a ref: a third parameter ends its compile, with "Expected React component to have
+    /// not more than two parameters". The TypeScript compiler has this invariant. The upstream Rust port, and oxlint
+    /// with it, take the first two parameters and go on.
+    pub components_take_two_parameters: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -168,6 +172,7 @@ impl Default for EnvironmentConfig {
             tagged_templates_are_always_called: false,
             react_is_known_by_its_module: true,
             dependencies_are_sorted_by_bytes: false,
+            components_take_two_parameters: true,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

@@ -1883,7 +1883,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ) && p.then_catch_chain.has_catch,
         };
 
-        let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
+        let target_tag_before_visit = e_.target.data.tag();
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
@@ -1912,7 +1912,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // language committee said it was indirect and everyone had to change it:
                 // https://github.com/tc39/ecma262/issues/2062.
                 if e_.optional_chain.is_none()
-                    && target_was_identifier_before_visit
+                    && matches!(target_tag_before_visit, Tag::EIdentifier)
                     && p.symbols[ident.ref_.inner_index() as usize]
                         .original_name
                         .slice()
@@ -2131,7 +2131,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            for arg in e_.args.slice_mut() {
+            // PERF: without the React Compiler this is one never-taken test per
+            // call. The compiler path joins before the loop, with nothing left
+            // to visit. Joined after it (`if` / `else` around the loop), the
+            // loop spills and reloads the state saved above: 13 more
+            // instructions per call.
+            let args: &mut [Expr] =
+                if p.react_compiler.is_some() && p.current_scope == p.module_scope {
+                    Self::visit_module_call_args_for_react_compiler(
+                        p,
+                        &mut *e_,
+                        target_tag_before_visit,
+                    );
+                    &mut []
+                } else {
+                    e_.args.slice_mut()
+                };
+            for arg in args {
                 p.visit_expr(arg);
             }
 
@@ -2480,6 +2496,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ) {
                 *e = minified;
                 return;
+            }
+        }
+    }
+
+    /// Note: Caller must check `p.react_compiler.is_some()` and that the call
+    /// is at module scope before calling.
+    /// Visits the arguments of a call whose callee is visited. A function that
+    /// is a direct argument of `memo()` / `forwardRef()` is a compile
+    /// candidate, as in the Babel plugin, which asks each function for its
+    /// parent call.
+    #[cold]
+    #[inline(never)]
+    fn visit_module_call_args_for_react_compiler(
+        p: &mut Self,
+        e_: &mut E::Call,
+        callee_as_written: Tag,
+    ) {
+        let arms = p.is_react_hoc_call(e_, callee_as_written);
+        for arg in e_.args.slice_mut() {
+            if arms && matches!(arg.data, Data::EArrow(_) | Data::EFunction(_)) {
+                p.react_compiler_candidate_name = Some(Ref::NONE);
+                p.react_compiler_in_react_hoc = true;
+                p.visit_expr(arg);
+                p.react_compiler_candidate_name = None;
+                p.react_compiler_in_react_hoc = false;
+            } else {
+                p.visit_expr(arg);
             }
         }
     }

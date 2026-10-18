@@ -49,7 +49,7 @@ rewritten) or an **AST-boundary port** (re-typed onto `bun_ast`).
 | `react_compiler_lowering/identifier_loc_index.rs`                               | — (not ported)                         | Ref already provides binding identity; lookup is by `Ref`, not `(u32, String)`         |
 | `react_compiler_reactive_scopes/codegen_reactive_function.rs`                   | `codegen.rs`                           | AST-boundary — emits `bun_ast::{Expr,Stmt,Binding}`                                    |
 | `react_compiler/entrypoint/pipeline.rs`                                         | `pipeline.rs`                          | AST-boundary — calls our `lower` + HIR passes + our `codegen`                          |
-| `react_compiler/entrypoint/program.rs`                                          | `program.rs`                           | AST-boundary — walks `&[Stmt]`, finds candidate components/hooks                       |
+| `react_compiler/entrypoint/program.rs`                                          | `program.rs`                           | AST-boundary — types and compiles one candidate that the visit pass found              |
 | `react_compiler/entrypoint/{imports,compile_result}.rs`                         | same names                             | AST-boundary — small; emit/read `bun_ast`                                              |
 | `react_compiler/entrypoint/gating.rs`                                           | — (folded into `program.rs`)           | dynamic-gating directive parsing lives alongside candidate selection                   |
 | `react_compiler/entrypoint/suppression.rs`                                      | — (not ported)                         | eslint-disable detected in `js_parser/lexer.rs`, consumed in `program.rs`              |
@@ -141,9 +141,9 @@ an index into a table of ranges, so that what is reported has an end, and
 
 Any `bun_ast` node the port cannot lower (bundler-only synthetics: `ESpecial`,
 `EInlinedEnum`, `ERequireMain`, …) returns a `CompilerError` from `lower()`
-with category `Unsupported`. `program.rs` catches that per-function, leaves the
-original `G::Fn` untouched, and logs a `CompileSkip` event — exactly what
-upstream does for its own unsupported cases.
+with category `Unsupported`. `program.rs` catches that per-function and leaves the
+original `G::Fn` untouched, as upstream does for its own unsupported cases. The
+build reports nothing: only the debug scope `react_compiler` logs the error.
 
 A function that is nested more deeply than the thread has the stack for bails out the same way, with the
 Todo "Support functions of this size". Every function of the compiler that calls itself along the nesting
@@ -151,13 +151,37 @@ of the source asks `Environment::has_stack()`, and the pipeline asks after each 
 
 ## Hook placement
 
-The compiler runs **per-function, post-visit** at the `S::Function` /
-`S::Local` / `S::ExportDefault` arms of `visit_stmt.rs` (the same hook sites
-as React Fast Refresh). At that point the visit pass has already consumed all
+The compiler runs **per-function, post-visit**, in the `visit_stmts` call for
+the body of a candidate function (`js_parser/visit/mod.rs`), between its visit
+and its mangle. At that point the visit pass has already consumed all
 `scopes_in_order` entries for the function's interior, every `Ref` is a
 resolved `RefTag::Symbol`, and JSX has been lowered to
 `E::Call { was_jsx_element: true }`. Lowering reads that call shape and
 codegen emits it, so the compiled body needs no further visiting.
+
+Upstream finds the candidates in a walk of the program before it compiles
+(`find_functions_to_compile`). The build has no such walk (`bun lint` has one,
+in `src/lint/react_compiler/program.rs`). The visit pass marks the function
+that it reaches next as a candidate (`P::react_compiler_candidate_name`), at
+module scope only, in two places:
+
+- A statement whose value is the function: a function declaration, a
+  declarator (`const Foo = () => {}`), `export default`. The candidate is
+  typed by the name of a function expression if it has one, else by the name
+  of the binding.
+- A call of `memo`, `forwardRef`, `React.memo` or `React.forwardRef`, for each
+  argument that is a function (`visit_module_call_args_for_react_compiler`).
+  This is the Babel plugin's `isMemoCallback` / `isForwardRefCallback`: a
+  function is asked for its direct parent, wherever that call is, so the
+  function in `memo(forwardRef(fn))` is a candidate. The callee counts as it
+  is written, and the call is not optional. As in the Babel plugin the
+  candidate has no name from a binding. (The upstream Rust port gives it the
+  name of the declarator, and takes the innermost call around it for its
+  parent.)
+
+Upstream also takes a function below module scope when no function around it
+is a candidate. The build takes none there: lowering reads what is bound
+outside of the function as bound at module level (`Host::is_module_level`).
 
 The visit pass emits two call shapes. The automatic runtime calls
 `jsx(type, {...props, children}, key)` (or `jsxs` / `jsxDEV`). The classic

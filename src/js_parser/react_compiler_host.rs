@@ -1,7 +1,7 @@
 //! `bun_react_compiler::Host` adapter over `&mut P`, kept in this crate so
 //! `bun_react_compiler` stays free of a `bun_js_parser` dependency.
 //!
-//! Constructed inline at each post-visit hook site (`visit_stmt.rs`) around the
+//! Constructed inline at the post-visit hook site (`visit_stmts`) around the
 //! single `maybe_compile_*` call, then dropped — it owns no state of its own.
 
 use bun_ast as js_ast;
@@ -34,10 +34,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         self.p.import_records.items()
     }
     fn namespace_of_import_item(&self, item: js_ast::Ref) -> Option<js_ast::Ref> {
-        let symbol = self.p.symbols.get(item.inner_index() as usize)?;
-        let name = symbol.original_name.slice();
-        let mut all = self.p.import_items_for_namespace.iter();
-        all.find_map(|(namespace, items)| (items.get(name)?.ref_ == item).then_some(*namespace))
+        self.p.namespace_of_import_item(item)
     }
     fn source(&self) -> &[u8] {
         &self.p.source.contents
@@ -273,46 +270,59 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         Some(result)
     }
 
-    /// Port of upstream `findFunctionDeclarationOrExpression` for the
-    /// expression positions (decl init / `export default` / expression
-    /// statement). Returns `Some(in_react_hoc)` only for the shapes the
-    /// Babel plugin accepts, so `react_compiler_candidate_name` cannot leak
-    /// into an unrelated nested arrow.
-    pub(crate) fn react_compiler_candidate_expr(&self, expr: &js_ast::Expr) -> Option<bool> {
-        use js_ast::expr::Data;
-        match &expr.data {
-            Data::EArrow(_) | Data::EFunction(_) => Some(false),
-            Data::ECall(call)
-                if !call.was_jsx_element && self.is_react_hoc_callee(&call.target) =>
-            {
-                matches!(
-                    call.args.first().map(|a| &a.data),
-                    Some(Data::EArrow(_) | Data::EFunction(_))
-                )
-                .then_some(true)
-            }
-            _ => None,
+    /// `call` is a call whose callee has been visited, and `callee_as_written`
+    /// is the tag that the callee had before its visit. True when the callee as
+    /// written is `memo`, `forwardRef`, `React.memo` or `React.forwardRef` and
+    /// the call is not optional: the calls that the Babel plugin's
+    /// `isMemoCallback` and `isForwardRefCallback` accept around a function.
+    pub(crate) fn is_react_hoc_call(
+        &self,
+        call: &js_ast::E::Call,
+        callee_as_written: js_ast::expr::Tag,
+    ) -> bool {
+        use js_ast::expr::{Data, Tag};
+        if call.was_jsx_element || call.optional_chain.is_some() {
+            return false;
         }
-    }
-
-    fn is_react_hoc_callee(&self, target: &js_ast::Expr) -> bool {
-        use js_ast::expr::Data;
-        let name: &[u8] = match &target.data {
-            Data::EIdentifier(id) => self.load_name_from_ref(id.ref_),
-            Data::EImportIdentifier(id) => self.load_name_from_ref(id.ref_),
-            Data::EDot(member) => {
-                let obj = match &member.target.data {
-                    Data::EIdentifier(o) => self.load_name_from_ref(o.ref_),
-                    Data::EImportIdentifier(o) => self.load_name_from_ref(o.ref_),
+        let visited = &call.target;
+        let name: &[u8] = match (callee_as_written, visited.data) {
+            (Tag::EIdentifier, Data::EIdentifier(id)) => self.load_name_from_ref(id.ref_),
+            (Tag::EIdentifier, Data::EImportIdentifier(id)) => self.load_name_from_ref(id.ref_),
+            (Tag::EDot, Data::EDot(dot)) => {
+                let object = match dot.target.data {
+                    Data::EIdentifier(object) => object.ref_,
+                    Data::EImportIdentifier(object) => object.ref_,
                     _ => return false,
                 };
-                if obj != b"React" {
+                // The object of `ns.React.memo` does not begin where the access begins.
+                if dot.target.loc != visited.loc
+                    || dot.optional_chain.is_some()
+                    || self.load_name_from_ref(object) != b"React"
+                {
                     return false;
                 }
-                member.name.slice()
+                dot.name.slice()
+            }
+            // `import * as React`: the visit made the access an import item.
+            (Tag::EDot, Data::EImportIdentifier(item)) => {
+                let of_react = self
+                    .namespace_of_import_item(item.ref_)
+                    .is_some_and(|namespace| self.load_name_from_ref(namespace) == b"React");
+                if !of_react {
+                    return false;
+                }
+                self.load_name_from_ref(item.ref_)
             }
             _ => return false,
         };
         name == b"forwardRef" || name == b"memo"
+    }
+
+    /// The namespace that `item` is a property of, when `item` is the import item that the visit made of `ns.name`.
+    pub(crate) fn namespace_of_import_item(&self, item: js_ast::Ref) -> Option<js_ast::Ref> {
+        let symbol = self.symbols.get(item.inner_index() as usize)?;
+        let name = symbol.original_name.slice();
+        let mut all = self.import_items_for_namespace.iter();
+        all.find_map(|(namespace, items)| (items.get(name)?.ref_ == item).then_some(*namespace))
     }
 }

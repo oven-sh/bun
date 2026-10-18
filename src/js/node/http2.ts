@@ -27,7 +27,13 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
-const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
+const {
+  hideFromStack,
+  hasObserver,
+  enqueueNodeEntry,
+  PerformanceNodeEntry,
+  isFrameOfStoppedModuleGraph,
+} = require("internal/shared");
 const { STATUS_CODES, utcDate } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
@@ -2247,7 +2253,8 @@ function streamOnResume(this: Http2Stream) {
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
 // HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
 function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
-  setImmediate(rstNextTick.bind(session, this.id, code));
+  // The session's immediate: dispose() drops one armed as the request's Bun.ModuleGraph, and the stream keeps its slot.
+  runInFrame(session[bunHTTP2AsyncContextFrame], setImmediate, undefined, rstNextTick.bind(session, this.id, code));
 }
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
@@ -2322,7 +2329,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   // Async-context frame captured at construction so native-driven callbacks
   // (response/data/end/…) on client streams observe the AsyncLocalStorage
   // context that request() ran in, matching Node's Http2Stream AsyncWrap.
-  // Read only by withStreamFrame; user-initiated emit() is untouched. The raw
+  // Read by withStreamFrame and the pending queue; user-initiated emit() is untouched. The raw
   // frame is snapshotted directly so session.request() does not flip on
   // async-context tracking when no AsyncLocalStorage is in use.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
@@ -5434,7 +5441,9 @@ class ClientHttp2Session extends Http2Session {
       this.#pendingRequests = null;
       if (pendingRequests !== null) {
         for (let i = 0; i < pendingRequests.length; i++) {
-          streamRejectedByGoawaySession(pendingRequests[i].req);
+          const req = pendingRequests[i].req;
+          // In its request() caller's async context, like node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L780-L786
+          runInFrame(req[bunHTTP2AsyncContextFrame], streamRejectedByGoawaySession, undefined, req);
         }
       }
       this.#parser?.forEachStream(streamRejectedByGoawaySession);
@@ -6355,36 +6364,54 @@ class ClientHttp2Session extends Http2Session {
       // A pending stream that was close()d (but not destroyed) is still submitted: node sends its
       // HEADERS and follows up with the RST_STREAM once the id is known (see close()).
       if (req.destroyed) continue;
-      const stream_id: number = parser.getNextStream();
-      if (stream_id < 0) {
-        process.nextTick(emitOutofStreamErrorNT, req);
-        continue;
+      const frame = req[bunHTTP2AsyncContextFrame];
+      if (frame !== undefined && isFrameOfStoppedModuleGraph(frame)) {
+        // A disposed Bun.ModuleGraph's request stays with the drainer: what runs as that graph arms nothing.
+        this.#submitPendingRequest(parser, req, headers, wireHeaders, sensitiveNames, options);
+      } else {
+        // node runs the submission bound to the request's AsyncResource, deferred or not: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1912-L1926
+        runInFrame(frame, this.#submitPendingRequest, this, parser, req, headers, wireHeaders, sensitiveNames, options);
       }
-      req[kSetStreamId](stream_id);
-      try {
-        if (typeof options === "undefined") {
-          parser.request(stream_id, req, wireHeaders, sensitiveNames);
-        } else {
-          parser.request(stream_id, req, wireHeaders, sensitiveNames, options);
-        }
-      } catch (err) {
-        // Native request() can reject headers the pre-queue validation does not cover (invalid
-        // tokens, bad value bytes); fail this queued request like the immediate path and keep
-        // flushing the rest. The native context was never attached, so the reset dispatch cannot
-        // release the connection slot - do it here, like the immediate path's catch. The HEADERS
-        // never reached the wire either, so the teardown must not write RST_STREAM for an id the
-        // peer considers idle.
-        this.#connections--;
-        req[kNeverAnnounced] = true;
-        if (!req.destroyed) req.destroy(err as Error);
-        continue;
-      }
-      if (onClientStreamStartChannel.hasSubscribers) {
-        onClientStreamStartChannel.publish({ stream: req, headers });
-      }
-      this.#trackActiveRequest(req);
-      process.nextTick(emitEventNT, req, "ready");
     }
+  }
+
+  #submitPendingRequest(
+    parser: typeof H2FrameParser,
+    req: ClientHttp2Stream,
+    headers: HeadersObject,
+    wireHeaders: HeadersObject | any[],
+    sensitiveNames: Record<string, boolean>,
+    options: any,
+  ) {
+    const stream_id: number = parser.getNextStream();
+    if (stream_id < 0) {
+      process.nextTick(emitOutofStreamErrorNT, req);
+      return;
+    }
+    req[kSetStreamId](stream_id);
+    try {
+      if (typeof options === "undefined") {
+        parser.request(stream_id, req, wireHeaders, sensitiveNames);
+      } else {
+        parser.request(stream_id, req, wireHeaders, sensitiveNames, options);
+      }
+    } catch (err) {
+      // Native request() can reject headers the pre-queue validation does not cover (invalid
+      // tokens, bad value bytes); fail this queued request like the immediate path and keep
+      // flushing the rest. The native context was never attached, so the reset dispatch cannot
+      // release the connection slot - do it here, like the immediate path's catch. The HEADERS
+      // never reached the wire either, so the teardown must not write RST_STREAM for an id the
+      // peer considers idle.
+      this.#connections--;
+      req[kNeverAnnounced] = true;
+      if (!req.destroyed) req.destroy(err as Error);
+      return;
+    }
+    if (onClientStreamStartChannel.hasSubscribers) {
+      onClientStreamStartChannel.publish({ stream: req, headers });
+    }
+    this.#trackActiveRequest(req);
+    process.nextTick(emitEventNT, req, "ready");
   }
   static connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
     return new ClientHttp2Session(url, options, listener);

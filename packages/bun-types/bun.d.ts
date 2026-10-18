@@ -3054,9 +3054,13 @@ declare module "bun" {
     /**
      * Enable REPL mode transforms:
      * - Wraps top-level inputs that appear to be object literals (inputs starting with '{' without trailing ';') in parentheses
-     * - Hoists all declarations as var for REPL persistence across vm.runInContext calls
+     * - Hoists the declarations the input wrote as var for REPL persistence across vm.runInContext calls.
+     *   A helper import or a temporary that the transpiler adds stays inside the IIFE
      * - Wraps last expression in { __proto__: null, value: expr } for result capture
-     * - Wraps code in sync/async IIFE to avoid parentheses around object literals
+     * - Wraps code in sync/async IIFE to avoid parentheses around object literals.
+     *   The IIFE is async, and the result is a Promise, if the input has a top-level await or an import,
+     *   or if the transpiler imports helpers for it (decorators, `accessor`, a lowered `using`, automatic JSX).
+     *   An import becomes an `import()` call: with `vm.runInContext`, pass `importModuleDynamically`
      *
      * @default false
      */

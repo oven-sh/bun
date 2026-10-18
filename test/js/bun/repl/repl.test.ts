@@ -604,6 +604,18 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("a named import leaves a variable with the name of its module alone", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        'var import_path = "./data.json"',
+        "import { join } from 'path'",
+        "import_path",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(['"./data.json"', "[Function: join]", '"./data.json"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test("import of a nonexistent module shows an error and keeps running", async () => {
       const { outputs, stderr, exitCode } = await runRepl(["import _ from 'nonexistent-module-xyz'", "1 + 1", ".exit"]);
       expect(outputs).toEqual([
@@ -737,6 +749,21 @@ describe.concurrent("Bun REPL", () => {
         ".exit",
       ]);
       expect(outputs).toEqual(["10", "20", "30", "0", "0", "1", "2", "undefined", "8", "[class Point]", "7", "2", "2"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a line adds only the names it declares to the global object", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "var before = new Set(Object.keys(globalThis)); before.size > 0",
+        // A lowered `using` declares a disposal stack and imports two helpers.
+        `using resource = { [Symbol.dispose]() { console.log("disposed") } }; console.log("body")`,
+        `import { join } from "node:path"`,
+        // `_` is the REPL's own, and `resource` is the line's.
+        `Object.keys(globalThis).filter(name => !before.has(name) && name !== "_" && name !== "resource")`,
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["true", "body\ndisposed\nundefined", "[Function: join]", '[ "join" ]']);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -971,6 +998,15 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("-e keeps the names of a lowered `using` out of the global object", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        `using resource = { [Symbol.dispose]() { console.log("disposed") } };
+         console.log(Object.keys(globalThis).filter(name => /^(import_|__using|__callDispose|__bun_temp_ref)/.test(name)));`,
+      ]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[]\ndisposed\n", stderr: "", exitCode: 0 });
+    });
+
     test("-e supports require()", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-p", "require('path').posix.join('/a', 'b')"]);
       expect(stdout).toBe('"/a/b"\n');
@@ -1069,6 +1105,24 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       // Should be back at a clean prompt
       send("1 + 1\n");
       await waitFor("2");
+    });
+  });
+
+  test("a line stopped with Ctrl+C still disposes its own `using`", async () => {
+    await withTerminalRepl(async ({ send, waitFor, proc }) => {
+      const resource = (name: string) => `{ async [Symbol.asyncDispose]() { log.push("dispose ${name}") } }`;
+      send(
+        `globalThis.log = []; globalThis.release = Promise.withResolvers(); await using a = ${resource("a")}; ` +
+          `console.log("hold" + "ing"); await release.promise; log.push("a done")\n`,
+      );
+      await waitFor("holding");
+      // The line stays suspended and holds `a`. The next line runs to its end.
+      proc.kill("SIGINT");
+      await waitFor(/\u276f|> /);
+      send(`await using b = ${resource("b")}; log.push("b done")\n`);
+      send('release.resolve(); await new Promise(resolve => setImmediate(resolve)); "l" + "og: " + log.join(", ")\n');
+      const output = stripAnsi(await waitFor(/"log: [^"]*"/));
+      expect(output.match(/"log: [^"]*"/)![0]).toBe('"log: b done, dispose b, a done, dispose a"');
     });
   });
 
@@ -1243,6 +1297,20 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
           // No global starts with "instan", but the keyword `instanceof` does.
           send("x instan");
           await waitFor(`${DIM}ceof`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("a named import does not change the suggestion for `imp`", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send('import { join } from "node:path"; "imp" + "orted"\n');
+          await waitFor('"imported"');
+          // The keyword, as in a new session: the line left no global whose name starts with `import_`.
+          send("imp");
+          const output = await waitFor(/\x1b\[2mort[^\x1b]*\x1b\[0m/);
+          expect(output).toContain(`${DIM}ort\x1b[0m`);
         },
         { env: colorEnv },
       );

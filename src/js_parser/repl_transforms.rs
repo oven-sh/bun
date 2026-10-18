@@ -3,7 +3,7 @@
 //! This module provides transformations for REPL mode:
 //! - Wraps the last expression in { value: expr } for result capture
 //! - Wraps code with await in async IIFE with variable hoisting
-//! - Hoists declarations for variable persistence across REPL lines
+//! - Hoists the declarations the input wrote for variable persistence across REPL lines
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
@@ -12,7 +12,7 @@ use bun_collections::VecExt;
 use bun_ast as js_ast;
 use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
-use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
+use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, Ref, S, Stmt};
 
 use crate::p::P;
 
@@ -21,6 +21,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture
     /// - Wraps code with await in async IIFE with variable hoisting
+    #[cold]
+    #[inline(never)]
     pub(crate) fn apply_repl_transforms<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
@@ -100,38 +102,33 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         let mut hoisted_stmts = BumpVec::<Stmt>::with_capacity_in(all_stmts.len(), bump);
         let mut inner_stmts = BumpVec::<Stmt>::with_capacity_in(all_stmts.len(), bump);
 
-        // Process each statement - hoist all declarations for REPL persistence
+        // Process each statement - hoist the declarations the input wrote for REPL persistence
         for stmt in all_stmts.iter() {
             match stmt.data {
                 StmtData::SLocal(local) => {
-                    // Hoist all declarations as var so they become context properties
+                    // Hoist the declarations the input wrote as var so they become context properties
                     // In sloppy mode, var at top level becomes a property of the global/context object
                     // This is essential for REPL variable persistence across vm.runInContext calls
                     let kind = S::Kind::KVar;
 
-                    // Extract individual identifiers from binding patterns for hoisting
                     let mut hoisted_decl_list = BumpVec::<G::Decl>::new_in(bump);
                     for decl in local.decls.slice() {
+                        if !self.repl_binding_persists(decl.binding) {
+                            inner_stmts.push(self.repl_wrapper_local(
+                                local.kind,
+                                decl.binding,
+                                decl.value,
+                                stmt.loc,
+                            ));
+                            continue;
+                        }
+
+                        // Extract individual identifiers from binding patterns for hoisting
                         self.repl_extract_identifiers_from_binding(
                             decl.binding,
                             &mut hoisted_decl_list,
                         )?;
-                    }
 
-                    if !hoisted_decl_list.is_empty() {
-                        let decls = G::DeclList::from_bump_vec(hoisted_decl_list);
-                        hoisted_stmts.push(self.s(
-                            S::Local {
-                                kind,
-                                decls,
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        ));
-                    }
-
-                    // Create assignment expressions for the inner statements
-                    for decl in local.decls.slice() {
                         if let Some(value) = decl.value {
                             // Create assignment expression: binding = value
                             let assign_expr =
@@ -145,6 +142,18 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             ));
                         }
                     }
+
+                    if !hoisted_decl_list.is_empty() {
+                        let decls = G::DeclList::from_bump_vec(hoisted_decl_list);
+                        hoisted_stmts.push(self.s(
+                            S::Local {
+                                kind,
+                                decls,
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ));
+                    }
                 }
                 StmtData::SFunction(func) => {
                     // For function declarations:
@@ -152,6 +161,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // Inner: this.funcName = funcName; function funcName() {}
                     if let Some(name_loc) = func.func.name {
                         let name_ref = name_loc.ref_;
+                        debug_assert!(self.repl_persists(name_ref));
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -217,6 +227,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // Inner: ClassName = class ClassName {}
                     if let Some(name_loc) = class.class.class_name {
                         let name_ref = name_loc.ref_;
+                        debug_assert!(self.repl_persists(name_ref));
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -297,6 +308,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
                     if !import_data.star_name_loc.is_empty() {
                         // import * as X from 'mod' -> var X = await import('mod')
+                        debug_assert!(self.repl_persists(import_data.namespace_ref));
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -340,6 +352,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         // import X from 'mod' -> var X = (await import('mod')).default
                         // import X, { a } from 'mod' -> var __ns = await import('mod'); var X = __ns.default; var a = __ns.a;
                         let default_ref = default_name.ref_;
+                        debug_assert!(self.repl_persists(default_ref));
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -358,9 +371,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
                         if !import_items.is_empty() {
                             // Share a single await import() between default and named imports.
-                            // namespace_ref is synthesized by processImportStatement for all non-star imports.
-                            self.repl_convert_named_imports(
-                                &*import_data,
+                            let namespace_ref = self.repl_convert_named_imports(
                                 import_items,
                                 await_expr,
                                 &mut hoisted_stmts,
@@ -370,7 +381,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             )?;
                             let ns_ref_expr = self.new_expr(
                                 E::Identifier {
-                                    ref_: import_data.namespace_ref,
+                                    ref_: namespace_ref,
                                     ..Default::default()
                                 },
                                 stmt.loc,
@@ -442,7 +453,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     } else if !import_items.is_empty() {
                         // import { a, b } from 'mod' -> destructure from await import('mod')
                         self.repl_convert_named_imports(
-                            &*import_data,
                             import_items,
                             await_expr,
                             &mut hoisted_stmts,
@@ -546,75 +556,34 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// import { a, b as c } from 'mod' ->
     ///   var a; var c;  (hoisted)
     ///   var __mod = await import('mod'); a = __mod.a; c = __mod.b;  (inner)
-    #[allow(clippy::too_many_arguments)]
+    /// Returns the ref of `__mod`.
     fn repl_convert_named_imports<'bump>(
         &mut self,
-        import_data: &S::Import,
         import_items: &[bun_ast::ClauseItem],
         await_expr: Expr,
         hoisted_stmts: &mut BumpVec<'bump, Stmt>,
         inner_stmts: &mut BumpVec<'bump, Stmt>,
         bump: &'bump Bump,
         loc: bun_ast::Loc,
-    ) -> Result<(), bun_alloc::AllocError> {
-        // Store the module in the namespace ref: var __ns = await import('mod')
-        hoisted_stmts.push(self.s(
-            S::Local {
-                kind: S::Kind::KVar,
-                decls: repl_one_decl(
-                    bump,
-                    Binding::alloc(
-                        bump,
-                        B::Identifier {
-                            r#ref: import_data.namespace_ref,
-                        },
-                        loc,
-                    ),
-                ),
-                ..Default::default()
-            },
-            loc,
-        ));
-        let left = self.new_expr(
-            E::Identifier {
-                ref_: import_data.namespace_ref,
-                ..Default::default()
+    ) -> Result<Ref, bun_alloc::AllocError> {
+        // Store the module in a temporary: var __mod = await import('mod')
+        // The import's namespace symbol prints `import_mod`, a name an input can declare.
+        let namespace_ref = self.generate_temp_ref(None);
+        let namespace = Binding::alloc(
+            bump,
+            B::Identifier {
+                r#ref: namespace_ref,
             },
             loc,
         );
-        let ns_assign = self.new_expr(
-            E::Binary {
-                op: js_ast::OpCode::BinAssign,
-                left,
-                right: await_expr,
-            },
-            loc,
-        );
-        inner_stmts.push(self.s(
-            S::SExpr {
-                value: ns_assign,
-                ..Default::default()
-            },
-            loc,
-        ));
+        inner_stmts.push(self.repl_wrapper_local(S::Kind::KVar, namespace, Some(await_expr), loc));
 
-        // For each named import: var name; name = __ns.originalName;
+        // For each named import: var name; name = __mod.originalName;
         for item in import_items.iter() {
             let item_ref = item.name.ref_;
-            hoisted_stmts.push(self.s(
-                S::Local {
-                    kind: S::Kind::KVar,
-                    decls: repl_one_decl(
-                        bump,
-                        Binding::alloc(bump, B::Identifier { r#ref: item_ref }, item.name.loc),
-                    ),
-                    ..Default::default()
-                },
-                loc,
-            ));
             let ns_ref_expr = self.new_expr(
                 E::Identifier {
-                    ref_: import_data.namespace_ref,
+                    ref_: namespace_ref,
                     ..Default::default()
                 },
                 loc,
@@ -630,6 +599,25 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 },
                 loc,
             );
+            let binding = Binding::alloc(bump, B::Identifier { r#ref: item_ref }, item.name.loc);
+            // A helper or JSX runtime binding of an import the parser added
+            if !self.repl_persists(item_ref) {
+                inner_stmts.push(self.repl_wrapper_local(
+                    S::Kind::KVar,
+                    binding,
+                    Some(prop_access),
+                    loc,
+                ));
+                continue;
+            }
+            hoisted_stmts.push(self.s(
+                S::Local {
+                    kind: S::Kind::KVar,
+                    decls: repl_one_decl(bump, binding),
+                    ..Default::default()
+                },
+                loc,
+            ));
             let left = self.new_expr(
                 E::Identifier {
                     ref_: item_ref,
@@ -654,7 +642,64 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             ));
         }
 
-        Ok(())
+        Ok(namespace_ref)
+    }
+
+    /// A declaration that stays inside the wrapper.
+    fn repl_wrapper_local(
+        &mut self,
+        kind: S::Kind,
+        binding: Binding,
+        value: Option<Expr>,
+        loc: bun_ast::Loc,
+    ) -> Stmt {
+        self.s(
+            S::Local {
+                kind,
+                decls: G::DeclList::init_one(G::Decl { binding, value }),
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    /// Whether `ref_` is a name the input declared at its top level: the module
+    /// scope's member for that name. Only such a name is hoisted. A lowering's
+    /// temporary or the binding of a helper import is no scope's member. It
+    /// stays in the wrapper, because the next input prints the same name for
+    /// its own.
+    fn repl_persists(&self, mut ref_: Ref) -> bool {
+        // Follow links because "var" declarations may be merged due to hoisting
+        loop {
+            let symbol = &self.symbols[ref_.inner_index() as usize];
+            if !symbol.has_link() {
+                break;
+            }
+            ref_ = symbol.link.get();
+        }
+        let name = self.symbols[ref_.inner_index() as usize]
+            .original_name
+            .slice();
+        self.module_scope()
+            .members
+            .get(name)
+            .is_some_and(|member| member.ref_ == ref_)
+    }
+
+    /// Whether every name that `binding` declares persists.
+    fn repl_binding_persists(&self, binding: Binding) -> bool {
+        match binding.data {
+            B::B::BIdentifier(ident) => self.repl_persists(ident.r#ref),
+            B::B::BArray(arr) => arr
+                .items()
+                .iter()
+                .all(|item| self.repl_binding_persists(item.binding)),
+            B::B::BObject(obj) => obj
+                .properties()
+                .iter()
+                .all(|prop| self.repl_binding_persists(prop.value)),
+            B::B::BMissing(_) => true,
+        }
     }
 
     /// Wrap the last expression in return { value: expr }

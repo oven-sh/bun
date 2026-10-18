@@ -2150,8 +2150,8 @@ impl<'a> Repl<'a> {
         opts.features.top_level_await = true; // Enable top-level await in REPL
         // Keep `lower_using` at its default (true) here even though JavaScriptCore
         // supports `using` / `await using` natively. The REPL transform in
-        // `js_parser/repl_transforms.rs` rewrites every top-level `s_local` into a
-        // hoisted `var` + assignment for cross-input persistence, which would
+        // `js_parser/repl_transforms.rs` rewrites a top-level `s_local` the input
+        // wrote into a hoisted `var` + assignment for persistence, which would
         // silently discard disposal semantics if `using` declarations survived
         // until that pass. Lowering wraps the declaration in `try/finally` first,
         // which the REPL transform passes through intact.

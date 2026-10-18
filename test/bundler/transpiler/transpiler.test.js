@@ -131,6 +131,17 @@ describe("Bun.Transpiler", () => {
   // prefix inliner nor the single-use substitution may fold it across cases.
   describe("switch case const", () => {
     it("keeps a const of one case out of the other cases", () => {
+      // `inline` turns the const local prefix inliner on, as `bun run` does.
+      const inlining = new Bun.Transpiler({ loader: "ts", inline: true, minify: { syntax: true } });
+      expect(
+        inlining.transformSync('function f(a) { switch (a) { case "*": const C = 2; return C; case "a": return C } }'),
+      ).toBe(
+        'function f(a) {\n  switch (a) {\n    case "*":\n      const C = 2;\n      return C;\n    case "a":\n      return C;\n  }\n}\n',
+      );
+      // A const before the switch is still inlined into it.
+      expect(inlining.transformSync("function f(a) { const C = 2; switch (a) { case 1: return C } }")).toBe(
+        "function f(a) {\n  switch (a) {\n    case 1:\n      return 2;\n  }\n}\n",
+      );
       ts.expectPrintedMin_(
         'function f(a) { switch (a) { case "*": const C = 2; return C; case "a": return C } }',
         'function f(a) {\n  switch (a) {\n    case "*":\n      const C = 2;\n      return C;\n    case "a":\n      return C;\n  }\n}',
@@ -162,7 +173,12 @@ describe("Bun.Transpiler", () => {
             return "a=" + CONSTANT;
         }
       }
-      expect(() => test("a")).toThrow(ReferenceError);
+      expect(() => test("a")).toThrow(
+        expect.objectContaining({
+          name: "ReferenceError",
+          message: expect.stringContaining("before initialization"),
+        }),
+      );
       expect(test("*")).toBe("matched 2");
     });
 

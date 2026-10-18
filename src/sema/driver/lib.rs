@@ -4295,8 +4295,6 @@ fn check_named_files(
     // Which files are checked for good, and how many from the first one on, in program order. The task that checks the
     // next one enters a ring where `tsc --singleThreaded` does: `Checker::set_first_in_order`.
     let checked_for_good = Guarded::new((vec![false; to_check.len()], 0usize));
-    // For each `Components::all`: all its files, and all files they import, are checked for good.
-    let closed_components = Guarded::new(vec![false; program.files.components.all.len()]);
     /// What the driver remembers about the last time a file was checked.
     #[derive(Clone, Default)]
     struct Visit {
@@ -4449,50 +4447,9 @@ fn check_named_files(
                     let component = component.and_then(|&at| components.all.get(at as usize));
                     let around = component.map_or(&[][..], |it| it.files).iter();
                     let around = around.filter_map(|it| index_of_file.get(it).copied());
-                    // tsc has checked everything this file imports by now. Without that, this task would evaluate parts
-                    // of those files from inside its own cycle.
-                    let is_file_done = |it: &FileId, is_done: &dyn Fn(usize) -> bool| {
-                        index_of_file.get(it).is_none_or(|&at| is_done(at))
-                    };
-                    let mut closed = closed_components.lock();
-                    let mut seen = FxHashSet::default();
-                    // (component, how many of its imports have been followed, nothing in it depends on `waiting`)
-                    let mut path: Vec<(u32, usize, bool)> = Vec::new();
-                    let mut are_imports_done = true;
-                    for &imported in component.map_or(&[][..], |it| it.imports) {
-                        if !closed[imported as usize] && seen.insert(imported) {
-                            path.push((imported, 0, true));
-                        }
-                        while let Some(top) = path.last_mut().filter(|_| are_imports_done) {
-                            let it = &components.all[top.0 as usize];
-                            if top.1 == 0 {
-                                are_imports_done =
-                                    it.files.iter().all(|it| is_file_done(it, &is_done));
-                                top.2 = (it.files.iter())
-                                    .all(|it| is_file_done(it, &|at| is_checked[at]));
-                            }
-                            if let Some(&next) = it.imports.get(top.1) {
-                                top.1 += 1;
-                                if closed[next as usize] {
-                                } else if seen.insert(next) {
-                                    path.push((next, 0, true));
-                                } else {
-                                    top.2 = false;
-                                }
-                                continue;
-                            }
-                            let (at, _, is_for_good) = *top;
-                            path.pop();
-                            closed[at as usize] = is_for_good;
-                            if let Some(importer) = path.last_mut() {
-                                importer.2 &= is_for_good;
-                            }
-                        }
-                    }
-                    drop(closed);
                     checker.set_first_in_order(
                         (*next..index).all(is_done),
-                        are_imports_done && around.take_while(|&it| it < index).all(is_done),
+                        around.take_while(|&it| it < index).all(is_done),
                     );
                 }
                 checked.push((file, checker.check_file(file)));

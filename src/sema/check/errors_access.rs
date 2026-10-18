@@ -905,10 +905,15 @@ impl<'p> Checker<'p, '_> {
         {
             return;
         }
-        // `typeToStringEx` returns "?" and `addDiagnostic` discards the diagnostic.
-        let is_discarded = self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL;
-        let created = self.non_existent_properties.insert((file, e), is_discarded);
-        if created.unwrap_or(is_discarded) {
+        // `typeToStringEx` returns "?" and `addDiagnostic` discards the diagnostic. TypeScript 7.0 never reports it after
+        // that, so what it prints depends on which file or statement gets here first. 7.1 always reports it. So the
+        // access isn't cached, and the walk of its file evaluates it again and reports.
+        if self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
+            self.mark_tainted_from(self.frames.len().saturating_sub(1));
+            return;
+        }
+        let created = self.non_existent_properties.insert((file, e), false);
+        if created == Some(true) {
             self.non_existent_properties.insert((file, e), true);
             return;
         }

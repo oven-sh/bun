@@ -793,6 +793,73 @@ export interface Loop extends Pick<Big & Pick<Loop, "own">, "b"> { own: 1 }
     }
   });
 
+  // An error message prints a type, which infers a return type, which reports an error whose message prints a type, and so
+  // on. TypeScript discards an error that is created two messages deep. 7.0 never reports a missing property after that, so
+  // its output depends on which file or statement gets there first. 7.1 reports it when the walk reaches it, and so do we.
+  describe("reports a missing property that is first reached while an error message prints a type", () => {
+    const filler = (prefix: string, lines: number) =>
+      Array.from(
+        { length: lines },
+        (_, i) => `const ${prefix}${i} = [${i}, "${i}"].map(it => typeof it).join("");\n`,
+      ).join("");
+    const dep = `declare function takesNumber(n: number): number;
+declare const p: Promise<any>;
+export function f2() { return p.nope; }
+export function f1() { return takesNumber({ g: f2 }); }
+export const api = { f1 };
+`;
+    const user = `import { api } from "./dep";\nexport const n: number = api;\n`;
+    const inUser = "user.ts(2,14): error TS2322: Type '{ f1: () => number; }' is not assignable to type 'number'.";
+    const inDep = (line: number) => [
+      `dep.ts(${line},33): error TS2339: Property 'nope' does not exist on type 'Promise<any>'.`,
+      `dep.ts(${line + 1},43): error TS2345: Argument of type '{ g: () => any; }' is not assignable to parameter of type 'number'.`,
+    ];
+    test.concurrent.each([
+      // Two threads start with the larger files.
+      [
+        "from a larger file that imports it",
+        { "big.ts": filler("b", 400) + "export {};\n", "dep.ts": dep, "user.ts": user + filler("u", 60) },
+        [...inDep(3), inUser],
+      ],
+      [
+        "from a smaller file that imports it",
+        { "dep.ts": dep + filler("d", 500), "user.ts": user },
+        [...inDep(3), inUser],
+      ],
+      [
+        "from a file that it imports too",
+        {
+          "dep.ts": `import type { n } from "./user";\n${dep}export type N = typeof n;\n`,
+          "user.ts": user + filler("u", 60),
+        },
+        [...inDep(4), inUser],
+      ],
+      [
+        "from a caller above it in the same file",
+        {
+          "server.ts": `declare function listen(port: number): number;
+const cache = { entries: [1, 2, 3] };
+export const port: number = { start };
+export function start() { return listen({ first }); }
+export function first() { return cache.entrees[0]; }
+`,
+        },
+        [
+          "server.ts(3,14): error TS2322: Type '{ start: () => number; }' is not assignable to type 'number'.",
+          "server.ts(4,41): error TS2345: Argument of type '{ first: () => any; }' is not assignable to parameter of type 'number'.",
+          "server.ts(5,40): error TS2551: Property 'entrees' does not exist on type '{ entries: number[]; }'. Did you mean 'entries'?",
+        ],
+      ],
+    ] as const)("%s", async (_, files, expected) => {
+      using dir = project(files);
+      const threads = [1, 2, 2, 2, 3, 3, 3, 8];
+      for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+        expect(stdout).toBe(expected.join("\n"));
+        expect(exitCode).toBe(1);
+      }
+    });
+  });
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

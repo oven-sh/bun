@@ -15123,7 +15123,35 @@
     "files": {
       "a.ts": "declare function id<T>(x: T): T; declare function abs(n: number): number;\nconst a = { m() { return this.z; }, f() { return this.z; }, g: id(() => ({}).nope) };\nconst b = { m() { return this.z; }, f() { return this.z; }, g: id(() => nope) };\nconst c = { m() { return this.z; }, f() { return this.z; }, g: id(() => abs(\"\")) };\nconst d = { m() { return this.z; }, f() { return this.z; }, g: id(function () { return abs(\"\"); }) };\nconst e = { m() { return this.z; }, f() { return this.z; }, g: id({ h() { return abs(\"\"); } }) };\n// not an argument of a generic call: both tools lose the error\nconst h = { m() { return this.z; }, f() { return this.z; }, g: [() => abs(\"\")] };\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    }
+    },
+    "theirs": [
+      "a.ts(2,13): error TS7023: 'm' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      "a.ts(2,31): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => any; }'.",
+      "a.ts(2,37): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      "a.ts(2,55): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => any; }'.",
+      "a.ts(2,78): error TS2339: Property 'nope' does not exist on type '{}'.",
+      "a.ts(3,13): error TS7023: 'm' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      "a.ts(3,31): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => any; }'.",
+      "a.ts(3,37): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      "a.ts(3,55): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => any; }'.",
+      "a.ts(4,13): error TS7023: 'm' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      "a.ts(4,31): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => number; }'.",
+      "a.ts(4,37): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      "a.ts(4,55): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => number; }'.",
+      "a.ts(5,13): error TS7023: 'm' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      "a.ts(5,31): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => number; }'.",
+      "a.ts(5,37): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      "a.ts(5,55): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => number; }'.",
+      "a.ts(6,13): error TS7023: 'm' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      "a.ts(6,31): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: { h(): number; }; }'.",
+      "a.ts(6,37): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      "a.ts(6,55): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: { h(): number; }; }'.",
+      "a.ts(8,13): error TS7023: 'm' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      "a.ts(8,31): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: (() => number)[]; }'.",
+      "a.ts(8,37): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      "a.ts(8,55): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: (() => number)[]; }'.",
+      "a.ts(9,7): error TS2322: Type 'string' is not assignable to type 'number'."
+    ]
   },
   "93-R05a": {
     "files": {

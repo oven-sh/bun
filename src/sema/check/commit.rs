@@ -36,8 +36,7 @@
 //!   got (`Task::close_ring`). Any other task is lost, and the driver checks its files again as soon as the files
 //!   before them are checked.
 //!   - Earlier files that can't reach the cycle don't matter. If only importers of the current file can reach it, the task
-//!     is trusted once the earlier files of its own import cycle, and everything they import, are done
-//!     (`Checker::is_reachable_only_by_importers`).
+//!     is trusted once the earlier files of its own import cycle are done (`Checker::is_reachable_only_by_importers`).
 //!   - A discarded task stops at its next statement. The driver rechecks its file as soon as a commit resolves that cycle
 //!     (`Program::is_cycle_resolved`), on any thread.
 //!   - Once a file is discarded, one worker switches from the heavy files to the first unchecked files of the program, so

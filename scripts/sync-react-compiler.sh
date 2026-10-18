@@ -91,7 +91,7 @@ declare -a boundary=(
   react_compiler/src/entrypoint/program.rs:program.rs
   react_compiler/src/entrypoint/imports.rs:imports.rs
   "react_compiler/src/entrypoint/gating.rs:(folded into program.rs)"
-  "react_compiler/src/entrypoint/suppression.rs:(detected in js_parser/lexer.rs, consumed in program.rs)"
+  "react_compiler/src/entrypoint/suppression.rs:(src/react_compiler/suppression.rs has the containment rule; js_parser/lexer.rs records the comments)"
   react_compiler/src/entrypoint/compile_result.rs:compile_result.rs
 )
 

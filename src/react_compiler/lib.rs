@@ -25,6 +25,7 @@ mod compile_result;
 mod imports;
 mod lint;
 mod options;
+mod suppression;
 
 pub mod codegen;
 pub mod lowering;
@@ -38,3 +39,4 @@ pub use program::{
     CompileResult, Host, JsxImportKind, PendingCompile, ReactCompilerState,
     collect_import_bindings, finish, has_module_scope_opt_out, maybe_compile_pending,
 };
+pub use suppression::suppression_affects_function;

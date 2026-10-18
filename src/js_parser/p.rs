@@ -222,6 +222,15 @@ pub struct StartsForParseOnly {
     pub(crate) class_elements: bun_collections::HashMap<i32, i32>,
 }
 
+/// See [`P::react_compiler_fn_spans`].
+#[derive(Clone, Copy)]
+pub(crate) struct ReactCompilerFnSpan {
+    /// Where a function statement starts: its `function`, or its `async`. `Loc::EMPTY` for a function expression
+    /// or an arrow, which starts at the `loc` of its node.
+    pub(crate) start: bun_ast::Loc,
+    pub(crate) end: i32,
+}
+
 #[derive(Clone, Copy)]
 pub struct ReactRefreshImportClause<'a> {
     pub(crate) name: &'a [u8],
@@ -471,6 +480,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
     /// Visiting a function that is handed to the React Compiler, which re-declares its locals as new symbols.
     pub(crate) react_compiler_may_replace_body: bool,
+    /// Where the functions end that the parse pass left while `lexer.react_hooks_next_line_suppressions` had a
+    /// comment, keyed by the `loc` of the body. A function with such a comment inside is among them. The tree has
+    /// no end of a function, and the lexer is a token ahead of the parser, so the end is noted when the function is
+    /// left. Read by [`Self::has_react_hooks_suppression`].
+    pub(crate) react_compiler_fn_spans: bun_collections::HashMap<i32, ReactCompilerFnSpan>,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
@@ -9775,6 +9789,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_pending: None,
             react_compiler_result: None,
             react_compiler_may_replace_body: false,
+            react_compiler_fn_spans: Default::default(),
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             import_records_for_current_part: BumpVec::new_in(arena),

@@ -9,6 +9,7 @@ use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::tokens::{Token, TokenKind};
 use bun_react_compiler::diagnostics::{CompilerSuggestionOperation, ErrorCategory};
+use bun_react_compiler::suppression_affects_function;
 
 /// From a comment that disables a rule to the one that enables it again. For `eslint-disable-next-line` both are the same
 /// comment. For `eslint-disable` there is no `enable_comment`: see [`find_program_suppressions`].
@@ -104,10 +105,12 @@ impl<'a> ProgramSuppressions<'a> {
         fn_end: u32,
     ) -> Vec<SuppressionRange<'a>> {
         let affects = |suppression: &&SuppressionRange| {
-            let disable_start = suppression.disable_comment.start();
-            let enable_end = suppression.enable_comment.map(Token::end);
-            (disable_start > fn_start && enable_end.is_none_or(|end| end < fn_end))
-                || (disable_start < fn_start && enable_end.is_none_or(|end| end > fn_end))
+            suppression_affects_function(
+                suppression.disable_comment.start(),
+                suppression.enable_comment.map(Token::end),
+                fn_start,
+                fn_end,
+            )
         };
         // One comment does not wrap a function: only those that start in it are candidates.
         let first = self

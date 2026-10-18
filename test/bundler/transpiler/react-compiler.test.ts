@@ -1441,12 +1441,554 @@ describe("bundler", () => {
     external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      // The next-line suppression inside the namespace member must be consumed
-      // there and not bail the compiler out of the sibling Component.
+      // The next-line suppression is inside the namespace member only, so the
+      // compiler still takes the sibling Component.
       expect(out).toContain("react/compiler-runtime");
       expect(out).toMatch(/\b_c\(\d+\)/);
     },
   });
+
+  // Which functions a comment that switches a rule of React hooks off for ESLint keeps the compiler from. Each
+  // case is one file, with the exports that babel-plugin-react-compiler 1.0.0 compiles of it.
+  {
+    const NEXT_LINE = "// eslint-disable-next-line react-hooks/exhaustive-deps";
+    const NEXT_LINE_INLINE = "/* eslint-disable-next-line react-hooks/exhaustive-deps */";
+    const DISABLE = "/* eslint-disable react-hooks/exhaustive-deps */";
+    const ENABLE = "/* eslint-enable react-hooks/exhaustive-deps */";
+    // A compiled component has a memo cache for `style`.
+    const BODY = "const style = { color }; return <div style={style} />;";
+    const A = `export function A({ color }) { ${BODY} }`;
+    const B = `export function B({ color }) { ${BODY} }`;
+    const C = `export function C({ color }) { ${BODY} }`;
+    // A function as the default of a parameter. `A` calls it, so its memo cache would count for `A`.
+    const DEFAULT = "render = ({ color }) => { const style = { color }; return <p style={style} />; }";
+
+    // [where the comment is, the file, the exports that are compiled]
+    const cases: [where: string, file: string, compiled: string][] = [
+      // `eslint-disable-next-line` is for the functions that it is inside of.
+      [
+        "next-line in the body",
+        `
+          export function A({ color }) {
+            ${NEXT_LINE}
+            ${BODY}
+          }
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line in a callback in the body",
+        `
+          import { useEffect } from "react";
+          export function A({ color }) {
+            useEffect(() => {
+              ${NEXT_LINE}
+              globalThis.color = color;
+            }, []);
+            ${BODY}
+          }
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line in the parameters",
+        `
+          export function A(
+            ${NEXT_LINE}
+            { color }) { ${BODY} }
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line between the parameters and the body",
+        `
+          export function A({ color })
+            ${NEXT_LINE}
+            { ${BODY} }
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line after `function`",
+        `
+          export function ${NEXT_LINE_INLINE} A({ color }) { ${BODY} }
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line after `async`",
+        `
+          export const A = async ${NEXT_LINE_INLINE} ({ color }) => { ${BODY} };
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line between the parameters and `=>`",
+        `
+          export const A = ({ color }) ${NEXT_LINE_INLINE} => <div style={{ color }} />;
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line after `=>`",
+        `
+          export const A = ({ color }) => ${NEXT_LINE_INLINE} <div style={{ color }} />;
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line in a JSX opening tag",
+        `
+          export function A({ color }) {
+            const style = { color };
+            return <div
+              ${NEXT_LINE}
+              style={style} />;
+          }
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line in a JSX closing tag",
+        `
+          export function A({ color }) {
+            const style = { color };
+            return <div style={style}></div ${NEXT_LINE_INLINE}>;
+          }
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line in a JSX child",
+        `
+          export function A({ color }) {
+            const style = { color };
+            return <div style={style}>{${NEXT_LINE_INLINE}}</div>;
+          }
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line in a function given to memo()",
+        `
+          import { memo } from "react";
+          export const A = memo(function A({ color }) {
+            ${NEXT_LINE}
+            ${BODY}
+          });
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line after an arrow with an expression body, in a function",
+        `
+          export function A({ color }) {
+            const one = () => 1
+            ${NEXT_LINE}
+            ${BODY}
+          }
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line in the second of two functions on one line",
+        `
+          ${A} export function B({ color }) { ${NEXT_LINE}
+            ${BODY} }`,
+        "A",
+      ],
+      // Outside of every function it is for none.
+      [
+        "next-line after the closing brace",
+        `
+          ${A}
+          ${NEXT_LINE}
+          ${B}
+          ${C}`,
+        "A B C",
+      ],
+      [
+        "next-line above a function",
+        `
+          ${NEXT_LINE}
+          ${A}
+          ${B}`,
+        "A B",
+      ],
+      [
+        "next-line above `export default function`",
+        `
+          ${NEXT_LINE}
+          export default function D({ color }) { ${BODY} }
+          ${B}`,
+        "B default",
+      ],
+      [
+        "next-line between `export` and `function`",
+        `
+          export ${NEXT_LINE_INLINE} function A({ color }) { ${BODY} }
+          ${B}`,
+        "A B",
+      ],
+      [
+        "next-line between `=` and an arrow",
+        `
+          export const A =
+            ${NEXT_LINE}
+            ({ color }) => { ${BODY} };
+          ${B}`,
+        "A B",
+      ],
+      [
+        "next-line after an arrow with an expression body",
+        `
+          export const A = ({ color }) => <div style={{ color }} />
+          ${NEXT_LINE}
+          ${B}`,
+        "A B",
+      ],
+      [
+        "next-line between a function given to memo() and `)`",
+        `
+          import { memo } from "react";
+          export const A = memo(function A({ color }) { ${BODY} }
+            ${NEXT_LINE}
+          );
+          ${B}`,
+        "A B",
+      ],
+      [
+        "next-line in an `if` of the module",
+        `
+          if (globalThis.never) {
+            ${NEXT_LINE}
+            globalThis.never();
+          }
+          ${A}
+          ${B}`,
+        "A B",
+      ],
+      [
+        "next-line in a class body",
+        `
+          class K {
+            ${NEXT_LINE}
+            x = 1;
+          }
+          ${A}
+          ${B}`,
+        "A B",
+      ],
+      [
+        "next-line in a static block",
+        `
+          class K {
+            static {
+              const one = () => 1
+              ${NEXT_LINE}
+            }
+          }
+          ${A}
+          ${B}`,
+        "A B",
+      ],
+      [
+        "next-line in an object literal",
+        `
+          const o = {
+            ${NEXT_LINE}
+            x: 1,
+          };
+          ${A}
+          ${B}`,
+        "A B",
+      ],
+      [
+        "next-line in a function that is not a component",
+        `
+          function helper() {
+            ${NEXT_LINE}
+            return 1;
+          }
+          ${A}
+          ${B}`,
+        "A B",
+      ],
+      [
+        "next-line in a method",
+        `
+          class K {
+            m() {
+              ${NEXT_LINE}
+              return 1;
+            }
+          }
+          ${A}
+          ${B}`,
+        "A B",
+      ],
+      [
+        "next-line at the end of the file",
+        `
+          ${A}
+          ${B}
+          ${NEXT_LINE}`,
+        "A B",
+      ],
+      [
+        "next-line for another rule",
+        `
+          export function A({ color }) {
+            // eslint-disable-next-line no-console
+            ${BODY}
+          }
+          ${B}`,
+        "A B",
+      ],
+      // `eslint-disable` is for every function of the file, above it too. No `eslint-enable` ends it.
+      [
+        "disable above every function",
+        `
+          ${DISABLE}
+          ${A}
+          ${B}`,
+        "",
+      ],
+      [
+        "disable between two functions",
+        `
+          ${A}
+          ${DISABLE}
+          ${B}`,
+        "",
+      ],
+      [
+        "disable below every function",
+        `
+          ${A}
+          ${B}
+          ${DISABLE}`,
+        "",
+      ],
+      [
+        "disable in the second of three functions",
+        `
+          ${A}
+          export function B({ color }) {
+            ${DISABLE}
+            ${BODY}
+          }
+          ${C}`,
+        "",
+      ],
+      [
+        "disable in a JSX opening tag",
+        `
+          export function A({ color }) {
+            const style = { color };
+            return <div ${DISABLE} style={style} />;
+          }
+          ${B}`,
+        "",
+      ],
+      [
+        "disable and enable in the second of three functions",
+        `
+          ${A}
+          export function B({ color }) {
+            ${DISABLE}
+            const style = { color };
+            ${ENABLE}
+            return <div style={style} />;
+          }
+          ${C}`,
+        "",
+      ],
+      [
+        "disable and enable around the first function",
+        `
+          ${DISABLE}
+          ${A}
+          ${ENABLE}
+          ${B}`,
+        "",
+      ],
+      [
+        "disable for another rule",
+        `
+          /* eslint-disable no-console */
+          ${A}
+          ${B}`,
+        "A B",
+      ],
+      [
+        "enable without a disable",
+        `
+          ${ENABLE}
+          ${A}
+          ${B}`,
+        "A B",
+      ],
+      // A function among the parameters of a component is not the component.
+      [
+        "next-line in the body, with a function as a parameter default",
+        `
+          export function A({ color }, ${DEFAULT}) {
+            ${NEXT_LINE}
+            return render({ color });
+          }
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line before a function that is a parameter default",
+        `
+          export function A({ color },
+            ${NEXT_LINE}
+            ${DEFAULT}) { return render({ color }); }
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line after a function that is a parameter default",
+        `
+          export function A({ color }, ${DEFAULT}
+            ${NEXT_LINE}
+          ) { return render({ color }); }
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line in a function that is a parameter default",
+        `
+          export function A({ color }, render = ({ color }) => {
+            ${NEXT_LINE}
+            ${BODY}
+          }) { return render({ color }); }
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line in the body of an arrow, with a function as a parameter default",
+        `
+          export const A = ({ color }, ${DEFAULT}) => {
+            ${NEXT_LINE}
+            return render({ color });
+          };
+          ${B}`,
+        "B",
+      ],
+      // The compiler does not take a function with such a default at all.
+      [
+        "no comment, with a function as a parameter default",
+        `
+          export function A({ color }, ${DEFAULT}) { return render({ color }); }
+          ${B}`,
+        "B",
+      ],
+    ];
+
+    // TypeScript: the parser goes back over some of these comments and lexes them again.
+    const tsCases: typeof cases = [
+      [
+        "next-line in an arrow after `?` that has a return type",
+        `
+          export function A({ color, yes }: any) {
+            const pick = yes ? (x: number): number => {
+              ${NEXT_LINE}
+              return x;
+            } : 2;
+            const style = { color, pick }; return <div style={style} />;
+          }
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line in the type parameters of an arrow",
+        `
+          export const A = <T, ${NEXT_LINE_INLINE} U>({ color }: { color: T | U }) => { ${BODY} };
+          ${B}`,
+        "B",
+      ],
+      [
+        "next-line after an overload",
+        `
+          export function A(props: { color: string }): unknown;
+          ${NEXT_LINE}
+          export function A({ color }: any) { ${BODY} }
+          ${B}`,
+        "A B",
+      ],
+      [
+        "next-line in a function of a namespace",
+        `
+          namespace N {
+            export function helper() {
+              ${NEXT_LINE}
+              return 1;
+            }
+          }
+          ${A}
+          ${B}`,
+        "A B",
+      ],
+      [
+        "next-line between `export` and `async function`",
+        `
+          export ${NEXT_LINE_INLINE} async function useA(color: string) { ${BODY} }
+          ${B}`,
+        "B useA",
+      ],
+      [
+        "next-line between `async` and `function`",
+        `
+          export async ${NEXT_LINE_INLINE} function useA(color: string) { ${BODY} }
+          ${B}`,
+        "B",
+      ],
+    ];
+
+    const all = [...cases.map(it => [...it, "jsx"]), ...tsCases.map(it => [...it, "tsx"])];
+    const files: Record<string, string> = {
+      // Prints for each file the exports that make a memo cache when they are called.
+      "/entry.js": `
+        ${all.map(([, , , loader], i) => `import * as case${i} from "./cases/${i}.${loader}";`).join("\n")}
+        const files = [${all.map((_, i) => `case${i}`).join(", ")}];
+        const where = ${JSON.stringify(all.map(([where]) => where))};
+        const compiled = file =>
+          Object.keys(file)
+            .sort()
+            .filter(name => {
+              globalThis.memoCaches = 0;
+              file[name]({ color: "red" });
+              return globalThis.memoCaches > 0;
+            });
+        console.log(files.map((file, i) => where[i] + ": " + (compiled(file).join(" ") || "none")).join("\\n"));
+      `,
+      "/node_modules/react/package.json": `{ "name": "react", "type": "module" }`,
+      "/node_modules/react/index.js": `
+        export const memo = component => component;
+        export const useEffect = () => {};
+      `,
+      "/node_modules/react/compiler-runtime.js": `
+        export const c = size => (globalThis.memoCaches++, Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+      `,
+      "/node_modules/react/jsx-runtime.js": `export const jsx = (type, props) => ({ type, props }), jsxs = jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => ({ type, props });`,
+    };
+    all.forEach(([, file, , loader], i) => (files[`/cases/${i}.${loader}`] = file));
+
+    // Top-level await is off for "cjs". That once made a `disable-next-line` count for every later function.
+    for (const format of ["esm", "cjs"] as const) {
+      itBundled(`react-compiler/SuppressionCommentPlacement-${format}`, {
+        files,
+        reactCompiler: true,
+        format,
+        backend: "cli",
+        run: { stdout: all.map(([where, , compiled]) => `${where}: ${compiled || "none"}`).join("\n") },
+      });
+    }
+  }
 
   // Stub react packages shared by the unbound-ref regression tests below.
   const stubReact = {

@@ -115,10 +115,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let body_loc = func.body.loc;
         let body_stmts: &'a [Stmt] = func.body.stmts.slice();
-        let prev_may_replace_body = self.enter_react_compiler_candidate(
+        // For a function expression `open_parens_loc` is that of the expression, which is where it starts. A
+        // function statement has its start in `react_compiler_fn_spans`.
+        let candidate = self.enter_react_compiler_candidate(
             func.name.map(|n| n.ref_),
-            func.flags
-                .contains(flags::Function::HasReactHooksSuppression),
+            open_parens_loc,
+            body_loc,
             body_stmts,
         );
 
@@ -142,7 +144,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
         };
-        let rc_binding = self.react_compiler_candidate_name.take();
+        let rc_binding = candidate.binding;
         if rc_binding.is_some() {
             self.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
                 args: func.args,
@@ -154,7 +156,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .map(|n| n.ref_)
                     .filter(|r| r.is_valid())
                     .or(rc_binding),
-                in_react_hoc: core::mem::take(&mut self.react_compiler_in_react_hoc),
+                in_react_hoc: candidate.in_react_hoc,
             });
         }
         self.visit_stmts_and_prepend_temp_refs(&mut stmts, &mut temp_opts)
@@ -211,7 +213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.pop_scope();
         self.pop_scope();
 
-        self.react_compiler_may_replace_body = prev_may_replace_body;
+        self.react_compiler_may_replace_body = candidate.prev_may_replace_body;
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
 

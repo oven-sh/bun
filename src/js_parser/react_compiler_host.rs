@@ -164,6 +164,16 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     }
 }
 
+/// What [`P::enter_react_compiler_candidate`] found for the function that is visited.
+#[derive(Clone, Copy)]
+pub(crate) struct ReactCompilerCandidate {
+    /// `react_compiler_may_replace_body` around the function, to restore when it is left.
+    pub(crate) prev_may_replace_body: bool,
+    /// The binding that `visit_stmt` named, if this function is the candidate. `Ref::NONE`: it has none.
+    pub(crate) binding: Option<js_ast::Ref>,
+    pub(crate) in_react_hoc: bool,
+}
+
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     /// Drops the replaced body's symbols, or the renamer prints a new local `count` as `count2`.
     pub(crate) fn drop_symbols_of_replaced_function(&mut self, name: Option<js_ast::Ref>) {
@@ -189,18 +199,25 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         }
     }
 
-    /// Sets `react_compiler_may_replace_body` for the visit of the pending candidate. Returns the old value.
+    /// Takes the candidate that `visit_stmt` named for the function at `loc`, before its parameters are visited, so
+    /// that a function among them is not taken for it. Sets `react_compiler_may_replace_body` for the visit.
     pub(crate) fn enter_react_compiler_candidate(
         &mut self,
         name: Option<js_ast::Ref>,
-        has_react_hooks_suppression: bool,
+        loc: bun_ast::Loc,
+        body_loc: bun_ast::Loc,
         body: &[js_ast::Stmt],
-    ) -> bool {
-        let prev = self.react_compiler_may_replace_body;
-        if !prev
-            && let Some(candidate) = self.react_compiler_candidate_name
-            && let Some(rc) = self.react_compiler.as_deref()
-        {
+    ) -> ReactCompilerCandidate {
+        let prev_may_replace_body = self.react_compiler_may_replace_body;
+        let Some(candidate) = self.react_compiler_candidate_name.take() else {
+            return ReactCompilerCandidate {
+                prev_may_replace_body,
+                binding: None,
+                in_react_hoc: false,
+            };
+        };
+        let in_react_hoc = core::mem::take(&mut self.react_compiler_in_react_hoc);
+        if !prev_may_replace_body && let Some(rc) = self.react_compiler.as_deref() {
             let name = name
                 .filter(|r| r.is_valid())
                 .or(Some(candidate))
@@ -208,12 +225,42 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
                 .map(|r| self.load_name_from_ref(r));
             self.react_compiler_may_replace_body = rc.may_compile(
                 name,
-                self.react_compiler_in_react_hoc,
-                has_react_hooks_suppression,
+                in_react_hoc,
+                self.has_react_hooks_suppression(loc, body_loc),
                 body,
             );
         }
-        prev
+        ReactCompilerCandidate {
+            prev_may_replace_body,
+            binding: Some(candidate),
+            in_react_hoc,
+        }
+    }
+
+    /// Whether a comment keeps the React Compiler from the function at `loc` whose body is at `body_loc`: an
+    /// `eslint-disable` for a rule of React hooks anywhere in the file, or an `eslint-disable-next-line` for one
+    /// inside of the function. Upstream's `filterSuppressionsThatAffectFunction`, which also runs once the whole
+    /// file is read. The parse pass cannot tell: it would go by the order in which the lexer met the comments.
+    fn has_react_hooks_suppression(&self, loc: bun_ast::Loc, body_loc: bun_ast::Loc) -> bool {
+        if self.lexer.has_react_hooks_block_suppression {
+            return true;
+        }
+        // A function without its end on record was left before the lexer met the first of the comments.
+        let Some(span) = self.react_compiler_fn_spans.get(&body_loc.start) else {
+            return false;
+        };
+        let fn_start = span.start.to_nullable().unwrap_or(loc).start as u32;
+        let comments = &self.lexer.react_hooks_next_line_suppressions;
+        // A comment does not wrap a function. Of those that start in it, the first is inside if any is.
+        let first = comments.partition_point(|comment| comment.loc.start as u32 <= fn_start);
+        comments.get(first).is_some_and(|comment| {
+            bun_react_compiler::suppression_affects_function(
+                comment.loc.start as u32,
+                Some((comment.loc.start + comment.len) as u32),
+                fn_start,
+                span.end as u32,
+            )
+        })
     }
 
     /// Port of upstream `findFunctionDeclarationOrExpression` for the

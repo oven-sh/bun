@@ -526,7 +526,6 @@ impl<'a> Converter<'a, '_> {
                 is_async: func.is_async(),
                 has_rest_arg,
                 prefer_expr,
-                has_react_hooks_suppression: false,
             })
         })
     }

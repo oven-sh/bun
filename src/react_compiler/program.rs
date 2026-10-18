@@ -1379,11 +1379,6 @@ fn maybe_compile_node(
     let fn_name: Option<String> =
         name.and_then(|n| core::str::from_utf8(n).ok().map(str::to_owned));
 
-    if node.has_react_hooks_suppression() {
-        bun_core::scoped_log!(react_compiler, "  -> bail: react-hooks eslint suppression");
-        return None;
-    }
-
     // Dynamic-gating directive validation (upstream `tryFindDirective…`).
     let dynamic_gating_ident: Option<String> = if state.options.dynamic_gating.is_some() {
         match find_dynamic_gating_directive(&body_directives) {

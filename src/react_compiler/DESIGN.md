@@ -52,7 +52,7 @@ rewritten) or an **AST-boundary port** (re-typed onto `bun_ast`).
 | `react_compiler/entrypoint/program.rs`                                          | `program.rs`                           | AST-boundary — walks `&[Stmt]`, finds candidate components/hooks                       |
 | `react_compiler/entrypoint/{imports,compile_result}.rs`                         | same names                             | AST-boundary — small; emit/read `bun_ast`                                              |
 | `react_compiler/entrypoint/gating.rs`                                           | — (folded into `program.rs`)           | dynamic-gating directive parsing lives alongside candidate selection                   |
-| `react_compiler/entrypoint/suppression.rs`                                      | — (not ported)                         | eslint-disable detected in `js_parser/lexer.rs`, consumed in `program.rs`              |
+| `react_compiler/entrypoint/suppression.rs`                                      | `suppression.rs`                       | AST-boundary — the containment rule only; `js_parser/lexer.rs` records the comments    |
 | `react_compiler_ast`, `react_compiler_lowering` (rest), `react_compiler` (rest) | —                                      | **not in tree** — upstream-only porting reference                                      |
 
 `validate_source_locations.rs` and `fixture_utils.rs` are upstream test/debug

@@ -100,6 +100,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
         )?;
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
+        // For `export async function`, `loc` is that of the `export`.
+        if !p.react_compiler_fn_spans.is_empty()
+            && let Some(span) = p.react_compiler_fn_spans.get_mut(&func.body.loc.start)
+        {
+            span.start = async_range.map_or(loc, |range| range.loc);
+        }
 
         if Self::IS_TYPESCRIPT_ENABLED {
             // Don't output anything if it's just a forward declaration of a function
@@ -400,14 +406,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let mut temp_opts = opts;
         func.body = p.parse_fn_body(&mut temp_opts)?;
-        if p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression {
-            func.flags.insert(Flags::Function::HasReactHooksSuppression);
-            // next-line semantics: a suppression marks the enclosing top-level
-            // function and is consumed; it never reaches that function's siblings.
-            if p.fn_or_arrow_data_parse.is_top_level {
-                p.lexer.has_react_hooks_suppression_before = false;
-            }
-        }
 
         Ok(func)
     }
@@ -503,6 +501,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TOpenBrace)?;
         let mut opts = ParseStatementOptions::default();
         let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut opts)?;
+        // The lexer is on the `}`. The `next()` below records the comments after it.
+        if !p.lexer.react_hooks_next_line_suppressions.is_empty() {
+            p.record_react_compiler_fn_end(loc, p.lexer.end);
+        }
         p.lexer.next()?;
 
         if pushed_scope_for_function_body {
@@ -552,15 +554,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TOpenBrace {
             let body = p.parse_fn_body(data)?;
             p.after_arrow_body_loc = p.lexer.loc();
-            let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before
-                || p.lexer.has_react_hooks_block_suppression;
-            if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
-                p.lexer.has_react_hooks_suppression_before = false;
-            }
             return Ok(E::Arrow {
                 args: args_slice,
                 body,
-                has_react_hooks_suppression,
                 ..Default::default()
             });
         }
@@ -586,16 +582,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         };
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+        // The lexer is on the token after the expression, and has recorded the comments between the two.
+        if !p.lexer.react_hooks_next_line_suppressions.is_empty() {
+            let end = p.lexer.end_before_trailing_react_hooks_suppressions();
+            p.record_react_compiler_fn_end(arrow_loc, end);
+        }
 
         let ret_stmt = p.s(S::Return { value: Some(expr) }, expr.loc);
         let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);
 
         p.pop_scope();
-        let has_react_hooks_suppression =
-            p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression;
-        if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
-            p.lexer.has_react_hooks_suppression_before = false;
-        }
         Ok(E::Arrow {
             args: args_slice,
             prefer_expr: true,
@@ -603,8 +599,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc: arrow_loc,
                 stmts: bun_ast::StoreSlice::new_mut(stmts),
             },
-            has_react_hooks_suppression,
             ..Default::default()
         })
+    }
+
+    /// Notes for [`Self::has_react_hooks_suppression`] that the function whose body is at `body_loc` ends at `end`.
+    #[cold]
+    fn record_react_compiler_fn_end(&mut self, body_loc: bun_ast::Loc, end: usize) {
+        self.react_compiler_fn_spans.insert(
+            body_loc.start,
+            crate::p::ReactCompilerFnSpan {
+                start: bun_ast::Loc::EMPTY,
+                end: end as i32,
+            },
+        );
     }
 }

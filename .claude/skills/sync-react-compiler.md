@@ -20,8 +20,9 @@ There are two kinds of port:
   `pipeline.rs`, `program.rs`, `imports.rs`, `compile_result.rs`) — re-typed
   onto `bun_ast` using the mapping in `src/react_compiler/DESIGN.md`. Upstream
   diffs are re-ported by hand. Upstream's `gating.rs` is folded into
-  `program.rs`; `suppression.rs` is handled by the lexer
-  (`js_parser/lexer.rs`) and consumed in `program.rs`;
+  `program.rs`; of `suppression.rs` only the containment rule is ported
+  (`suppression.rs`): the lexer (`js_parser/lexer.rs`) records the comments
+  and `js_parser/react_compiler_host.rs` asks the rule for each candidate;
   `identifier_loc_index.rs` is not needed because Bun's `Ref` already
   provides binding identity.
 

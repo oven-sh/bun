@@ -349,10 +349,7 @@ pub struct Arrow {
     pub has_rest_arg: bool,
     /// Use shorthand if true and "Body" is a single return statement
     pub prefer_expr: bool,
-    /// See `flags::Function::HasReactHooksSuppression`.
-    pub has_react_hooks_suppression: bool,
 }
-// The fourth bool fits in existing trailing padding.
 const _: () = assert!(core::mem::size_of::<Arrow>() == 32);
 impl Arrow {
     pub const NOOP_RETURN_UNDEFINED: Arrow = Arrow {
@@ -364,7 +361,6 @@ impl Arrow {
         is_async: false,
         has_rest_arg: false,
         prefer_expr: false,
-        has_react_hooks_suppression: false,
     };
 }
 impl Default for Arrow {
@@ -378,7 +374,6 @@ impl Default for Arrow {
             is_async: false,
             has_rest_arg: false,
             prefer_expr: false,
-            has_react_hooks_suppression: false,
         }
     }
 }

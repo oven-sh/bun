@@ -2348,7 +2348,6 @@ fn codegen_function_expression(
                     is_async: fn_result.is_async,
                     has_rest_arg: fn_result.has_rest_arg,
                     prefer_expr: single_return,
-                    has_react_hooks_suppression: false,
                 },
                 loc,
             )

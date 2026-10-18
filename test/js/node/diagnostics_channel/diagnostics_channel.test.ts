@@ -357,14 +357,14 @@ describe("Channel", () => {
   });
 
   test("unsubscribe() does not modify the array in _subscribers", () => {
-    const dc = channel("frozen-subscribers") as Channel & { _subscribers: Function[] };
+    const dc = channel("frozen-subscribers") as Channel & { _subscribers: readonly Function[] };
     const first = () => {};
     const second = () => {};
     dc.subscribe(first);
     dc.subscribe(second);
-    const frozen = Object.freeze([first, second]) as Function[];
+    const frozen = Object.freeze([first, second]);
     dc._subscribers = frozen;
-    expect(dc.unsubscribe(first)).toBe(true);
+    expect(dc.unsubscribe(first)).toBe<boolean>(true);
     expect(dc._subscribers).toEqual([second]);
     expect(frozen).toEqual([first, second]);
   });
@@ -375,7 +375,7 @@ describe("Channel", () => {
     const other = () => {};
     dc.subscribe(first);
     dc._subscribers = [first, ...new Array(1_000_000).fill(other)];
-    expect(dc.unsubscribe(first)).toBe(true);
+    expect(dc.unsubscribe(first)).toBe<boolean>(true);
     expect(dc._subscribers.length).toBe(1_000_000);
   });
 

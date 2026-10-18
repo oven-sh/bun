@@ -2335,7 +2335,7 @@ describe.concurrent("compress argument defaults", () => {
   it("server.publish() compresses by default; ws.send() and ws.publish() only with compress: true", async () => {
     const sockets: Record<string, ServerWebSocket<string>> = {};
     const opened = { deflate: Promise.withResolvers<void>(), plain: Promise.withResolvers<void>() };
-    await using server = serve<string, {}>({
+    await using server = serve<string>({
       port: 0,
       hostname: "127.0.0.1",
       fetch(req, server) {
@@ -2353,8 +2353,8 @@ describe.concurrent("compress argument defaults", () => {
       },
     });
 
-    using deflate = await RawClient.upgrade(server.port, { path: "/deflate", headers: offerDeflate });
-    using plain = await RawClient.upgrade(server.port, { path: "/plain" });
+    using deflate = await RawClient.upgrade(server.port!, { path: "/deflate", headers: offerDeflate });
+    using plain = await RawClient.upgrade(server.port!, { path: "/plain" });
     expect({
       deflate: deflate.header("sec-websocket-extensions"),
       plain: plain.header("sec-websocket-extensions"),
@@ -2414,7 +2414,7 @@ describe.concurrent("compress argument defaults", () => {
       },
     });
 
-    using raw = await RawClient.upgrade(server.port, { headers: offerDeflate });
+    using raw = await RawClient.upgrade(server.port!, { headers: offerDeflate });
     expect(raw.header("sec-websocket-extensions")).toBeUndefined();
     const ws = await opened.promise;
 
@@ -3313,7 +3313,7 @@ it("server.upgrade() after an await sends the 101 and open()'s messages in a sin
   const proxy = net.createServer(downstream => {
     const upstream = net.connect(server.port!, "127.0.0.1");
     let pending = Buffer.alloc(0);
-    upstream.on("data", chunk => {
+    upstream.on("data", (chunk: Buffer) => {
       pending = Buffer.concat([pending, chunk]);
       while (pending.length >= 5 && pending.length >= 5 + pending.readUInt16BE(3)) {
         if (pending[0] === 23) applicationDataRecords++;

@@ -1246,7 +1246,7 @@ describe("every command that installs runs the scanner", () => {
       "sends every package with the lockfile of another package manager",
       async () => {
         const result = await run(command.split(" "), async (_, dir) => {
-          const { registry } = Bun.TOML.parse(await Bun.file(join(dir, "bunfig.toml")).text()).install;
+          const { registry } = (Bun.TOML.parse(await Bun.file(join(dir, "bunfig.toml")).text()) as any).install;
           const entry = (name: string, version: string, rest = {}) => ({
             [`node_modules/${name}`]: { version, resolved: `${registry}${name}-${version}.tgz`, ...rest },
           });

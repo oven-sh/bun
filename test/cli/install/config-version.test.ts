@@ -213,7 +213,7 @@ snapshots:
 `,
     ],
   ])("bun pm migrate writes the bun.lock of an install that migrates %s", async (name, foreign) => {
-    const results = [];
+    const results: string[] = [];
     for (const args of [
       ["pm", "migrate"],
       ["install", "--lockfile-only"],

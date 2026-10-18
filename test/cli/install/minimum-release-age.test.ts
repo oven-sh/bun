@@ -2915,7 +2915,7 @@ describe("minimum-release-age", () => {
           "package.json": manifest(range),
           ".npmrc": `registry=${mockRegistryUrl}`,
         });
-        const install = async (cache: string, args: string[]) => {
+        const install = async (cache: string, args: readonly string[]) => {
           await using proc = Bun.spawn({
             cmd: [bunExe(), "install", "--no-verify", ...args],
             cwd: String(dir),

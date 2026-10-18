@@ -2561,7 +2561,9 @@ describe.concurrent("a version published after the manifest was cached", () => {
       env: installEnv(cwd),
     });
     const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    const lock = Bun.JSONC.parse(await file(join(cwd, "bun.lock")).text()) as { packages: Record<string, [string]> };
+    const lock = Bun.JSONC.parse(await file(join(cwd, "bun.lock")).text()) as {
+      packages: Record<string, [string] | undefined>;
+    };
     return {
       messages: err.split("\n").filter(line => /^(error|warn):/.test(line)),
       exitCode,

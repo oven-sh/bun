@@ -11,6 +11,8 @@ import { forOxfmt } from "./for-oxfmt";
 
 afterAll(endChildren);
 
+type Files = Record<string, string>;
+
 async function formatIn(cwd: string, names: string[], flags: string[] = ["."]) {
   await using proc = spawn({
     cmd: [bunExe(), "fmt", "--log-level=warn", ...flags],
@@ -543,7 +545,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ],
   ])("what the plugin damages is printed right: %s", async (_, before, after, ofPlugin) => {
     expect(after).not.toBe(ofPlugin);
-    for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }]) {
+    for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }] as Files[]) {
       const result = await format({ ...config, "a.svelte": before, "b.svelte": after }, ["a.svelte", "b.svelte"]);
       expect(result).toMatchObject({ stderr: "", files: [after, after], exitCode: 0 });
       const checked = await format({ ...config, "a.svelte": before }, ["a.svelte"], ["--debug-check"]);
@@ -1360,7 +1362,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       const seen = rows.filter(it => it[2] !== null && it[2] !== it[1]);
       using dir = tempDir("bun-format-svelte", {
         ...Object.fromEntries(
-          seen.flatMap((it, index) => it.slice(0, 3).map((text, which) => [`${index}.${which}`, text])),
+          seen.flatMap((it, index) => (it.slice(0, 3) as string[]).map((text, which) => [`${index}.${which}`, text])),
         ),
       });
       // Each with what Bun prints, then with what the plugin prints.
@@ -1475,7 +1477,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       const seen = rows.filter(it => it[3] !== null);
       using dir = tempDir("bun-format-svelte", {
         ...Object.fromEntries(
-          seen.flatMap((it, index) => it.slice(0, 4).map((text, which) => [`${index}.${which}`, text])),
+          seen.flatMap((it, index) => (it.slice(0, 4) as string[]).map((text, which) => [`${index}.${which}`, text])),
         ),
       });
       const pairs = seen.flatMap((_, index) => [
@@ -2250,7 +2252,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         warning("Expression expected.", [1, 30, '<script>let é = "é"; let b = ;</script>']),
       ],
     ])("%s", async (_, before, after, stderr) => {
-      for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }]) {
+      for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }] as Files[]) {
         expect(await format({ ...config, "a.svelte": before }, ["a.svelte"])).toMatchObject({
           stderr,
           files: [after],
@@ -2338,7 +2340,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ],
   ])("a syntax error is shown where it is: %s", async (_, text, message, [line, column, shown]) => {
     const caret = Buffer.alloc(`${line} | `.length + column - 1, " ").toString() + "^";
-    for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }]) {
+    for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }] as Files[]) {
       const result = await format({ ...config, "a.svelte": text, "b.svelte": input }, ["a.svelte", "b.svelte"]);
       expect(result.stderr).toStartWith(
         `${line} | ${shown}\n${caret}\nerror: ${message}\n    at a.svelte:${line}:${column}\n\n`,
@@ -2562,7 +2564,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
   test("blocks of Svelte in Markdown are formatted where components are", async () => {
     const block = (text: string) => `# a\n\n\`\`\`svelte\n${text}\`\`\`\n`;
     const withOtherVersion = { ".prettierrc": prettierrc, ...plugin("4.1.0") };
-    for (const config of [{}, { ".prettierrc": prettierrc }, withOtherVersion, { ".oxfmtrc.json": oxfmtrc }]) {
+    for (const config of [
+      {},
+      { ".prettierrc": prettierrc },
+      withOtherVersion,
+      { ".oxfmtrc.json": oxfmtrc },
+    ] as Files[]) {
       expect(await format({ ...config, "a.md": block(input) }, ["a.md"])).toMatchObject({
         stderr: "",
         files: [block(output)],
@@ -2571,7 +2578,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       const refused = block("<p   >{a +}</p>\n");
       expect(await format({ ...config, "a.md": refused }, ["a.md"])).toMatchObject({ files: [refused], exitCode: 0 });
     }
-    for (const config of [{ ".prettierrc": "{}" }, { ".oxfmtrc.json": "{}" }]) {
+    for (const config of [{ ".prettierrc": "{}" }, { ".oxfmtrc.json": "{}" }] as Files[]) {
       expect((await format({ ...config, "a.md": block(input) }, ["a.md"], ["--allow-unsupported"])).files).toEqual([
         block(input),
       ]);
@@ -2663,7 +2670,7 @@ exports.__unstable__loadDesignSystem = async () => ({
       `<p>a</p>\n${style}\n\n${script}`,
       `${style}\n<script module>\n  let m;\n</script>\n${script}<svelte:options runes />\n`,
     ];
-    const configs = [
+    const configs: Files[] = [
       { ".prettierrc": JSON.stringify({ plugins, svelteSortOrder: "none" }) },
       { ".oxfmtrc.json": '{ "svelte": { "sortOrder": "none" } }' },
     ];

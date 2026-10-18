@@ -369,7 +369,7 @@ describe.concurrent("bun fmt", () => {
   });
 
   // Prettier's `listDifferent`: it has nothing to say about what is going to be written, and then nothing is printed either.
-  test.each([
+  test.each<string[]>([
     ["--check", "--write"],
     ["--write", "--check"],
     ["-l", "--write"],
@@ -768,7 +768,7 @@ describe.concurrent("bun fmt", () => {
     `);
     expect(stdin.exitCode).toBe(2);
     // The configuration of another tool makes no difference.
-    for (const configuration of [{ ".prettierrc": "{}\n" }, { ".oxfmtrc.json": "{}\n" }]) {
+    for (const configuration of [{ ".prettierrc": "{}\n" }, { ".oxfmtrc.json": "{}\n" }] as Record<string, string>[]) {
       const result = await format({ ...configuration, "b.css": files["b.css"] }, ["b.css"]);
       expect(result.stderr).toStartWith(problem("b.css", "Unclosed string", [7, 6, '  e: "f']) + "\n\n");
       expect(result.exitCode).toBe(2);
@@ -1426,7 +1426,7 @@ describe.concurrent("bun fmt", () => {
     const names = rows.map((_, index) => `${index}.js`);
     const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));
     const printed = Object.fromEntries(rows.map(([, printed], index) => [names[index], printed]));
-    for (const configuration of [{}, { ".oxfmtrc.json": "{}" }]) {
+    for (const configuration of [{}, { ".oxfmtrc.json": "{}" }] as Record<string, string>[]) {
       const result = await format({ ...configuration, ...texts }, [], { reads: names });
       expect(result.files).toEqual(printed);
       expect(result.exitCode).toBe(0);
@@ -5052,7 +5052,7 @@ try {
         Buffer.alloc(Buffer.byteLength(unit) * Math.floor(times), unit).toString();
       const texts = units.map(unit => repeated(unit, count));
       const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
-      for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }]) {
+      for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }] as Record<string, string>[]) {
         const run = (text: (index: number) => string) =>
           format(
             {
@@ -5252,7 +5252,7 @@ try {
     const ordinary =
       "// Returns the sum.\nfunction add(first, second) {\n  const sum = first + second; // a number\n  return [sum, { first, second }];\n}\n\n";
     const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
-    for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }]) {
+    for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }] as Record<string, string>[]) {
       const run = (text: (index: number) => string) =>
         format(
           {
@@ -6802,7 +6802,7 @@ describe.concurrent("what an ignore file has is not written, however it is come 
     expect(result.exitCode).toBe(0);
   });
 
-  test.each([["src"], ["src/*.js"], ["src", "src/*.js"]])(
+  test.each<string[]>([["src"], ["src/*.js"], ["src", "src/*.js"]])(
     "%s, of which every file is ignored, is no error",
     async (...args) => {
       const files = { ".prettierignore": "src/a.js\nsrc/b.js\n", "src/a.js": ugly, "src/b.js": ugly };

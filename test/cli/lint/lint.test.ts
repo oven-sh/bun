@@ -7046,7 +7046,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         const { line, column, length } = labels[0].span;
         places[line - 1].push([column, length]);
       }
-      const written = fixed.files["a.mjs"].split("\n");
+      const written = fixed.files["a.mjs"]!.split("\n");
       expect(rows.map(([code], at) => [code, written[at].slice("x = ".length, -1), places[at]])).toEqual(rows);
     });
 
@@ -7902,7 +7902,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       ]);
       expect(metadata.rulesMeta["no-restricted-syntax/no-moment"].type).toBe("suggestion");
       const suppressed = await lint(files, ["--suppress-all", "a.js"], { reads: ["eslint-suppressions.json"] });
-      expect(JSON.parse(suppressed.files["eslint-suppressions.json"])).toEqual({
+      expect(JSON.parse(suppressed.files["eslint-suppressions.json"]!)).toEqual({
         "a.js": { "no-restricted-syntax/no-moment": { "count": 1 } },
       });
     });
@@ -7954,7 +7954,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       ]);
       expect(exitCode).toBe(1);
       const suppressed = await lint(files, ["--suppress-all", "a.js"], { reads: ["oxlint-suppressions.json"] });
-      expect(JSON.parse(suppressed.files["oxlint-suppressions.json"])).toEqual({
+      expect(JSON.parse(suppressed.files["oxlint-suppressions.json"]!)).toEqual({
         "a.js": { "no-restricted-syntax/no-moment": { count: 1 } },
       });
     });
@@ -8211,8 +8211,8 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           lint(files, ["-f", format, "--quiet", "-o", "report.txt"], inActions),
           lint(files, ["-f", format, "--quiet"], { env: { GITHUB_ACTIONS: "true" } }),
         ]);
-        expect(toFile.files["report.txt"].replaceAll(/bun-lint_\w+/g, "")).toBe(
-          plain.files["report.txt"].replaceAll(/bun-lint_\w+/g, ""),
+        expect(toFile.files["report.txt"]!.replaceAll(/bun-lint_\w+/g, "")).toBe(
+          plain.files["report.txt"]!.replaceAll(/bun-lint_\w+/g, ""),
         );
         expect(toFile.files["report.txt"]).not.toContain("::error");
         expect(toFile.stdout).toBe(named.stdout);
@@ -11114,7 +11114,7 @@ describe.concurrent("what bun lint takes from Bun", () => {
     { BUN_INSPECT: "ws://127.0.0.1:0/x?wait=1" },
     { BUN_INSPECT_PRELOAD: "./nowhere.js" },
     { BUN_OPTIONS: "--preload=./nowhere.js" },
-  ])("%j is not for the process that runs the configuration file", async variables => {
+  ] as Record<string, string>[])("%j is not for the process that runs the configuration file", async variables => {
     const result = await bun(files, ["lint", "-f", "unix", "sub"], variables);
     expect(result.stdout).toStartWith("<dir>/sub/b.js:1:1: Unexpected 'debugger' statement.");
     expect(result.exitCode).toBe(1);

@@ -15175,7 +15175,7 @@ describe.concurrent("--dry-run lists the packages that the install puts in node_
     };
 
     const lines = await run("--dry-run");
-    expect(lines.filter(line => /^( |installed )/.test(line)).sort()).toEqual(listed);
+    expect(lines.filter(line => /^( |installed )/.test(line)).sort()).toEqual<readonly string[]>(listed);
     expect(existsSync(join(packageDir, "node_modules"))).toBeFalse();
 
     await run();

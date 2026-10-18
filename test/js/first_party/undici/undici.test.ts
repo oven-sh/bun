@@ -410,7 +410,7 @@ describe.concurrent("WebSocket ping", () => {
     });
   }
 
-  function once(ws: EventTarget, type: "open" | "close") {
+  function once(ws: Pick<EventTarget, "addEventListener">, type: "open" | "close") {
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     ws.addEventListener(type, () => resolve());
     ws.addEventListener("error", (e: any) => reject(e.error ?? new Error(e.message)));
@@ -419,7 +419,7 @@ describe.concurrent("WebSocket ping", () => {
 
   // Resolves with the first message published for `ws`. Channels are process-wide and these tests
   // run concurrently, so filter by socket.
-  async function firstPublished(name: "ping" | "pong", ws: EventTarget) {
+  async function firstPublished(name: "ping" | "pong", ws: Pick<EventTarget, "addEventListener">) {
     const { promise, resolve, reject } = Promise.withResolvers<{ payload: Buffer; websocket: unknown }>();
     const onMessage = (message: any) => {
       if (message.websocket === ws) resolve(message);

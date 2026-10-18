@@ -3025,7 +3025,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
       socket.on("error", () => {});
     });
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-    const port = server.address().port;
+    const port = (server.address() as AddressInfo).port;
     return {
       requests,
       host: `127.0.0.1:${port}`,
@@ -3074,7 +3074,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
       socket.on("error", () => {});
     });
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-    const port = server.address().port;
+    const port = (server.address() as AddressInfo).port;
     origin = `https://127.0.0.1:${port}`;
     return {
       requests,
@@ -5203,6 +5203,7 @@ describe.concurrent("`ca` and `cafile` are one setting: a layer that sets either
   ] as [string, Record<string, string>, string[]][])("%s", async (_, files, args) => {
     const tarball = await new Bun.Archive({
       "package/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+      // @ts-expect-error bytes() takes no argument, so the tarball is not compressed
     }).bytes("gzip");
     await using server = Bun.serve({ port: 0, tls, fetch: () => new Response(tarball) });
     using dir = tempDir("npmrc-ca-layers", {

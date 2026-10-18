@@ -963,6 +963,7 @@ describe.concurrent("auto-install reads a package.json dependency version from t
     const tarball = await new Bun.Archive({
       "package/package.json": JSON.stringify(manifest),
       "package/index.js": "",
+      // @ts-expect-error bytes() takes no argument, so the tarball is not compressed
     }).bytes("gzip");
     using server = Bun.serve({
       port: 0,
@@ -1673,7 +1674,7 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
   }
 
   // A 404 is an answer, and stands for as long as a manifest would (300 seconds) unless the registry says otherwise.
-  const notFound = (headers: HeadersInit = { "Cache-Control": "no-cache" }) =>
+  const notFound = (headers: ResponseInit["headers"] = { "Cache-Control": "no-cache" }) =>
     new Response("{}", { status: 404, headers });
 
   const failures: Record<string, { respond: (deadPort: number) => Response; requestsPerLookup: number }> = {
@@ -2710,6 +2711,7 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
         const tarball = await new Bun.Archive({
           "package/package.json": JSON.stringify(manifest),
           "package/index.js": index,
+          // @ts-expect-error bytes() takes no argument, so the tarball is not compressed
         }).bytes("gzip");
         const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarball).digest("base64");
         return { name, manifest, tarball, integrity, tarballPath: `/${name}/-/${name.split("/").pop()}-1.0.0.tgz` };

@@ -1664,7 +1664,9 @@ describe.concurrent("committing a package with every edit undone removes its pat
     return original;
   }
 
-  const state = async (dir: string) => ({
+  const state = async (
+    dir: string,
+  ): Promise<{ patchedDependencies?: unknown; inLockfile: boolean; files: string[]; index: string }> => ({
     patchedDependencies: (await Bun.file(join(dir, "package.json")).json()).patchedDependencies,
     inLockfile: (await Bun.file(join(dir, "bun.lock")).text()).includes("patchedDependencies"),
     files: await readdirSorted(join(dir, "node_modules", "no-deps")),
@@ -3547,7 +3549,7 @@ describe.concurrent("a patch file that is not there", () => {
         patchedDependencies: (await Bun.file(join(dir, "package.json")).json()).patchedDependencies,
         lockfile: (await Bun.file(join(dir, "bun.lock")).text()).match(/patches\/[^"]+/g)?.sort(),
       });
-      const bothPatched = {
+      const bothPatched: Awaited<ReturnType<typeof state>> = {
         "basic-1": patched,
         "no-deps": patched,
         patchedDependencies: {

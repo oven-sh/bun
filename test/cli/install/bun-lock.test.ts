@@ -1443,7 +1443,7 @@ it.concurrent.each([true, false])(
       },
     });
     const yarnLock = join(packageDir, "yarn.lock");
-    const states = [];
+    const states: { text: string; inode: number }[] = [];
     for (let i = 0; i < 2; i++) {
       await using proc = spawn({
         cmd: [bunExe(), "install", "--yarn"],
@@ -4092,7 +4092,7 @@ async function registryWithHolds(manifests: OrderedManifests, broken: string[] =
   };
 }
 
-function projectOn(server: Bun.Server, files: Record<string, object>) {
+function projectOn(server: Bun.Server<undefined>, files: Record<string, object>) {
   return tempDir("lock-arrival-order", {
     ...Object.fromEntries(Object.entries(files).map(([path, json]) => [path, JSON.stringify(json)])),
     "bunfig.toml": `[install]\nregistry = "${server.url.href}"\nlinker = "hoisted"\nsaveTextLockfile = true\n`,
@@ -4112,7 +4112,7 @@ async function installAndReadLock(cwd: string) {
   return await file(join(cwd, "bun.lock")).text();
 }
 
-async function freshInstallLock(server: Bun.Server, files: Record<string, object>) {
+async function freshInstallLock(server: Bun.Server<undefined>, files: Record<string, object>) {
   using dir = projectOn(server, files);
   return await installAndReadLock(String(dir));
 }
@@ -4644,7 +4644,7 @@ it("an install that adds packages to a bun.lock writes the same bun.lock whichev
 const pinAndPeer = { dependencies: { p: "1.0.0", z: "1.0.0" } };
 const peerOnZ2 = { "1.0.0": { peerDependencies: { z: "^2.0.0" } } };
 
-function dependenciesOnTarballs(server: Bun.Server, names: string[]) {
+function dependenciesOnTarballs(server: Bun.Server<undefined>, names: string[]) {
   return Object.fromEntries(names.map(name => [name, `${server.url.origin}/${name}-1.0.0.tgz`]));
 }
 

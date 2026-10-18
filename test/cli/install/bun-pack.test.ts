@@ -2339,7 +2339,7 @@ describe.concurrent("lifecycle scripts run the commands in node_modules/.bin", (
 
     const { stdout, err, exitCode } = await runPack(String(dir));
     expect(err).toBe("$ tool\n$ tool\n$ tool");
-    expect(stdout.match(/^tool of .*$/gm)).toEqual(Array(3).fill("tool of the package"));
+    expect(stdout.match(/^tool of .*$/gm)).toEqual<string[]>(Array(3).fill("tool of the package"));
     expect(exitCode).toBe(0);
   });
 
@@ -2356,7 +2356,7 @@ describe.concurrent("lifecycle scripts run the commands in node_modules/.bin", (
 
     const { stdout, err, exitCode } = await runPack(dirs.member, ["--dry-run"]);
     expect(err).toBe("$ tool\n$ tool\n$ tool");
-    expect(stdout.match(/^tool of .*$/gm)).toEqual(Array(3).fill(`tool of the ${runs}`));
+    expect(stdout.match(/^tool of .*$/gm)).toEqual<string[]>(Array(3).fill(`tool of the ${runs}`));
     expect(exitCode).toBe(0);
   });
 });
@@ -2891,7 +2891,7 @@ describe.concurrent("bundledDependencies", () => {
   );
 
   // The tarball's package.json keeps the field, so whoever installs the tarball does not install the package.
-  test.each([{ args: [] }, { args: ["--dry-run"] }])(
+  test.each<{ args: string[] }>([{ args: [] }, { args: ["--dry-run"] }])(
     "a bundled dependency that is not installed is an error (args: $args)",
     async ({ args }) => {
       using dir = tempDir("pack-bundled-missing", {
@@ -5060,7 +5060,7 @@ test.concurrent("unicode", async () => {
 // Names are returned latin1-decoded (one char per stored byte) and collected
 // from every place the archive spells a name: the ustar header `name` field
 // and, when libarchive emits one, the `path` record of the pax header.
-function rawTarballMembers(tgz: Uint8Array) {
+function rawTarballMembers(tgz: Uint8Array<ArrayBuffer>) {
   const tar = Buffer.from(Bun.gunzipSync(tgz));
   const members: { names: Set<string>; contents: string }[] = [];
   let paxPath: string | undefined;

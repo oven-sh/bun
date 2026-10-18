@@ -312,7 +312,7 @@ async function urlTarballProxy(ctx: TestContext, urls: string[], responses: Reco
       urls.push(request.url);
       const registered = responses[request.url];
       if (!registered) return new Response(`nothing registered for ${request.url}`, { status: 404 });
-      return registered instanceof Response ? registered.clone() : new Response(registered);
+      return registered instanceof Response ? (registered.clone() as Response) : new Response(registered);
     },
   });
 
@@ -5167,7 +5167,7 @@ describe.concurrent("bun-install", () => {
     expect(err).not.toContain("error:");
     expect(err).toContain("Saved lockfile");
     expect(exitCode).toBe(0);
-    const locked = Bun.JSONC.parse(await file(join(ctx.package_dir, "bun.lock")).text()).packages as Record<
+    const locked = (Bun.JSONC.parse(await file(join(ctx.package_dir, "bun.lock")).text()) as any).packages as Record<
       string,
       [string, ...unknown[]]
     >;

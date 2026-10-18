@@ -1025,7 +1025,7 @@ describe.concurrent("bun pm version", () => {
       });
       const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(err).toBe("$ tool\n$ tool\n$ tool\n");
-      expect(out.match(/^tool of .*$/gm)).toEqual(Array(3).fill("tool of the package"));
+      expect(out.match(/^tool of .*$/gm)).toEqual<string[]>(Array(3).fill("tool of the package"));
       expect(exitCode).toBe(0);
     });
 

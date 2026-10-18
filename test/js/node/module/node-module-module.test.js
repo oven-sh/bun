@@ -62,7 +62,7 @@ describe.concurrent("node-module-module", () => {
     expect(exitCode).toBe(0);
   });
 
-  describe("Module.prototype._compile override", () => {
+  describe.concurrent("Module.prototype._compile override", () => {
     // The `_compile` hook receives the body Bun hands to the wrapper, so a rewrite targets that text.
     const files = {
       "package.json": JSON.stringify({ type: "commonjs" }),
@@ -92,8 +92,9 @@ describe.concurrent("node-module-module", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
+      const parsed = JSON.parse(stdout);
       expect(exitCode).toBe(0);
-      return JSON.parse(stdout);
+      return parsed;
     }
 
     test("require() calls it for every CommonJS file, with the module as this", async () => {
@@ -365,6 +366,39 @@ describe.concurrent("node-module-module", () => {
         first: 1,
         deletedError: "module._compile is not a function",
         restored: 1,
+      });
+    });
+
+    test("Module.prototype survives a copied accessor, an index property, a freeze and an unwrap", async () => {
+      using dir = tempDir("module-prototype-compile-shape", {
+        ...files,
+        "main.js": `
+          const Module = require("node:module");
+          const orig = Module.prototype._compile;
+          const fresh = () => { delete require.cache[require.resolve("./nested.js")]; return require("./nested.js"); };
+          Object.defineProperty(Module.prototype, "_compile", Object.getOwnPropertyDescriptor(Module.prototype, "_compile"));
+          const copiedAccessor = fresh();
+          Object.defineProperty(Module.prototype, "0", { value: 1 });
+          const indexed = fresh();
+          const [start, end] = Module.wrapper;
+          Module.wrapper = [start + "globalThis.prefixRuns = (globalThis.prefixRuns ?? 0) + 1;", end];
+          Module.prototype._compile = function (c, f) { return orig.call(this, c, f); };
+          Object.defineProperty(Module.prototype, "_compile", { value: orig, writable: true, configurable: true });
+          const unwrapped = fresh();
+          const fake = Object.create(Module.prototype);
+          fake.filename = "/x.js";
+          Object.freeze(Module.prototype);
+          const frozen = fresh();
+          console.log(JSON.stringify({ copiedAccessor, indexed, unwrapped, prefixRuns: globalThis.prefixRuns, fakeFilename: fake.filename, frozen }));
+        `,
+      });
+      expect(await run(dir, ["main.js"])).toEqual({
+        copiedAccessor: 1,
+        indexed: 1,
+        unwrapped: 1,
+        prefixRuns: 2,
+        fakeFilename: "/x.js",
+        frozen: 1,
       });
     });
 

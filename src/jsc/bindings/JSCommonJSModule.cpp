@@ -51,6 +51,7 @@
 #include <JavaScriptCore/StackVisitor.h>
 #include "BunClientData.h"
 #include "IsolatedModuleCache.h"
+#include "CodeGenerationFromStrings.h"
 #include <JavaScriptCore/Identifier.h>
 #include "ImportMetaObject.h"
 #include "NodeModuleModule.h"
@@ -336,10 +337,21 @@ static String stripCommonJSWrapper(StringView source)
     if (!source.substring(start).startsWith("(function"_s))
         return {};
     size_t bodyStart = source.find('{', start);
-    size_t bodyEnd = source.reverseFind("})"_s);
-    if (bodyStart == WTF::notFound || bodyEnd == WTF::notFound || bodyEnd <= bodyStart)
+    if (bodyStart == WTF::notFound)
         return {};
-    return source.substring(bodyStart + 1, bodyEnd - bodyStart - 1).toString();
+    size_t end = source.length();
+    while (true) {
+        while (end > bodyStart && (isASCIIWhitespace(source[end - 1]) || source[end - 1] == ';'))
+            end--;
+        size_t lineStart = end > 0 ? source.reverseFind('\n', end - 1) : WTF::notFound;
+        lineStart = lineStart == WTF::notFound ? 0 : lineStart + 1;
+        if (lineStart <= bodyStart || !source.substring(lineStart, end - lineStart).startsWith("//"_s))
+            break;
+        end = lineStart;
+    }
+    if (end < bodyStart + 3 || source.substring(end - 2, 2) != "})"_s)
+        return {};
+    return source.substring(bodyStart + 1, end - 2 - bodyStart - 1).toString();
 }
 
 // Puts the overridden `Module.wrapper` around the body in place of the transpiler's wrapper.
@@ -355,6 +367,7 @@ static void applyModuleWrapperOverride(Zig::GlobalObject* globalObject, Resolved
 }
 
 static bool isDefaultCompileFunction(JSValue value);
+static bool putOnNonModuleReceiver(JSC::JSGlobalObject* globalObject, JSValue receiver, JSValue value, JSC::PropertyName propertyName);
 
 static bool evaluateCommonJSModuleWithCompileHook(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
@@ -368,7 +381,9 @@ static bool evaluateCommonJSModuleWithCompileHook(JSC::VM& vm, Zig::GlobalObject
     }
 
     // Node does not run the -e / stdin entry through _compile; its source has no wrapper.
-    if (isDefaultCompileFunction(compileFunction) || Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)))
+    // The default with the default wrapper is the plain evaluation. With an overridden wrapper
+    // the call applies it, as the source still has the transpiler's.
+    if ((isDefaultCompileFunction(compileFunction) && !globalObject->hasOverriddenModuleWrapper) || Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)))
         return evaluateCommonJSModuleOnce(vm, globalObject, moduleObject, dirname, filename);
 
     JSC::CallData callData = compileFunction.isCell() ? JSC::getCallData(compileFunction) : JSC::CallData();
@@ -715,7 +730,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterPath,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), JSValue::decode(value), propertyName);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSString* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
@@ -755,7 +770,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), JSValue::decode(value), propertyName);
     {
         WTF::Locker locker { thisObject->cellLock() };
         thisObject->m_children.clear();
@@ -831,7 +846,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterPaths,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), JSValue::decode(value), propertyName);
 
     thisObject->m_paths.set(globalObject->vm(), thisObject, JSValue::decode(value));
     return true;
@@ -843,7 +858,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterFilename,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), JSValue::decode(value), propertyName);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSString* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
@@ -857,7 +872,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterId,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), JSValue::decode(value), propertyName);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSString* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
@@ -870,7 +885,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterParent,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), JSValue::decode(value), propertyName);
 
     JSValue decodedValue = JSValue::decode(value);
 
@@ -889,7 +904,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), JSValue::decode(value), propertyName);
 
     thisObject->hasEvaluated = JSValue::decode(value).toBoolean(globalObject);
 
@@ -910,8 +925,8 @@ static bool isDefaultCompileFunction(JSValue value)
 
 static JSValue modulePrototypeCompileFunction(Zig::GlobalObject* globalObject)
 {
-    if (globalObject->hasOverriddenModulePrototypeCompile) [[unlikely]]
-        return globalObject->m_modulePrototypeCompileOverride.get();
+    if (JSValue override = globalObject->m_modulePrototypeCompileOverride.get()) [[unlikely]]
+        return override;
     return globalObject->modulePrototypeUnderscoreCompileFunction();
 }
 
@@ -987,7 +1002,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 }
 
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
-    { "_compile"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterUnderscoreCompile, setterUnderscoreCompile } },
+    { "_compile"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterUnderscoreCompile, setterUnderscoreCompile } },
     { "children"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterChildren, setterChildren } },
     { "filename"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterFilename, setterFilename } },
     { "id"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterId, setterId } },
@@ -1068,10 +1083,25 @@ public:
 const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
 
 // Flag set with an empty override slot: the accessor is gone, the loader looks `_compile` up.
-static void noteModulePrototypeCompileRedefined(JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName)
+// A module accessor written on something that is not a module. `Object.create(Module.prototype)`
+// gets an own property. The prototype itself keeps the accessor.
+static bool putOnNonModuleReceiver(JSC::JSGlobalObject* globalObject, JSValue receiver, JSValue value, JSC::PropertyName propertyName)
 {
-    if (propertyName != PropertyName(Identifier::fromString(globalObject->vm(), "_compile"_s)))
-        return;
+    JSObject* object = receiver.getObject();
+    if (!object || receiver.inherits<JSCommonJSModulePrototype>())
+        return false;
+    object->putDirect(JSC::getVM(globalObject), propertyName, value);
+    return true;
+}
+
+static bool isCompilePropertyName(JSC::VM& vm, JSC::PropertyName propertyName)
+{
+    return propertyName == PropertyName(Identifier::fromString(vm, "_compile"_s));
+}
+
+// Flag set with an empty override slot: the accessor is gone, the loader looks `_compile` up.
+static void noteModulePrototypeCompileRedefined(JSC::JSGlobalObject* globalObject)
+{
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     zigGlobalObject->m_modulePrototypeCompileOverride.clear();
     zigGlobalObject->hasOverriddenModulePrototypeCompile = true;
@@ -1079,21 +1109,26 @@ static void noteModulePrototypeCompileRedefined(JSC::JSGlobalObject* globalObjec
 
 bool JSCommonJSModulePrototype::defineOwnProperty(JSC::JSObject* object, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, const JSC::PropertyDescriptor& descriptor, bool shouldThrow)
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool defined = Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
     RETURN_IF_EXCEPTION(scope, false);
-    if (defined && !object->getDirect(globalObject->vm(), propertyName).isCustomGetterSetter())
-        noteModulePrototypeCompileRedefined(globalObject, propertyName);
+    if (defined && isCompilePropertyName(vm, propertyName)) {
+        JSValue slot = object->getDirect(vm, propertyName);
+        if (!slot || !slot.isCustomGetterSetter())
+            noteModulePrototypeCompileRedefined(globalObject);
+    }
     return defined;
 }
 
 bool JSCommonJSModulePrototype::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSC::DeletePropertySlot& slot)
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool deleted = Base::deleteProperty(cell, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
-    if (deleted)
-        noteModulePrototypeCompileRedefined(globalObject, propertyName);
+    if (deleted && isCompilePropertyName(vm, propertyName))
+        noteModulePrototypeCompileRedefined(globalObject);
     return deleted;
 }
 
@@ -1125,7 +1160,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
             zigGlobalObject->m_modulePrototypeCompileOverride.clear();
         } else {
             auto scope = DECLARE_THROW_SCOPE(vm);
-            RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(globalObject, scope, false);
+            THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(globalObject, scope, false);
             zigGlobalObject->m_modulePrototypeCompileOverride.set(vm, zigGlobalObject, decodedValue);
             zigGlobalObject->hasOverriddenModulePrototypeCompile = true;
         }

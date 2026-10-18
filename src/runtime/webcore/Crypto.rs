@@ -16,10 +16,7 @@ impl CryptoClass for Crypto {
     type Error<'a> = bindgen::Error<'a>;
 
     fn constructor<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, Self> {
-        Err(heap.error_with_code(
-            bun_jsc::ErrorCode::ILLEGAL_CONSTRUCTOR,
-            format_args!("Illegal constructor"),
-        ))
+        Err(heap.illegal_constructor())
     }
 
     fn get_random_values<'a>(

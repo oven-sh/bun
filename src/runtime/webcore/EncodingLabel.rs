@@ -4,8 +4,9 @@ use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue};
 /// Every encoding the Encoding Standard defines, keyed by its canonical name.
 /// https://encoding.spec.whatwg.org/#names-and-labels
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Default, Eq, PartialEq, Debug)]
 pub(crate) enum EncodingLabel {
+    #[default]
     Utf8,
     Ibm866,
     Iso8859_2,

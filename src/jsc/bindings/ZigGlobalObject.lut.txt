@@ -35,18 +35,19 @@
   Buffer                          GlobalObject::m_JSBufferClassStructure               ClassStructure
   BuildError                      GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBuildMessage]                       ClassStructure
   BuildMessage                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBuildMessage]                       ClassStructure
+  Crypto                          Bun::Bindgen::Generated::Crypto::getCryptoConstructor PropertyCallback
   HTMLRewriter                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSHTMLRewriter]                       ClassStructure
   Request                         GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSRequest]                            ClassStructure
   ResolveError                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResolveMessage]                     ClassStructure
   ResolveMessage                  GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResolveMessage]                     ClassStructure
   Response                        GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResponse]                           ClassStructure
+  TextDecoder                     Bun::Bindgen::Generated::TextDecoder::getTextDecoderConstructor PropertyCallback
 
   AbortController                 AbortControllerConstructorCallback                   PropertyCallback
   AbortSignal                     AbortSignalConstructorCallback                       PropertyCallback
   BroadcastChannel                BroadcastChannelConstructorCallback                  PropertyCallback
   ByteLengthQueuingStrategy       ByteLengthQueuingStrategyConstructorCallback         DontEnum|PropertyCallback
   CloseEvent                      CloseEventConstructorCallback                        PropertyCallback
-  Crypto                          Bun::Bindgen::Generated::Crypto::getCryptoConstructor PropertyCallback
   CompressionStream               CompressionStreamConstructorCallback                 PropertyCallback
   CountQueuingStrategy            CountQueuingStrategyConstructorCallback              DontEnum|PropertyCallback
   CryptoKey                       CryptoKeyConstructorCallback                         PropertyCallback
@@ -77,7 +78,6 @@
   ReadableStreamDefaultController ReadableStreamDefaultControllerConstructorCallback   DontEnum|PropertyCallback
   ReadableStreamDefaultReader     ReadableStreamDefaultReaderConstructorCallback       DontEnum|PropertyCallback
   SubtleCrypto                    SubtleCryptoConstructorCallback                      PropertyCallback
-  TextDecoder                     Bun::Bindgen::Generated::TextDecoder::getTextDecoderConstructor PropertyCallback
   TextDecoderStream               TextDecoderStreamConstructorCallback                 PropertyCallback
   TextEncoder                     TextEncoderConstructorCallback                       PropertyCallback
   TextEncoderStream               TextEncoderStreamConstructorCallback                 PropertyCallback

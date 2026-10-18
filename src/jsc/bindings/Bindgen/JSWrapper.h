@@ -118,14 +118,8 @@ private:
     JSWrapper(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
     {
-        // Rust reads the schema's `internalFields`, which start as `undefined`. The rest hold cached getters: empty until computed.
-        unsigned index = 0;
-        for (auto& field : internalFields()) {
-            if (index++ < numberOfInternalFields - Traits::numberOfCachedGetters)
-                new (NotNull, &field) JSC::WriteBarrier<JSC::Unknown>(JSC::UndefinedWriteBarrierTag);
-            else
-                new (NotNull, &field) JSC::WriteBarrier<JSC::Unknown>;
-        }
+        for (auto& field : internalFields())
+            new (NotNull, &field) JSC::WriteBarrier<JSC::Unknown>(JSC::UndefinedWriteBarrierTag);
     }
 
     DECLARE_DEFAULT_FINISH_CREATION;

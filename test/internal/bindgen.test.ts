@@ -388,18 +388,22 @@ describe("strings", () => {
     "nul \0 inside",
   ];
 
-  it("expected: a value of the wrong type throws Node's ERR_INVALID_ARG_TYPE", () => {
-    const f = bindgen.expectedByNode;
-    expect(f("abc", "de", true)).toBe(6);
-    expect(f("abc", new Uint8Array(2))).toBe(5);
-    const thrownBy = (...args: unknown[]) => {
+  const invalid = "TypeError ERR_INVALID_ARG_TYPE: ";
+  const thrower =
+    (f: (...args: any[]) => unknown) =>
+    (...args: unknown[]) => {
       try {
         f(...args);
       } catch (error: any) {
         return `${error.name} ${error.code}: ${error.message}`;
       }
     };
-    const invalid = "TypeError ERR_INVALID_ARG_TYPE: ";
+
+  it("expected: a value of the wrong type throws Node's ERR_INVALID_ARG_TYPE", () => {
+    const f = bindgen.expectedByNode;
+    expect(f("abc", "de", true)).toBe(6);
+    expect(f("abc", new Uint8Array(2))).toBe(5);
+    const thrownBy = thrower(f);
     expect(thrownBy()).toBe(`${invalid}The "text" argument must be of type string. Received undefined`);
     expect(thrownBy(1)).toBe(`${invalid}The "text" argument must be of type string. Received type number (1)`);
     expect(thrownBy({})).toBe(`${invalid}The "text" argument must be of type string. Received an instance of Object`);
@@ -414,14 +418,7 @@ describe("strings", () => {
     expect(f(new Uint8Array(2))).toBe(2);
     expect(f(new Uint8Array(2), null, { flag: 1 })).toBe(3);
     expect(f(new Uint8Array(2), { flag: 1 }, { flag: 1 })).toBe(4);
-    const thrownBy = (...args: unknown[]) => {
-      try {
-        f(...args);
-      } catch (error: any) {
-        return `${error.name} ${error.code}: ${error.message}`;
-      }
-    };
-    const invalid = "TypeError ERR_INVALID_ARG_TYPE: ";
+    const thrownBy = thrower(f);
     const trap = () => {
       throw new Error("looked at");
     };
@@ -1593,6 +1590,7 @@ describe("classes", () => {
       "count",
       "label",
       "tag",
+      "sameTag",
       "increment",
       "add",
       "forgetTag",
@@ -1660,7 +1658,7 @@ describe("classes", () => {
     expect(new TestCounter(3).tag).not.toBe(tag);
   });
 
-  it("a cached getter that was forgotten is computed again", () => {
+  it("a cached getter is computed again once Rust sets its field to undefined", () => {
     const counter = new TestCounter(3);
     const tag = counter.tag;
     counter.increment();
@@ -1672,6 +1670,18 @@ describe("classes", () => {
     untouched.forgetTag();
     Bun.gc(true);
     expect(untouched.tag).toEqual([5]);
+  });
+
+  it("two cached getters can return one field", () => {
+    const counter = new TestCounter(3);
+    expect(counter.sameTag).toBe(counter.tag);
+    const other = new TestCounter(4);
+    expect(other.tag).toBe(other.sameTag);
+    other.forgetTag();
+    expect(other.sameTag).toEqual([4]);
+    expect(() => b.class({ rustPath: "crate::X", proto: { a: { getter: b.i32, cache: "absent" } } })).toThrow(
+      "a: there is no internal field absent",
+    );
   });
 
   it("checks the receiver", () => {

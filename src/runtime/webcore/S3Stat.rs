@@ -1,10 +1,8 @@
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
-use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsResult, bun_string_jsc};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 
 use crate::generated_bindgen::s3_stat::S3StatClass;
-
-bun_output::declare_scope!(S3Stat, visible);
 
 pub(crate) struct S3Stat {
     pub(crate) size: u64,
@@ -37,20 +35,17 @@ impl S3StatClass for S3Stat {
     type Error<'a> = bindgen::Error<'a>;
 
     fn constructor<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, Self> {
-        Err(heap.error_with_code(
-            ErrorCode::ILLEGAL_CONSTRUCTOR,
-            format_args!("Illegal constructor"),
-        ))
+        Err(heap.illegal_constructor())
     }
 
     fn etag(&self) -> BunString {
         self.etag.clone()
     }
 
-    fn last_modified<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> JsLocal<'a> {
-        let last_modified = this.with(&cx.payloads, |stat| stat.last_modified);
-        let date = JSValue::from_date_number(cx.global(), last_modified);
-        JsLocal::new(&cx.heap, date)
+    fn last_modified<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
+        // SAFETY: makes a `Date`.
+        let date = JSValue::from_date_number(unsafe { heap.global() }, self.last_modified);
+        JsLocal::new(heap, date)
     }
 
     fn size(&self) -> u64 {

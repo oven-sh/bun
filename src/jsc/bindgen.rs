@@ -138,6 +138,15 @@ impl<'a> JsHeap<'a> {
     pub fn invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
         self.error_with_code(ErrorCode::INVALID_ARG_TYPE, args)
     }
+
+    /// What [`JSGlobalObject::throw_illegal_constructor`] throws.
+    #[cold]
+    pub fn illegal_constructor(&self) -> Error<'a> {
+        self.error_with_code(
+            ErrorCode::ILLEGAL_CONSTRUCTOR,
+            format_args!("Illegal constructor"),
+        )
+    }
 }
 
 impl<'a> JsScope<'a> {
@@ -661,7 +670,7 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
     }
 
     /// # Safety
-    /// `index` is one of the class's `internalFields`.
+    /// `index` is one of the class's internal fields.
     #[doc(hidden)]
     #[inline(always)]
     pub unsafe fn internal_field(self, _: &JsHeap<'a>, index: usize) -> JsLocal<'a> {
@@ -694,24 +703,6 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
                 (T::INTERNAL_FIELDS_OFFSET + index * size_of::<JSValue>()) as u32,
                 value.0,
             )
-        }
-    }
-}
-
-impl<'a, T: JsPayload> JsWrapper<'a, T> {
-    /// # Safety
-    /// `index` is the internal field of one of the class's cached getters, which reads an empty one as not computed.
-    #[doc(hidden)]
-    #[inline(always)]
-    pub unsafe fn clear_internal_field(self, _: &JsHeap<'a>, index: usize) {
-        // SAFETY: generated offset inside the cell. Storing no cell takes no write barrier.
-        unsafe {
-            self.0
-                .as_ptr()
-                .byte_add(T::INTERNAL_FIELDS_OFFSET)
-                .cast::<JSValue>()
-                .add(index)
-                .write(JSValue::ZERO)
         }
     }
 }

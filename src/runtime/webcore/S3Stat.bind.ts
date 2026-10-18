@@ -6,8 +6,8 @@ export const S3Stat = b.class({
   construct: { capability: "heap", throws: true },
   proto: {
     etag: { getter: b.string, cache: true },
-    lastModified: { getter: b.any, cache: true, capability: "js" },
-    size: { getter: b.u64, cache: true },
+    lastModified: { getter: b.any, cache: true, capability: "heap" },
+    size: { getter: b.u64 },
     type: { getter: b.string, cache: true, rustName: "content_type" },
   },
 });

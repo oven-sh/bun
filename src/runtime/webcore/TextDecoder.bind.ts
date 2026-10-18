@@ -14,7 +14,7 @@ export const TextDecoder = b.class({
   rustPath: "crate::webcore::TextDecoder",
   configurable: false,
   construct: {
-    args: { label: b.string.loose.utf8.default("utf-8"), options: TextDecoderOptions.nullable.default({}) },
+    args: { label: b.string.loose.utf8.optional, options: TextDecoderOptions.nullable.default({}) },
     expected: { options: ["object"] },
     capability: "heap",
     throws: true,
@@ -30,6 +30,7 @@ export const TextDecoder = b.class({
       returns: b.any,
       capability: "heap",
       throws: true,
+      mutates: true,
       length: 1,
     },
     encoding: { getter: b.any, cache: true, capability: "heap" },

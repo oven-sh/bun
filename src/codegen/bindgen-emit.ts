@@ -638,8 +638,7 @@ namespace Bun::Bindgen::Generated {
 struct ${name}Traits {
     static constexpr auto className = ${asciiLiteral(name)};
     static constexpr unsigned classIndex = ${type.classIndex};
-    static constexpr unsigned numberOfInternalFields = ${type.numberOfInternalFields};
-    static constexpr unsigned numberOfCachedGetters = ${type.cachedGetters.length};
+    static constexpr unsigned numberOfInternalFields = ${type.internalFields.length};
     static size_t payloadSize() { return ${symbolName(type, "payloadSize")}; }
     static void finalize(void* payload) { ${classSymbolName(type, "finalize")}(payload); }
 };
@@ -700,10 +699,10 @@ ${cppPrologue}
     auto* thisObject = uncheckedDowncast<${type.cpp}>(JSC::JSValue::decode(thisValue));
     JSC::EnsureStillAliveScope ensureThisStillAlive { thisObject };
 ${
-  !getter.cached
+  getter.internalField === undefined
     ? `    RELEASE_AND_RETURN(scope, ${getSymbol}(globalObject, thisObject));`
     : `    auto& cachedValue = thisObject->internalField(${getter.internalFieldIndex});
-    if (JSC::JSValue cached = cachedValue.get())
+    if (JSC::JSValue cached = cachedValue.get(); !cached.isUndefined())
         return JSC::JSValue::encode(cached);
     JSC::JSValue result = JSC::JSValue::decode(${getSymbol}(globalObject, thisObject));
     RETURN_IF_EXCEPTION(scope, {});
@@ -846,7 +845,7 @@ ${cppConstructorSignature(type)}
 
 /** sizeof(JSC::JSDestructibleObject) */
 const offsetOfInternalFields = 24;
-const offsetOfPayload = (type: ClassType) => offsetOfInternalFields + 8 * type.numberOfInternalFields;
+const offsetOfPayload = (type: ClassType) => offsetOfInternalFields + 8 * type.internalFields.length;
 
 /** Defines the host function `name`. `takeThis` declares `thisObject`, which is then the thunks' first argument. */
 function cppHostFunction(
@@ -1330,39 +1329,28 @@ ${rustTakeArguments([{ name: "value", type: getter.type }], scope)}let result = 
     );
   }
 
-  const fieldDeclarations = [
-    ...type.internalFields.map(field => {
+  const fieldDeclarations = type.internalFields
+    .map(field => {
       const id = snakeCase(field);
       return `    fn ${id}_field(self, heap: &bindgen::JsHeap<'a>) -> bindgen::JsLocal<'a>;
     fn set_${id}_field<T>(self, heap: &bindgen::JsHeap<'a>, value: bindgen::JsLocal<'a, T>);`;
-    }),
-    ...type.cachedGetters.map(
-      getter => `    /// The next read of \`${getter.name}\` computes it again.
-    fn forget_cached_${snakeCase(getter.name)}(self, heap: &bindgen::JsHeap<'a>);`,
-    ),
-  ].join("\n");
-  const fieldDefinitions = [
-    ...type.internalFields.map((field, index) => {
+    })
+    .join("\n");
+  const fieldDefinitions = type.internalFields
+    .map((field, index) => {
       const id = snakeCase(field);
       return `    #[inline(always)]
     fn ${id}_field(self, heap: &bindgen::JsHeap<'a>) -> bindgen::JsLocal<'a> {
-        // SAFETY: internal field ${index} of ${type.numberOfInternalFields}.
+        // SAFETY: internal field ${index} of ${type.internalFields.length}.
         unsafe { self.internal_field(heap, ${index}) }
     }
     #[inline(always)]
     fn set_${id}_field<T>(self, heap: &bindgen::JsHeap<'a>, value: bindgen::JsLocal<'a, T>) {
-        // SAFETY: internal field ${index} of ${type.numberOfInternalFields}.
+        // SAFETY: internal field ${index} of ${type.internalFields.length}.
         unsafe { self.set_internal_field(heap, ${index}, value) }
     }`;
-    }),
-    ...type.cachedGetters.map(
-      getter => `    #[inline(always)]
-    fn forget_cached_${snakeCase(getter.name)}(self, heap: &bindgen::JsHeap<'a>) {
-        // SAFETY: internal field ${getter.internalFieldIndex} of ${type.numberOfInternalFields}.
-        unsafe { self.clear_internal_field(heap, ${getter.internalFieldIndex}) }
-    }`,
-    ),
-  ].join("\n");
+    })
+    .join("\n");
 
   return `
 /// What \`${rustPath}\` implements to be the JS class \`${name}\`.
@@ -1393,7 +1381,7 @@ pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${ru
     unsafe { core::ptr::drop_in_place(payload) }
 }
 ${
-  type.numberOfInternalFields > 0
+  type.internalFields.length > 0
     ? `/// The JS values a \`${name}\` holds.
 pub trait ${name}InternalFields<'a>: Copy {
 ${fieldDeclarations}

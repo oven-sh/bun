@@ -1,7 +1,7 @@
 import * as b from "../../../../codegen/bindgen-lib.ts";
 
 /** An object without a prototype. */
-const counts = { getter: b.any, capability: "js" } as const;
+const counts = { getter: b.any, capability: "heap" } as const;
 
 export const ResourceUsage = b.class({
   rustPath: "crate::api::bun_subprocess::ResourceUsage",

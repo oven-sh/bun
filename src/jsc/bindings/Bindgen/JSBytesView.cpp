@@ -52,7 +52,7 @@ static bool isSharedBuffer(JSValue value)
     return false;
 }
 
-void JSBytesView::copyIfShared(JSGlobalObject& globalObject, JSValue argument, MallocSpan<uint8_t>& copy)
+void JSBytesView::copyIfShared(JSGlobalObject& globalObject, JSValue argument, std::optional<MallocSpan<uint8_t>>& copy)
 {
     if (!m_isBlobOrBuffer || !isSharedBuffer(argument))
         return;
@@ -61,13 +61,13 @@ void JSBytesView::copyIfShared(JSGlobalObject& globalObject, JSValue argument, M
         return;
     // Not a Vector, which holds less than a buffer can.
     copy = MallocSpan<uint8_t>::tryMalloc(m_bytes.size());
-    if (!copy) [[unlikely]] {
+    if (!*copy) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(getVM(&globalObject));
         throwOutOfMemoryError(&globalObject, scope);
         return;
     }
-    memcpySpan(copy.mutableSpan(), m_bytes);
-    m_bytes = copy.span();
+    memcpySpan(copy->mutableSpan(), m_bytes);
+    m_bytes = copy->span();
 }
 
 }

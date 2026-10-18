@@ -384,6 +384,10 @@ impl TestCounterClass for TestCounter {
         bindgen::to_js::array(heap, [self.count], bindgen::to_js::i32)
     }
 
+    fn same_tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+        self.tag(heap)
+    }
+
     fn increment(&mut self, by: i32) -> i32 {
         self.count = self.count.wrapping_add(by);
         self.count
@@ -398,7 +402,7 @@ impl TestCounterClass for TestCounter {
     }
 
     fn forget_tag<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>) {
-        this.forget_cached_tag(heap);
+        this.set_tag_field(heap, JsLocal::UNDEFINED);
     }
 
     fn listen<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>, listener: JsLocal<'a>) {

@@ -539,6 +539,22 @@ it("origin should be validated", async () => {
   }).toThrow("FileSystemRouterOptions.origin must be a string");
 });
 
+it("reads an extension that is a String object with its toString()", () => {
+  const { dir } = make(["posts.tsx", "about.mdx"]);
+  const routes = (extension: String) =>
+    //@ts-ignore
+    Object.keys(new Bun.FileSystemRouter({ dir, style: "nextjs", fileExtensions: [extension] }).routes);
+  expect(routes(Object.assign(new String(""), { toString: () => ".mdx" }))).toEqual(["/about"]);
+  // None is left, so the default ones are used.
+  expect(routes(Object.assign(new String(".mdx"), { toString: () => "" }))).toEqual(["/posts"]);
+});
+
+it("takes options that are an array", () => {
+  const { dir } = make(["posts.tsx"]);
+  const router = new Bun.FileSystemRouter(Object.assign([], { dir, style: "nextjs" as const }));
+  expect(Object.keys(router.routes)).toEqual(["/posts"]);
+});
+
 it("assetPrefix and origin are what the router was given, or null", () => {
   const { dir } = make(["posts.tsx"]);
   const router = new Bun.FileSystemRouter({

@@ -1,28 +1,33 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-export const FileSystemRouterOptions = b.dictionary({
-  style: b.string.loose.utf8.optional,
-  dir: b.string.utf8,
-  fileExtensions: b.array(b.string.utf8.owned).optional,
-  assetPrefix: b.string.utf8.nullable,
-  origin: b.string.utf8.optional,
-});
+export const FileSystemRouterOptions = b.dictionary(
+  {
+    style: b.string.loose.utf8.optional,
+    dir: b.string.utf8,
+    fileExtensions: b.array(b.string.utf8.owned).optional,
+    assetPrefix: b.string.utf8.nullable,
+    origin: b.string.utf8.optional,
+  },
+  { allowArray: true },
+);
 
 const text = { getter: b.string.utf8, cache: true } as const;
 const record = { getter: b.any, cache: true, capability: "heap", throws: true } as const;
+
+export const RouteKind = b.enumeration(["exact", "catch-all", "optional-catch-all", "dynamic"]);
 
 export const MatchedRoute = b.class({
   rustPath: "crate::api::filesystem_router::MatchedRoute",
   configurable: false,
   proto: {
     filePath: text,
-    kind: text,
+    kind: { getter: RouteKind },
     name: text,
     params: record,
     pathname: text,
     query: record,
     /** `src`, for old versions of bun-framework-next. */
-    scriptSrc: text,
+    scriptSrc: { ...text, cache: "src" },
     src: text,
   },
 });
@@ -44,7 +49,7 @@ export const FileSystemRouter = b.class({
     length: 0,
   },
   proto: {
-    assetPrefix: { getter: b.string.utf8.nullable, cache: true },
+    assetPrefix: { getter: b.string.utf8.nullable },
     match: {
       args: { input: Routable },
       expected: { input: "Expected string, Request or Response" },
@@ -56,6 +61,6 @@ export const FileSystemRouter = b.class({
     origin: { getter: b.string.utf8.nullable, cache: true },
     reload: { returns: b.self, capability: "js", throws: true },
     routes: record,
-    style: { getter: b.string, cache: true },
+    style: { getter: b.string },
   },
 });

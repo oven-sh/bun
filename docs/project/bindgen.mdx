@@ -66,8 +66,9 @@ A function of a `node:*` module names what Node's own source expects of an argum
 `expected: { data: ["Buffer", "TypedArray", "DataView", "string"] }`. A value the argument's type
 refuses then throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)`, "The "data" argument must
 be of type string or an instance of Buffer, TypedArray, or DataView. Received null", and not "data
-must be a string, ArrayBuffer or ArrayBufferView". What the type takes is the same. Node's C++ throws
-the same code with a message that it writes out, and a string in the place of the list is that message.
+must be a string, ArrayBuffer or ArrayBufferView". What the type takes is the same. A string in the
+place of the list is the whole message, as Node's C++ writes its own out. A dictionary named in
+`expected` reports what is not an object as the argument, and not under the dictionary's name.
 
 Nothing else is written by hand, except once per crate: `src/<crate>/generated_bindgen.rs`
 includes the generated file, the crate root declares `mod generated_bindgen`, and a
@@ -514,13 +515,13 @@ Code that has the global object and no capability makes one with
 
 A property of `proto` is one of:
 
-| Property                                    | What it is                                                                   |
-| ------------------------------------------- | ---------------------------------------------------------------------------- |
-| `{ args, returns, capability, throws, .. }` | a native function; `privateSymbol` keys it by a private name of `src/js`     |
-| `{ getter: T, capability, throws }`         | an accessor; with `setter: true` it can be assigned                          |
-| `{ getter: T, cache: true, .. }`            | an accessor whose value is computed once per object; it cannot have a setter |
-| `{ builtin: true, length }`                 | the export of that name in `src/js/builtins/<class name>.ts`                 |
-| `[{ rustName, args, .. }, ..]`              | a native function with [overloads](#overloads)                               |
+| Property                                    | What it is                                                               |
+| ------------------------------------------- | ------------------------------------------------------------------------ |
+| `{ args, returns, capability, throws, .. }` | a native function; `privateSymbol` keys it by a private name of `src/js` |
+| `{ getter: T, capability, throws }`         | an accessor; with `setter: true` it can be assigned                      |
+| `{ getter: T, cache: true, .. }`            | an accessor that returns an [internal field](#internalfields); no setter |
+| `{ builtin: true, length }`                 | the export of that name in `src/js/builtins/<class name>.ts`             |
+| `[{ rustName, args, .. }, ..]`              | a native function with [overloads](#overloads)                           |
 
 The properties are in the order of the schema, which `for-in` and `Object.keys` show. The Rust
 function is named after the property. `rustName` names it otherwise, which tells apart the
@@ -571,8 +572,12 @@ allocating or viewing a buffer inside the closure is fine.
 `&mut self` method that needs them asks for the wrapper too, with `passThis: true`.
 The wrapper reaches the internal fields and not the payload.
 
-A getter with `cache: true` keeps its value in a field of its own. `this.forget_cached_routes(heap)`
-empties the one of `routes`, so the next read computes it again.
+Every field starts as `undefined`.
+
+A getter with `cache: true` declares a field of its own name, with the same two functions, and
+returns it. While the field is `undefined` the getter calls Rust and stores the result, so
+`this.set_tag_field(heap, JsLocal::UNDEFINED)` makes the next read of `tag` compute it again.
+`cache: "tag"` on another getter returns that same field.
 
 ### Staying alive
 

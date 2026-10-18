@@ -379,6 +379,12 @@ describe("TextDecoder", () => {
       expect(messageOf(() => new TextDecoder().decode(new Uint8Array(), "a\ud800"))).toBe(message);
     });
 
+    it("refuses options before it looks up the label", () => {
+      expect(() => new TextDecoder("nope", 1)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    });
+
     it("constructor rejects symbol options", () => {
       expect(() => new TextDecoder("utf-8", Symbol())).toThrow(
         expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),

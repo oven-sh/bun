@@ -1,74 +1,82 @@
 use crate::api::bun::Rusage;
 use crate::generated_bindgen::resource_usage::ResourceUsageClass;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::JSValue;
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, to_js};
 use bun_spawn::RusageFields as _; // trait + impls now live in bun_spawn_sys::spawn_process
 
 pub(crate) struct ResourceUsage {
     pub(crate) rusage: Rusage,
 }
 
-fn counts<'a>(
-    this: JsWrapper<'a, ResourceUsage>,
-    cx: &mut JsScope<'a>,
-    counts: impl FnOnce(&Rusage) -> [(&'static [u8], f64); 2],
+fn without_prototype<'a, const N: usize>(
+    heap: &JsHeap<'a>,
+    members: [(&'static [u8], JSValue); N],
 ) -> JsLocal<'a> {
-    let counts = this.with(&cx.payloads, |usage| counts(&usage.rusage));
-    let global: &JSGlobalObject = cx.global();
+    // SAFETY: makes an object and defines its own properties.
+    let global = unsafe { heap.global() };
     let object = JSValue::create_empty_object_with_null_prototype(global);
-    for (name, count) in counts {
-        object.put(global, name, JSValue::js_number(count));
+    for (name, value) in members {
+        object.put(global, name, value);
     }
-    JsLocal::new(&cx.heap, object)
+    JsLocal::new(heap, object)
+}
+
+fn counts<'a>(heap: &JsHeap<'a>, counts: [(&'static [u8], f64); 2]) -> JsLocal<'a> {
+    without_prototype(
+        heap,
+        counts.map(|(name, count)| (name, JSValue::js_number(count))),
+    )
 }
 
 impl ResourceUsageClass for ResourceUsage {
-    type Error<'a> = JsError;
+    type Error<'a> = bindgen::Error<'a>;
 
-    fn context_switches<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> JsLocal<'a> {
-        counts(this, cx, |rusage| {
+    fn context_switches<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
+        counts(
+            heap,
             [
-                (b"voluntary", rusage.nvcsw()),
-                (b"involuntary", rusage.nivcsw()),
-            ]
-        })
+                (b"voluntary", self.rusage.nvcsw()),
+                (b"involuntary", self.rusage.nivcsw()),
+            ],
+        )
     }
 
-    fn cpu_time<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> JsResult<JsLocal<'a>> {
-        let rusage = this.with(&cx.payloads, |usage| usage.rusage);
-        let global = cx.global();
-        let cpu = JSValue::create_empty_object_with_null_prototype(global);
-
-        let usr_time =
-            JSValue::from_timeval_no_truncate(global, rusage.utime_usec(), rusage.utime_sec())?;
-        let sys_time =
-            JSValue::from_timeval_no_truncate(global, rusage.stime_usec(), rusage.stime_sec())?;
-
-        cpu.put(global, b"user", usr_time);
-        cpu.put(global, b"system", sys_time);
-        cpu.put(
-            global,
-            b"total",
-            JSValue::big_int_sum(global, usr_time, sys_time),
-        );
-
-        Ok(JsLocal::new(&cx.heap, cpu))
+    fn cpu_time<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+        let microseconds = |sec: i64, usec: i64| (sec * 1_000_000 + usec) as u64;
+        let user = microseconds(self.rusage.utime_sec(), self.rusage.utime_usec());
+        let system = microseconds(self.rusage.stime_sec(), self.rusage.stime_usec());
+        Ok(without_prototype(
+            heap,
+            [
+                (b"user", to_js::u64_as_bigint(heap, user)?.to_js()),
+                (b"system", to_js::u64_as_bigint(heap, system)?.to_js()),
+                (b"total", to_js::u64_as_bigint(heap, user + system)?.to_js()),
+            ],
+        ))
     }
 
     fn max_rss(&self) -> f64 {
         self.rusage.maxrss()
     }
 
-    fn messages<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> JsLocal<'a> {
-        counts(this, cx, |rusage| {
-            [(b"sent", rusage.msgsnd()), (b"received", rusage.msgrcv())]
-        })
+    fn messages<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
+        counts(
+            heap,
+            [
+                (b"sent", self.rusage.msgsnd()),
+                (b"received", self.rusage.msgrcv()),
+            ],
+        )
     }
 
-    fn ops<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> JsLocal<'a> {
-        counts(this, cx, |rusage| {
-            [(b"in", rusage.inblock()), (b"out", rusage.oublock())]
-        })
+    fn ops<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
+        counts(
+            heap,
+            [
+                (b"in", self.rusage.inblock()),
+                (b"out", self.rusage.oublock()),
+            ],
+        )
     }
 
     fn shm_size(&self) -> f64 {

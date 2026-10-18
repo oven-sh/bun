@@ -802,7 +802,7 @@ export class BytesType extends Type {
       ...(this.#options.held === "borrowed" ? [`${target}.read(${value});`] : []),
       ...(this.#options.shared === "copied"
         ? [
-            `WTF::MallocSpan<uint8_t> ${target}Copy;`,
+            `std::optional<WTF::MallocSpan<uint8_t>> ${target}Copy;`,
             `${target}.copyIfShared(*globalObject, ${value}, ${target}Copy);`,
             `RETURN_IF_EXCEPTION(scope, {});`,
           ]
@@ -1770,8 +1770,8 @@ export interface GetterField {
   getter: Type;
   /** Also generate a setter, which takes `&mut self` (or the wrapper, with `capability: "js"`). */
   setter?: true;
-  /** Computed once per object, then kept in the wrapper. */
-  cache?: true;
+  /** Returns an internal field, of this name or the one named, and computes it while that is `undefined`. */
+  cache?: true | string;
   capability?: Capability;
   throws?: boolean;
   /** As a function's. */
@@ -1798,7 +1798,7 @@ export interface ClassOptions {
   proto?: Record<string, Field>;
   /** Properties of the constructor. */
   static?: Record<string, StaticField>;
-  /** JS values the object holds. The GC visits them; the wrapper gets `x_field` / `set_x_field` for each. */
+  /** JS values the object holds, `undefined` at first. The GC visits them; the wrapper gets `x_field` / `set_x_field` for each. */
   internalFields?: readonly string[];
   /** `false`: native properties are non-configurable. */
   configurable?: boolean;
@@ -1835,10 +1835,11 @@ export class Getter {
   readonly capability: Capability;
   readonly throws: boolean;
   readonly hasSetter: boolean;
-  readonly cached: boolean;
+  /** The internal field it returns. */
+  readonly internalField: string | undefined;
   readonly isStatic: boolean;
   readonly rustName: string;
-  /** Where a cached one keeps the value. Set by its class. */
+  /** Of `internalField`. Set by its class. */
   internalFieldIndex = -1;
   constructor(name: string, options: GetterField, isStatic = false) {
     this.name = name;
@@ -1854,7 +1855,7 @@ export class Getter {
       !this.type.holdsJSValue || this.capability !== "none",
       `${name}: returning a JS value takes capability: "heap" or "js"`,
     );
-    this.cached = !!options.cache;
+    this.internalField = options.cache === true ? name : options.cache;
   }
 }
 
@@ -1903,9 +1904,8 @@ export class ClassType extends NamedType {
   /** The properties of the prototype and of the constructor, as written. */
   readonly protoMembers: readonly ClassMember[];
   readonly staticMembers: readonly ClassMember[];
+  /** The schema's, then those of `cache: true` getters. */
   readonly internalFields: readonly string[];
-  /** Each has an internal field of its own, after `internalFields`. */
-  readonly cachedGetters: readonly Getter[];
   readonly configurable: boolean;
   /** Index in `Tables::classes`. Set by the generator. */
   classIndex = -1;
@@ -1947,9 +1947,17 @@ export class ClassType extends NamedType {
     this.staticGetters = this.staticMembers.filter(member => member instanceof Getter);
     const { getters } = this;
     assert(this.construct || this.staticMembers.length === 0, "static members need a constructor object");
-    this.internalFields = options.internalFields ?? [];
+    this.internalFields = [
+      ...(options.internalFields ?? []),
+      ...getters.filter(getter => getter.internalField === getter.name).map(getter => getter.name),
+    ];
     for (const field of this.internalFields)
       assert(/^[a-z][A-Za-z0-9]*$/.test(field), `${field}: an internal field is named in camelCase`);
+    for (const getter of getters) {
+      if (getter.internalField === undefined) continue;
+      getter.internalFieldIndex = this.internalFields.indexOf(getter.internalField);
+      assert(getter.internalFieldIndex >= 0, `${getter.name}: there is no internal field ${getter.internalField}`);
+    }
     assertDistinct(
       [
         "constructor",
@@ -1962,8 +1970,6 @@ export class ClassType extends NamedType {
       "members' Rust functions",
     );
     assertDistinct(this.internalFields.map(snakeCase), "internal fields");
-    this.cachedGetters = getters.filter(getter => getter.cached);
-    this.cachedGetters.forEach((getter, index) => (getter.internalFieldIndex = this.internalFields.length + index));
     this.configurable = options.configurable ?? true;
     for (const method of this.methods) {
       assert(
@@ -1975,9 +1981,6 @@ export class ClassType extends NamedType {
   /** Every signature of the prototype's and the constructor's functions. */
   get methods(): readonly Method[] {
     return [...this.functions, ...this.staticFunctions].flatMap(fn => fn.signatures as readonly Method[]);
-  }
-  get numberOfInternalFields(): number {
-    return this.internalFields.length + this.cachedGetters.length;
   }
   get cpp(): string {
     return `Bun::Bindgen::Generated::JS${this.name}`;

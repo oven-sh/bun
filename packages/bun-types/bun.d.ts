@@ -9180,6 +9180,20 @@ declare module "bun" {
     [Symbol.dispose](): void;
   }
 
+  interface FileSystemRouterOptions {
+    /**
+     * The root directory containing the files to route
+     */
+    dir: string;
+    style: "nextjs";
+
+    /** The base path to use when routing */
+    assetPrefix?: string;
+    origin?: string;
+    /** Limit the pages to those with particular file extensions. */
+    fileExtensions?: string[];
+  }
+
   /**
    * Resolve routes against a directory of files using Next.js-style (`pages`
    * directory) conventions.
@@ -9202,24 +9216,14 @@ declare module "bun" {
      * @param options.dir The root directory containing the files to route
      * @param options.style The style of router to use (only "nextjs" is supported)
      */
-    constructor(options: {
-      /**
-       * The root directory containing the files to route
-       */
-      dir: string;
-      style: "nextjs";
-
-      /** The base path to use when routing */
-      assetPrefix?: string;
-      origin?: string;
-      /** Limit the pages to those with particular file extensions. */
-      fileExtensions?: string[];
-    });
+    constructor(options: FileSystemRouterOptions);
 
     // todo: URL
     match(input: string | Request | Response): MatchedRoute | null;
 
+    /** The `assetPrefix` option, or `null` without one */
     readonly assetPrefix: string | null;
+    /** The `origin` option, or `null` without one */
     readonly origin: string | null;
     readonly style: string;
     readonly routes: Record<string, string>;

@@ -7,7 +7,6 @@ use bun_core::AllocError;
 use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal};
-use core::cell::{Cell, RefCell};
 
 use bun_core::EncodedSlice;
 use jsc::EncodedSliceJsc as _;
@@ -29,71 +28,47 @@ impl Buffered {
     }
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (`RefCell` for the decoder; its borrow is
-// released before anything can call back into JS).
+#[derive(Default)]
 pub(crate) struct TextDecoder {
     // used for utf8 decoding
-    pub(crate) buffered: Cell<Buffered>,
+    pub(crate) buffered: Buffered,
 
     // used for utf16 decoding
-    pub(crate) lead_byte: Cell<Option<u8>>,
-    pub(crate) lead_surrogate: Cell<Option<u16>>,
+    pub(crate) lead_byte: Option<u8>,
+    pub(crate) lead_surrogate: Option<u16>,
 
     // https://encoding.spec.whatwg.org/#textdecoder-bom-seen-flag
     // True once the stream's BOM decision is made: its first scalar was either
     // a suppressed U+FEFF or something else, so no later U+FEFF may be dropped.
-    bom_seen: Cell<bool>,
+    bom_seen: bool,
     // https://encoding.spec.whatwg.org/#textdecoder-do-not-flush-flag
     // True when the previous `decode()` was a `{stream: true}` chunk, so the
     // next call continues that stream instead of starting a new one.
-    do_not_flush: Cell<bool>,
+    do_not_flush: bool,
 
     // encoding_rs decoder for every other encoding. It owns the streaming
     // state (lead byte, ISO-2022-JP mode, GB18030 first/second/third), so it
     // must live across `{stream: true}` chunks. Created lazily by a stream's
-    // first chunk and cleared by `begin_decode` when the next stream starts,
+    // first chunk and cleared by `decode_chunk` when the next stream starts,
     // however the previous decode exited: a decoder that has flushed must not
     // be fed again (encoding_rs panics).
-    codec: RefCell<Option<encoding_rs::Decoder>>,
+    codec: Option<encoding_rs::Decoder>,
 
-    // Read-only after construction (set in `constructor` before the JS wrapper
-    // exists) — left bare.
     pub(crate) ignore_bom: bool,
     pub(crate) fatal: bool,
     pub(crate) encoding: EncodingLabel,
 }
 
-impl Default for TextDecoder {
-    fn default() -> Self {
-        Self {
-            buffered: Cell::new(Buffered::default()),
-            lead_byte: Cell::new(None),
-            lead_surrogate: Cell::new(None),
-            bom_seen: Cell::new(false),
-            do_not_flush: Cell::new(false),
-            codec: RefCell::new(None),
-            ignore_bom: false,
-            fatal: false,
-            encoding: EncodingLabel::Utf8,
-        }
-    }
-}
-
 impl TextDecoder {
-    pub(crate) fn new(init: TextDecoder) -> Box<TextDecoder> {
-        Box::new(init)
-    }
-
     #[inline(always)]
     fn process_code_unit_utf16(
-        &self,
+        &mut self,
         output: &mut Vec<u16>,
         saw_error: &mut bool,
         code_unit: u16,
     ) -> Result<(), AllocError> {
-        if let Some(lead_surrogate) = self.lead_surrogate.get() {
-            self.lead_surrogate.set(None);
+        if let Some(lead_surrogate) = self.lead_surrogate {
+            self.lead_surrogate = None;
 
             if u16_is_trail(code_unit) {
                 // TODO: why is this here?
@@ -106,7 +81,7 @@ impl TextDecoder {
         }
 
         if u16_is_lead(code_unit) {
-            self.lead_surrogate.set(Some(code_unit));
+            self.lead_surrogate = Some(code_unit);
             return Ok(());
         }
 
@@ -133,7 +108,7 @@ impl TextDecoder {
     }
 
     pub(crate) fn decode_utf16<const BIG_ENDIAN: bool, const FLUSH: bool>(
-        &self,
+        &mut self,
         bytes: &[u8],
     ) -> Result<(Vec<u16>, bool), AllocError> {
         let mut output: Vec<u16> = Vec::with_capacity(bytes.len() / 2);
@@ -141,9 +116,9 @@ impl TextDecoder {
         let mut remain = bytes;
         let mut saw_error = false;
 
-        if let Some(lead_byte) = self.lead_byte.get() {
+        if let Some(lead_byte) = self.lead_byte {
             if !remain.is_empty() {
-                self.lead_byte.set(None);
+                self.lead_byte = None;
 
                 self.process_code_unit_utf16(
                     &mut output,
@@ -172,15 +147,15 @@ impl TextDecoder {
         }
 
         if !remain.is_empty() && i == remain.len() - 1 {
-            self.lead_byte.set(Some(remain[i]));
+            self.lead_byte = Some(remain[i]);
         } else {
             assert!(i == remain.len());
         }
 
         if FLUSH {
-            if self.lead_byte.get().is_some() || self.lead_surrogate.get().is_some() {
-                self.lead_byte.set(None);
-                self.lead_surrogate.set(None);
+            if self.lead_byte.is_some() || self.lead_surrogate.is_some() {
+                self.lead_byte = None;
+                self.lead_surrogate = None;
                 output.push(UNICODE_REPLACEMENT_U16);
                 saw_error = true;
                 return Ok((output, saw_error));
@@ -194,7 +169,7 @@ impl TextDecoder {
     /// `{stream: true}` chunks. `InvalidByteSequence` is only reported in
     /// fatal mode; otherwise malformed bytes become U+FFFD in the output.
     fn decode_with_encoding_rs<const FLUSH: bool>(
-        &self,
+        fatal: bool,
         decoder: &mut encoding_rs::Decoder,
         bytes: &[u8],
     ) -> Result<Vec<u16>, strings::ToUTF16Error> {
@@ -220,7 +195,7 @@ impl TextDecoder {
         // only the prefix it reports as written.
         let dst = unsafe { core::slice::from_raw_parts_mut(decoded.as_mut_ptr(), cap) };
 
-        let written = if self.fatal {
+        let written = if fatal {
             let (result, _, written) =
                 decoder.decode_to_utf16_without_replacement(bytes, dst, FLUSH);
             if let encoding_rs::DecoderResult::Malformed(..) = result {
@@ -245,15 +220,25 @@ impl TextDecoder {
     /// https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2: a
     /// decode() after a flushing one starts a new stream, with a new decoder
     /// and its BOM not yet seen.
-    fn begin_decode(&self, stream: bool) {
-        if !self.do_not_flush.replace(stream) {
-            self.bom_seen.set(false);
-            *self.codec.borrow_mut() = None;
+    fn decode_chunk(
+        &mut self,
+        global_this: &JSGlobalObject,
+        chunk: &[u8],
+        stream: bool,
+    ) -> JsResult<JSValue> {
+        if !core::mem::replace(&mut self.do_not_flush, stream) {
+            self.bom_seen = false;
+            self.codec = None;
+        }
+        if stream {
+            self.decode_slice::<false>(global_this, chunk)
+        } else {
+            self.decode_slice::<true>(global_this, chunk)
         }
     }
 
     fn decode_slice<const FLUSH: bool>(
-        &self,
+        &mut self,
         global_this: &JSGlobalObject,
         buffer_slice: &[u8],
     ) -> JsResult<JSValue> {
@@ -282,10 +267,10 @@ impl TextDecoder {
                 // previous `{stream: true}` chunk; the BOM check below must
                 // see the JOINED bytes (a BOM may be split across chunks).
                 let joined_owned: Box<[u8]>;
-                let buffered = self.buffered.get();
+                let buffered = self.buffered;
                 let joined: &[u8] = if buffered.len > 0 {
                     joined_owned = [buffered.slice(), buffer_slice].concat().into_boxed_slice();
-                    self.buffered.set(Buffered::default());
+                    self.buffered = Buffered::default();
                     &joined_owned
                 } else {
                     buffer_slice
@@ -296,7 +281,7 @@ impl TextDecoder {
                 // EF, EF BB) is still ambiguous; `buffered` carries it to the next chunk.
                 const UTF8_BOM: &[u8] = b"\xef\xbb\xbf";
                 let set_bom_seen: bool;
-                let input: &[u8] = if self.ignore_bom || self.bom_seen.get() {
+                let input: &[u8] = if self.ignore_bom || self.bom_seen {
                     set_bom_seen = false;
                     joined
                 } else if let Some(rest) = joined.strip_prefix(UTF8_BOM) {
@@ -346,18 +331,18 @@ impl TextDecoder {
                 // thrown fatal decode never reaches, so only commit it once the
                 // decode succeeded.
                 if set_bom_seen {
-                    self.bom_seen.set(true);
+                    self.bom_seen = true;
                 }
 
                 if let Some((decoded, leftover, leftover_len)) = maybe_decode_result {
                     // `joined_owned` drops at scope exit.
-                    debug_assert!(self.buffered.get().len == 0);
+                    debug_assert!(self.buffered.len == 0);
                     if !FLUSH {
                         if leftover_len != 0 {
-                            self.buffered.set(Buffered {
+                            self.buffered = Buffered {
                                 buf: leftover,
                                 len: leftover_len,
-                            });
+                            };
                         }
                     }
                     return bun_string_jsc::owned_utf16_into_js(global_this, decoded);
@@ -377,9 +362,9 @@ impl TextDecoder {
                 // carried lead byte or surrogate means these are not its first bytes.
                 let bom: &[u8; 2] = if big_endian { b"\xfe\xff" } else { b"\xff\xfe" };
                 let pre_stripped = !self.ignore_bom
-                    && !self.bom_seen.get()
-                    && self.lead_byte.get().is_none()
-                    && self.lead_surrogate.get().is_none()
+                    && !self.bom_seen
+                    && self.lead_byte.is_none()
+                    && self.lead_surrogate.is_none()
                     && buffer_slice.starts_with(bom);
                 let input = if pre_stripped {
                     &buffer_slice[2..]
@@ -411,11 +396,11 @@ impl TextDecoder {
                 // stream's FIRST code unit is dropped as a BOM. `bom_seen` is only
                 // committed here, after the fatal early return, which never reaches it.
                 if pre_stripped {
-                    self.bom_seen.set(true);
-                } else if !self.ignore_bom && !self.bom_seen.get() && !decoded.is_empty() {
+                    self.bom_seen = true;
+                } else if !self.ignore_bom && !self.bom_seen && !decoded.is_empty() {
                     // The BOM was split across chunks (half of it in `lead_byte`),
                     // so it is only recognizable as the first decoded code unit.
-                    self.bom_seen.set(true);
+                    self.bom_seen = true;
                     if decoded[0] == 0xFEFF {
                         decoded.remove(0);
                     }
@@ -428,24 +413,22 @@ impl TextDecoder {
             _ => {
                 // The decoder carries streaming state (lead bytes, escape mode),
                 // so reuse the one from the previous `{stream: true}` chunk.
-                let mut slot = self.codec.borrow_mut();
-                let decoder = slot.get_or_insert_with(|| {
+                let decoder = self.codec.get_or_insert_with(|| {
                     // Only utf-8/utf-16 have a BOM and those are handled above.
                     self.encoding
                         .encoding_rs()
                         .new_decoder_without_bom_handling()
                 });
-                let result = self.decode_with_encoding_rs::<FLUSH>(decoder, buffer_slice);
+                let result =
+                    Self::decode_with_encoding_rs::<FLUSH>(self.fatal, decoder, buffer_slice);
 
                 // A fatal error discards the decoder along with whatever it had
                 // pending (a lead byte, the ISO-2022-JP mode), so a later
                 // `{stream: true}` chunk starts over instead of continuing from
-                // the bad byte. A flushing decode leaves it to `begin_decode`.
+                // the bad byte. A flushing decode leaves it to `decode_chunk`.
                 if matches!(result, Err(strings::ToUTF16Error::InvalidByteSequence)) {
-                    *slot = None;
+                    self.codec = None;
                 }
-                // Released before anything below can allocate or throw.
-                drop(slot);
 
                 let decoded = match result {
                     Ok(decoded) => decoded,
@@ -476,41 +459,39 @@ impl TextDecoderClass for TextDecoder {
 
     fn constructor<'a>(
         heap: &JsHeap<'a>,
-        label: &'a [u8],
+        label: Option<&'a [u8]>,
         options: &TextDecoderOptions,
     ) -> bindgen::Result<'a, Self> {
-        match EncodingLabel::which(label) {
-            // "If encoding is failure or replacement, then throw a RangeError."
-            Some(encoding) if encoding != EncodingLabel::Replacement => Ok(TextDecoder {
-                fatal: options.fatal,
-                ignore_bom: options.ignore_bom,
-                encoding,
-                ..TextDecoder::default()
-            }),
-            _ => Err(heap.error_with_code(
-                jsc::ErrorCode::ERR_ENCODING_NOT_SUPPORTED,
-                format_args!("Unsupported encoding label \"{}\"", bstr::BStr::new(label)),
-            )),
-        }
+        let encoding = match label {
+            None => EncodingLabel::Utf8,
+            // https://encoding.spec.whatwg.org/#dom-textdecoder: failure or replacement is a RangeError.
+            Some(label) => match EncodingLabel::which(label) {
+                Some(encoding) if encoding != EncodingLabel::Replacement => encoding,
+                _ => {
+                    return Err(heap.error_with_code(
+                        jsc::ErrorCode::ERR_ENCODING_NOT_SUPPORTED,
+                        format_args!("Unsupported encoding label \"{}\"", bstr::BStr::new(label)),
+                    ));
+                }
+            },
+        };
+        Ok(TextDecoder {
+            fatal: options.fatal,
+            ignore_bom: options.ignore_bom,
+            encoding,
+            ..TextDecoder::default()
+        })
     }
 
     fn decode<'a>(
-        &self,
+        &mut self,
         heap: &JsHeap<'a>,
         input: Option<&'a [u8]>,
         options: &TextDecodeOptions,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
-        self.begin_decode(options.stream);
-
         // SAFETY: decoding makes a string or throws, and what throws returns without reading `input` again.
         let global = unsafe { heap.global() };
-        let input = input.unwrap_or_default();
-        // Dispatch the runtime `stream` bool to a const-generic flush parameter.
-        let decoded = if !options.stream {
-            self.decode_slice::<true>(global, input)
-        } else {
-            self.decode_slice::<false>(global, input)
-        }?;
+        let decoded = self.decode_chunk(global, input.unwrap_or_default(), options.stream)?;
         Ok(JsLocal::new(heap, decoded))
     }
 
@@ -583,7 +564,7 @@ pub(crate) extern "C" fn TextDecoder__createForStream(
         unsafe { *out_utf8_fast_path = true };
         return core::ptr::null_mut();
     }
-    bun_core::heap::into_raw(TextDecoder::new(TextDecoder {
+    bun_core::heap::into_raw(Box::new(TextDecoder {
         fatal,
         ignore_bom,
         encoding,
@@ -621,9 +602,6 @@ pub(crate) extern "C" fn TextDecoder__decodeForStream(
     input_len: usize,
     stream: bool,
 ) -> JSValue {
-    // SAFETY: `this` is the live decoder owned by the calling JS cell; driven
-    // only from the JS thread, so `&*this` has no mutable alias.
-    let this = unsafe { &*this };
     let slice = if input.is_null() {
         &[][..]
     } else {
@@ -631,11 +609,6 @@ pub(crate) extern "C" fn TextDecoder__decodeForStream(
         // escape this call.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
-    this.begin_decode(stream);
-    let result = if stream {
-        this.decode_slice::<false>(global, slice)
-    } else {
-        this.decode_slice::<true>(global, slice)
-    };
-    result.or_pending_exception()
+    // SAFETY: `this` is the live decoder owned by the calling JS cell, and decoding runs no JS that could reach it.
+    unsafe { (*this).decode_chunk(global, slice, stream) }.or_pending_exception()
 }

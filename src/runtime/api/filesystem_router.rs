@@ -1,24 +1,5 @@
 //! `Bun.FileSystemRouter` / `MatchedRoute` — Next.js-style file router.
 
-pub(crate) mod kind_enum {
-    const EXACT: &[u8] = b"exact";
-    const CATCH_ALL: &[u8] = b"catch-all";
-    const OPTIONAL_CATCH_ALL: &[u8] = b"optional-catch-all";
-    const DYNAMIC: &[u8] = b"dynamic";
-
-    pub(crate) fn classify(name: &[u8]) -> &'static [u8] {
-        if bun_core::strings::contains(name, b"[[...") {
-            OPTIONAL_CATCH_ALL
-        } else if bun_core::strings::contains(name, b"[...") {
-            CATCH_ALL
-        } else if bun_core::strings::contains(name, b"[") {
-            DYNAMIC
-        } else {
-            EXACT
-        }
-    }
-}
-
 use bun_paths::strings;
 
 use bun_ast as Log;
@@ -40,7 +21,7 @@ use bun_url::{CombinedScanner, QueryStringMap, URL, route_param};
 use crate::api::bun_object;
 use crate::generated_bindgen::filesystem_router::{
     FileSystemRouterClass, FileSystemRouterInternalFields as _, FileSystemRouterOptions,
-    MatchedRouteClass, Routable,
+    MatchedRouteClass, Routable, RouteKind,
 };
 
 // Note: `FrameworkFileSystemRouter` is declared in this file's
@@ -86,73 +67,58 @@ pub(crate) struct FileSystemRouter {
     asset_prefix: Option<BackRef<RefString>>,
 }
 
-enum LoadError {
-    NotFound,
-    ReadingRootDirectory,
-    LoadingRoutes,
-}
-
-impl LoadError {
-    fn throw(self, global: &JSGlobalObject, log: &Log::Log, dir: &[u8]) -> JsError {
-        let doing = match self {
-            LoadError::NotFound => {
-                return global.throw(format_args!(
-                    "Unable to find directory: {}",
-                    bstr::BStr::new(dir)
-                ));
-            }
-            LoadError::ReadingRootDirectory => format_args!("reading root directory"),
-            LoadError::LoadingRoutes => format_args!("loading routes"),
-        };
-        match log.to_js(global, doing) {
-            Ok(error) => global.throw_value(error),
-            Err(error) => error,
-        }
-    }
-}
-
-/// SAFETY: the resolver logs to `log` until what this returns is dropped, which is before `log` moves or drops.
-unsafe fn log_resolver_to(log: &mut Log::Log) -> impl Drop + use<> {
-    // Derived from the thread-local raw `*mut VirtualMachine` (via `get_mut_ptr`) so the stored
-    // slot pointer keeps valid provenance under Stacked Borrows across the callers'
-    // `&mut vm.transpiler.resolver` reborrows.
-    // SAFETY: the VM and its resolver outlive the caller's scope.
-    unsafe {
-        let vm_ptr = VirtualMachine::get_mut_ptr();
-        Resolver::scoped_log(
-            core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
-            core::ptr::NonNull::from(log),
-        )
-    }
-}
-
+/// The routes of `config.dir`. To `reload` is to read it from the disk again, and to let warnings pass.
 fn load_router(
+    global: &JSGlobalObject,
     config: RouteConfig,
-    log: &mut Log::Log,
-) -> Result<(Router::Router, bun_resolver::DirInfoRef), LoadError> {
+    reload: bool,
+) -> JsResult<(Router::Router, bun_resolver::DirInfoRef)> {
+    let mut log = Log::Log::new();
+    // SAFETY: the VM and its resolver outlive this call, and this is dropped before `log`.
+    let _restore_log = unsafe {
+        Resolver::scoped_log(
+            core::ptr::addr_of_mut!((*VirtualMachine::get_mut_ptr()).transpiler.resolver),
+            core::ptr::NonNull::from(&mut log),
+        )
+    };
+    let without_slash = strings::paths::without_trailing_slash_windows_path(&config.dir);
+    if reload {
+        FileSystemRouter::bust_dir_cache_recursive(without_slash);
+    }
+
     let resolver = &mut VirtualMachine::get().as_mut().transpiler.resolver;
     let root_dir_info = match resolver.read_dir_info(&config.dir) {
         Ok(Some(info)) => info,
-        Ok(None) => return Err(LoadError::NotFound),
-        Err(_) => return Err(LoadError::ReadingRootDirectory),
+        Ok(None) => {
+            return Err(global.throw(format_args!(
+                "Unable to find directory: {}",
+                bstr::BStr::new(if reload { &*config.dir } else { without_slash })
+            )));
+        }
+        Err(_) => {
+            let error = log.to_js(global, format_args!("reading root directory"))?;
+            return Err(global.throw_value(error));
+        }
     };
 
     let mut router = Router::Router::init(config).expect("unreachable");
     let config_dir = router.config.dir.clone();
-    router
-        .load_routes(
-            log,
-            &root_dir_info,
-            &mut RouterResolver(resolver),
-            &config_dir,
-        )
-        .map_err(|_| LoadError::LoadingRoutes)?;
+    let loaded = router.load_routes(
+        &mut log,
+        &root_dir_info,
+        &mut RouterResolver(resolver),
+        &config_dir,
+    );
+    if loaded.is_err() || (!reload && log.errors + log.warnings > 0) {
+        let error = log.to_js(global, format_args!("loading routes"))?;
+        return Err(global.throw_value(error));
+    }
     Ok((router, root_dir_info))
 }
 
 impl FileSystemRouter {
     fn bust_dir_cache_recursive(input_path: &[u8]) {
-        // Re-derived per use site: the recursive call does the same, which pops this tag mid-loop.
+        // `vm.as_mut()` at each use: the recursive call makes its own, which ends one held across it.
         let vm = VirtualMachine::get();
         #[cfg(not(windows))]
         let path = input_path;
@@ -229,12 +195,6 @@ impl FileSystemRouter {
 
         let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
     }
-
-    fn bust_dir_cache(&self) {
-        Self::bust_dir_cache_recursive(strings::paths::without_trailing_slash_windows_path(
-            &self.router.config.dir,
-        ));
-    }
 }
 
 impl FileSystemRouterClass for FileSystemRouter {
@@ -244,24 +204,20 @@ impl FileSystemRouterClass for FileSystemRouter {
         cx: &mut JsScope<'a>,
         options: &FileSystemRouterOptions<'a>,
     ) -> bindgen::Result<'a, Self> {
-        let global = cx.global();
         match options.style {
             Some(b"nextjs") => {}
             Some(_) => {
-                return Err(global
-                    .throw_invalid_arguments(format_args!(
-                        "Only 'nextjs' style is currently implemented"
-                    ))
-                    .into());
+                return Err(cx.heap.invalid_arguments(format_args!(
+                    "Only 'nextjs' style is currently implemented"
+                )));
             }
             None => {
-                return Err(global
-                    .throw_invalid_arguments(format_args!(
-                        "Expected 'style' option (ex: \"style\": \"nextjs\")"
-                    ))
-                    .into());
+                return Err(cx.heap.invalid_arguments(format_args!(
+                    "Expected 'style' option (ex: \"style\": \"nextjs\")"
+                )));
             }
         }
+        let global = cx.global();
         let vm = global.bun_vm().as_mut();
 
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
@@ -275,9 +231,10 @@ impl FileSystemRouterClass for FileSystemRouter {
                     &[options.dir],
                 )
             else {
-                return Err(LoadError::NotFound
-                    .throw(global, &Log::Log::new(), options.dir)
-                    .into());
+                return Err(cx.heap.error(format_args!(
+                    "Unable to find directory: {}",
+                    bstr::BStr::new(options.dir)
+                )));
             };
             root_dir_path = joined;
         }
@@ -291,10 +248,6 @@ impl FileSystemRouterClass for FileSystemRouter {
         }
         let asset_prefix = options.asset_prefix.unwrap_or_default();
 
-        let mut log = Log::Log::new();
-        // SAFETY: declared after `log`, so it is dropped first.
-        let _restore_log = unsafe { log_resolver_to(&mut log) };
-
         let config = RouteConfig {
             // Ends with the native separator (`\` on Windows).
             dir: strings::paths::clone_normalizing_separators(root_dir_path).into_boxed_slice(),
@@ -302,11 +255,7 @@ impl FileSystemRouterClass for FileSystemRouter {
             asset_prefix_path: Box::from(asset_prefix),
             ..Default::default()
         };
-        let (mut router, root_dir_info) = match load_router(config, &mut log) {
-            Ok(loaded) if log.errors + log.warnings == 0 => loaded,
-            Ok(_) => return Err(LoadError::LoadingRoutes.throw(global, &log, b"").into()),
-            Err(error) => return Err(error.throw(global, &log, root_dir_path).into()),
-        };
+        let (mut router, root_dir_info) = load_router(global, config, false)?;
 
         let base_dir_str = if !root_dir_info.abs_real_path.is_empty() {
             root_dir_info.abs_real_path
@@ -423,28 +372,15 @@ impl FileSystemRouterClass for FileSystemRouter {
         this: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
     ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
-        let mut log = Log::Log::new();
-        // SAFETY: declared after `log`, so it is dropped first.
-        let _restore_log = unsafe { log_resolver_to(&mut log) };
-
-        let loaded = this.with_mut(&mut cx.payloads, |this| {
-            this.bust_dir_cache();
-            let config = &this.router.config;
-            let config = RouteConfig {
-                dir: config.dir.clone(),
-                extensions: config.extensions.clone(),
-                asset_prefix_path: config.asset_prefix_path.clone(),
-                ..Default::default()
-            };
-            let dir = config.dir.clone();
-            let (router, _) = load_router(config, &mut log).map_err(|error| (error, dir))?;
-            this.router = router;
-            Ok(())
+        let config = this.with(&cx.payloads, |this| RouteConfig {
+            dir: this.router.config.dir.clone(),
+            extensions: this.router.config.extensions.clone(),
+            asset_prefix_path: this.router.config.asset_prefix_path.clone(),
+            ..Default::default()
         });
-        if let Err((error, dir)) = loaded {
-            return Err(error.throw(cx.global(), &log, &dir).into());
-        }
-        this.forget_cached_routes(&cx.heap);
+        let (router, _) = load_router(cx.global(), config, true)?;
+        this.with_mut(&mut cx.payloads, |this| this.router = router);
+        this.set_routes_field(&cx.heap, JsLocal::UNDEFINED);
         Ok(this)
     }
 
@@ -487,13 +423,12 @@ pub(crate) struct MatchedRoute {
     // `name`/`file_path`/`basename`/`path` and (b) `self.pathname_backing` for
     // `pathname`/`query_string`/param values. Both are stable for `Self`'s lifetime, so
     // the stored `'static` is the standard self-referential erasure — see `init`.
-    /// `params` is `self.params_list`.
+    /// `params` is null: they are `self.params_list`.
     route: RouterMatch<'static>,
     // Lazily populated by `query`/`params`, which take `&self`.
     query_string_map: JsCell<Option<QueryStringMap>>,
     param_map: JsCell<Option<QueryStringMap>>,
-    /// Owned, and on the heap because `self` moves into its wrapper. Freed by `drop`.
-    params_list: *mut route_param::List<'static>,
+    params_list: route_param::List<'static>,
     /// What `route.pathname`, `route.query_string` and the values in `params_list` borrow.
     #[expect(dead_code, reason = "held for what borrows it")]
     pathname_backing: Utf8Bytes<'static>,
@@ -505,12 +440,6 @@ pub(crate) struct MatchedRoute {
 }
 
 impl MatchedRoute {
-    #[inline]
-    fn params_list(&self) -> &route_param::List<'static> {
-        // SAFETY: owned by `self` and written by nothing after `init`.
-        unsafe { &*self.params_list }
-    }
-
     fn init(
         match_: RouterMatch<'_>,
         pathname_backing: Utf8Bytes<'static>,
@@ -518,19 +447,11 @@ impl MatchedRoute {
         asset_prefix: Option<BackRef<RefString>>,
         base_dir: BackRef<RefString>,
     ) -> MatchedRoute {
-        // SAFETY: `match_.params` is the caller's live list.
-        let params_list = unsafe { (*match_.params).clone() };
-
-        // SAFETY: what both borrow is the DirnameStore or `pathname_backing`, which is stored with them.
+        // SAFETY: what it borrows is the DirnameStore or `pathname_backing`, which is stored with it.
         let mut route: RouterMatch<'static> = unsafe { match_.detach_lifetime() };
-        let params_list: route_param::List<'static> = {
-            let mut v = core::mem::ManuallyDrop::new(params_list);
-            let (ptr, len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
-            // SAFETY: the same allocation, with the lifetime of its elements erased as above.
-            unsafe { Vec::from_raw_parts(ptr.cast::<route_param::Param<'static>>(), len, cap) }
-        };
-        let params_list = bun_core::heap::into_raw(Box::new(params_list));
-        route.params = params_list;
+        // SAFETY: the caller's live list, which it does not read again.
+        let params_list = unsafe { core::mem::take(&mut *route.params) };
+        route.params = core::ptr::null_mut();
 
         base_dir.ref_();
         if let Some(o) = origin {
@@ -598,8 +519,6 @@ impl MatchedRoute {
 
 impl Drop for MatchedRoute {
     fn drop(&mut self) {
-        // SAFETY: made by `heap::into_raw` in `init`, and `route.params` is not read again.
-        unsafe { bun_core::heap::destroy(self.params_list) };
         if let Some(p) = self.origin.take() {
             p.get().deref();
         }
@@ -617,8 +536,17 @@ impl MatchedRouteClass for MatchedRoute {
         self.route.file_path
     }
 
-    fn kind(&self) -> impl AsRef<[u8]> {
-        kind_enum::classify(self.route.name)
+    fn kind(&self) -> RouteKind {
+        let name = self.route.name;
+        if strings::contains(name, b"[[...") {
+            RouteKind::OptionalCatchAll
+        } else if strings::contains(name, b"[...") {
+            RouteKind::CatchAll
+        } else if strings::contains(name, b"[") {
+            RouteKind::Dynamic
+        } else {
+            RouteKind::Exact
+        }
     }
 
     fn name(&self) -> impl AsRef<[u8]> {
@@ -628,7 +556,7 @@ impl MatchedRouteClass for MatchedRoute {
     fn params<'a>(&self, heap: &JsHeap<'a>) -> JsResult<JsLocal<'a>> {
         // SAFETY: makes an object of strings.
         let global = unsafe { heap.global() };
-        if self.params_list().is_empty() {
+        if self.params_list.is_empty() {
             return Ok(JsLocal::new(heap, JSValue::create_empty_object(global, 0)));
         }
 
@@ -637,7 +565,7 @@ impl MatchedRouteClass for MatchedRoute {
                 b"",
                 self.route.pathname_without_leading_slash(),
                 self.route.name,
-                self.params_list(),
+                &self.params_list,
             );
             self.param_map
                 .set(QueryStringMap::init_with_scanner(scanner)?);
@@ -657,19 +585,19 @@ impl MatchedRouteClass for MatchedRoute {
         // SAFETY: makes an object of strings.
         let global = unsafe { heap.global() };
         let route = &self.route;
-        if route.query_string.is_empty() && self.params_list().is_empty() {
+        if route.query_string.is_empty() && self.params_list.is_empty() {
             return Ok(JsLocal::new(heap, JSValue::create_empty_object(global, 0)));
         } else if route.query_string.is_empty() {
             return self.params(heap);
         }
 
         if self.query_string_map.get().is_none() {
-            if !self.params_list().is_empty() {
+            if !self.params_list.is_empty() {
                 let scanner = CombinedScanner::init(
                     route.query_string,
                     route.pathname_without_leading_slash(),
                     route.name,
-                    self.params_list(),
+                    &self.params_list,
                 );
                 self.query_string_map
                     .set(QueryStringMap::init_with_scanner(scanner)?);

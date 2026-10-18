@@ -4785,6 +4785,8 @@ class ServerHttp2Session extends Http2Session {
     }
     this.#destroying = true;
     emitHttp2SessionPerf(this, this.#parser, this[bunHTTP2Socket]);
+    const socket = this[bunHTTP2Socket];
+    let destroysSocket = false;
     try {
       const server = this[kServer];
       if (server) {
@@ -4808,8 +4810,9 @@ class ServerHttp2Session extends Http2Session {
         this[kSessionDestroyError] = error;
       }
 
-      const socket = this[bunHTTP2Socket];
       if (!this.#connected) return;
+      // Like node's finishSessionClose, which only leaves the socket to the peer after close().
+      destroysSocket = !!error || !this.#closed;
       this.#closed = true;
       this.#connected = false;
       if (socket) {
@@ -4819,7 +4822,7 @@ class ServerHttp2Session extends Http2Session {
           // a destroy(err) after close() must still put the error GOAWAY on the wire.
           this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
         }
-        if (error) {
+        if (destroysSocket) {
           // node's finishSessionClose destroys the socket when the session dies
           // with an error (a misbehaving peer must observe the connection going
           // away) - but it still ends first and destroys a tick later, so the
@@ -4870,8 +4873,13 @@ class ServerHttp2Session extends Http2Session {
       runInFrame(asyncFrame, this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
-    // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    // close()/destroy() returns must still observe it), after the socket's. Only wait for that one
+    // if this call also destroys the socket: after close(), it closes when the peer does, if ever.
+    if (destroysSocket && socket && !socket.destroyed) {
+      socket.once("close", FunctionPrototypeBind.$call(emitSessionCloseNT, undefined, this, asyncFrame));
+    } else {
+      process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    }
   }
 }
 function emitTimeout(session: ClientHttp2Session) {
@@ -5881,6 +5889,7 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#destroying = true;
     emitHttp2SessionPerf(this, this.#parser, socket);
+    let destroysSocket = false;
     try {
       if (this[kTimeout]) {
         clearTimeout(this[kTimeout]);
@@ -5904,6 +5913,8 @@ class ClientHttp2Session extends Http2Session {
         // Streams torn down by this destroy surface the same session error (node semantics).
         this[kSessionDestroyError] = error;
       }
+      // Like node's finishSessionClose, which only leaves the socket to the peer after close().
+      destroysSocket = !!error || !this.#closed;
       this.#closed = true;
       this.#connected = false;
       {
@@ -5930,7 +5941,7 @@ class ClientHttp2Session extends Http2Session {
           // a destroy(err) after close() must still put the error GOAWAY on the wire.
           this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
         }
-        if (error) {
+        if (destroysSocket) {
           // See the client session: end first, destroy a tick later (node's
           // finishSessionClose Windows-ECONNRESET avoidance).
           endThenDestroySessionSocket(socket, error);
@@ -5979,8 +5990,13 @@ class ClientHttp2Session extends Http2Session {
       runInFrame(asyncFrame, this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
-    // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    // close()/destroy() returns must still observe it), after the socket's. Only wait for that one
+    // if this call also destroys the socket: after close(), it closes when the peer does, if ever.
+    if (destroysSocket && socket && !socket.destroyed) {
+      socket.once("close", FunctionPrototypeBind.$call(emitSessionCloseNT, undefined, this, asyncFrame));
+    } else {
+      process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    }
   }
 
   request(headers?: HeadersObject | any[] | null, options?: ClientRequestOptions) {

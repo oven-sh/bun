@@ -392,6 +392,63 @@ for (const [site, table] of [
   }
 }
 
+describe("session.destroy() with no close() before it", () => {
+  const settings = Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]);
+  const listen = (server: net.Server) =>
+    new Promise<number>(resolve =>
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
+    );
+
+  // The peer greets and then never closes its side, so only destroy() itself can close the socket.
+  async function destroyed(session: http2.Http2Session, socket: net.Socket) {
+    const seen: string[] = [];
+    socket.on("close", () => seen.push("socket"));
+    const closed = new Promise<void>(resolve => session.on("close", () => (seen.push("session"), resolve())));
+    session.destroy();
+    await new Promise<void>(resolve => process.nextTick(resolve));
+    const atNextTick = [...seen];
+    await closed;
+    return { atNextTick, seen };
+  }
+  const expected = { atNextTick: [], seen: ["socket", "session"] };
+
+  test("a client session's 'close' follows its socket's", async () => {
+    const peer = net.createServer({ allowHalfOpen: true }, socket => {
+      socket.on("error", () => {});
+      socket.resume();
+      socket.write(settings);
+    });
+    const port = await listen(peer);
+    try {
+      const socket = net.connect(port, "127.0.0.1");
+      const session = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => socket });
+      session.on("error", () => {});
+      await new Promise(resolve => session.once("remoteSettings", resolve));
+      assert.deepStrictEqual(await destroyed(session, socket), expected);
+    } finally {
+      peer.close();
+    }
+  });
+
+  test("a server session's 'close' follows its socket's", async () => {
+    const server = http2.createServer();
+    const port = await listen(server);
+    const peer = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    try {
+      peer.on("error", () => {});
+      peer.resume();
+      const socket = new Promise<net.Socket>(resolve => server.once("connection", resolve));
+      const session = new Promise<http2.ServerHttp2Session>(resolve => server.once("session", resolve));
+      peer.write(Buffer.concat([Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), settings]));
+      (await session).on("error", () => {});
+      assert.deepStrictEqual(await destroyed(await session, await socket), expected);
+    } finally {
+      peer.destroy();
+      server.close();
+    }
+  });
+});
+
 if (typeof Bun !== "undefined") {
   const node = Bun.which("node");
   // Alpine's node segfaults at a random point of this file (alpine 3.23 aarch64, on main too), and

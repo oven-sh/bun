@@ -106,27 +106,20 @@ macro_rules! log {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// ALPN select callback
+// ALPN
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `SSL_CTX_set_alpn_select_cb` registers on the listener-level `SSL_CTX`, so
 /// its `arg` is shared across every accepted connection — using it for a
 /// per-connection `*TLSSocket` is a UAF when handshakes overlap. Read the
 /// socket back from the per-SSL ex_data slot set in `onOpen` instead.
-extern "C" fn select_alpn_callback(
-    ssl: *mut bun_boringssl_sys::SSL,
-    out: *mut *const u8,
-    outlen: *mut u8,
-    in_: *const u8,
-    inlen: c_uint,
-    _arg: *mut c_void,
-) -> c_int {
+fn alpn_socket(ssl: *mut bun_boringssl_sys::SSL) -> Option<bun_ptr::ThisPtr<TLSSocket>> {
     // BoringSSL never invokes the ALPN callback with a null `SSL*`; route
     // through the const-asserted opaque-ZST accessor so the call is safe.
     let this_ptr =
         tls_socket_functions::ffi::SSL_get_ex_data(boringssl_sys::SSL::opaque_ref(ssl), 0);
     if this_ptr.is_null() {
-        return boringssl_sys::SSL_TLSEXT_ERR_NOACK;
+        return None;
     }
     // SAFETY: ex_data slot 0 holds a `*mut TLSSocket` (set in on_open), kept
     // live for this handshake callback by the JS wrapper's ref.
@@ -134,10 +127,20 @@ extern "C" fn select_alpn_callback(
     // Same handlers-presence guard as every other dispatch entry point:
     // an idle socket has dropped its Handlers, and the ALPN selection
     // callback can still fire for a connection JS already detached -
-    // get_handlers() would panic. NOACK falls through to the static list.
-    if !this.has_handlers() {
-        return boringssl_sys::SSL_TLSEXT_ERR_NOACK;
-    }
+    // get_handlers() would panic.
+    this.has_handlers().then_some(this)
+}
+
+/// openssl.c calls this before BoringSSL picks the certificate and the session, so `setKeyCert()` in the handler is in time.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn us_dispatch_alpn_offer(
+    ssl: *mut bun_boringssl_sys::SSL,
+    in_: *const u8,
+    inlen: c_uint,
+) {
+    let Some(this) = alpn_socket(ssl) else {
+        return;
+    };
     // Dynamic per-connection ALPN: when the listener's config carries an
     // `alpnCallback` handler, consult it with the client's protocol list (and
     // the SNI name) before the static ALPNProtocols list. The JS handler
@@ -182,13 +185,14 @@ extern "C" fn select_alpn_callback(
             let global = handlers.global_object;
             let this_value = this.get_this_value(&global);
             let wire_len = inlen as usize;
-            // BoringSSL's ALPN callback is these sockets' landing frame for this
+            // BoringSSL's certificate callback is these sockets' landing frame for this
             // event: whatever it leaves pending is folded before returning to C.
             let buffer = match JSValue::create_buffer_from_length(&global, wire_len) {
                 Ok(b) => b,
                 Err(err) => {
                     crate::dispatch::fold(Err(err));
-                    return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
+                    this.alpn_refused.set(true);
+                    return;
                 }
             };
             if let Some(ab) = buffer.as_array_buffer(&global) {
@@ -216,7 +220,8 @@ extern "C" fn select_alpn_callback(
                 crate::dispatch::fold(
                     handlers.call_error_handler(this_value, &[this_value, err_value]),
                 );
-                return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
+                this.alpn_refused.set(true);
+                return;
             }
             if !result.is_boolean() || result.to_boolean() {
                 // The server has an ALPNCallback and it answered: a string
@@ -232,22 +237,40 @@ extern "C" fn select_alpn_callback(
                         crate::dispatch::fold(
                             handlers.call_error_handler(this_value, &[this_value, err_value]),
                         );
-                        return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
+                        this.alpn_refused.set(true);
+                        return;
                     }
                 };
                 let chosen_bytes = chosen.slice();
                 if !result.is_string() || chosen_bytes.is_empty() || chosen_bytes.len() > 255 {
-                    return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
+                    this.alpn_refused.set(true);
+                    return;
                 }
                 let mut wire = Vec::with_capacity(chosen_bytes.len() + 1);
                 wire.push(chosen_bytes.len() as u8);
                 wire.extend_from_slice(chosen_bytes);
                 this.protos.set(Some(wire.into_boxed_slice()));
-                // Fall through to the standard selection below, which now
+                // `select_alpn_callback` then
                 // negotiates against the single chosen protocol (and sends the
                 // fatal alert if the client did not actually offer it).
             }
         }
+    }
+}
+
+extern "C" fn select_alpn_callback(
+    ssl: *mut bun_boringssl_sys::SSL,
+    out: *mut *const u8,
+    outlen: *mut u8,
+    in_: *const u8,
+    inlen: c_uint,
+    _arg: *mut c_void,
+) -> c_int {
+    let Some(this) = alpn_socket(ssl) else {
+        return boringssl_sys::SSL_TLSEXT_ERR_NOACK;
+    };
+    if this.alpn_refused.get() {
+        return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
     }
     if let Some(protos) = this.protos.get() {
         if protos.is_empty() {
@@ -338,6 +361,8 @@ pub(crate) struct NewSocket<const SSL: bool> {
     pub this_value: JsCell<JsRef>,
     pub poll_ref: JsCell<KeepAlive>,
     pub(crate) ref_pollref_on_connect: Cell<bool>,
+    /// `us_dispatch_alpn_offer` refused the offer: `select_alpn_callback` answers it with the fatal alert.
+    pub(crate) alpn_refused: Cell<bool>,
     pub(crate) connection: JsCell<Option<super::listener::UnixOrHost>>,
     /// `localAddress`/`localPort` from the connect options: the socket is
     /// bound to this address before connecting. Always a literal IP.
@@ -1543,15 +1568,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                     }
                     // A server needs the per-connection ALPN selector when it
                     // has static ALPNProtocols OR a dynamic ALPNCallback (the
-                    // selector consults the callback first and falls back to
+                    // selector acts on the callback's answer, else falls back to
                     // the static list). The callback reads `this` from the SSL,
                     // not the CTX-level arg (shared across the listener).
                     // ffi-safe-fn: opaque-ZST `&SSL`/`&SSL_CTX` redecls;
                     // `ssl_ptr` non-null in this branch and `SSL_get_SSL_CTX`
                     // never returns null for a live SSL.
+                    let has_alpn_callback = !this.get_handlers().on_alpn_callback().is_empty();
                     if this.acts_as_tls_server()
-                        && (this.protos.get().is_some()
-                            || !this.get_handlers().on_alpn_callback().is_empty())
+                        && (this.protos.get().is_some() || has_alpn_callback)
                     {
                         let ssl_ref = boringssl_sys::SSL::opaque_ref(ssl_ptr);
                         tls_socket_functions::ffi::SSL_set_ex_data(
@@ -1559,6 +1584,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                             0,
                             this_ptr.cast::<c_void>(),
                         );
+                        if has_alpn_callback {
+                            tls_socket_functions::ffi::us_ssl_on_alpn_offer(ssl_ref);
+                        }
                         tls_socket_functions::ffi::SSL_CTX_set_alpn_select_cb(
                             SSL_CTX::opaque_ref(tls_socket_functions::ffi::SSL_get_SSL_CTX(
                                 ssl_ref,
@@ -3642,6 +3670,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            alpn_refused: Cell::new(false),
             latest_session: Cell::new(None),
         });
         // Never shadow this with a long-lived borrow: it would alias the
@@ -3767,6 +3796,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            alpn_refused: Cell::new(false),
             latest_session: Cell::new(None),
         });
         let raw_ref = raw;
@@ -4874,6 +4904,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: JsCell::new(None),
         verify_error: JsCell::new(None),
+        alpn_refused: Cell::new(false),
         latest_session: Cell::new(None),
     });
     let tls_ref = tls;

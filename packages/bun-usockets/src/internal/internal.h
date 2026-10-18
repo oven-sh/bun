@@ -154,6 +154,8 @@ extern int us_dispatch_new_session(us_socket_r s, struct ssl_session_st *session
 /* Returns a US_IDENTITY_* verdict on the name of the server's certificate. Must not run JS. */
 extern int us_dispatch_server_identity(us_socket_r s, struct ssl_st *ssl);
 extern struct ssl_ctx_st *us_dispatch_socket_server_name(us_socket_r s, const char *hostname, int *abort_handshake);
+/* The ALPN protocols a ClientHello offers (u8 length, bytes), for the owner of an SSL that asked with us_ssl_on_alpn_offer. */
+extern void us_dispatch_alpn_offer(struct ssl_st *ssl, const unsigned char *protocols, unsigned int length);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
 /* crypto/sni_tree.cpp: the one place server names are compared. */
 void *sni_new();

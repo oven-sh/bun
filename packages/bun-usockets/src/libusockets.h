@@ -458,6 +458,13 @@ int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
 /* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
  * listen socket behind it: us_dispatch_socket_server_name then resolves. */
 void us_socket_on_server_name(us_socket_r s);
+/* us_dispatch_alpn_offer then gets the ALPN protocols of this SSL's ClientHello, once the version
+ * is negotiated and SNI is resolved, and before BoringSSL picks the certificate and the session:
+ * the SSL_CTX can still be replaced there. */
+void us_ssl_on_alpn_offer(struct ssl_st *ssl);
+/* SSL_set_SSL_CTX for a server-side SSL, at any time before its certificate is selected: `ctx`
+ * also gets the callback that asks the SNI resolver and keeps the ALPN offer. */
+void us_ssl_set_server_ctx(struct ssl_st *ssl, struct ssl_ctx_st *ctx);
 
 /* ── Connect ──────────────────────────────────────────────────────────────
  * Returns either us_socket_t* (fast path, *is_connecting=1) or

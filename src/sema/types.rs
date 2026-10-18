@@ -3503,7 +3503,7 @@ impl<'p, 's> Types<'p, 's> {
     /// Compares `a.id` with `b.id` for `isDeeplyNestedType`, which treats a higher id as a sign of a newer instantiation,
     /// one caused by recursion. Only the heights are compared. The instantiations of a recursion
     /// that steps from one literal type to the next all have the same height, and comparing their hashes would count
-    /// only about half of them. The caller looks further unless `a` has the lower height.
+    /// only about half of them. The caller orders two types with the same height.
     #[inline]
     pub fn nesting_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         self.rank(a).height.cmp(&self.rank(b).height)

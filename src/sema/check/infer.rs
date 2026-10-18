@@ -80,9 +80,8 @@ pub(super) struct Inference {
     visited: SmallVec<[(TypeId, TypeId, i32); 8]>,
     /// The index of each pair in `visited`, once there are `VISITED_INDEX_FROM` of them.
     visited_index: FxHashMap<(TypeId, TypeId), u32>,
-    /// Each type with its push number. See `is_created_no_earlier`.
-    source_stack: SmallVec<[(TypeId, u32); 8]>,
-    target_stack: SmallVec<[(TypeId, u32); 8]>,
+    source_stack: SmallVec<[TypeId; 8]>,
+    target_stack: SmallVec<[TypeId; 8]>,
     expanding: u8,
     depth: u32,
     /// How often `infer_types` was called for the walk, for `memo`. It ends no walk: tsgo has no such limit.
@@ -717,9 +716,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let saved_priority = std::mem::replace(&mut n.inference_priority, PRIORITY_MAX);
         let saved_expanding = n.expanding;
-        let push = 2 * n.source_stack.len() as u32;
-        n.source_stack.push((source, push + 1));
-        n.target_stack.push((target, push));
+        n.source_stack.push(source);
+        n.target_stack.push(target);
         if self.is_deeply_nested_type(source, [&n.source_stack, &n.target_stack], true, 2) {
             n.expanding |= 1;
         }
@@ -2325,9 +2323,8 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(cached.unwrap_or(TypeId::UNKNOWN));
         }
         let scope = self.begin_scope();
-        let push = 2 * self.reverse_mapped_source_stack.len() as u32;
-        self.reverse_mapped_source_stack.push((source, push + 1));
-        self.reverse_mapped_target_stack.push((target, push));
+        self.reverse_mapped_source_stack.push(source);
+        self.reverse_mapped_target_stack.push(target);
         let saved = self.reverse_expanding;
         let (sources, targets) = (
             std::mem::take(&mut self.reverse_mapped_source_stack),

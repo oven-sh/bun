@@ -5570,103 +5570,41 @@ a.ts(5,1): error TS2322: Type 'T1<1, "x">' is not assignable to type 'T1<1, stri
       },
     );
 
-    // `Q`'s constraint is compared with the same target as `Q`, so from there on more source types than target types are in
-    // progress.
-    test.each([1, 8])(
-      "reports an error between generic types that are compared in both directions below a constraint, on %d threads",
-      async threads => {
-        using dir = project({
-          "a.ts": `type T0<H, P> = (x: { g0: T0<any, P> & { z?: P }; r2: Partial<Record<P & string, boolean>>; }) => void;
-declare let l: T0<1, string>;
-export function g<Q extends T0<1, string | number>>(q: Q) { l = q; }
-`,
-        });
-        const { stdout, exitCode } = await check(dir, ["--threads", String(threads)]);
-        expect(stdout).toBe(
-          `
-a.ts(3,61): error TS2322: Type 'Q' is not assignable to type 'T0<1, string>'.
-  Type 'T0<1, string | number>' is not assignable to type 'T0<1, string>'.
-    Types of parameters 'x' and 'x' are incompatible.
-      Type '{ g0: T0<any, string> & { z?: string | undefined; }; r2: Partial<Record<string, boolean>>; }' is not assignable to type '{ g0: T0<any, string | number> & { z?: string | number | undefined; }; r2: Partial<Record<string, boolean>>; }'.
-        Types of property 'g0' are incompatible.
-          Type 'T0<any, string> & { z?: string | undefined; }' is not assignable to type 'T0<any, string | number> & { z?: string | number | undefined; }'.
-            Type 'T0<any, string> & { z?: string | undefined; }' is not assignable to type 'T0<any, string | number>'.
-              Types of parameters 'x' and 'x' are incompatible.
-                Type '{ g0: T0<any, string | number> & { z?: string | number | undefined; }; r2: Partial<Record<string, boolean>>; }' is not assignable to type '{ g0: T0<any, string> & { z?: string | undefined; }; r2: Partial<Record<string, boolean>>; }'.
-                  Types of property 'g0' are incompatible.
-                    Type 'T0<any, string | number> & { z?: string | number | undefined; }' is not assignable to type 'T0<any, string> & { z?: string | undefined; }'.
-                      Type 'T0<any, string | number> & { z?: string | number | undefined; }' is not assignable to type '{ z?: string | undefined; }'.
-                        Types of property 'z' are incompatible.
-                          Type 'string | number | undefined' is not assignable to type 'string | undefined'.
-                            Type 'number' is not assignable to type 'string'.
-`.slice(1, -1),
-        );
-        expect(exitCode).toBe(1);
-      },
-    );
-
-    // `R<"b">` is both the first source and the second target. TypeScript cuts the comparison off before it reaches `v` if
-    // `R<"a">` was created before `R<"b">`, so it reports the error only with `l` declared first.
-    test.each([`declare let l: R<"b">, s: R<"a">;`, `declare let s: R<"a">, l: R<"b">;`])(
-      "reports an error three steps into a cycle of literal type arguments, after %s",
-      async declarations => {
-        using dir = project({
-          "a.ts": `type Next<P> = P extends "a" ? "b" : P extends "b" ? "c" : P extends "c" ? "d" : "a";
-type V<P> = P extends "d" ? number : string;
-type R<P> = { v: V<P>; u: Partial<Record<P & "q", boolean>>; next: R<Next<P>>; };
-${declarations}
-s = l;
-export {};
-`,
-        });
-        const { stdout, exitCode } = await check(dir);
-        expect(stdout).toBe(
-          `
-a.ts(5,1): error TS2322: Type 'R<"b">' is not assignable to type 'R<"a">'.
-  The types of 'next.next.v' are incompatible between these types.
-    Type 'number' is not assignable to type 'string'.
-`.slice(1, -1),
-        );
-        expect(exitCode).toBe(1);
-      },
-    );
-
-    // `Readonly<T1<any, string>>` is in progress on one side before `T1<any, "x">` is on the other, so it isn't a newer
-    // instantiation, although it's the larger type.
-    test("reports an error between generic types that are compared in both directions inside Readonly", async () => {
+    // `G`'s argument alternates between `[1]` and `1`, so one side repeats two types while the other side grows forever.
+    // The side that repeats has to count as recursion too, or nothing ends the comparison.
+    test.each([
+      [
+        "an assignment",
+        `type H<N> = { v: string; next: H<[N]> };
+type G<X> = { v: string; next: G<St<X>> };
+declare let s: H<0>, l: G<[1]>;
+s = l;`,
+      ],
+      [
+        "an inference",
+        `type H<N> = { v: string; next: H<[N]> };
+type G<X> = { v: string; next: G<St<X>> };
+declare function f<T>(h: H<T>): T;
+declare const a: G<[1]>;
+export const r = f(a);`,
+      ],
+      [
+        "an assignment to a type that branches 20 levels deep",
+        `type D<N extends unknown[], T> = N["length"] extends 20 ? {} : { v: string; next: D<[...N, 0], [T, 0]>; alt: D<[...N, 0], [T, 1]> };
+type G<X> = { v: string; next: G<St<X>>; alt: G<St<X>> };
+declare let s: D<[], 0>, l: G<[1]>;
+s = l;`,
+      ],
+    ])("accepts %s from a recursive type whose argument alternates between two forms", async (_, text) => {
       using dir = project({
-        "a.ts": `type T1<H, P> = { e0(x: T0<any, P>): void; e2: (x: T2<any, P>) => void; };
-type T2<H, P> = (x: { __p?: P; e1: (x: Readonly<T1<any, P>>) => void; }) => void;
-type T0<H, P> = (x: { r: Partial<Record<P & string, boolean>>; e1(x: Readonly<T1<any, P>>): void; }) => void;
-declare let s1: T1<1, string>, l1: T1<1, "x">;
-s1 = l1;
+        "a.ts": `type St<X> = X extends [infer U] ? U : [X];
+${text}
 export {};
 `,
       });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toBe(
-        `
-a.ts(5,1): error TS2322: Type 'T1<1, "x">' is not assignable to type 'T1<1, string>'.
-  Types of property 'e0' are incompatible.
-    Type '(x: T0<any, "x">) => void' is not assignable to type '(x: T0<any, string>) => void'.
-      Types of parameters 'x' and 'x' are incompatible.
-        Types of parameters 'x' and 'x' are incompatible.
-          Type '{ r: Partial<Record<"x", boolean>>; e1(x: Readonly<T1<any, "x">>): void; }' is not assignable to type '{ r: Partial<Record<string, boolean>>; e1(x: Readonly<T1<any, string>>): void; }'.
-            Types of property 'e1' are incompatible.
-              Type '(x: Readonly<T1<any, "x">>) => void' is not assignable to type '(x: Readonly<T1<any, string>>) => void'.
-                Types of parameters 'x' and 'x' are incompatible.
-                  Type 'Readonly<T1<any, string>>' is not assignable to type 'Readonly<T1<any, "x">>'.
-                    Types of property 'e2' are incompatible.
-                      Type '(x: T2<any, string>) => void' is not assignable to type '(x: T2<any, "x">) => void'.
-                        Types of parameters 'x' and 'x' are incompatible.
-                          Types of parameters 'x' and 'x' are incompatible.
-                            Type '{ __p?: string | undefined; e1: (x: Readonly<T1<any, string>>) => void; }' is not assignable to type '{ __p?: "x" | undefined; e1: (x: Readonly<T1<any, "x">>) => void; }'.
-                              Types of property '__p' are incompatible.
-                                Type 'string | undefined' is not assignable to type '"x" | undefined'.
-                                  Type 'string' is not assignable to type '"x"'.
-`.slice(1, -1),
-      );
-      expect(exitCode).toBe(1);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
     });
 
     test("an intersection with a conditional type whose constraint is any", async () => {

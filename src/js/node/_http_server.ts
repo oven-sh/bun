@@ -2714,17 +2714,17 @@ function emitResponseFinish() {
   // A listener that threw after res.end() skipped message-complete. The connection goes on, so the request still ends.
   if (req && !req.complete && req[noBodySymbol]) completeWithoutBody(req);
   // Node's resOnFinish: dump a body that nobody consumed or resumed.
-  if (req && !req._consuming && !req._readableState?.resumeScheduled) {
-    req._dump();
-  }
+  const dumped = req != null && !req._consuming && !req._readableState?.resumeScheduled;
+  if (dumped) req._dump(true);
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
   const socket = this.req?.socket ?? this.socket;
   // Node's clearIncoming. Node also keeps a request that nothing reads, with its buffered body, until the next request.
+  // A dumped request is not one of those: it ends, also when _dump() took read(0) and the request does not flow.
   const parser = socket?.parser;
   if (parser != null && parser.incoming === req) {
-    if (req.readableEnded || (req.readableFlowing !== true && req.listenerCount("readable") === 0)) {
+    if (req.readableEnded || (!dumped && req.readableFlowing !== true && req.listenerCount("readable") === 0)) {
       parser.incoming = null;
     } else {
       req.on("end", clearIncomingOnEnd);

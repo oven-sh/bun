@@ -513,7 +513,7 @@ function connectionListenerHTTP1(server, socket, options) {
     // response, replaying whatever it buffered.
     res.on("finish", function onFallbackResponseFinish() {
       const finishedReq = this.req;
-      if (!finishedReq._consuming && !finishedReq._readableState.resumeScheduled) finishedReq._dump();
+      if (!finishedReq._consuming && !finishedReq._readableState.resumeScheduled) finishedReq._dump(true);
       this.detachSocket(socket);
       // `_last`: onHttp1SocketEnd saw the client's FIN while this response owned the socket.
       if (this[kMustCloseConnection] || this._last) {

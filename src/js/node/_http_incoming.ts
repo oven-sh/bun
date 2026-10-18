@@ -711,14 +711,26 @@ IncomingMessage.prototype._dumpAndCloseReadable = function _dumpAndCloseReadable
 
 // Call this instead of resume() if we want to just
 // dump all the data to /dev/null
-IncomingMessage.prototype._dump = function _dump() {
+IncomingMessage.prototype._dump = function _dump(ofServer?: boolean) {
   if (!this._dumped) {
     this._dumped = true;
     // If there is buffered data, it may trigger 'data' events.
     // Remove 'data' event listeners explicitly.
     this.removeAllListeners("data");
-    // ondata stays armed: it drops the chunks and still delivers the last one, which completes the request.
-    this.resume();
+    // Only for a request of a server. For a response of the client, read(0) in ClientRequest#destroy(err) puts 'end'
+    // ahead of the error of the socket, and 'end' of a keep-alive response removes the 'error' listener of the socket
+    // (nodejs/node#65938). The guard of Node.js for that (nodejs/node#65952) reads the writableFinished of
+    // nodejs/node#64847, which is not ported. With both ported, `ofServer` goes.
+    if (ofServer === true && this.complete && !this.destroyed && this.readableLength === 0) {
+      // The message was fully received and never read: there is nothing to
+      // pull off the wire. Go straight to the 'end' emission instead of
+      // paying for the resume() and flow() scheduling machinery.
+      // https://github.com/nodejs/node/blob/v26.11.1/lib/_http_incoming.js#L564-L579
+      this.read(0);
+    } else {
+      // ondata stays armed: it drops the chunks and still delivers the last one, which completes the request.
+      this.resume();
+    }
   }
 };
 

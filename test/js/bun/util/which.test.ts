@@ -1,6 +1,6 @@
 import { $, which } from "bun";
 import { dlopen, ptr } from "bun:ffi";
-import { expect, test } from "bun:test";
+import { expect, jest, test } from "bun:test";
 import { isArm64, isIntelMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,6 +30,77 @@ function writeFixture(path: string) {
 test("which rlly long", async () => {
   const longstr = "a".repeat(100000);
   expect(() => which(longstr)).toThrow("bin path is too long");
+});
+
+test("which without a command", () => {
+  // @ts-expect-error
+  expect(which()).toBeNull();
+  for (const nothing of [undefined, null, ""] as any[]) expect(which(nothing)).toBeNull();
+
+  // The options are converted all the same.
+  const PATH = jest.fn(() => "");
+  expect(
+    which("", {
+      get PATH() {
+        return PATH();
+      },
+    }),
+  ).toBeNull();
+  expect(PATH).toHaveBeenCalledTimes(1);
+  expect(() => which(null as any, { cwd: Symbol() } as any)).toThrow(
+    expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a string" }),
+  );
+});
+
+test("which converts the command, PATH and cwd to strings, in that order", () => {
+  using dir = tempDir("which-arguments", { "bin/123": "", "bin/é": "" });
+  const bin = join(realpathSync(String(dir)), "bin");
+  for (const name of ["123", "é"]) chmodSync(join(bin, name), 0o755);
+
+  const log: string[] = [];
+  const stringLike = (name: string, value: string) => ({
+    toString() {
+      log.push(name);
+      return value;
+    },
+  });
+  const found = isWindows ? null : join(bin, "123");
+  expect(
+    which(stringLike("command", "123") as any, { cwd: stringLike("cwd", bin), PATH: stringLike("PATH", bin) } as any),
+  ).toBe(found);
+  expect(log).toEqual(["command", "PATH", "cwd"]);
+  expect(which(123 as any, { PATH: bin })).toBe(found);
+  expect(which(new String("123") as any, { PATH: bin })).toBe(found);
+  expect(which("é", { PATH: bin })).toBe(isWindows ? null : join(bin, "é"));
+  for (const call of [() => which(Symbol() as any), () => which("123", { PATH: Symbol() } as any)]) {
+    expect(call).toThrow(
+      expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a string" }),
+    );
+  }
+});
+
+test("which ignores options that are not an object, and Object.prototype", () => {
+  const shell = isWindows ? "cmd" : "sh";
+  const found = which(shell);
+  expect(found).toBeString();
+  for (const options of [undefined, null, 1, "PATH", true, 1n, Symbol(), {}, []] as any[]) {
+    expect(which(shell, options)).toBe(found);
+  }
+  expect(which(shell, { PATH: undefined, cwd: undefined })).toBe(found);
+  expect(which(shell, { PATH: "" })).toBeNull();
+  for (const options of [
+    Object.create({ PATH: "" }),
+    Object.assign([], { PATH: "" }),
+    Object.assign(() => {}, { PATH: "" }),
+  ]) {
+    expect(which(shell, options)).toBeNull();
+  }
+  (Object.prototype as any).PATH = "";
+  try {
+    expect(which(shell, {})).toBe(found);
+  } finally {
+    delete (Object.prototype as any).PATH;
+  }
 });
 
 if (isWindows) {

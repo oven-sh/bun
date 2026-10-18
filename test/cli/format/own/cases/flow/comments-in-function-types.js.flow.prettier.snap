@@ -1,0 +1,155 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A = (a /* 1 */: number, b /* 2 */?: string) => void;
+
+type B = (
+  a: number, // 1
+) => void;
+
+type C = (
+  a: // 1
+  number,
+) => void;
+
+type D = (
+  a: number, // 1
+) => void;
+
+type E = (a: B /* 1 */) => C;
+
+type F = (
+  a: B, // 1
+) => C;
+
+type G = () => /* 1 */ void;
+
+type H = (this: /* 1 */ B, a: C) => void;
+
+type I = {
+  [k: string]: number, // 1
+};
+
+type J = { m(): /* 1 */ void, n(/* 2 */ a: A): void, get g /* 3 */(): 1 };
+
+type K = {
+  get g(): 1, // 1
+  // 2
+};
+
+type K1 = {
+  m<T> /* 1 */(): void,
+  n<T>(/* 2 */ a: T): void,
+  <T> /* 3 */(): void,
+};
+
+type L = { m(): /* 1 */ void };
+
+type M = /* 1 */ hook () => void;
+
+type N = hook () => /* 1 */ void;
+
+type O = hook (
+  a: 1, // 1
+) => void;
+
+type P = component(
+  a /* 1 */?: 1,
+  b: 2, // 2
+) renders C;
+
+type Q = component(
+  a: 1,
+  // 1
+) renders C;
+
+type Q1 = component(
+  a: 1,
+  // 1
+) renders C;
+
+type R = A</* 1 */>;
+
+type S = B extends infer /* 1 */ G ? G : H;
+
+type T = /* 1 */ interface { c: 1 };
+
+type U = // 1
+  interface { c: 1 };
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A = (a /* 1 */: number, b /* 2 */?: string) => void;
+
+type B = (
+  a: number, // 1
+) => void;
+
+type C = (
+  a: // 1
+  number,
+) => void;
+
+type D = (
+  a: number, // 1
+) => void;
+
+type E = (a: B /* 1 */) => C;
+
+type F = (
+  a: B, // 1
+) => C;
+
+type G = () => /* 1 */ void;
+
+type H = (this: /* 1 */ B, a: C) => void;
+
+type I = {
+  [k: string]: number, // 1
+};
+
+type J = { m(): /* 1 */ void, n(/* 2 */ a: A): void, get g /* 3 */(): 1 };
+
+type K = {
+  get g(): 1, // 1
+  // 2
+};
+
+type K1 = { m<T> /* 1 */(): void, n<T>(/* 2 */ a: T): void, <T> /* 3 */(): void };
+
+type L = { m(): /* 1 */ void };
+
+type M = /* 1 */ hook () => void;
+
+type N = hook () => /* 1 */ void;
+
+type O = hook (
+  a: 1, // 1
+) => void;
+
+type P = component(
+  a /* 1 */?: 1,
+  b: 2, // 2
+) renders C;
+
+type Q = component(
+  a: 1,
+  // 1
+) renders C;
+
+type Q1 = component(
+  a: 1,
+  // 1
+) renders C;
+
+type R = A</* 1 */>;
+
+type S = B extends infer /* 1 */ G ? G : H;
+
+type T = /* 1 */ interface { c: 1 };
+
+type U = // 1
+  interface { c: 1 };
+
+===================== End =====================

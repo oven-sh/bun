@@ -2336,7 +2336,12 @@ pub struct StyleSheet<AtRule> {
     pub sources: Vec<Box<[u8]>>,
     pub source_map_urls: Vec<Option<Box<[u8]>>>,
     pub license_comments: Vec<&'static [u8]>, // TODO: lifetime — arena
-    pub options: ParserOptions<'static>,      // TODO: lifetime
+    /// [`ParserOptions::filename`] of the parse.
+    pub filename: &'static [u8], // TODO: lifetime
+    /// [`ParserOptions::css_modules`] of the parse.
+    pub css_modules: Option<css_modules::Config>,
+    /// [`ParserOptions::flags`] of the parse.
+    pub flags: ParserFlags,
     /// Every `@layer` name seen after the first `@import`, in cascade order.
     pub layer_names: Vec<LayerName>,
     /// The names of the `@layer` statements that precede every `@import`.
@@ -2358,7 +2363,9 @@ impl<AtRule> StyleSheet<AtRule> {
             sources: Vec::new(),
             source_map_urls: Vec::new(),
             license_comments: Vec::new(),
-            options: ParserOptions::default(None),
+            filename: b"",
+            css_modules: None,
+            flags: ParserFlags::default(),
             layer_names: Vec::new(),
             layers_pre_import: Vec::new(),
             local_scope: LocalScope::default(),
@@ -2396,7 +2403,7 @@ mod stylesheet_impl {
             // here and create a lookup table by name.
             let custom_media: Option<
                 ArrayHashMap<Box<[u8]>, css_rules::custom_media::CustomMediaRule>,
-            > = if self.options.flags.contains(ParserFlags::CUSTOM_MEDIA)
+            > = if self.flags.contains(ParserFlags::CUSTOM_MEDIA)
                 && options
                     .targets
                     .should_compile_same(compat::Feature::CustomMediaQueries)
@@ -2421,7 +2428,7 @@ mod stylesheet_impl {
                 handler_context: ctx,
                 unused_symbols: &options.unused_symbols,
                 custom_media,
-                css_modules: self.options.css_modules.is_some(),
+                css_modules: self.css_modules.is_some(),
                 extra,
                 err: None,
                 selector_expansion_multiplier: 1,
@@ -2440,7 +2447,7 @@ mod stylesheet_impl {
                     .sources
                     .get(e.loc.source_index as usize)
                     .map(|source| &**source)
-                    .unwrap_or(self.options.filename);
+                    .unwrap_or(self.filename);
                 let minify_error = Err {
                     kind: e.kind,
                     loc: Some(ErrorLocation {
@@ -2500,7 +2507,7 @@ mod stylesheet_impl {
                 printer.newline()?;
             }
 
-            if let Some(config) = &self.options.css_modules {
+            if let Some(config) = &self.css_modules {
                 let mut references = CssModuleReferences::default();
                 let references_ptr: *mut CssModuleReferences<'_> = &raw mut references;
                 // SAFETY: `'bump`-erasure — `Printer<'a>` stores `CssModule<'a>` which
@@ -2559,7 +2566,7 @@ mod stylesheet_impl {
         pub fn parse(
             arena: &'static Bump,
             code: &[u8],
-            options: ParserOptions<'static>,
+            options: ParserOptions<'_>,
             import_records: Option<&mut Vec<ImportRecord>>,
             source_index: SrcIndex,
         ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
@@ -2585,13 +2592,10 @@ mod stylesheet_impl {
         }
 
         /// Parse a style sheet from a string.
-        // TODO: `ParserOptions<'static>` matches the `StyleSheet.options`
-        // field's `'static` erasure; re-threads to `<'bump>` alongside the rest of
-        // the crate.
         pub(crate) fn parse_with<P: CustomAtRuleParser<AtRule = AtRule>>(
             arena: &'static Bump,
             code: &[u8],
-            options: ParserOptions<'static>,
+            options: ParserOptions<'_>,
             at_rule_parser: &mut P,
             import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
             source_index: SrcIndex,
@@ -2680,7 +2684,9 @@ mod stylesheet_impl {
                     sources,
                     source_map_urls,
                     license_comments,
-                    options,
+                    filename: options.filename,
+                    css_modules: options.css_modules,
+                    flags: options.flags,
                     layer_names,
                     layers_pre_import,
                     local_scope: parser_extra.local_scope,
@@ -2767,27 +2773,17 @@ mod stylesheet_impl {
         pub fn parse_bundler(
             arena: &'static Bump,
             code: &[u8],
-            options: ParserOptions<'static>,
+            options: ParserOptions<'_>,
             import_records: &mut Vec<ImportRecord>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
             // `import_records` is shared by both `BundlerAtRuleParser` and the
-            // inner `Parser`, and `options` is both borrowed by the at-rule
-            // parser and passed by value:
-            // - `import_records`: derive a single raw `NonNull` from the unique
-            //   borrow; both the at-rule parser and `Parser::new` store copies of
-            //   that raw pointer. Neither holds a
-            //   long-lived `&mut`, so interleaved writes from `on_import_rule` and
-            //   `add_import_record`/`state`/`reset` each create a fresh short-lived
-            //   `&mut` from the shared SharedRW provenance — sound under SB.
-            // - `options`: bitwise-duplicate via `ptr::read` and wrap the
-            //   original in `ManuallyDrop` so
-            //   only the moved copy drops — `ParserOptions` transitively owns a
-            //   `SmallList` (via `css_modules::Config::pattern`) which has a real
-            //   `Drop`, so both copies must not run their destructors.
-            let options = core::mem::ManuallyDrop::new(options);
-            // SAFETY: original is `ManuallyDrop`; only `options_for_parse` drops.
-            let options_for_parse = unsafe { core::ptr::read(&raw const *options) };
+            // inner `Parser`: derive a single raw `NonNull` from the unique
+            // borrow; both the at-rule parser and `Parser::new` store copies of
+            // that raw pointer. Neither holds a
+            // long-lived `&mut`, so interleaved writes from `on_import_rule` and
+            // `add_import_record`/`state`/`reset` each create a fresh short-lived
+            // `&mut` from the shared SharedRW provenance — sound under SB.
             let import_records_ptr = core::ptr::NonNull::from(import_records);
             let mut at_rule_parser = BundlerAtRuleParser {
                 arena,
@@ -2801,7 +2797,7 @@ mod stylesheet_impl {
             Self::parse_with(
                 arena,
                 code,
-                options_for_parse,
+                options,
                 &mut at_rule_parser,
                 Some(import_records_ptr),
                 source_index,
@@ -2944,10 +2940,9 @@ pub struct ParserOptions<'a> {
     /// Stored as a raw `NonNull<Log>` so `warn(&self)`
     /// can soundly write through it. Deriving `&mut Log` from a `&self`-reachable
     /// `&'a mut Log` (the previous representation) is UB under Stacked Borrows
-    /// — see PORTING.md §Forbidden patterns. The caller that constructs
-    /// `ParserOptions` guarantees the pointee outlives `'a` and is not aliased
-    /// for the duration of parsing.
-    pub logger: Option<core::ptr::NonNull<Log>>,
+    /// — see PORTING.md §Forbidden patterns. Only `default` sets it, from a
+    /// `&'a mut Log`.
+    logger: Option<core::ptr::NonNull<Log>>,
     /// Feature flags to enable.
     pub flags: ParserFlags,
     _lt: core::marker::PhantomData<&'a mut Log>,

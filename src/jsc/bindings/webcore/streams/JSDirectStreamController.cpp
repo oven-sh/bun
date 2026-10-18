@@ -431,13 +431,16 @@ static JSValue writeToTextSink(JSGlobalObject* globalObject, JSDirectStreamContr
             ropeString = jsString(vm, accumulator.rope.toString());
             RETURN_IF_EXCEPTION(scope, {});
         }
-        // GC-allocation is done; the barrier container is only mutated under the cell lock.
-        Locker locker { controller->cellLock() };
-        if (ropeString) {
-            accumulator.pieces.append(WriteBarrier<Unknown>(vm, controller, ropeString));
-            accumulator.rope.clear();
+        // GC-allocation is done; the barrier container is only mutated under the cell lock, and the throw waits for the unlock.
+        bool appended;
+        {
+            Locker locker { controller->cellLock() };
+            appended = accumulator.tryAppendPieces(locker, vm, controller, ropeString, chunk);
         }
-        accumulator.pieces.append(WriteBarrier<Unknown>(vm, controller, chunk));
+        if (!appended) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
     }
     accumulator.estimatedLength += byteLength;
     return jsNumber(byteLength);
@@ -724,7 +727,7 @@ static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirec
     return {};
 }
 
-JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool readRequestQueued)
+bool JSDirectStreamController::onPull(JSGlobalObject* globalObject, JSPromise* readPromise)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -737,32 +740,38 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
         m_finalChunk.clear();
         auto* stream = m_stream.get();
         // A queued read request (for-await/tee/pipeTo) takes the chunk through its own
-        // chunkSteps; a promise-backed read gets it wrapped in the returned promise.
+        // chunkSteps; a promise-backed read is fulfilled with it.
         if (stream && readableStreamHasDefaultReader(stream) && readableStreamGetNumReadRequests(stream) > 0) {
             readableStreamFulfillReadRequest(globalObject, stream, chunk, false);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, false);
             readableStreamCloseIfPossible(globalObject, stream);
-            RETURN_IF_EXCEPTION(scope, {});
-            return jsUndefined();
+            RETURN_IF_EXCEPTION(scope, false);
+            return false;
         }
-        JSObject* result = createIteratorResultObject(globalObject, chunk, false);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
-        promise->fulfill(vm, result);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (readPromise) {
+            JSObject* result = createIteratorResultObject(globalObject, chunk, false);
+            RETURN_IF_EXCEPTION(scope, false);
+            readPromise->fulfill(vm, result);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
         if (stream) {
             readableStreamCloseIfPossible(globalObject, stream);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, false);
         }
-        return promise;
+        return true;
     }
 
     auto* stream = m_stream.get();
     if (!stream || stream->m_state != ReadableStreamState::Readable || m_closed)
-        return jsUndefined();
+        return false;
     // Re-entrant pull while a pull is already running.
     if (m_deferClose == -1)
-        return jsUndefined();
+        return false;
+    // Refuse before pull() runs, or a close() that pull() defers is lost with the read.
+    if (readPromise && m_pendingRead && readableStreamReadRequestsFull(stream)) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return false;
+    }
 
     int8_t deferredClose = 0;
     int8_t deferredFlush = 0;
@@ -781,16 +790,18 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
         m_deferClose = 0;
         m_deferFlush = 0;
         // A VM termination from the pull, or a failure while registering the reaction.
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, false);
 
         if (!abrupt.isEmpty()) {
             // A synchronous throw from pull errors the stream, which settles a queued read
             // request through its errorSteps; a promise-backed read gets the rejection here.
             handleError(globalObject, abrupt);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (readRequestQueued)
-                return jsUndefined();
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, abrupt));
+            RETURN_IF_EXCEPTION(scope, false);
+            if (readPromise) {
+                rejectPromise(globalObject, readPromise, abrupt);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            return true;
         }
     } else {
         // A new read arrived while an async pull is pending: the fulfillment reaction will
@@ -804,30 +815,31 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
     // A queued read request was already settled by the stream's error/close steps.
     stream = m_stream.get();
     if (!stream || stream->m_state != ReadableStreamState::Readable) {
-        if (readRequestQueued)
-            return jsUndefined();
-        if (auto* pendingRead = m_pendingRead.get())
-            return pendingRead;
-        if (stream && stream->m_state == ReadableStreamState::Errored)
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, stream->m_storedError.get()));
+        if (!readPromise)
+            return true;
+        if (stream && stream->m_state == ReadableStreamState::Errored) {
+            JSValue storedError = stream->m_storedError.get();
+            rejectPromise(globalObject, readPromise, storedError ? storedError : jsUndefined());
+            RETURN_IF_EXCEPTION(scope, false);
+            return true;
+        }
         JSObject* doneResult = createIteratorResultObject(globalObject, jsUndefined(), true);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto* doneP = JSPromise::create(vm, globalObject->promiseStructure());
-        doneP->fulfill(vm, doneResult);
-        return doneP;
+        RETURN_IF_EXCEPTION(scope, false);
+        readPromise->fulfill(vm, doneResult);
+        RETURN_IF_EXCEPTION(scope, false);
+        return true;
     }
 
     // Register the consumer before replaying what pull() deferred. A queued read request is
-    // already registered; a promise made for it here would swallow that delivery unobserved.
-    JSPromise* promiseToReturn = nullptr;
-    if (!readRequestQueued) {
-        promiseToReturn = JSPromise::create(vm, globalObject->promiseStructure());
+    // already registered.
+    if (readPromise) {
         if (!m_pendingRead)
-            m_pendingRead.set(vm, this, promiseToReturn);
+            m_pendingRead.set(vm, this, readPromise);
         else {
             auto* runtime = JSStreamsRuntime::from(globalObject);
-            auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::Promise, promiseToReturn);
-            readableStreamAddReadRequest(vm, stream, readRequest);
+            auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::Promise, readPromise);
+            readableStreamAddReadRequest(globalObject, stream, readRequest);
+            RETURN_IF_EXCEPTION(scope, false);
         }
     }
 
@@ -835,14 +847,14 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
         JSValue reason = m_deferCloseReason.get();
         m_deferCloseReason.clear();
         onClose(globalObject, reason);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, false);
     } else if (deferredFlush == 1 || !m_buffer.isEmpty()) {
         // Bytes written before this read (outside pull, or by a producer now parked on
         // backpressure) go to the consumer just registered.
         onFlush(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, false);
     }
-    return promiseToReturn ? JSValue(promiseToReturn) : jsUndefined();
+    return true;
 }
 
 void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue reason)

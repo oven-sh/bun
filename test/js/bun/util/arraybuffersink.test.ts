@@ -146,14 +146,14 @@ describe("ArrayBufferSink", () => {
   it("close() followed by further calls does not crash", () => {
     const s = new ArrayBufferSink();
     s.write("hello");
-    s.close();
+    (s as any).close();
     // After close() the wrapper is detached; every method that needs the
     // native backing throws the "already been closed" error rather than
     // dereferencing a freed pointer.
     expect(() => s.write("x")).toThrow(/already been closed/);
     expect(() => s.flush()).toThrow(/already been closed/);
     expect(() => s.end()).toThrow(/already been closed/);
-    expect(s.close()).toBeUndefined();
+    expect((s as any).close()).toBeUndefined();
   });
 
   it("start() with an option getter that closes the sink throws instead of crashing", async () => {

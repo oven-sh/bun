@@ -133,7 +133,7 @@ static const WTF::String toString(EncodedSlice str)
         }
 
         return !isTaggedUTF16Ptr(str.ptr)
-            ? WTF::String(WTF::ExternalStringImpl::create({ untag(str.ptr), str.len }, untagVoid(str.ptr), free_global_string))
+            ? WTF::String(WTF::ExternalStringImpl::create({ byteCast<Latin1Character>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string))
             : WTF::String(WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
     }
 
@@ -143,7 +143,7 @@ static const WTF::String toString(EncodedSlice str)
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
-        ? WTF::String(WTF::StringImpl::createWithoutCopying({ untag(str.ptr), str.len }))
+        ? WTF::String(WTF::StringImpl::createWithoutCopying({ byteCast<Latin1Character>(untag(str.ptr)), str.len }))
         : WTF::String(WTF::StringImpl::createWithoutCopying(
               { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
 }
@@ -171,7 +171,7 @@ static const WTF::String toStringCopy(EncodedSlice str, StringPointer ptr)
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
-        ? WTF::String(WTF::StringImpl::create(std::span { &untag(str.ptr)[ptr.off], ptr.len }))
+        ? WTF::String(WTF::StringImpl::create(std::span { byteCast<Latin1Character>(&untag(str.ptr)[ptr.off]), ptr.len }))
         : WTF::String(WTF::StringImpl::create(
               std::span { &reinterpret_cast<const char16_t*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
@@ -234,7 +234,7 @@ static void appendToBuilder(EncodedSlice str, WTF::StringBuilder& builder)
         return;
     }
 
-    builder.append({ untag(str.ptr), str.len });
+    builder.append({ byteCast<Latin1Character>(untag(str.ptr)), str.len });
 }
 
 static JSC::JSString* toJSStringGC(EncodedSlice str, JSC::JSGlobalObject* global)
@@ -257,7 +257,7 @@ static EncodedSlice toEncodedSlice(const WTF::StringImpl* str)
 {
     return (!str || str->isEmpty())
         ? EncodedSliceEmpty
-        : EncodedSlice { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
+        : EncodedSlice { str->is8Bit() ? byteCast<uint8_t>(str->span8().data()) : taggedUTF16Ptr(str->span16().data()),
               str->length() };
 }
 
@@ -265,7 +265,7 @@ static EncodedSlice toEncodedSlice(const WTF::StringView& str)
 {
     return str.isEmpty()
         ? EncodedSliceEmpty
-        : EncodedSlice { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
+        : EncodedSlice { str.is8Bit() ? byteCast<uint8_t>(str.span8().data()) : taggedUTF16Ptr(str.span16().data()),
               str.length() };
 }
 
@@ -301,7 +301,7 @@ static const WTF::String toStringStatic(EncodedSlice str)
     // and asserts a trailing NUL) over-reads. Intern via a length-bounded span
     // instead — same atom-table caching, no NUL dependency.
     auto* untagged = untag(str.ptr);
-    return WTF::String(AtomStringImpl::add(std::span { untagged, str.len }));
+    return WTF::String(AtomStringImpl::add(std::span { byteCast<Latin1Character>(untagged), str.len }));
 }
 
 static const JSC::Identifier toIdentifier(EncodedSlice str, JSC::JSGlobalObject* global)

@@ -968,8 +968,11 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
           "fs.watch listener": boom => {
             const dir = path.join(import.meta.dirname, "watched");
             fs.mkdirSync(dir);
-            const w = fs.watch(dir, () => { w.close(); boom(); });
-            fs.writeFileSync(path.join(dir, "f"), "x");
+            const w = fs.watch(dir, () => { clearInterval(again); w.close(); boom(); });
+            // macOS starts watching on another thread after fs.watch() returns, and reports nothing written before that.
+            const write = () => fs.writeFileSync(path.join(dir, "f"), "x");
+            write();
+            const again = setInterval(write, 5);
           },
           "a read stream's 'data'": boom => { fs.createReadStream(import.meta.filename).on("data", boom); },
           "a zlib stream's 'data'": boom => { const z = zlib.createGzip(); z.on("data", boom); z.end("hello"); },

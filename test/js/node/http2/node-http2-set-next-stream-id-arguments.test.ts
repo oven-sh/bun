@@ -1,10 +1,5 @@
-// Every HTTP/2 session has a getter named Symbol.for("::bunhttp2native::") that
-// returns its native session object. session.setNextStreamID(id) checks the id
-// and then calls the native setNextStreamID(id), but script can call the native
-// method itself. With no argument it read past the end of the argument list,
-// which ended the process with
-// "panic: index out of bounds: the len is 0 but the index is 0".
-// The fixture runs in a subprocess because that failure kills the process.
+// session.setNextStreamID(id) validates the id first, so the test calls the native method itself.
+// The calls run in a subprocess because a native panic ends the process.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug } from "harness";
 

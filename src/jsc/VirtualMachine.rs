@@ -186,6 +186,12 @@ pub struct VirtualMachine {
     pub bake_config_plugins: crate::strong::Optional,
     /// The names of `bake_config_plugins`.
     pub bake_config_plugin_names: Box<[Box<[u8]>]>,
+    /// `bun bake`: the next `Bun.serve()` (its own) adds the routers of a framework: the one in
+    /// `bake_framework`, or the default React framework. That call clears it.
+    pub bake_pages: bool,
+    /// `bun bake`: the `framework` object of a plugin in `bake.config.ts`, as for the `app` option of
+    /// `Bun.serve()`. Empty for the default React framework.
+    pub bake_framework: crate::strong::Optional,
     pub(crate) entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
     // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
@@ -3246,6 +3252,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).main_entry_point).write(MainEntryPoint::File);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
             addr_of_mut!((*vm).bake_config_plugin_names).write(Box::default());
+            addr_of_mut!((*vm).bake_pages).write(false);
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
             // Left at the
@@ -5662,6 +5669,7 @@ impl VirtualMachine {
         self.overridden_main.deinit();
         self.bake_config_plugins.deinit();
         drop(core::mem::take(&mut self.bake_config_plugin_names));
+        self.bake_framework.deinit();
         self.pending_internal_promise.deinit();
 
         // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so

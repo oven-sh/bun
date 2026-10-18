@@ -33,6 +33,8 @@ function spawnBake(dir: string, args: string[]) {
     cmd: [bunExe(), ...args],
     env,
     cwd: dir,
+    // Some fixtures catch SIGTERM, so the cleanup of `await using` would wait for an exit that never comes.
+    killSignal: "SIGKILL",
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -242,6 +244,82 @@ test.concurrent.each([
     waits: true,
     files: { "app/pages/index.html": page, "bake.config.ts": `export default { plugins: [{ setup() {} }] };` },
     error: `"bake.config.ts": plugins[0] has no "name".`,
+  },
+  {
+    name: "two plugins in bake.config.ts with a framework",
+    files: {
+      "app/pages/.keep": "",
+      "r.ts": `export function render() { return new Response("x"); }`,
+      "bake.config.ts": `
+        const framework = { fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./r.ts" }] };
+        export default { plugins: [{ name: "a", framework }, { name: "b", framework }] };
+      `,
+    },
+    waits: true,
+    error: `"bake.config.ts": the plugins "a" and "b" both have a framework.`,
+  },
+  {
+    name: "a framework that Bun.serve() rejects",
+    files: {
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: { fileSystemRouterTypes: [{ root: "app/pages", serverEntryPoint: "./r.ts" }] } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the framework of "a": 'fileSystemRouterTypes[0]' is missing 'style'`,
+  },
+  {
+    name: "a framework with clientPages and serverComponents",
+    files: {
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: {
+        fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./r.ts", clientEntryPoint: "./r.ts", clientPages: true }],
+        serverComponents: { separateSSRGraph: false, serverRuntimeImportSource: "./rt.ts" },
+      } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the framework of "a": 'fileSystemRouterTypes[n].clientPages' cannot be used with 'serverComponents'`,
+  },
+  {
+    name: "a framework with plugins",
+    files: {
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: { plugins: [], fileSystemRouterTypes: [] } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the framework of "a": "plugins" is not supported in "bun bake". Add build plugins to "plugins" of bake.config.ts.`,
+  },
+  {
+    name: "a framework with clientPages and no clientEntryPoint",
+    files: {
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: {
+        fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./r.ts", clientPages: true }],
+      } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the framework of "a": 'fileSystemRouterTypes[0].clientPages' needs a 'clientEntryPoint'`,
+  },
+  {
+    name: "a .tsx page and an .html page at the same URL",
+    files: {
+      "app/pages/index.html": page,
+      "app/pages/index.tsx": `document.title = "a script of the .html page";`,
+    },
+    error: `"app/pages/index.tsx" and "app/pages/index.html" are both the page "/". Move the script of the .html page out of app/pages/.`,
+  },
+  {
+    name: "a framework router whose root folder does not exist",
+    files: {
+      "r.ts": `export function render() { return new Response("x"); }`,
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: { fileSystemRouterTypes: [{ root: "src/route", style: "nextjs-pages", serverEntryPoint: "./r.ts" }] } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the framework of "a": its router's root folder "src/route" does not exist.`,
+  },
+  {
+    name: "a framework entry point that cannot be found",
+    files: {
+      "app/pages/.keep": "",
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: { fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./nope.ts" }] } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the framework of "a": cannot find "./nope.ts", its serverEntryPoint.`,
   },
   {
     name: "a bake.config.ts default export that is not an object",
@@ -714,6 +792,7 @@ test.concurrent.skipIf(isWindows)(
       cmd: [bunExe(), "bake", "--port=0"],
       env,
       cwd: String(dir),
+      killSignal: "SIGKILL",
       terminal: {
         cols: 200,
         rows: 50,
@@ -961,3 +1040,297 @@ test.concurrent.skipIf(isWindows)(
     expect(await get(url, "/missing")).toBe("200 v3");
   },
 );
+
+/** Links the React of the test suite into a project in `dir`. A junction needs no privilege on Windows. */
+function linkReact(dir: string) {
+  symlinkSync(join(import.meta.dir, "../../node_modules"), join(dir, "node_modules"), "junction");
+}
+
+test.concurrent(
+  "bun bake renders .tsx pages, with layouts and params, next to .html pages and app/server.ts",
+  async () => {
+    using dir = tempDir("bake-command-tsx", {
+      "app/pages/index.tsx": `export default function Home() { return <h1>Home</h1>; }`,
+      "app/pages/blog/[slug].tsx": `export default function Post({ params }) { return <h1>{"Post " + params.slug}</h1>; }`,
+      "app/pages/_layout.tsx": `export default function Layout({ children }) { return <main className="layout">{children}</main>; }`,
+      "app/pages/about.html": `<!doctype html><html><body><h1>About</h1></body></html>`,
+      "app/server.ts": `
+      export default {
+        routes: { "/api/hello": () => Response.json({ hi: 1 }) },
+        fetch: () => new Response("fallback", { status: 404 }),
+      };
+    `,
+    });
+    linkReact(String(dir));
+
+    await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+    const url = await getServerUrl(proc);
+
+    const home = await (await fetch(new URL("/", url))).text();
+    expect(home).toContain(`<main class="layout"><h1>Home</h1></main>`);
+    const post = await (await fetch(new URL("/blog/hello", url))).text();
+    expect(post).toContain(`<h1>Post hello</h1>`);
+    expect(post).toContain(`<script id="__bun_bake_params" type="application/json">{"slug":"hello"}</script>`);
+    expect(await (await fetch(new URL("/about", url))).text()).toContain("<h1>About</h1>");
+    expect(await get(url, "/api/hello")).toBe(`200 {"hi":1}`);
+    expect(await get(url, "/missing")).toBe("404 fallback");
+  },
+);
+
+test.concurrent.each([
+  {
+    name: "React is not installed",
+    packages: {},
+    error: "app/pages/ has .tsx pages, which need React. Install it: bun add react react-dom",
+  },
+  {
+    name: "React is too old",
+    packages: { react: "17.0.2", "react-dom": "17.0.2" },
+    error: `"bun bake" renders .tsx pages with React 18 or newer, but this project has react 17.0.2. Upgrade React.`,
+  },
+  {
+    name: "react and react-dom differ",
+    packages: { react: "19.0.0", "react-dom": "18.3.1" },
+    error:
+      "react 19.0.0 and react-dom 18.3.1 must be the same version. Install matching versions: bun add react@19.0.0 react-dom@19.0.0",
+  },
+])("bun bake exits when $name", async ({ packages, error }) => {
+  const files: Record<string, string> = {
+    "app/pages/index.tsx": `export default function Home() { return <h1>Home</h1>; }`,
+    // With a package.json and node_modules, Bun does not install missing packages on the fly.
+    "package.json": `{}`,
+    "node_modules/.keep": "",
+  };
+  for (const [name, version] of Object.entries(packages)) {
+    files[`node_modules/${name}/package.json`] = JSON.stringify({ name, version });
+  }
+  using dir = tempDir("bake-command-react-version", files);
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr.trim()).toBe(`error: ${error}`);
+  expect(stdout).not.toContain("url: ");
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("bun bake routes and renders pages with the framework of a bake.config.ts plugin", async () => {
+  using dir = tempDir("bake-command-framework", {
+    // No React, and its own folder and extension: the framework routes and renders the pages.
+    "src/routes/index.ts": `export default () => "home";`,
+    "src/routes/[id].ts": `export default params => "page " + params.id;`,
+    // Not a page of this framework.
+    "app/pages/other.tsx": `export default () => "other";`,
+    "render/server.ts": `
+      export function render(request, meta) {
+        const body = meta.pageModule.default(meta.params ?? {}) + " " + JSON.stringify(meta.modules);
+        return new Response(body, { headers: { "content-type": "text/plain" } });
+      }
+    `,
+    "bake.config.ts": `export default {
+      plugins: [{
+        name: "strings",
+        framework: {
+          fileSystemRouterTypes: [{ root: "src/routes", style: "nextjs-pages", serverEntryPoint: "./render/server.ts", extensions: [".ts"] }],
+        },
+      }],
+    };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  // A framework with no client entry point has no browser bundle.
+  expect(await get(url, "/")).toBe("200 home []");
+  expect(await get(url, "/7")).toBe("200 page 7 []");
+  expect(await get(url, "/other")).toBe("200 page other []");
+});
+
+test.concurrent("a framework with clientPages puts the pages of a route in its browser bundle", async () => {
+  using dir = tempDir("bake-command-client-pages", {
+    "app/pages/index.ts": `export default () => "home-page-module";`,
+    "app/pages/about.ts": `export default () => "about-page-module";`,
+    "render/server.ts": `export function render(request, meta) { return new Response(meta.modules.join(" ")); }`,
+    "render/client.ts": `import { route } from "bun:bake/client"; route.page();`,
+    "bake.config.ts": `export default {
+      plugins: [{
+        name: "fw",
+        framework: {
+          fileSystemRouterTypes: [{
+            root: "app/pages",
+            style: "nextjs-pages",
+            serverEntryPoint: "./render/server.ts",
+            clientEntryPoint: "./render/client.ts",
+            extensions: [".ts"],
+            clientPages: true,
+          }],
+        },
+      }],
+    };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const [, bundleUrl] = (await get(url, "/")).split(" ");
+  const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+  expect(bundle).toContain(`route: { page: "app/pages/index.ts", layouts: [] }`);
+  expect(bundle).toContain("home-page-module");
+  expect(bundle).not.toContain("about-page-module");
+});
+
+test.concurrent("bun bake sends a page's new code to a page load after an edit", async () => {
+  using dir = tempDir("bake-command-page-edit", {
+    "app/pages/index.tsx": `export default function Home() { return <h1>{"first-version"}</h1>; }`,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+  const bundle = async () => {
+    const html = await (await fetch(url)).text();
+    // While the edit is written, the file can be empty for a moment, and the page an error with no script.
+    const src = html.match(/<script type="module" src="([^"]+)"/)?.[1];
+    return src === undefined ? "" : await (await fetch(new URL(src, url))).text();
+  };
+  expect(await bundle()).toContain("first-version");
+
+  await Bun.write(
+    join(String(dir), "app/pages/index.tsx"),
+    `export default function Home() { return <h1>{"second-version"}</h1>; }`,
+  );
+  // Until the dev server has the edit. Before, it served the bundle it made before the edit.
+  let code = await bundle();
+  for (let i = 0; i < 200 && !code.includes("second-version"); i++) code = await bundle();
+  expect(code).not.toContain("first-version");
+});
+
+test.concurrent("bun bake starts again for the first .tsx page, at the next reload", async () => {
+  using dir = tempDir("bake-command-first-page", {
+    "app/pages/index.html": page,
+    "app/server.ts": `export default { fetch: () => new Response("fallback") };`,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  expect(await get(url, "/about")).toBe("200 fallback");
+
+  await Bun.write(join(String(dir), "app/pages/about.tsx"), `export default () => <h1>about</h1>;`);
+  // A new file in app/pages/ does not reload; an edit to app/server.ts does.
+  const before = output.text.length;
+  await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("fallback 2") };`);
+  await output.waitFor(new RegExp(`^[\\s\\S]{${before}}[\\s\\S]*url: http`));
+  const next = output.text.slice(before).match(/url: (http:\/\/\S+)/)![1];
+  expect(await (await fetch(new URL("/about", next))).text()).toContain("<h1>about</h1>");
+});
+
+test.concurrent("bun bake renders pages and layouts made with memo() and forwardRef()", async () => {
+  using dir = tempDir("bake-command-memo", {
+    "app/pages/index.tsx": `
+      import { memo } from "react";
+      export default memo(function Home() { return <h1>memo page</h1>; });
+    `,
+    "app/pages/_layout.tsx": `
+      import { forwardRef } from "react";
+      export default forwardRef(function Layout({ children }, ref) { return <main ref={ref}>{children}</main>; });
+    `,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+  expect(await (await fetch(url)).text()).toContain("<main><h1>memo page</h1></main>");
+});
+
+test.concurrent("bun bake rejects a route with dir and style in app/server.ts", async () => {
+  using dir = tempDir("bake-command-dir-style", {
+    "app/pages/index.ts": `export default () => "x";`,
+    "r.ts": `export function render() { return new Response("x"); }`,
+    "bake.config.ts": `export default { plugins: [{ name: "fw", framework: { fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./r.ts", extensions: [".ts"] }] } }] };`,
+    "app/server.ts": `export default { routes: { "/x/*": { dir: "app/x", style: "nextjs-pages" } } };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/does not support a route with "dir" and "style"/);
+  expect(output.text).not.toContain("url: ");
+});
+
+test.concurrent("the default framework sends the browser bundle before a slow Suspense boundary", async () => {
+  using dir = tempDir("bake-command-bootstrap", {
+    // The boundary waits until the test requests /release.
+    "app/server.ts": `
+      globalThis.gate ??= Promise.withResolvers();
+      export default { routes: { "/release": () => { globalThis.gate.resolve(); globalThis.released = true; return new Response("ok"); } } };
+    `,
+    "app/pages/index.tsx": `
+      import { Suspense } from "react";
+      function Late() {
+        if (!globalThis.released) throw globalThis.gate.promise;
+        return <p>late content</p>;
+      }
+      export default () => <Suspense fallback={<p>loading</p>}><Late /></Suspense>;
+    `,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+  const response = await fetch(url);
+  const decoder = new TextDecoder();
+  let html = "";
+  const reader = response.body!.getReader();
+  while (!html.includes('src="/_bun/client/')) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    html += decoder.decode(value, { stream: true });
+  }
+  // The browser can start hydrating while the boundary is still pending.
+  expect(html).toContain('src="/_bun/client/');
+  expect(html).not.toContain("late content");
+
+  await fetch(new URL("/release", url));
+  for (let r = await reader.read(); !r.done; r = await reader.read()) html += decoder.decode(r.value, { stream: true });
+  expect(html).toContain("late content");
+});
+
+test.concurrent("bun bake reports a page that a route of app/server.ts hides", async () => {
+  using dir = tempDir("bake-command-hidden-page", {
+    "app/pages/index.ts": `export default () => "page-index";`,
+    "app/pages/about.ts": `export default () => "page-about";`,
+    "render/server.ts": `export function render(request, meta) { return new Response(meta.pageModule.default()); }`,
+    "bake.config.ts": `export default { plugins: [{ name: "fw", framework: { fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./render/server.ts", extensions: [".ts"] }] } }] };`,
+    "app/server.ts": `export default { routes: { "/about": () => new Response("route-about") } };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  await output.waitFor(/The server has a route "\/about", which hides the page app\/pages\/about\.ts/);
+
+  // It keeps serving: the route answers, and the other page too.
+  expect(await get(url, "/about")).toBe("200 route-about");
+  expect(await get(url, "/")).toBe("200 page-index");
+});
+
+test.concurrent("bun bake reports two pages with the same URL pattern, and keeps serving", async () => {
+  using dir = tempDir("bake-command-aliased", {
+    "app/pages/[a].tsx": `export default () => "a";`,
+    "app/pages/[b].tsx": `export default () => "b";`,
+    "render/server.ts": `export function render(request, meta) { return new Response(meta.pageModule.default()); }`,
+    "bake.config.ts": `export default { plugins: [{ name: "strings", framework: { fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./render/server.ts" }] } }] };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  // The router reports the collision when it scans, at the first request.
+  expect((await get(url, "/x")).startsWith("200 ")).toBe(true);
+  await output.waitFor(/Multiple pages matching the same route pattern is ambiguous/);
+
+  expect(output.text).toContain("app/pages/[a].tsx");
+  expect(output.text).toContain("app/pages/[b].tsx");
+  expect(proc.exitCode).toBeNull();
+});

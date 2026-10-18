@@ -41,7 +41,7 @@ pub struct ExtractTarball {
     /// The lockfile's bun-tag (`repository.resolved`) for a Github resolution,
     /// copied out because extract workers must not read lockfile buffers. When
     /// set it names the cache folder and `.bun-tag` (cache lookups are keyed by
-    /// it); empty on a fresh resolve, which uses the archive's root dir name.
+    /// it and the integrity); empty on a fresh resolve, which uses the archive's root dir name.
     pub(crate) github_resolved: StringOrTinyString,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
     pub(crate) package_manager: bun_ptr::BackRef<PackageManager>,
@@ -69,7 +69,7 @@ impl ExtractTarball {
         Ok(result)
     }
 
-    /// Settled before extracting: a `file:` / URL tarball's cache entry is named after it.
+    /// Settled before extracting: the cache entry is named after it.
     pub(crate) fn lockfile_integrity(&self, compute: impl FnOnce() -> Integrity) -> Integrity {
         match self.resolution.tag {
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball => {
@@ -401,30 +401,6 @@ impl ExtractTarball {
                             .append(lockfile_tag)
                             .expect("unreachable");
                     }
-
-                    // This tag is used to know which version of the package was
-                    // installed from GitHub. package.json version becomes sort of
-                    // meaningless in cases like this.
-                    if !resolved.is_empty() {
-                        // Create/truncate `.bun-tag`, then write the resolved tag.
-                        if sys::File::openat(
-                            extract_destination.fd(),
-                            ZStr::from_static(b".bun-tag\0"),
-                            sys::O::WRONLY
-                                | sys::O::CREAT
-                                | sys::O::TRUNC
-                                | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
-                            0o664,
-                        )
-                        .and_then(|f| f.write_all(resolved))
-                        .is_err()
-                        {
-                            let _ = sys::unlinkat(
-                                extract_destination.fd(),
-                                ZStr::from_static(b".bun-tag\0"),
-                            );
-                        }
-                    }
                 }
                 _ => {
                     let _ = Archiver::extract_to_dir(
@@ -469,7 +445,7 @@ impl ExtractTarball {
     /// Rename the freshly-extracted temp directory into the cache, read
     /// `package.json` if required, and build the `ExtractData` result. Shared
     /// between the buffered and streaming extraction paths.
-    /// `resolved` names a GitHub cache entry, `integrity` a `file:` / URL tarball's.
+    /// `integrity` names the cache entry, a GitHub one after `resolved` as well.
     pub(crate) fn move_to_cache_directory(
         &self,
         log: &mut bun_ast::Log,
@@ -482,7 +458,35 @@ impl ExtractTarball {
         let package_manager = self.package_manager.get();
 
         let tmpname = staging.name();
+        // A hash computed from these bytes is as good as a checked one.
+        let unchecked = self.skip_verify && self.integrity.tag.is_supported();
+        // `.bun-tag` does not claim a hash that `--no-verify` left unchecked.
+        let checked = if unchecked {
+            Integrity::default()
+        } else {
+            *integrity
+        };
         TL_BUFS.with_borrow_mut(|bufs| {
+            // Says which bytes a copy in node_modules is of: `PackageInstall::verify`.
+            let mut write_bun_tag = |parts: &[&[u8]]| {
+                let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+                    &mut bufs.json_path_buf.0,
+                    &[tmpname.as_bytes(), b".bun-tag"],
+                );
+                let written = sys::File::openat(
+                    self.temp_dir,
+                    tag_path,
+                    sys::O::WRONLY
+                        | sys::O::CREAT
+                        | sys::O::TRUNC
+                        | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
+                    0o664,
+                )
+                .and_then(|f| parts.iter().try_for_each(|part| f.write_all(part)));
+                if written.is_err() {
+                    let _ = sys::unlinkat(self.temp_dir, tag_path);
+                }
+            };
             // The entire body lives inside the thread_local borrow closure.
             let folder_name_z: &ZStr = match self.resolution.tag {
                 ResolutionTag::Npm => {
@@ -518,40 +522,21 @@ impl ExtractTarball {
                         );
                         return Err(crate::Error::InstallFailed);
                     }
+                    // `<resolved>[+<integrity>]`: the commit, and the bytes when their hash is known.
+                    let mut sri = [0; Integrity::MAX_SRI_LEN];
+                    let sri = checked.sri(&mut sri);
+                    let plus: &[u8] = if sri.is_empty() { b"" } else { b"+" };
+                    write_bun_tag(&[resolved, plus, sri]);
                     directories::cached_github_folder_name_print(
                         &mut bufs.folder_name_buf,
                         resolved,
+                        integrity,
+                        unchecked,
                         None,
                     )
                 }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
-                    // A hash computed from these bytes is as good as a checked one.
-                    let unchecked = self.skip_verify && self.integrity.tag.is_supported();
-                    // `.bun-tag` does not claim a hash that `--no-verify` left unchecked.
-                    let tag = if unchecked {
-                        Integrity::default()
-                    } else {
-                        *integrity
-                    };
-                    // Says which bytes a copy in node_modules is of: `PackageInstall::verify`.
-                    let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
-                        &mut bufs.json_path_buf.0,
-                        &[tmpname.as_bytes(), b".bun-tag"],
-                    );
-                    if sys::File::openat(
-                        self.temp_dir,
-                        tag_path,
-                        sys::O::WRONLY
-                            | sys::O::CREAT
-                            | sys::O::TRUNC
-                            | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
-                        0o664,
-                    )
-                    .and_then(|f| f.write_all(tag.sri(&mut [0; Integrity::MAX_SRI_LEN])))
-                    .is_err()
-                    {
-                        let _ = sys::unlinkat(self.temp_dir, tag_path);
-                    }
+                    write_bun_tag(&[checked.sri(&mut [0; Integrity::MAX_SRI_LEN])]);
                     directories::cached_tarball_folder_name_print(
                         &mut bufs.folder_name_buf,
                         integrity,

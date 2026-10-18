@@ -239,6 +239,14 @@ const hostile: Hostile[] = [
     "@T@a b@@@1",
     "@GH@-rf@@@1",
     "@GH@owner-repo-0123456",
+    // A GitHub entry ends in the integrity of its tarball: an algorithm, and 16 digest bytes in lowercase hex.
+    "@GH@owner-repo-0123456+@@@1",
+    "@GH@owner-repo-0123456+sha512-@@@1",
+    "@GH@owner-repo-0123456+sha512-0123456789abcdef@@@1",
+    "@GH@owner-repo-0123456+sha512-0123456789ABCDEF0123456789ABCDEF@@@1",
+    "@GH@owner-repo-0123456+md5-0123456789abcdef0123456789abcdef@@@1",
+    "@GH@owner-repo-0123456+x+sha512-0123456789abcdef0123456789abcdef@@@1",
+    "@GH@+sha512-0123456789abcdef0123456789abcdef@@@1",
     "@G@",
     `@G@${sha}@@@1`,
   ].map(name => badName(name)),
@@ -767,6 +775,19 @@ describe("bun pm cache unpack", () => {
     expect(readFileSync(join(box.cache, "present@1.0.0@@@1", "index.js"), "utf8")).toBe("original");
     expect(existsSync(join(box.cache, "new@1.0.0@@@1", "package.json"))).toBeTrue();
     expect(readdirSync(box.tmp)).toEqual([]);
+    expect(code).toBe(0);
+  });
+
+  test.concurrent("unpacks a GitHub entry that is named after the integrity of its tarball", async () => {
+    using box = sandbox();
+    const names = ["sha1", "sha256", "sha384", "sha512"].map(
+      algorithm => `@GH@owner-repo-0123456+${algorithm}-0123456789abcdef0123456789abcdef@@@1`,
+    );
+    writeFileSync(box.at("github.pack"), packOf(...names.map(name => pkg(name))));
+    const { out, err, code } = await bun(box, ["pm", "cache", "unpack", box.at("github.pack")]);
+    expect(err).toBe("");
+    expect(out).toContain("Unpacked 4 packages (4 new, 0 already cached, ");
+    expect(entryNames(box.cache)).toEqual(names);
     expect(code).toBe(0);
   });
 

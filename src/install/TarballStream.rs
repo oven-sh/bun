@@ -1083,28 +1083,6 @@ impl TarballStream {
                 }
             }
 
-            if tarball.resolution.tag == ResolutionTag::Github {
-                'insert_tag: {
-                    if self.resolved_github_dirname.is_empty() {
-                        break 'insert_tag;
-                    }
-                    if bun_sys::File::openat(
-                        self.dest.unwrap(),
-                        bun_core::zstr!(".bun-tag"),
-                        O::WRONLY
-                            | O::CREAT
-                            | O::TRUNC
-                            | if cfg!(windows) { 0 } else { O::NOFOLLOW },
-                        0o664,
-                    )
-                    .and_then(|f| f.write_all(self.resolved_github_dirname))
-                    .is_err()
-                    {
-                        let _ = bun_sys::unlinkat(self.dest.unwrap(), bun_core::zstr!(".bun-tag"));
-                    }
-                }
-            }
-
             // Close the temp dir handle before renaming so Windows can move it.
             if let Some(d) = self.dest.take() {
                 d.close();

@@ -920,6 +920,47 @@ describe.concurrent.each(
       expect(await box.cacheEntries()).toEqual([v1.cacheEntry]);
     });
 
+    // `pkg` and `alias` are two rows then. The second row of a path or URL used to share the read
+    // of the first: `pkg` was left out, or the command did not end. The timeout is a minute and not
+    // the five of this file, for when the command does not end again.
+    it("bun add <the same path or URL> fails when nothing is cached and the new bytes carry another package name", async () => {
+      const { box } = await changed("tarball-renamed-second-dependent");
+      using _ = box;
+      await box.put("app", await tarball("renamed", {}, "renamed-pkg"));
+      await rm(join(box.root, "cache"), { recursive: true });
+      await rm(join(box.root, "app", "node_modules"), { recursive: true });
+
+      const { stderr, exitCode } = await box.run("app", "add", `alias@${box.spec}`);
+      // bun.lock still pins the bytes that `pkg` was resolved to, and the path or URL no longer has them.
+      expect(stderr).toContain("Integrity check failed for tarball: pkg");
+      expect(exitCode).toBe(1);
+    }, 60_000);
+
+    it("two packages of bun.lock that pin other bytes of one path or URL are each checked", async () => {
+      const renamed = await tarball("renamed", {}, "renamed-pkg");
+      using box = sandbox("tarball-two-rows", { app: {} });
+      const dependencies = { pkg: box.spec, alias: box.spec };
+      await writeFile(join(box.root, "app", "package.json"), JSON.stringify({ name: "app", dependencies }));
+      await writeFile(
+        join(box.root, "app", "bun.lock"),
+        JSON.stringify({
+          lockfileVersion: 1,
+          configVersion: 1,
+          workspaces: { "": { name: "app", dependencies } },
+          packages: {
+            pkg: [`pkg@${box.resolution}`, {}, (await tarball("v1")).integrity],
+            alias: [`renamed-pkg@${box.resolution}`, {}, renamed.integrity],
+          },
+        }),
+      );
+      // The path or URL holds what `alias` pins.
+      await box.put("app", renamed);
+
+      const { stderr, exitCode } = await box.run("app", "install", "--frozen-lockfile");
+      expect(stderr).toContain("Integrity check failed for tarball: pkg");
+      expect(exitCode).toBe(1);
+    });
+
     it("fails a clean install, and names no other bytes in bun.lock", async () => {
       const { box, lockfile } = await changed("tarball-changed-clean-install");
       using _ = box;
@@ -953,6 +994,53 @@ describe.concurrent.each(
     // Next to `pkg`, wherever the linker put that.
     const siblings = dirname(await realpath(join(box.root, "app", "node_modules", "pkg")));
     expect(await file(join(siblings, "dep", "index.js")).text()).toBe('module.exports = "dep";\n');
+  });
+
+  // A binary lockfile records the lifecycle scripts of a package. They are of the build that is installed.
+  it.each([
+    ["adds", {}, { postinstall: "echo v2 > ran.txt" }, "v2\n"],
+    ["changes", { postinstall: "echo v1 > ran.txt" }, { postinstall: "echo v2 > ran.txt" }, "v2\n"],
+    ["drops", { postinstall: "echo v1 > ran.txt" }, {}, null],
+  ] as const)(
+    "bun update runs what the new build has when it %s a postinstall (bun.lockb)",
+    async (verb, from, to, ran) => {
+      using box = sandbox(`tarball-scripts-${verb}`, { app: {} });
+      await writeFile(
+        join(box.root, "app", "package.json"),
+        JSON.stringify({ name: "app", dependencies: { pkg: box.spec }, trustedDependencies: ["pkg"] }),
+      );
+      await writeFile(
+        join(box.root, "app", "bunfig.toml"),
+        Bun.TOML.stringify({ install: { linker, saveTextLockfile: false } }),
+      );
+      const ranFile = () => file(join(box.root, "app", "node_modules", "pkg", "ran.txt"));
+
+      await box.put("app", await tarball("v1", { scripts: from }));
+      await box.ok("app", "install");
+      expect(await ranFile().exists()).toBe("postinstall" in from);
+
+      await box.put("app", await tarball("v2", { scripts: to }));
+      await box.ok("app", "update");
+      expect(await box.installed("app")).toBe('module.exports = "v2";\n');
+      expect((await ranFile().exists()) ? await ranFile().text() : null).toBe(ran);
+    },
+  );
+
+  it("bun update records whether the new build has a lifecycle script", async () => {
+    using box = sandbox("tarball-has-install-script", { app: {} });
+    const locked = async () => (Bun.JSONC.parse(await box.lockfile("app")) as any).packages.pkg[1];
+
+    await box.put("app", await tarball("v1"));
+    await box.ok("app", "install");
+    expect(await locked()).toEqual({});
+
+    await box.put("app", await tarball("v2", { scripts: { postinstall: "echo v2 > ran.txt" } }));
+    await box.ok("app", "update");
+    expect(await locked()).toEqual({ hasInstallScript: true });
+
+    await box.put("app", await tarball("v3"));
+    await box.ok("app", "update");
+    expect(await locked()).toEqual({});
   });
 
   // `--no-verify` skips the hash check of a download (a `file:` tarball is always checked).

@@ -135,9 +135,10 @@ impl PackageManager {
                         pkg.resolution.git(),
                         patch_hash,
                     ),
-                    ResolutionTag::Github => directories::cached_github_folder_name_print_auto(
+                    ResolutionTag::Github => directories::cached_github_folder_name(
                         self,
                         pkg.resolution.github(),
+                        &pkg.meta.integrity,
                         patch_hash,
                     ),
                     ResolutionTag::Npm => {

@@ -1275,6 +1275,7 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::Github => package_manager::cached_github_folder_name(
                 self.manager(),
                 resolution.github(),
+                &self.metas[package_id as usize].integrity,
                 patch_contents_hash,
             ),
             _ => package_manager::cached_tarball_folder_name(
@@ -1553,7 +1554,7 @@ impl<'a> PackageInstaller<'a> {
         // If a newly computed integrity hash is available (e.g. for a GitHub
         // tarball) and the lockfile doesn't already have one, persist it so
         // the lockfile gets re-saved with the hash.
-        // Before the callbacks below: a `file:` / URL tarball's cache entry is named after it.
+        // Before the callbacks below: the cache entry of a GitHub or `file:` / URL tarball is named after it.
         if data.integrity.tag.is_supported() {
             let pkg_metas = self.lockfile_mut().packages.items_meta_mut();
             if !pkg_metas[package_id as usize].integrity.tag.is_supported() {

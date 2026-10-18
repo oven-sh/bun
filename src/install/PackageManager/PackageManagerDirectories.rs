@@ -534,6 +534,9 @@ struct ByteCursor<'a> {
     at: usize,
 }
 
+/// Digest bytes in the name of a `@T@` or `@GH@` entry.
+pub(crate) const ENTRY_DIGEST_PREFIX_LEN: usize = 16;
+
 impl<'a> ByteCursor<'a> {
     #[inline(always)]
     fn new(buf: &'a mut [u8]) -> Self {
@@ -585,6 +588,15 @@ impl<'a> ByteCursor<'a> {
         let end = self.at + bytes.len() * 2;
         bun_fmt::bytes_to_hex_lower(bytes, &mut self.buf[self.at..end]);
         self.at = end;
+    }
+
+    /// `<algorithm>-<hex>`: what ties a `@T@` or `@GH@` entry to the bytes it was extracted from.
+    #[inline(always)]
+    fn put_digest_prefix(&mut self, algorithm: &str, integrity: &Integrity) {
+        let digest = integrity.slice();
+        self.put(algorithm.as_bytes());
+        self.put_byte(b'-');
+        self.put_hex_bytes(&digest[..digest.len().min(ENTRY_DIGEST_PREFIX_LEN)]);
     }
 
     /// `@@@{d}` when set.
@@ -660,53 +672,51 @@ pub fn cached_git_folder_name_print_auto(
     ZStr::EMPTY
 }
 
+/// `@GH@<resolved>+sha512-<32 hex>@@@1`. `unchecked` bytes go to `@GH@<resolved>@@@1`.
 pub fn cached_github_folder_name_print<'a>(
     buf: &'a mut [u8],
     resolved: &[u8],
+    integrity: &Integrity,
+    unchecked: bool,
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
     let mut w = ByteCursor::new(buf);
     w.put(b"@GH@");
     w.put(resolved);
+    if !unchecked && let Some(algorithm) = integrity.tag.name() {
+        // `is_safe_resolved_tag` lets no `resolved` spell a `+`.
+        w.put_byte(b'+');
+        w.put_digest_prefix(algorithm, integrity);
+    }
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
     w.finish_z()
 }
 
+/// The cache entry that holds the bytes of a GitHub row with this `integrity`.
 pub fn cached_github_folder_name(
     this: &PackageManager,
     repository: &Repository,
+    integrity: &Integrity,
     patch_hash: Option<u64>,
 ) -> &'static ZStr {
-    cached_github_folder_name_print(
-        cached_package_folder_name_buf(),
-        this.lockfile.str(&repository.resolved),
-        patch_hash,
-    )
-}
-
-pub fn cached_github_folder_name_print_auto(
-    this: &PackageManager,
-    repository: &Repository,
-    patch_hash: Option<u64>,
-) -> &'static ZStr {
-    if !repository.resolved.is_empty() {
-        return cached_github_folder_name(this, repository, patch_hash);
-    }
-
-    if !repository.owner.is_empty()
-        && !repository.repo.is_empty()
-        && !repository.committish.is_empty()
-    {
-        return cached_github_folder_name_print_guess(
+    let print = |unchecked: bool, patch_hash: Option<u64>| {
+        cached_github_folder_name_print(
             cached_package_folder_name_buf(),
-            this.lockfile.buffers.string_bytes.as_slice(),
-            repository,
+            this.lockfile.str(&repository.resolved),
+            integrity,
+            unchecked,
             patch_hash,
-        );
+        )
+    };
+    if !integrity.tag.is_supported() || !this.skips_verify(ResolutionTag::Github) {
+        return print(false, patch_hash);
     }
-
-    ZStr::EMPTY
+    // Verified bytes are good for every install, so `--no-verify` prefers them. A patched entry is made from its base.
+    let has_verified_base = (this.cache_directory.as_ref()).is_some_and(|dir| {
+        is_package_in_cache_at(dir.fd(), print(false, None), ResolutionTag::Github)
+    });
+    print(!has_verified_base, patch_hash)
 }
 
 // TODO: normalize to alphanumeric
@@ -759,24 +769,6 @@ pub fn cached_npm_package_folder_name_print<'a>(
         w.put(b"__");
         w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(scope_url.href));
     }
-    w.put_cache_version(Some(CacheVersion::CURRENT));
-    w.put_patch_hash(patch_hash);
-    w.finish_z()
-}
-
-fn cached_github_folder_name_print_guess<'a>(
-    buf: &'a mut [u8],
-    string_buf: &[u8],
-    repository: &Repository,
-    patch_hash: Option<u64>,
-) -> &'a ZStr {
-    let mut w = ByteCursor::new(buf);
-    w.put(b"@GH@");
-    w.put(repository.owner.slice(string_buf));
-    w.put_byte(b'-');
-    w.put(repository.repo.slice(string_buf));
-    w.put_byte(b'-');
-    w.put(repository.committish.slice(string_buf));
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
     w.finish_z()
@@ -844,12 +836,7 @@ pub fn cached_tarball_folder_name_print<'a>(
     w.put(b"@T@");
     match integrity.tag.name() {
         // Unverified bytes never get a cache entry named after the lockfile's hash.
-        Some(algorithm) if !skips_verify => {
-            let digest = integrity.slice();
-            w.put(algorithm.as_bytes());
-            w.put_byte(b'-');
-            w.put_hex_bytes(&digest[..digest.len().min(16)]);
-        }
+        Some(algorithm) if !skips_verify => w.put_digest_prefix(algorithm, integrity),
         // `--no-verify`, or a row that has no integrity and gets none (`pins_tarballs`).
         _ => {
             let mut hasher = bun_wyhash::Wyhash11::init(0);
@@ -1097,7 +1084,9 @@ pub fn path_for_resolution<'a>(
             path_for_cached_npm_path(this, buf, &package_name, npm.version)
         }
         ResolutionTag::Github => {
-            let folder_name = cached_github_folder_name(this, resolution.github(), None);
+            let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
+            let folder_name =
+                cached_github_folder_name(this, resolution.github(), &integrity, None);
             path_for_cached_folder(this, buf, folder_name, resolution.tag)
         }
         ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
@@ -1142,9 +1131,10 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Github => {
-            let github = resolution.github();
-            cache_dir_subpath = cached_github_folder_name(manager, github, patch_hash);
+            // Opened first: under `--no-verify` the name depends on what the cache holds.
             cache_dir = get_cache_directory(manager);
+            let github = resolution.github();
+            cache_dir_subpath = cached_github_folder_name(manager, github, integrity, patch_hash);
         }
         ResolutionTag::Folder => {
             let buf = manager.lockfile.buffers.string_bytes.as_slice();

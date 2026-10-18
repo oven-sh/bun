@@ -180,10 +180,13 @@ impl File {
         Ok(v)
     }
     /// Like [`File::read_to_end`] but
-    /// reserves only 64 bytes initially instead of fstat-presizing; for files
+    /// reserves only 256 bytes initially instead of fstat-presizing; for files
     /// callers expect to be tiny (`.bun-tag`, lockfile markers, etc.).
     pub fn read_to_end_small(&self) -> Maybe<Vec<u8>> {
         let mut v = Vec::new();
+        if v.try_reserve(256).is_err() {
+            return Err(Error::oom());
+        }
         self.read_to_end_with_array_list(&mut v, SizeHint::ProbablySmall)?;
         Ok(v)
     }

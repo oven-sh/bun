@@ -549,6 +549,22 @@ describe.each(kinds)("a %s dependency", kind => {
   });
 });
 
+// bun.lockb keeps the ref of package.json beside the commit, and the download asked for the ref.
+it("a github dependency pinned by bun.lockb is fetched by its commit", async () => {
+  await using fixture = await projectWith("github", binaryLockfile);
+  const { bun, requested, files } = fixture;
+  expect(await bun("other-cache", "install", "--lockfile-only")).toMatchObject({ exitCode: 0 });
+  expect(await files()).toContain("bun.lockb");
+  requested();
+
+  expect(await bun("cache", "pm", "fetch", "--frozen-lockfile")).toEqual({
+    stdout: summary("Fetched 2 packages into cache"),
+    stderr: "Fetching packages\n",
+    exitCode: 0,
+  });
+  expect(requested()).toEqual(["/dep-1.0.0.tgz", "/repos/owner/repo/tarball/abc1234"]);
+});
+
 it("--frozen-lockfile fails like bun install when package.json has moved on", async () => {
   await using fixture = await projectWith("npm");
   const { bun, files, project } = fixture;

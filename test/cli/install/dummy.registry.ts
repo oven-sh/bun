@@ -28,7 +28,7 @@
  * ```
  */
 import { file, Server } from "bun";
-import { githubTarball, tmpdirSync } from "harness";
+import { githubCacheEntry, githubTarball, tmpdirSync } from "harness";
 
 let expect: (typeof import("bun:test"))["expect"];
 
@@ -82,8 +82,9 @@ const githubTarballs = new Map<string, Uint8Array>();
  * contacting api.github.com. These requests are not counted in `requested` or
  * `ctx.requested`.
  *
- * @param commit - The short sha GitHub puts in the tarball's root directory name. bun reports it as the resolved commit.
- * @param refs - Every committish the tests ask for (`""` for a dependency without one)
+ * @param commit - The short sha GitHub puts in the tarball's root directory name. bun reports it as the resolved
+ *   commit, and asks for it when it installs the package from a lockfile.
+ * @param refs - Every other committish the tests ask for (`""` for a dependency without one)
  * @param files - Repository files, by path relative to the repository root
  */
 export async function setGithubRepository(
@@ -94,7 +95,7 @@ export async function setGithubRepository(
   files: Record<string, string>,
 ) {
   const tarball = await githubTarball(`${owner}-${repo}-${commit}`, files);
-  for (const ref of refs) {
+  for (const ref of [commit, ...refs]) {
     githubTarballs.set(`/repos/${owner}/${repo}/tarball/${ref}`, tarball);
   }
 }
@@ -125,6 +126,14 @@ export const uglifyJsRepositoryFiles = {
 /** Registers `uglifyJsRepositoryFiles` as mishoo/UglifyJS at tag v3.14.1 (commit e219a9a). */
 export function setUglifyJsRepository() {
   return setGithubRepository("mishoo", "UglifyJS", "e219a9a", ["", "v3.14.1", "e219a9a"], uglifyJsRepositoryFiles);
+}
+
+/**
+ * The install cache folder of the tarball `setUglifyJsRepository` registered. The tarball is
+ * built anew by every run, so the name is derived from the bytes that are served.
+ */
+export function uglifyJsCacheEntry() {
+  return githubCacheEntry("mishoo-UglifyJS-e219a9a", githubTarballs.get("/repos/mishoo/UglifyJS/tarball/e219a9a")!);
 }
 
 // ============================================================================

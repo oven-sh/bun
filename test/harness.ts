@@ -2137,6 +2137,16 @@ export function githubTarball(rootDir: string, files: Record<string, string | Ui
 }
 
 /**
+ * The install cache folder of a GitHub package that was extracted from `tarball`. bun names it
+ * after the archive's root directory and the first 16 bytes of the tarball's sha512, so a
+ * folder is never reused for other bytes of the same commit.
+ */
+export function githubCacheEntry(rootDir: string, tarball: Uint8Array) {
+  const digest = new Bun.CryptoHasher("sha512").update(tarball).digest("hex");
+  return `@GH@${rootDir}+sha512-${digest.slice(0, 32)}@@@1`;
+}
+
+/**
  * A git repository on disk standing in for one on a real host, for the cases whose point is the specifier
  * (`bitbucket:user/repo`, `git@github.com:user/repo.git`): bun has to turn it into one of `cloneUrls`, which git then
  * rewrites to the local repository (`url.<base>.insteadOf`). A bun spawned with the returned `env` cannot reach the

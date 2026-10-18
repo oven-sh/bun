@@ -4990,9 +4990,9 @@ export function f<O>(x: { t?: string } & { a: { code: number } }) {
     });
 
     // TypeScript caches the variances it measures while another measurement is still in progress. 7.1 restarts from the cycle's
-    // first-declared type, so the result doesn't depend on check order. In 7.0 it does: `tsc --singleThreaded` reports the error in
-    // model.ts only if global.ts is checked first.
-    describe("variances of mutually recursive types don't depend on check order", () => {
+    // first-declared type, so here the result doesn't depend on check order. In 7.0 it does: `tsc --singleThreaded` reports the
+    // error in model.ts only if global.ts is checked first. For a type in two cycles it can still depend on it, in 7.1 too.
+    describe("variances of these mutually recursive types don't depend on check order", () => {
       const files = {
         "directives.ts": `
 export interface Binding<Value = any, Modifiers extends string = string> {
@@ -5056,6 +5056,30 @@ dynamic.getSSRProps = binding => {
         });
       }
     });
+
+    // The restart from T3 caches that `T0<sub, X>` is assignable to `T0<super, X>`. The suspended measurement of T0 then finds that
+    // it isn't, and that result has to replace the cached one before T2 is measured.
+    test.each([1, 8])(
+      "reports a wrong assignment to a type that points into a cycle of generic types, on %d threads",
+      async threads => {
+        using dir = project({
+          "a.ts": `
+interface T2<H, P> { e0?: (x: T0<P, H>) => object | undefined; }
+interface T3<H, P> { e4?: (x: T4<P, H>) => object | undefined; }
+interface T4<H, P> { h?: H; e0: T0<P, H>; }
+interface T0<H, P> { e3: T3<P, H>; }
+declare let s2: T2<1, string>, n2: T2<1, number>;
+s2 = n2;
+export {};
+`,
+        });
+        const { stdout } = await check(dir, ["--threads", String(threads)]);
+        expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(7,1): error TS2322: Type 'T2<1, number>' is not assignable to type 'T2<1, string>'.
+          Type 'number' is not assignable to type 'string'."
+      `);
+      },
+    );
 
     // The expected output is TypeScript 7.1's. 7.0 misses the errors in issue_v0.ts and issue_v1.ts and some in order_b.ts.
     test.each([1, 8])(

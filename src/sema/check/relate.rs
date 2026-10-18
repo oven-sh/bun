@@ -2760,6 +2760,16 @@ impl<'p, 's> Checker<'p, 's> {
         self.variances_worker(sym)
     }
 
+    /// Called when a symbol's variances are requested while they are being measured.
+    ///
+    /// A restart can store "succeeded" for a comparison that a suspended measurement is still working on and then fails.
+    /// typescript-go overwrites the entry. A published entry can't be replaced, so until the next commit the task keeps
+    /// what it stores in its own buffer.
+    fn note_variance_cycle(&mut self) {
+        self.in_progress_variance_reads += 1;
+        self.task.stop_writing_at_once();
+    }
+
     /// `getVariancesWorker`. The caller's cache lookup of `sym` missed.
     fn variances_worker(&mut self, sym: Sym) -> &'s [u8] {
         if Some(sym) == self.global_type_of_arity(known::Array, 1)
@@ -2773,14 +2783,14 @@ impl<'p, 's> Checker<'p, 's> {
             };
         }
         if self.variances_marked_empty.contains(&sym) {
-            self.in_progress_variance_reads += 1;
+            self.note_variance_cycle();
             return &[];
         }
         // TypeScript 7.1: variances measured inside a cycle of generic types depend on which type was measured first.
-        // On re-entry, restart from the cycle's first-declared type with an empty stack and keep those results. That
-        // makes them independent of check order.
+        // On re-entry, restart from the cycle's first-declared type with an empty stack and keep those results. For a
+        // type in two cycles the result can still depend on which type is compared first, as in 7.1.
         if let Some(at) = (self.variances_in_progress.iter()).position(|&it| it == sym) {
-            self.in_progress_variance_reads += 1;
+            self.note_variance_cycle();
             let mut first = sym;
             for &other in &self.variances_in_progress[at + 1..] {
                 if self.compare_symbols(other, first).is_lt() {
@@ -2922,15 +2932,19 @@ impl<'p, 's> Checker<'p, 's> {
         // Kept until the check ends, published or not: a few bytes.
         let variances: &'s [u8] = self.arena.alloc_slice_copy(&variances);
         let mut is_open = false;
-        let variances = match self.end_scope(scope) {
-            Ok(stored) => {
-                let known = self.p.variances.get(&self.task, &sym);
-                known.unwrap_or_else(|| {
-                    self.variances_measured.push((sym, variances));
-                    self.p.variances.insert(&self.task, sym, variances, stored)
-                })
+        // If a restart already measured `sym`, the loop above stopped early and `variances` is incomplete.
+        let known = self.p.variances.get(&self.task, &sym);
+        let variances = match (self.end_scope(scope), known) {
+            (Ok(_), Some(known)) => known,
+            (Ok(stored), None) => {
+                self.variances_measured.push((sym, variances));
+                self.p.variances.insert(&self.task, sym, variances, stored)
             }
-            Err(_) => {
+            (Err(_), Some(known)) => {
+                is_open = true;
+                known
+            }
+            (Err(_), None) => {
                 is_open = true;
                 if self.cuts() != cuts {
                     self.variances_cut_short.insert(sym, (outermost, variances));
@@ -2938,6 +2952,7 @@ impl<'p, 's> Checker<'p, 's> {
                 variances
             }
         };
+        debug_assert_eq!(variances.len(), params.len());
         if !was_computing && self.task.commits() {
             let has_met_a_cycle = self.variance_cycles != variance_cycles;
             self.share_what_was_measured((sym, has_claim), before, has_met_a_cycle, is_open);
@@ -4455,7 +4470,9 @@ impl<'p, 's> Checker<'p, 's> {
                 && !is_cut_short
                 && cached.is_none()
             {
-                self.insert_relation(key, FAILED | propagating, stored);
+                // `relation.set`: this replaces an entry that a nested comparison stored under the same generic key. See
+                // `note_variance_cycle`.
+                self.set_relation(key, FAILED | propagating, stored);
             }
             r.relation_count -= 1;
             self.reset_maybe_stack(r, maybe_start, propagating, false, stored, REPORT);

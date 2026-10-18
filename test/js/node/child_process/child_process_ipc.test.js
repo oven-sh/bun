@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { bunEnv, bunExe } from "harness";
 
-test("child_process ipc", async () => {
+test.concurrent("child_process ipc", async () => {
   const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc_fixture.js`.text();
   // node (v23.4.0) has identical output
   expect(output).toMatchInlineSnapshot(`
@@ -91,4 +91,32 @@ test.concurrent("a channel that could not be opened does not hold the event loop
   });
   expect(await child.stderr.text()).toContain("Unable to start IPC");
   expect(await child.exited).toBe(0);
+});
+
+test.concurrent("a message that arrives before there is a 'message' listener is kept for it", async () => {
+  const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc-pending-messages-fixture.mjs`.text();
+  // node (v26.7.0) has identical output, except that a listener that throws gets ["first","first","end"]
+  expect(output).toMatchInlineSnapshot(`
+    "child, a late listener: ["first","second","end"]
+    child, a handle: [["first","Server"],"second","end"]
+    child, a listener that throws: ["first","second","end"]
+    child, once: ["first","end"]
+    child, added and removed in one tick: ["first","second","end"]
+    child, disconnect() in the tick that adds it: []
+    child, opened by channel.ref(): ["first","second","end"]
+    child, opened by channel.unref(): ["first","second","end"]
+    child, opened by channel.refCounted(): ["first","second","end"]
+    child, opened by channel.unrefCounted(): ["first","second","end"]
+    parent, a late listener: ["first","second","end"]
+    parent, a handle: [["first","Server"],"second","end"]
+    parent, a listener that throws: ["first","end"]
+    parent, once: ["first","end"]
+    parent, added and removed in one tick: ["first","second","end"]
+    parent, disconnect() in the tick that adds it: []
+    parent, opened by channel.ref(): ["first","second","end"]
+    parent, opened by channel.unref(): ["first","second","end"]
+    parent, opened by channel.refCounted(): ["first","second","end"]
+    parent, opened by channel.unrefCounted(): ["first","second","end"]
+    "
+  `);
 });

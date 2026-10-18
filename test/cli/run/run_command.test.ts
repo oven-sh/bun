@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 
@@ -240,6 +240,66 @@ for (const mode of ctrlCModes) {
     }
   });
 }
+
+// `bun run` passes a signal on to its script. A signal that arrives before it has the script's pid is passed on
+// once the spawn returns, from outside the signal handler. That used to leave the signal blocked: `bun run` could
+// then not die of it like the script did, and aborted.
+//
+// Linux only: /proc/<pid>/status shows `bun run` inside the spawn, where every signal is blocked. Stopped at that
+// point, it has the SIGINT pending when it continues. Not concurrent: the poll holds the thread until then.
+test.skipIf(!isLinux)("a signal that reaches bun run while it spawns the script ends it like the script", async () => {
+  using dir = tempDir("run-signal-in-spawn", {
+    "package.json": JSON.stringify({ name: "t", scripts: { go: "kill -INT $$" } }),
+  });
+
+  async function run() {
+    // Only ends the polls if `bun run` never gets to the spawn.
+    const deadline = performance.now() + 10_000;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--shell=system", "go"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const look = () => {
+      const status = readFileSync(`/proc/${proc.pid}/status`, "latin1");
+      // A signal set is 16 hex digits. The last one holds SIGINT (2).
+      const sigint = (set: string) => (parseInt(status[status.indexOf(set) + set.length + 15], 16) & 2) !== 0;
+      return {
+        state: status[status.indexOf("State:\t") + 7],
+        // SIGINT is blocked, and the handler that passes it on is installed.
+        inSpawn: sigint("SigBlk:\t") && sigint("SigCgt:\t"),
+      };
+    };
+    let inSpawn = false;
+    try {
+      let now = look();
+      while (!now.inSpawn && now.state !== "Z" && performance.now() < deadline) now = look();
+      if (now.inSpawn) {
+        proc.kill("SIGSTOP");
+        while (now.state !== "T" && now.state !== "Z" && performance.now() < deadline) now = look();
+        inSpawn = now.state === "T" && now.inSpawn;
+        if (inSpawn) proc.kill("SIGINT");
+        proc.kill("SIGCONT");
+      }
+    } catch (e: any) {
+      // `bun run` is gone.
+      if (e.code !== "ENOENT" && e.code !== "ESRCH") throw e;
+    }
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { inSpawn, stderr, signalCode: proc.signalCode };
+  }
+
+  // A run that was not stopped inside the spawn shows nothing, so it is tried again.
+  let stoppedInSpawn = false;
+  for (let attempt = 0; attempt < 20 && !stoppedInSpawn; attempt++) {
+    const { inSpawn, ...end } = await run();
+    expect(end).toEqual({ stderr: "$ kill -INT $$\n", signalCode: "SIGINT" });
+    stoppedInSpawn = inSpawn;
+  }
+  expect(stoppedInSpawn).toBe(true);
+});
 
 describe.concurrent.each([
   ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],

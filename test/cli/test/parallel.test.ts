@@ -1587,6 +1587,53 @@ test.skipIf(isWindows).each([
 });
 
 test.skipIf(isWindows)(
+  "--parallel: the JUnit report tells an interrupted file from one that never started",
+  async () => {
+    const slow = `
+    import { test } from "bun:test";
+    import { appendFileSync } from "fs";
+    test("finished", () => {});
+    test("slow", async () => {
+      appendFileSync(process.env.PIDS, "started\\n");
+      await Bun.sleep(60000);
+    });
+  `;
+    using dir = tempDir("parallel-signal-junit", {
+      "a.test.ts": slow,
+      "b.test.ts": slow,
+      "c.test.ts": slow,
+      "d.test.ts": slow,
+    });
+    const pids = String(dir) + "/pids.txt";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=0", "--reporter=junit", "--reporter-outfile=out.xml"],
+      env: { ...bunEnv, PIDS: pids },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    while (
+      [
+        ...(
+          await Bun.file(pids)
+            .text()
+            .catch(() => "")
+        ).matchAll(/^started$/gm),
+      ].length < 2
+    )
+      await Bun.sleep(5);
+    proc.kill("SIGTERM");
+    await proc.exited;
+
+    const xml = await Bun.file(String(dir) + "/out.xml").text();
+    const cases = [...xml.matchAll(/<testcase name="([^"]+)"/g)].map(match => match[1]).sort();
+    expect(cases).toEqual(["(aborted)", "(aborted)", "(interrupted)", "(interrupted)", "finished", "finished"]);
+    expect(xml).toContain(`<testsuites name="bun test" tests="6" assertions="0" failures="4"`);
+  },
+);
+
+test.skipIf(isWindows)(
   "--parallel: a worker that dies mid-file takes the processes its test spawned with it",
   async () => {
     // The grandchild is orphaned when the worker dies, so a zombie could still

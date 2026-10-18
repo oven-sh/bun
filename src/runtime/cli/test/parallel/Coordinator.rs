@@ -193,8 +193,20 @@ impl<'a> Coordinator<'a> {
         for (idx, ms) in &running {
             self.reporter.summary().fail += 1;
             self.reporter.summary().files += 1;
-            self.mark_crashed(*idx, *ms);
+            self.mark_cut_short(
+                *idx,
+                *ms,
+                b"(interrupted)",
+                b"interrupted while still running",
+            );
             self.files_done += 1;
+        }
+        for w in self.workers.iter() {
+            for idx in w.range.lo..w.range.hi {
+                if let Some(file) = self.test_records.get_mut(idx as usize) {
+                    file.unfinished = Some((b"(aborted)", b"interrupted before it started"));
+                }
+            }
         }
         if !running.is_empty() {
             bun_core::pretty_errorln!("<r>\n<red>Interrupted<r> while still running:");
@@ -770,13 +782,16 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    fn mark_crashed(&mut self, file_idx: u32, elapsed_ms: i64) {
+    fn mark_cut_short(
+        &mut self,
+        file_idx: u32,
+        elapsed_ms: i64,
+        name: &'static [u8],
+        message: &'static [u8],
+    ) {
         if let Some(file) = self.test_records.get_mut(file_idx as usize) {
             file.elapsed_ns = u64::try_from(elapsed_ms).unwrap_or(0) * bun_core::time::NS_PER_MS;
-            file.unfinished = Some((
-                b"(worker crashed)",
-                b"worker process crashed before reporting results",
-            ));
+            file.unfinished = Some((name, message));
         }
     }
 
@@ -795,7 +810,12 @@ impl<'a> Coordinator<'a> {
         );
         self.reporter.summary().fail += 1;
         self.reporter.summary().files += 1;
-        self.mark_crashed(file_idx, bun_core::time::milli_timestamp() - dispatched_at);
+        self.mark_cut_short(
+            file_idx,
+            bun_core::time::milli_timestamp() - dispatched_at,
+            b"(worker crashed)",
+            b"worker process crashed before reporting results",
+        );
         self.files_done += 1;
         if self.bail > 0 && self.reporter.summary().fail >= self.bail {
             self.bail_out();

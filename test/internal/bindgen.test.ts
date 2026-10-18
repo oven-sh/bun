@@ -643,6 +643,14 @@ describe("dictionaries", () => {
     expect(bindgen.names("")).toStrictEqual({ first: "", nickname: null, all: [] });
   });
 
+  it("returns one with no prototype", () => {
+    const bare = bindgen.bare(7);
+    expect(Object.getPrototypeOf(bare)).toBeNull();
+    expect(Object.getOwnPropertyDescriptors(bare)).toEqual({
+      id: { value: 7, writable: true, enumerable: true, configurable: true },
+    });
+  });
+
   it("returns ordinary objects", () => {
     const seen = bindgen.optionsEcho({ name: "a", renamed: 1 });
     expect(Object.getPrototypeOf(seen)).toBe(Object.prototype);

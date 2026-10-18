@@ -71,6 +71,9 @@ export const TestNames = b.dictionary({
 });
 export const names = b.fn({ args: { text: b.string.utf8 }, returns: TestNames });
 
+export const TestBare = b.dictionary({ id: b.u32, label: b.string.utf8.optional }, { nullPrototype: true });
+export const bare = b.fn({ args: { id: b.u32 }, returns: TestBare });
+
 export const TestValue = b.union({
   number: b.f64,
   flag: b.bool,

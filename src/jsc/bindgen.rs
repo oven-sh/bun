@@ -862,6 +862,25 @@ pub mod to_js {
         }))
     }
 
+    /// # Safety: as for [`object`].
+    #[doc(hidden)]
+    #[inline]
+    pub unsafe fn null_prototype_object<'a>(
+        heap: &JsHeap<'a>,
+        first_member_name_index: u32,
+        values: &[JSValue],
+    ) -> Result<'a, JsLocal<'a>> {
+        // SAFETY: forwarded; this cannot throw.
+        Ok(JsLocal::from_raw(unsafe {
+            extern_types::Bun__Bindgen__createNullPrototypeObject(
+                heap.global_ptr(),
+                first_member_name_index,
+                values.as_ptr(),
+                values.len(),
+            )
+        }))
+    }
+
     /// # Safety
     /// `index` is one into `Tables::enumerationValues`.
     #[doc(hidden)]

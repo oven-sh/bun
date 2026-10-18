@@ -1242,7 +1242,7 @@ impl ${type.name}${lifetime ? "<'_>" : ""} {
 ${type.members.map(member => `            ${value(member)},`).join("\n")}
         ];
         // SAFETY: the names of these members start there in the table.
-        unsafe { bindgen::to_js::object(heap, ${type.firstReturnedMemberNameIndex}, &values) }
+        unsafe { bindgen::to_js::${type.nullPrototype ? "null_prototype_object" : "object"}(heap, ${type.firstReturnedMemberNameIndex}, &values) }
     }
 }
 `;

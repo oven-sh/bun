@@ -125,6 +125,12 @@ unsafe extern "C" {
         values: *const JSValue,
         count: usize,
     ) -> JSValue;
+    pub(super) fn Bun__Bindgen__createNullPrototypeObject(
+        global: *mut JSGlobalObject,
+        first_member_name_index: u32,
+        values: *const JSValue,
+        count: usize,
+    ) -> JSValue;
     pub(super) fn Bun__Bindgen__createObject(
         global: *mut JSGlobalObject,
         first_member_name_index: u32,

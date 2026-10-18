@@ -7,7 +7,7 @@ use crate::bindgen::{
     JsWrapper, JsWrapperStrong, PinnedBytes, StringOrJsBytes,
 };
 use crate::generated_bindgen::bindgen_test::{
-    TestAnything, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
+    TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
     TestCounterInternalFields as _, TestFailure, TestFlag, TestHolderClass, TestNames, TestOptions,
     TestOptionsEcho, TestOuter, TestTokenClass, TestValue,
 };
@@ -200,6 +200,10 @@ pub(crate) fn names(text: &[u8]) -> TestNames {
         nickname: all.get(1).cloned(),
         all,
     }
+}
+
+pub(crate) fn bare(id: u32) -> TestBare {
+    TestBare { id, label: None }
 }
 
 pub(crate) fn words(text: &[u8]) -> impl Iterator<Item = &[u8]> {

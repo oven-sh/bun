@@ -1417,6 +1417,8 @@ export interface DictionaryOptions {
    * `if (typeof options !== "object") options = null`.
    */
   nonObjectAsEmpty?: boolean | "typeof";
+  /** As a result, the object has no prototype. */
+  nullPrototype?: boolean;
 }
 
 export class DictionaryType extends NamedType {
@@ -1466,6 +1468,9 @@ export class DictionaryType extends NamedType {
   }
   get nonObjectAsEmpty(): boolean | "typeof" {
     return this.options.nonObjectAsEmpty ?? false;
+  }
+  get nullPrototype(): boolean {
+    return !!this.options.nullPrototype;
   }
   get idlType(): string {
     return `WebCore::IDLDictionary<${this.cpp}>`;

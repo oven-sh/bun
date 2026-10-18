@@ -265,6 +265,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   overloaded: $bindgen("bindgen_test.bind.ts", "overloaded"),
   describeDefaults: $bindgen("bindgen_test.bind.ts", "describeDefaults"),
   names: $bindgen("bindgen_test.bind.ts", "names"),
+  bare: $bindgen("bindgen_test.bind.ts", "bare"),
   sumArray: $bindgen("bindgen_test.bind.ts", "sumArray"),
   range: $bindgen("bindgen_test.bind.ts", "range"),
   words: $bindgen("bindgen_test.bind.ts", "words"),

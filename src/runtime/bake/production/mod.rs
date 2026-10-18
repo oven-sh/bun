@@ -540,12 +540,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
     for fsr in &framework.file_system_router_types {
         let joined_root = resolve_path::join_abs::<platform::Auto>(cwd, &fsr.root);
-        let Some(entry) = server_transpiler
-            .resolver
-            .read_dir_info_ignore_error(joined_root)
-        else {
+        if bun_sys::Dir::open(joined_root).is_err() {
             continue;
-        };
+        }
+        let abs_root: Box<[u8]> = Box::from(strings::paths::without_trailing_slash_windows_path(
+            joined_root,
+        ));
         let server_file =
             entry_points.get_or_put_entry_point(&fsr.entry_server, bake::Side::Server)?;
         let client_file = if let Some(client) = &fsr.entry_client {
@@ -554,9 +554,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             None
         };
         router_types.push(router::Type {
-            abs_root: Box::from(strings::paths::without_trailing_slash_windows_path(
-                entry.abs_path,
-            )),
+            abs_root,
             ignore_underscores: fsr.ignore_underscores,
             ignore_dirs: fsr
                 .ignore_dirs
@@ -577,10 +575,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     }
 
     let mut router = FrameworkRouter::init_empty(cwd, router_types.into_boxed_slice())?;
-    router.scan_all(
-        &mut server_transpiler.resolver,
-        router::InsertionContext::wrap(&mut entry_points),
-    )?;
+    router.scan_all(router::InsertionContext::wrap(&mut entry_points))?;
 
     // `bake::Framework` is the runtime-side superset; the bundler reads only
     // `built_in_modules` / `server_components` / `react_fast_refresh` /

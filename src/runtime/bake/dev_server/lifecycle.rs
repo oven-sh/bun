@@ -468,14 +468,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 &mut buf[..],
                 &[&fsr.root],
             );
-            // SAFETY: `server_transpiler` was fully initialized by `init_transpiler`
-            // above; `.resolver` is disjoint from `framework`.
-            let Some(entry) = unsafe { (*dev_ptr).server_transpiler.assume_init_mut() }
-                .resolver
-                .read_dir_info_ignore_error(joined_root)
-            else {
+            if bun_sys::Dir::open(joined_root).is_err() {
                 continue;
-            };
+            }
 
             // SAFETY: `server_graph` is disjoint from `framework`.
             let server_file = unsafe { &mut (*dev_ptr).server_graph }.insert_stale_extra(
@@ -485,7 +480,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             )?;
 
             types.push(router::Type {
-                abs_root: strings::without_trailing_slash(entry.abs_path).into(),
+                abs_root: strings::without_trailing_slash(joined_root).into(),
                 ignore_underscores: fsr.ignore_underscores,
                 ignore_dirs: fsr
                     .ignore_dirs
@@ -803,17 +798,15 @@ impl DevServer {
 
     /// Deferred one tick so that the server can be up faster
     fn scan_initial_routes(&mut self) -> crate::Result<()> {
-        // Reborrow `self`, `self.router`, and `self.server_transpiler.resolver`
-        // via the raw self-ptr (the three are disjoint fields of the heap-stable `*self`).
+        // Reborrow `self` and `self.router` via the raw self-ptr (the router and
+        // what the handler touches are disjoint fields of the heap-stable `*self`).
         let self_ptr = std::ptr::from_mut::<Self>(self);
-        // SAFETY: `router`, `server_transpiler.resolver`, and the
-        // `InsertionHandler` callbacks (touch `server_graph`/`route_lookup`)
-        // are disjoint fields of `*self_ptr`.
+        // SAFETY: `router` and the `InsertionHandler` callbacks (touch
+        // `server_graph`/`route_lookup`) are disjoint fields of `*self_ptr`.
         unsafe {
-            (*self_ptr).router.scan_all(
-                &mut (*(*self_ptr).server_transpiler.as_mut_ptr()).resolver,
-                router::InsertionContext::wrap(&mut *self_ptr),
-            )?;
+            (*self_ptr)
+                .router
+                .scan_all(router::InsertionContext::wrap(&mut *self_ptr))?;
         }
 
         self.server_graph.ensure_stale_bit_capacity(true)?;

@@ -1,5 +1,6 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
+import fs from "fs";
 import { tempDir } from "harness";
 import path from "path";
 
@@ -132,4 +133,41 @@ test("discovers from filesystem paths", () => {
       },
     ],
   });
+});
+
+/** The file of each page, relative to `root`, in POSIX form. */
+function pageFiles(root: string) {
+  const files: string[] = [];
+  (function walk(node: { page: string | null; children: any[] }) {
+    if (node.page) files.push(path.relative(root, node.page).replaceAll("\\", "/"));
+    node.children.forEach(walk);
+  })(new FrameworkRouter({ root, style: "nextjs-pages" }).toJSON());
+  return files.sort();
+}
+
+test("a new router reads the directory from disk", () => {
+  using dir = tempDir("fsr-fresh", {
+    "pages/a.tsx": "1",
+    "pages/old.tsx": "1",
+    "pages/gone/x.tsx": "1",
+  });
+  const root = path.join(String(dir), "pages");
+  expect(pageFiles(root)).toEqual(["a.tsx", "gone/x.tsx", "old.tsx"]);
+
+  fs.writeFileSync(path.join(root, "new.tsx"), "1");
+  fs.rmSync(path.join(root, "old.tsx"));
+  fs.rmSync(path.join(root, "gone"), { recursive: true });
+  fs.mkdirSync(path.join(root, "blog"));
+  fs.writeFileSync(path.join(root, "blog", "post.tsx"), "1");
+  expect(pageFiles(root)).toEqual(["a.tsx", "blog/post.tsx", "new.tsx"]);
+});
+
+test("a router finds a root that was created after a router found none", () => {
+  using dir = tempDir("fsr-missing-root", {});
+  const root = path.join(String(dir), "pages");
+  expect(pageFiles(root)).toEqual([]);
+
+  fs.mkdirSync(root);
+  fs.writeFileSync(path.join(root, "a.tsx"), "1");
+  expect(pageFiles(root)).toEqual(["a.tsx"]);
 });

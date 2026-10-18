@@ -886,6 +886,7 @@ pub enum EntryKind {
     Dir,
 }
 
+#[derive(Clone, Copy)]
 pub struct DirListingEntry<'a> {
     pub name: &'a [u8],
     pub kind: EntryKind,

@@ -10,7 +10,7 @@ use bun_alloc::{AllocError, Arena};
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_jsc::{JSGlobalObject, JSValue, StringJsc, StrongOptional};
 use bun_paths as paths;
-use bun_resolver::{DirInfo, Resolver};
+use bun_router::{DirListing, DirListingEntry, EntryKind};
 
 use crate::bake::dev_server::route_bundle::IndexOptional as RouteBundleIndexOptional;
 
@@ -226,13 +226,9 @@ impl FrameworkRouter {
         cost
     }
 
-    pub(crate) fn scan_all(
-        &mut self,
-        r: &mut Resolver,
-        ctx: &mut dyn InsertionHandler,
-    ) -> Result<(), AllocError> {
+    pub(crate) fn scan_all(&mut self, ctx: &mut dyn InsertionHandler) -> Result<(), AllocError> {
         for i in 0..self.types.len() {
-            self.scan(TypeIndex::init(u8::try_from(i).expect("int cast")), r, ctx)?;
+            self.scan(TypeIndex::init(u8::try_from(i).expect("int cast")), ctx)?;
         }
         Ok(())
     }
@@ -504,13 +500,13 @@ pub(crate) trait InsertionHandler {
     ) -> Result<(), AllocError>;
 }
 
-/// Hash context (wyhash final4, seed 0) for the `zig_hash_map` rebuild below.
+/// Hash context (wyhash final4, seed 0) for the `zig_hash_map` build below.
 ///
-/// `scan_inner` walks `DirEntry.data` to discover routes; the resulting child
-/// order is the map's iteration order, and the linear-probe bucket walk is
-/// what `test/bake/framework-router.test.ts` snapshots. `EntryMap` is a
-/// `std::collections::HashMap`, which has a different layout, so we rebuild
-/// into a `zig_hash_map` keyed/hashed deterministically before iterating.
+/// `scan_inner` walks a directory listing to discover routes; the resulting
+/// child order is the map's iteration order, and the linear-probe bucket walk
+/// is what `test/bake/framework-router.test.ts` snapshots. A directory lists
+/// its names in an order of its own, so we build a `zig_hash_map`
+/// keyed/hashed deterministically before iterating.
 struct ZigStringHashContext;
 impl bun_collections::zig_hash_map::HashContext<Box<[u8]>> for ZigStringHashContext {
     #[inline]
@@ -531,75 +527,56 @@ impl FrameworkRouter {
     pub(crate) fn scan(
         &mut self,
         ty: TypeIndex,
-        r: &mut Resolver,
         ctx: &mut dyn InsertionHandler,
     ) -> Result<(), AllocError> {
         let abs_root: Box<[u8]> = self.types[ty.get() as usize].abs_root.clone();
         debug_assert!(!abs_root.ends_with(b"/"));
         debug_assert!(paths::is_absolute(&abs_root));
-        let Some(root_info) = r.read_dir_info_ignore_error(&abs_root) else {
-            return Ok(());
-        };
         let mut arena_state = Arena::new();
-        self.scan_inner(ty, r, &root_info, &mut arena_state, ctx)
+        self.scan_inner(ty, &mut abs_root.into_vec(), &mut arena_state, ctx)
     }
 
+    /// Reads `dir_path` from disk: the resolver's listing of a directory is a cache.
     fn scan_inner(
         &mut self,
         t_index: TypeIndex,
-        r: &mut Resolver,
-        dir_info: &DirInfo,
+        dir_path: &mut Vec<u8>,
         arena_state: &mut Arena,
         ctx: &mut dyn InsertionHandler,
     ) -> Result<(), AllocError> {
-        let fs = r.fs();
-        // SAFETY: BACKREF — `r.fs()` is the process-global FileSystem singleton; valid for the
-        // program lifetime. Resolver mutex serializes mutation. We hold a raw pointer (no borrow)
-        // so `r.read_dir_info_ignore_error(&mut self)` below does not conflict.
-        let fs_ref = unsafe { &*fs };
-        // SAFETY: `fs` is the non-null process-global FileSystem singleton (see above);
-        // `addr_of_mut!` only computes a field address without forming a reference.
-        let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
+        let Ok(dir) = bun_sys::Dir::open(dir_path) else {
+            return Ok(());
+        };
+        let listing = DirListing::read(&dir, dir_path, |_| false);
+        drop(dir);
+        let Ok(listing) = listing else {
+            return Ok(());
+        };
+        let mut file_path: Vec<u8> = Vec::new();
 
         {
-            // Note: `entries.data` is backed by `std::collections::HashMap`,
-            // whose iteration order is unspecified. The route-tree child order
-            // is this iteration order (see `insert`), and
-            // `test/bake/framework-router.test.ts` snapshots it. Rebuild into a
-            // `zig_hash_map` (fixed wyhash/seed/probe) so the walk order is
-            // deterministic. Absent hash collisions (the common case for small
-            // dirs) the bucket order is fully determined by the hash, so
-            // re-insertion order is irrelevant.
+            // Note: the route-tree child order is the iteration order of this
+            // map (see `insert`), and `test/bake/framework-router.test.ts`
+            // snapshots it. Build a `zig_hash_map` (fixed wyhash/seed/probe)
+            // keyed by the lowercased name so the walk order is deterministic.
+            // Absent hash collisions (the common case for small dirs) the
+            // bucket order is fully determined by the hash, so insertion order
+            // is irrelevant.
             let mut zig_order: bun_collections::zig_hash_map::HashMap<
                 Box<[u8]>,
-                *mut bun_resolver::fs::Entry,
+                DirListingEntry<'_>,
                 ZigStringHashContext,
             > = Default::default();
-            {
-                // Copy under `entries_mutex`: other threads rewrite the cached
-                // `DirEntry` map in place under that lock. Dropped before the
-                // walk so the `read_dir_info_ignore_error` recursion can re-lock.
-                let _entries_lock = fs_ref.fs.entries_mutex.lock_guard();
-                if let Some(entries) = dir_info.get_entries_const() {
-                    for (k, &v) in entries.data.iter() {
-                        let _ = zig_order.put(Box::from(&**k), v);
-                    }
-                }
+            for entry in listing.iter() {
+                let _ = zig_order.put(entry.name.to_ascii_lowercase().into_boxed_slice(), entry);
             }
             let mut it = zig_order.iter();
             'outer: while let Some(entry) = it.next() {
-                let file_ptr: *mut bun_resolver::fs::Entry = *entry.1;
-                // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton
-                // (process lifetime); the lazy-stat rewrite in `kind()` below is
-                // serialized on the per-entry `Entry.mutex`.
-                let file = unsafe { &*file_ptr };
-                let base = file.base();
+                let file: DirListingEntry<'_> = *entry.1;
+                let base = file.name;
                 // Note: reshaped for borrowck — fetch type fields fresh each iteration.
-                // SAFETY: `Entry::kind` mutates only the entry's lazily-cached kind; `file_ptr`
-                // is the unique live reference to this entry during the scan, and `fs_impl`
-                // points at the process-global FS implementation.
-                match unsafe { (*file_ptr).kind(&raw mut *fs_impl, false) } {
-                    bun_resolver::fs::EntryKind::Dir => {
+                match file.kind {
+                    EntryKind::Dir => {
                         let t = &self.types[t_index.get() as usize];
                         if t.ignore_underscores && base.starts_with(b"_") {
                             continue 'outer;
@@ -611,13 +588,14 @@ impl FrameworkRouter {
                             }
                         }
 
-                        if let Some(child_info) =
-                            r.read_dir_info_ignore_error(fs_ref.abs(&[file.dir, file.base()]))
-                        {
-                            self.scan_inner(t_index, r, &child_info, arena_state, ctx)?;
-                        }
+                        let parent_len = dir_path.len();
+                        dir_path.push(paths::SEP);
+                        dir_path.extend_from_slice(base);
+                        let scanned = self.scan_inner(t_index, dir_path, arena_state, ctx);
+                        dir_path.truncate(parent_len);
+                        scanned?;
                     }
-                    bun_resolver::fs::EntryKind::File => {
+                    EntryKind::File => {
                         let ext = paths::extension(base);
 
                         {
@@ -636,15 +614,18 @@ impl FrameworkRouter {
                             }
                         }
 
+                        file_path.clear();
+                        file_path.extend_from_slice(dir_path);
+                        file_path.push(paths::SEP);
+                        file_path.extend_from_slice(base);
+
                         let mut rel_path_buf = bun_paths::path_buffer_pool::get();
                         let full_rel_path_len = {
                             let full_rel_path = paths::resolve_path::relative_normalized_buf::<
                                 paths::platform::Auto,
                                 true,
                             >(
-                                &mut rel_path_buf[1..],
-                                &self.root,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                &mut rel_path_buf[1..], &self.root, &file_path
                             );
                             full_rel_path.len()
                         };
@@ -734,7 +715,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Dynamic(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                &file_path,
                                 ctx,
                                 &mut out_colliding_file_id,
                             )
@@ -765,7 +746,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Static(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                &file_path,
                                 ctx,
                                 &mut out_colliding_file_id,
                             )
@@ -785,7 +766,6 @@ impl FrameworkRouter {
 
                         arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                     }
-                    bun_resolver::fs::EntryKind::Dangling => {}
                 }
             }
         }

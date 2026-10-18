@@ -422,16 +422,10 @@ impl std::ops::Deref for GrowingDecls {
 
 /// See [`Storage::Symbols`].
 pub trait SymbolList {
-    fn len(&self) -> usize;
     fn get(&self, index: usize) -> Option<Symbol<'_>>;
 }
 
 impl SymbolList for Vec<GrowingSymbol> {
-    #[inline]
-    fn len(&self) -> usize {
-        self.len()
-    }
-
     #[inline]
     fn get(&self, index: usize) -> Option<Symbol<'_>> {
         self[..].get(index).map(GrowingSymbol::get)
@@ -498,11 +492,6 @@ pub struct Symbols<'s> {
 }
 
 impl SymbolList for Symbols<'_> {
-    #[inline]
-    fn len(&self) -> usize {
-        self.len()
-    }
-
     #[inline]
     fn get(&self, index: usize) -> Option<Symbol<'_>> {
         self.get(index)

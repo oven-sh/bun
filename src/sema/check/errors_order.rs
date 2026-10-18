@@ -70,7 +70,7 @@ impl Checker<'_, '_> {
         if !symbol.flags.intersects(is_block_scoped) {
             return 1;
         }
-        let &[declaration] = &symbol.decls[..] else {
+        let &[declaration] = symbol.decls else {
             return 0;
         };
         // Cases that `block_scoped_declaration` handles specially.

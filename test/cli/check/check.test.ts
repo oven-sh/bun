@@ -12366,6 +12366,34 @@ export interface Q5<in T> { f: () => S5<T> }
       expect(exitCode).toBe(1);
     });
 
+    test("a labeled tuple built twice is one type, also in a file that nothing imports", async () => {
+      using dir = project({
+        "a.ts": `import { twice as imported } from "./b";
+function f(p: string, q: number) {}
+type Args<F> = F extends (...args: infer A) => unknown ? A : never;
+declare const twice: Args<typeof f> | Parameters<typeof f>;
+declare function argsOf<A extends unknown[]>(fn: (...args: A) => void): A;
+const first = argsOf(f);
+const second = argsOf(f);
+declare const inferred: typeof first | typeof second;
+export const n1: never = twice;
+export const n2: never = inferred;
+export const n3: never = imported;
+`,
+        "b.ts": `function f(p: string, q: number) {}
+type Args<F> = F extends (...args: infer A) => unknown ? A : never;
+export declare const twice: Args<typeof f> | Parameters<typeof f>;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(9,14): error TS2322: Type '[p: string, q: number]' is not assignable to type 'never'.
+        a.ts(10,14): error TS2322: Type '[p: string, q: number]' is not assignable to type 'never'.
+        a.ts(11,14): error TS2322: Type '[p: string, q: number]' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("inference to `keyof T` from string literals and enum members", async () => {
       using dir = project({
         "a.ts": `enum SE { A = "a", B = "b" }

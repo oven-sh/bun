@@ -1069,10 +1069,6 @@ impl<'s> Shape<'s> {
         }
     }
 
-    pub fn prop(&self, name: Atom) -> Option<&Prop<'s>> {
-        self.props.iter().find(|p| p.name == name)
-    }
-
     /// Whether every field but the four lists is as `new_in` makes it. Every field is named, so that a new one is a
     /// compile error.
     fn is_plain(&self) -> bool {
@@ -1557,9 +1553,8 @@ impl TypeKey<'_> {
     fn is_bound(self, own: &OwnStore) -> bool {
         match self {
             TypeKey::Data(data) => data.is_bound(own),
-            TypeKey::Union(types)
-            | TypeKey::Intersection(types)
-            | TypeKey::Tuple { elems: types, .. } => types.is_bound(own),
+            TypeKey::Union(types) | TypeKey::Intersection(types) => types.is_bound(own),
+            TypeKey::Tuple { elems, flags, .. } => elems.is_bound(own) || flags.is_bound(own),
             TypeKey::Ref { target, args } => target.is_bound(own) || args.is_bound(own),
             TypeKey::Fns { decls, mapper } => {
                 decls.iter().any(|decl| decl.0.is_bound(own)) || mapper.is_bound(own)

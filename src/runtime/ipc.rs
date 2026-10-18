@@ -790,6 +790,11 @@ impl SendHandle {
         matches!(self.callbacks, CallbackList::AckNack)
     }
 
+    /// By its bytes: a message that was queued behind it can have been appended to it.
+    fn is_version_packet(&self, mode: Mode) -> bool {
+        self.data.list.as_slice() == get_version_packet(mode)
+    }
+
     /// Call the callback and deinit
     pub(crate) fn complete(mut self, global: &JSGlobalObject) {
         if let Some(handle) = &self.handle {
@@ -1492,7 +1497,9 @@ impl SendQueue {
 
     fn update_ref(&self) {
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L868-L874
-        let sending = self.waiting_for_ack.get().is_some() || !self.queue.get().is_empty();
+        // Node has no version packet, and on Windows its write ends after the channel was started.
+        let sending = self.waiting_for_ack.get().is_some()
+            || (self.queue.get().iter()).any(|message| !message.is_version_packet(self.mode));
         if sending != self.control.sending.replace(sending) {
             self.add_refs(if sending { 1 } else { -1 });
         }

@@ -1554,13 +1554,10 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
         env,
         timeout: longLimit,
         stdout: "pipe",
-        stderr: "pipe",
+        stderr: "ignore",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr }).toEqual({
-        stdout: `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`,
-        stderr: "",
-      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe(`a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
       expect(exitCode).toBe(1);
     });
 

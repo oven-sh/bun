@@ -365,6 +365,19 @@ public:
         }
     }
 
+    /* Fails the connection because a message it received could not be buffered, or could not be copied
+     * for its handler. The peer gets 1011, unless this socket has unsent data: the Close frame would
+     * wait behind it in a buffer that may have to double first, and under the same memory pressure
+     * that refusal ends the process. The connection then closes without a Close frame, as a timeout does. */
+    void failOutOfMemory() {
+        if (!getBufferedAmount()) {
+            failConnection(FAIL_OUT_OF_MEMORY, 0);
+            return;
+        }
+        /* The reason length doubles as the close code. */
+        us_socket_close((us_socket_t *) this, (int) FAIL_OUT_OF_MEMORY.diagnostic.length(), (void *) FAIL_OUT_OF_MEMORY.diagnostic.data());
+    }
+
     /* Corks the response if possible. Leaves already corked socket be. */
     void cork(MoveOnlyFunction<void()> &&handler) {
         if (!Super::isCorked()) {

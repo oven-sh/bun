@@ -709,6 +709,11 @@ extern "C"
     withWebSocket(ssl, ws, [](auto *uws) { uws->close(); });
   }
 
+  void uws_ws_fail_out_of_memory(int ssl, uws_websocket_t *ws)
+  {
+    withWebSocket(ssl, ws, [](auto *uws) { uws->failOutOfMemory(); });
+  }
+
   void uws_ws_pause(int ssl, uws_websocket_t *ws)
   {
     withWebSocket(ssl, ws, [](auto *uws) { uws->pause(); });

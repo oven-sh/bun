@@ -3,7 +3,9 @@
 // error message as the reason. The close handler gets 1006 with the same
 // message. A peer can't send 1006, so it always means the server aborted.
 import { describe, expect, test } from "bun:test";
-import { tls as cert } from "harness";
+import { bunEnv, bunExe, isASAN, tls as cert } from "harness";
+import path from "node:path";
+import { deflateRawSync } from "node:zlib";
 import {
   closePayload,
   encodeFrame,
@@ -11,6 +13,7 @@ import {
   OP,
   type Payload,
   RawClient,
+  type RequestOptions,
   showFullFrame,
 } from "../../web/websocket/raw-peer";
 
@@ -238,5 +241,104 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
         events: [`close ${code} "why"`],
       });
     });
+  });
+});
+
+// A buffer for a received message is sized by the peer, so it can fail to grow. That
+// fails the one connection with 1011 and leaves the server serving. The messages below
+// are legal: each is under the default 16 MB maxPayloadLength.
+//
+// ASAN's per-allocation cap makes each refusal deterministic. The buffers double from
+// the size of the first read, so which growth is over the cap is arithmetic. The clients
+// run in this process, which is not capped. `Malloc=1` puts WebKit's allocations on the
+// same capped allocator, which is what the text case needs.
+describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () => {
+  const MiB = 1024 * 1024;
+  const CAP_MB = 4;
+  const diagnostic = "Received message that does not fit in memory";
+  const deflate: RequestOptions = { headers: { "Sec-WebSocket-Extensions": "permessage-deflate" } };
+  // What a refused message inflates from. A run of one byte compresses to a few KiB.
+  const deflated = (size: number) => deflateRawSync(Buffer.alloc(size, 7));
+
+  async function* jsonLines(stream: ReadableStream<Uint8Array>) {
+    let pending = "";
+    for await (const chunk of stream.pipeThrough(new TextDecoderStream())) {
+      pending += chunk;
+      for (let end; (end = pending.indexOf("\n")) !== -1; pending = pending.slice(end + 1)) {
+        yield JSON.parse(pending.slice(0, end));
+      }
+    }
+  }
+
+  async function startServer() {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "websocket-server-oom-fixture.ts")],
+      env: {
+        ...bunEnv,
+        Malloc: "1",
+        // detect_leaks=0: natives owned only by a JSC cell are invisible to
+        // LeakSanitizer's reachability scan, and `Malloc=1` adds WebKit's own
+        // never-freed startup allocations.
+        ASAN_OPTIONS: [
+          bunEnv.ASAN_OPTIONS,
+          "allocator_may_return_null=1",
+          `max_allocation_size_mb=${CAP_MB}`,
+          "detect_leaks=0",
+        ]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const events = jsonLines(proc.stdout);
+    const { port } = (await events.next()).value;
+    return { proc, events, port };
+  }
+
+  const refusals: [name: string, options: RequestOptions | undefined, send: (client: RawClient) => void][] = [
+    // The fragment buffer: the up-front reserve for the length the header declares is
+    // refused, then the buffer doubles with the bytes that arrive until a growth is too.
+    ["a message larger than the cap", undefined, client => client.binary(Buffer.alloc(CAP_MB * MiB + 2 * MiB))],
+    [
+      "a fragmented message larger than the cap",
+      undefined,
+      client => {
+        client.binary(Buffer.alloc(3 * MiB), { fin: false });
+        client.send(OP.continuation, Buffer.alloc(3 * MiB));
+      },
+    ],
+    // The inflate buffer, which every connection of the loop shares.
+    [
+      "a compressed message that inflates past the cap",
+      deflate,
+      client => client.binary(deflated(CAP_MB * MiB + 2 * MiB), { rsv1: true }),
+    ],
+    // The copy for the message handler: one non-ASCII character makes the string 16-bit,
+    // so its buffer is twice the size of the one the bytes already fit in.
+    [
+      "a text message whose UTF-16 copy is over the cap",
+      undefined,
+      client => client.text("\u00e9" + Buffer.alloc(3 * MiB - 2, "a").toString("latin1")),
+    ],
+  ];
+
+  test.each(refusals)("%s fails that connection with 1011", async (_name, options, send) => {
+    const { proc, events, port } = await startServer();
+    await using _ = proc;
+    using client = await RawClient.upgrade(port, options);
+
+    send(client);
+    expect(await client.remainingFrames()).toEqual([`close 1011 ${JSON.stringify(diagnostic)}`]);
+    expect((await events.next()).value).toEqual({ close: 1006, reason: diagnostic });
+
+    // The server still serves, with the shared inflate buffer still usable.
+    using next = await RawClient.upgrade(port, deflate);
+    next.binary(Buffer.alloc(2 * MiB));
+    next.binary(deflated(2 * MiB), { rsv1: true });
+    expect(await next.nextFrames(2)).toEqual([`text "got ${2 * MiB}"`, `text "got ${2 * MiB}"`]);
+
+    next.text("stop");
+    expect(await proc.exited).toBe(0);
   });
 });

@@ -89,7 +89,16 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
         if (length > WTF::String::MaxLength) [[unlikely]] {
             return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
         }
-        return JSValue::encode(jsString(vm, WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(ptr), length))));
+        // The caller's data decides the size (a received message, a file), so the
+        // allocation has to be able to fail. `WTF::String(span)` crashes instead.
+        std::span<Latin1Character> characters;
+        auto impl = WTF::StringImpl::tryCreateUninitialized(length, characters);
+        if (!impl) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        memcpy(characters.data(), ptr, length);
+        return JSValue::encode(jsString(vm, WTF::String(impl.releaseNonNull())));
     }
 
     auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(ptr), length });

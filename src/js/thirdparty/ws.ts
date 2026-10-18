@@ -1674,6 +1674,8 @@ const receiverErrors = {
   ],
   WS_ERR_UNSUPPORTED_MESSAGE_LENGTH: [RangeError, "Max payload size exceeded", false, 1009],
   Z_DATA_ERROR: [Error, "invalid compressed data", false, 1007],
+  // Not an upstream code: a buffer for the message could not be allocated.
+  ERR_MEMORY_ALLOCATION_FAILED: [RangeError, "Out of memory", false, 1011],
 } as const;
 type ReceiverErrorCode = Exclude<keyof typeof receiverErrors, "__proto__">;
 
@@ -1691,6 +1693,7 @@ const serverFailures: (ReceiverErrorCode | undefined)[] = [
   "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH",
   "WS_ERR_UNSUPPORTED_DATA_PAYLOAD_LENGTH",
   "Z_DATA_ERROR",
+  "ERR_MEMORY_ALLOCATION_FAILED",
 ];
 
 function createReceiverError(code: ReceiverErrorCode, detail: string | undefined): ReceiverError {

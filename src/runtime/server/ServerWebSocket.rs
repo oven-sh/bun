@@ -739,9 +739,29 @@ impl ServerWebSocket {
             Opcode::Binary => self.binary_to_js(global_object, message),
             _ => unreachable!(),
         };
-        // Converting the payload threw (or the VM is terminating): there is
-        // no message to deliver; the handler's landing frame folds it.
-        let data = data?;
+        let data = match data {
+            Ok(data) => data,
+            Err(e) => {
+                // The payload could not be copied for the handler: out of memory. A
+                // connection cannot skip a message it received, so fail it with 1011.
+                let err_value = global_object.take_error(e);
+                if err_value.is_termination_exception() {
+                    return Err(e);
+                }
+                ws.fail_out_of_memory();
+                if on_error.is_empty_or_undefined_or_null() {
+                    // The close code and its reason are the report. An uncaught
+                    // exception would end the process over one connection's message.
+                    return Ok(());
+                }
+                return self.handler().run_error_callback(
+                    on_error,
+                    global_object,
+                    self.js_value().unwrap_or(JSValue::UNDEFINED),
+                    err_value,
+                );
+            }
+        };
         let arguments = [self.js_value().unwrap_or(JSValue::UNDEFINED), data];
 
         let result = match call_corked(
@@ -1549,15 +1569,26 @@ impl WebSocketHandler for WsPackageSocket {
         unsafe { &*this }.0.attach(ws);
     }
     #[inline(always)]
-    unsafe fn on_message(this: *mut Self, _ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
+    unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
         // SAFETY: per trait contract.
         unsafe {
             Self::dispatch(this, |this| {
-                this.call(this.0.handler().on_message, |global| {
-                    Ok([
-                        ArrayBuffer::create_buffer(global, message)?,
-                        JSValue::js_boolean(opcode == Opcode::Binary),
-                    ])
+                let global = this.0.handler().global_object();
+                let buffer = match ArrayBuffer::create_buffer(global, message) {
+                    Ok(buffer) => buffer,
+                    Err(e) => {
+                        // Same as `ServerWebSocket::on_message`: the copy for the handler
+                        // failed, so the connection fails. `ws.ts` turns the close into an
+                        // 'error' event on the WebSocket, which is the report.
+                        if global.take_error(e).is_termination_exception() {
+                            return Err(e);
+                        }
+                        ws.fail_out_of_memory();
+                        return Ok(());
+                    }
+                };
+                this.call(this.0.handler().on_message, |_| {
+                    Ok([buffer, JSValue::js_boolean(opcode == Opcode::Binary)])
                 })
             })
         };

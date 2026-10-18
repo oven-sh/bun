@@ -135,12 +135,13 @@ const sprite = (x, y, px) => {
   return set(px, k * (250 - 60 * t), k * (190 - 90 * t), k * (60 + 40 * t), 255 * a);
 };
 
-// An 8-bit PNG of colour type 2, 3 or 6, not interlaced (what Bun.Image
-// writes), as RGBA pixels and its palette entries.
+// A PNG that is not interlaced, as RGBA pixels and its palette entries: colour
+// type 2 or 6 at 8 bits, or colour type 3 at 1, 2, 4 or 8 bits per index.
 function decodePng(png) {
   const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
   let width = 0;
   let height = 0;
+  let depth = 8;
   let type = 0;
   let plte = new Uint8Array(0);
   let trns = new Uint8Array(0);
@@ -152,9 +153,11 @@ function decodePng(png) {
     if (name === "IHDR") {
       width = dv.getUint32(at + 8);
       height = dv.getUint32(at + 12);
+      depth = png[at + 16];
       type = png[at + 17];
-      if (png[at + 16] !== 8 || png[at + 20] !== 0 || ![2, 3, 6].includes(type)) {
-        throw new Error(`unsupported PNG: depth ${png[at + 16]}, colour type ${type}, interlace ${png[at + 20]}`);
+      const depths = type === 3 ? [1, 2, 4, 8] : [8];
+      if (!depths.includes(depth) || png[at + 20] !== 0 || ![2, 3, 6].includes(type)) {
+        throw new Error(`unsupported PNG: depth ${depth}, colour type ${type}, interlace ${png[at + 20]}`);
       }
     } else if (name === "PLTE") plte = data;
     else if (name === "tRNS") trns = data;
@@ -162,7 +165,8 @@ function decodePng(png) {
     at += 12 + length;
   }
   const bpp = type === 3 ? 1 : type === 2 ? 3 : 4;
-  const stride = width * bpp;
+  // A row of indices is packed from the high bits of each byte.
+  const stride = type === 3 ? Math.ceil((width * depth) / 8) : width * bpp;
   const raw = zlib.inflateSync(Buffer.concat(idat));
   const rows = new Uint8Array(height * stride);
   for (let y = 0; y < height; y++) {
@@ -192,8 +196,11 @@ function decodePng(png) {
     entries.push([plte[i * 3], plte[i * 3 + 1], plte[i * 3 + 2], i < trns.length ? trns[i] : 255]);
   }
   for (let p = 0; p < width * height; p++) {
-    if (type === 3) rgba.set(entries[rows[p]], p * 4);
-    else {
+    if (type === 3) {
+      const bit = (p % width) * depth;
+      const byte = rows[Math.floor(p / width) * stride + (bit >> 3)];
+      rgba.set(entries[(byte >> (8 - depth - (bit & 7))) & ((1 << depth) - 1)], p * 4);
+    } else {
       rgba[p * 4] = rows[p * bpp];
       rgba[p * 4 + 1] = rows[p * bpp + 1];
       rgba[p * 4 + 2] = rows[p * bpp + 2];

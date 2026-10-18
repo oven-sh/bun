@@ -2432,7 +2432,7 @@ pub mod formatter {
                             }
                             PercentTag::D | PercentTag::I | PercentTag::F => {
                                 if next_value.is_int32() {
-                                    // An int32, and a whole number under `%d` or `%i` below, add one column.
+                                    // An int32, and a number that `%d` or `%i` prints as only digits below, add one column.
                                     writer.add_for_new_line(1);
                                     writer.print(format_args!("{}", next_value.as_int32()));
                                 } else if token != PercentTag::F && next_value.is_big_int() {
@@ -2447,9 +2447,12 @@ pub mod formatter {
                                     let number = number_substitution(token, next_value, global)?;
                                     let mut buf = [0u8; 124];
                                     let text = js_number_text(&mut buf, number);
-                                    let is_whole = number.is_finite() && number.trunc() == number;
+                                    // `String(number)` is only digits for a whole number below 1e21 that is not -0.
+                                    let is_digits = number.trunc() == number
+                                        && number.abs() < 1e21
+                                        && !(number == 0.0 && number.is_sign_negative());
                                     writer.add_for_new_line(
-                                        if token == PercentTag::F || !is_whole {
+                                        if token == PercentTag::F || !is_digits {
                                             text.len()
                                         } else {
                                             1

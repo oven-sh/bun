@@ -293,3 +293,7 @@ console.log("| %d | %i | %f |", 12n, 12n, 12n);
 console.log("| %d | %i | %f |", -12345678901234567890n, -12345678901234567890n, -12345678901234567890n);
 console.log("| %d | %i | %f |", Object(5n), Object(5n), Object(5n));
 console.log("| %d | %i | %f |", Symbol("d"), Symbol("i"), Symbol("f"));
+
+// a number that does not print as only digits adds its width to the line
+console.log(Buffer.alloc(60, "x").toString() + " %d", Number.MAX_VALUE, [1, 2, 3]);
+console.log(Buffer.alloc(60, "x").toString() + " %f", Number.MAX_VALUE, [1, 2, 3]);

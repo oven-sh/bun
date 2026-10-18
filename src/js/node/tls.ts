@@ -1583,7 +1583,7 @@ function cacheBundledRootCertificates(): string[] {
   bundledRootCertificates ||= getBundledRootCertificates() as string[];
   return bundledRootCertificates;
 }
-const getUseSystemCA = $bindgen("Arguments.bind.ts", "getUseSystemCA");
+const getUseSystemCA = $bindgen("node_tls_binding.bind.ts", "getUseSystemCA");
 
 let defaultCACertificates: string[] | undefined;
 function cacheDefaultCACertificates() {

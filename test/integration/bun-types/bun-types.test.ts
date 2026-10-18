@@ -308,7 +308,6 @@ function checkForEmptyInterfaces(program: ts.Program) {
  * `null`: nothing, since JavaScript wraps them, they are not for users, or the file has only types.
  */
 const PUBLISHED_AS: Record<string, string | null> = {
-  "Arguments.bind.ts": null,
   "BunObject.bind.ts": "typeof Bun & { braces: typeof Bun.$.braces; shellEscape: typeof Bun.$.escape }",
   "BunObjectInternals.bind.ts": null,
   "Crypto.bind.ts": "typeof Bun",
@@ -341,6 +340,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "node_http_binding.bind.ts": null,
   "node_net_binding.bind.ts": null,
   "node_os.bind.ts": null,
+  "node_tls_binding.bind.ts": null,
   "node_util_binding.bind.ts": null,
   "node_zlib_binding.bind.ts": null,
   "socket.bind.ts": null,

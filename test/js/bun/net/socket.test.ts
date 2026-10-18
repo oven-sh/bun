@@ -4605,15 +4605,19 @@ Reo=
           },
         },
       });
-      const chainCheck = () => (client.getAuthorizationError() as NodeJS.ErrnoException | null)?.code;
+      const chainCheck = () => (client.getAuthorizationError() as NodeJS.ErrnoException | null)?.code ?? null;
       try {
         await flightForwarded.promise;
         // The client has read the flight when its SSL has the result of the chain check.
+        const deadline = Date.now() + 3000;
         do {
           await pendingReadsDone();
-        } while (chainCheck() !== "UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+        } while (chainCheck() !== "UNABLE_TO_VERIFY_LEAF_SIGNATURE" && events.length === 0 && Date.now() < deadline);
         // The server waits for the client's flight, so the handshake is still pending.
-        expect(events).toEqual([]);
+        expect({ chainCheck: chainCheck(), events }).toEqual({
+          chainCheck: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+          events: [],
+        });
         client.end();
         await closed.promise;
         // The failure reports that check.

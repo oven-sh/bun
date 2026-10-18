@@ -23,8 +23,7 @@ struct Options {
     /// The paths, `--project`, `--build`, `--strict`, `--target es2022` and so on.
     command_line: CommandLine,
     threads: usize,
-    /// `--format`, `--pretty`, `--no-pretty`. If none is given, it depends on the output
-    /// destination.
+    /// `--format`, `--pretty`, `--no-pretty`. None: the output destination decides.
     layout: Option<Layout>,
     /// `--all`: never group identical errors.
     all: bool,
@@ -433,8 +432,7 @@ fn style_for(cwd: &[u8], layout: Option<Layout>, to: Destination, show_all: bool
         cwd,
         // Whoever prints a report has it from there.
         is_case_sensitive: true,
-        // Not for an agent, whose context window they would waste, whichever way the layout was
-        // chosen. The JSON document has no room for them either.
+        // An agent has no use for them, however its layout was chosen, and a document no room.
         github_annotations: Output::is_github_action()
             && !matches!(layout, Layout::Agent | Layout::Json),
         width: if to.is_tty {

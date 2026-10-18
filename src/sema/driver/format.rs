@@ -37,8 +37,7 @@ pub enum Layout {
     /// One tag per error that contains the surrounding source, so that the reader does not have to
     /// open the file.
     Agent,
-    /// One JSON document with every field of each diagnostic, for programs. Nothing else goes to
-    /// the same output.
+    /// One JSON document with every field of each diagnostic, for programs.
     Json,
 }
 
@@ -453,9 +452,8 @@ fn write_github_annotation(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
     let _ = writeln!(out, "title=TS{}::{}", d.code, text.as_bstr());
 }
 
-/// The whole report as one JSON object, for a program: `diagnostics` in order, never grouped,
-/// then `incomplete`, `resolutionTrace` and `listedFiles`, which the other layouts print
-/// around the diagnostics.
+/// The report as one object: `diagnostics` in order, never grouped, then what the other layouts
+/// print around them.
 fn write_json(out: &mut Vec<u8>, report: &Report, style: &Style) {
     fn comma(out: &mut Vec<u8>, i: usize) {
         if i > 0 {
@@ -496,11 +494,8 @@ fn write_json(out: &mut Vec<u8>, report: &Report, style: &Style) {
     out.extend_from_slice(b"]}\n");
 }
 
-/// One diagnostic as a JSON object. The position is null for a diagnostic without a file. `line`,
-/// `column`, `endLine` and `endColumn` are 1-based and count UTF-16 code units, as TypeScript's
-/// do. `byteStart` and `byteEnd` are offsets in the UTF-8 text of the file. The end of a missing
-/// value in a JSON file comes before its start (`Diagnostic::end`): it is the start then.
-/// `with_related`: related information has none of its own.
+/// One diagnostic as an object. Its position is null without a file. `with_related`: related
+/// information has none of its own.
 fn write_json_diagnostic(out: &mut Vec<u8>, d: &Diagnostic, style: &Style, with_related: bool) {
     out.extend_from_slice(b"{\"file\":");
     if d.path.is_empty() {
@@ -546,8 +541,8 @@ fn write_json_diagnostic(out: &mut Vec<u8>, d: &Diagnostic, style: &Style, with_
     out.push(b'}');
 }
 
-/// The message of `d` without its chain: the first line of `d.text`, unless an argument has a line
-/// break in it. Rendered as `Explained::new` renders it. Bun's own diagnostics have no template.
+/// The message of `d` without its chain, rendered as `Explained::new` renders it: the first line
+/// of `d.text` is not it when an argument has a line break.
 fn head_text(d: &Diagnostic) -> std::borrow::Cow<'_, [u8]> {
     if d.code == 0 {
         return std::borrow::Cow::Borrowed(&d.text);
@@ -589,8 +584,7 @@ pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
         *rest = after;
         taken
     }
-    // The document has a place for everything that the other layouts print between the
-    // diagnostics, and a program reads it whole.
+    // The document has a place for what the other layouts print between the diagnostics.
     if style.layout == Layout::Json {
         return write_json(out, report, style);
     }

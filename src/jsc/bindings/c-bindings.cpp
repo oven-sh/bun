@@ -1018,12 +1018,9 @@ extern "C" int ffi_fileno(FILE* file)
 #include <signal.h>
 #include <pthread.h>
 
-// One synchronous spawn at a time owns these. The thread that spawns
-// publishes the pid, but a process-directed signal is delivered to any thread
-// that does not block it, so the handler below can run on another thread
-// while the pid is published.
-// Rust declares this as `AtomicI64`, which is layout-compatible.
-extern "C" std::atomic<int64_t> Bun__currentSyncPID { 0 };
+// The handler below can run on any thread that does not block the signal,
+// concurrently with the spawning thread's store of the pid.
+extern "C" std::atomic<int64_t> Bun__currentSyncPID { 0 }; // `AtomicI64` on the Rust side.
 static_assert(std::atomic<int64_t>::is_always_lock_free);
 static std::atomic<int> Bun__pendingSignalToSend { 0 };
 static struct sigaction previous_actions[NSIG];
@@ -1063,16 +1060,14 @@ static struct sigaction previous_actions[NSIG];
     FOR_EACH_LINUX_ONLY_SIGNAL(M)
 #endif
 
-// `pid` is the child, or (negative) the process group the child leads. Bun is
-// in neither, so nothing needs to be blocked around the kill.
+// `pid` is the child or (negative) the group it leads, never bun itself.
 static void Bun__forwardSignalToChild(pid_t pid, int sig)
 {
     kill(pid, sig);
 }
 
-// The caller stores the pid (seq_cst) before this exchange, and the handler
-// stores the pending signal before it re-reads the pid. So at least one side
-// sees the other's store, and the exchange lets only one of them forward it.
+// Store pid, then exchange the slot; the handler stores the slot, then loads
+// the pid. One side sees the other's store, and the exchange picks the sender.
 extern "C" void Bun__sendPendingSignalIfNecessary()
 {
     int sig = Bun__pendingSignalToSend.exchange(0);
@@ -1095,7 +1090,6 @@ extern "C" void Bun__registerSignalsForForwarding()
         int64_t pid = Bun__currentSyncPID.load();
         if (pid == 0) {
             Bun__pendingSignalToSend.store(sig);
-            // See Bun__sendPendingSignalIfNecessary: it may have run between the two loads.
             pid = Bun__currentSyncPID.load();
             if (pid == 0 || Bun__pendingSignalToSend.exchange(0) == 0)
                 return;

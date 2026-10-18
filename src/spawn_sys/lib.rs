@@ -99,16 +99,12 @@ pub mod ffi {
         pub safe fn Bun__noOrphans_onFork();
         pub safe fn Bun__noOrphans_onExit(pid: pid_t);
 
-        /// The PID to forward signals to. Set to 0 when unregistering.
-        ///
-        /// C++ declares this as `std::atomic<int64_t>`, which has the same
-        /// size and alignment as `AtomicI64`.
+        /// The PID to forward signals to (`std::atomic<int64_t>` in C++).
+        /// Set to 0 when unregistering.
         pub safe static Bun__currentSyncPID: core::sync::atomic::AtomicI64;
 
-        /// Forwards a signal that arrived before `spawn_process_posix`
-        /// returned. Call after a `SeqCst` store of the child PID: the
-        /// handler stores the signal and then re-reads the PID, so one of
-        /// the two sides always sees the other's store.
+        /// Forwards a signal that arrived before the child PID was known.
+        /// Call after a `SeqCst` store of the PID.
         pub safe fn Bun__sendPendingSignalIfNecessary();
     }
 }

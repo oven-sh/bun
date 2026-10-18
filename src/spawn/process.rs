@@ -3278,9 +3278,8 @@ mod spawn_process_body {
             // Negative → kill() in the C++ signal forwarder targets the pgroup, so
             // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
             // that hasn't `setsid()`-escaped.
-            // SeqCst: the handler on another thread stores a pending signal and
-            // then re-reads this pid. This store, then the exchange in
-            // `Bun__sendPendingSignalIfNecessary`, must be ordered against that.
+            // SeqCst: ordered against the handler's store-then-load, see
+            // `Bun__sendPendingSignalIfNecessary`.
             Bun__currentSyncPID.store(
                 if no_orphans {
                     -i64::from(process.pid)

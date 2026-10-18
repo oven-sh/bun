@@ -208,45 +208,48 @@ test.concurrent.skipIf(!isPosix)("children do not inherit a signal bun itself ha
 // the spawn. The window is the spawn itself, so short that one flood in ten
 // misses it on a release build; three attempts have to end in SIGINT.
 // `--shell=system`: the script has to be a process of its own.
-test.skipIf(!isPosix)("bun run forwards a signal that arrives before it knows the script's pid", async () => {
-  using project = tempDir("inherited-signal-mask-early", {
-    "package.json": JSON.stringify({ name: "inherited-signal-mask", scripts: { go: "kill -INT $$" } }),
-  });
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await using proc = Bun.spawn({
-      cmd: ["sh", "-c", 'trap "" INT; echo ready; read _; exec "$0" "$@"', bunExe(), "run", "--shell=system", "go"],
-      cwd: String(project),
-      env: bunEnv,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-      killSignal: "SIGKILL",
+test.concurrent.skipIf(!isPosix)(
+  "bun run forwards a signal that arrives before it knows the script's pid",
+  async () => {
+    using project = tempDir("inherited-signal-mask-early", {
+      "package.json": JSON.stringify({ name: "inherited-signal-mask", scripts: { go: "kill -INT $$" } }),
     });
-    // The flood starts once the trap is in place (a SIGINT before it kills the
-    // launcher) and before the launcher execs bun, so it covers all of bun.
-    const reader = proc.stdout.getReader();
-    let seen = "";
-    while (!seen.includes("ready\n")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      seen += Buffer.from(value).toString();
-    }
-    expect(seen).toBe("ready\n");
-    await using flood = Bun.spawn({
-      cmd: ["sh", "-c", "while kill -INT $1 2>/dev/null; do :; done", "sh", String(proc.pid)],
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    proc.stdin.write("\n");
-    await proc.stdin.end();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", 'trap "" INT; echo ready; read _; exec "$0" "$@"', bunExe(), "run", "--shell=system", "go"],
+        cwd: String(project),
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        killSignal: "SIGKILL",
+      });
+      // The flood starts once the trap is in place (a SIGINT before it kills the
+      // launcher) and before the launcher execs bun, so it covers all of bun.
+      const reader = proc.stdout.getReader();
+      let seen = "";
+      while (!seen.includes("ready\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        seen += Buffer.from(value).toString();
+      }
+      expect(seen).toBe("ready\n");
+      await using flood = Bun.spawn({
+        cmd: ["sh", "-c", "while kill -INT $1 2>/dev/null; do :; done", "sh", String(proc.pid)],
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      proc.stdin.write("\n");
+      await proc.stdin.end();
 
-    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
-    flood.kill();
-    expect(stderr).toContain("$ kill -INT $$");
-    expect({ attempt, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
-      attempt,
-      exitCode: null,
-      signalCode: "SIGINT",
-    });
-  }
-});
+      const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+      flood.kill();
+      expect(stderr).toContain("$ kill -INT $$");
+      expect({ attempt, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+        attempt,
+        exitCode: null,
+        signalCode: "SIGINT",
+      });
+    }
+  },
+);

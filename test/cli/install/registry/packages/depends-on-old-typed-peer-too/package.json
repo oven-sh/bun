@@ -1,0 +1,25 @@
+{
+  "_id": "depends-on-old-typed-peer-too",
+  "name": "depends-on-old-typed-peer-too",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "depends-on-old-typed-peer-too",
+      "version": "1.0.0",
+      "main": "index.js",
+      "types": "index.d.ts",
+      "dependencies": {
+        "@types/typed-peer": "1.0.0",
+        "typed-peer-lib-too": "1.0.0"
+      },
+      "_id": "depends-on-old-typed-peer-too@1.0.0",
+      "dist": {
+        "integrity": "sha512-zGuYmtBcVobUVSFZ91PFGkSnMqhghONOpIKXz7VU+V0s4P8BZ6DFjhVTGkVCp8uWxCcMHPjjOeMROmtpsHCUYg==",
+        "shasum": "dcf5ec51e421c91b875fa6b8e7a54d31bd5d990c",
+        "tarball": "http://localhost:4873/depends-on-old-typed-peer-too/-/depends-on-old-typed-peer-too-1.0.0.tgz"
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "_id": "provides-typed-peer",
+  "name": "provides-typed-peer",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "provides-typed-peer",
+      "version": "1.0.0",
+      "main": "index.js",
+      "types": "index.d.ts",
+      "dependencies": {
+        "typed-peer": "1.0.0",
+        "@types/typed-peer": "1.0.0",
+        "typed-peer-lib": "1.0.0"
+      },
+      "_id": "provides-typed-peer@1.0.0",
+      "dist": {
+        "integrity": "sha512-saxZ48EUbBRV2Ri2sjvVn2X/C9m/F98oX7FbOABIZgub6K/1u7Sf7H6Ica2wPk/RG7mPc5YHhNlMknYeM7WMlg==",
+        "shasum": "060e5b8fa250099e8b9f797bf7b0ed8f5e918c4a",
+        "tarball": "http://localhost:4873/provides-typed-peer/-/provides-typed-peer-1.0.0.tgz"
+      }
+    }
+  }
+}

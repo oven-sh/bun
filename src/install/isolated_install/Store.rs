@@ -10,7 +10,9 @@ use bun_semver::String as SemverString;
 use bun_wyhash::Wyhash;
 
 use crate::lockfile::{Lockfile, package};
-use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID, Resolution};
+use crate::{
+    Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID, PackageNameHash, Resolution,
+};
 
 pub use super::installer::Installer;
 
@@ -28,6 +30,42 @@ pub struct Store {
     pub(crate) nodes: node::List,
     /// `node_modules/.bun/node_modules` names other than that of the entry's `node_id`.
     pub(crate) hidden_hoist_keys: Vec<entry::DependenciesItem>,
+}
+
+/// The `@types/<peer>` name of each peer name the lockfile has both of. Under `install.globalStore`
+/// the node that binds a peer lends its `@types/<peer>` to the dependent, as TypeScript looks for
+/// the types next to the dependent, and `<cache>/links` is not below the project.
+#[derive(Default)]
+pub struct PeerTypes {
+    by_peer: ArrayHashMap<PackageNameHash, PackageNameHash>,
+    names: ArrayHashMap<PackageNameHash, ()>,
+}
+
+impl PeerTypes {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.by_peer.count() == 0
+    }
+
+    pub(crate) fn put(
+        &mut self,
+        peer_name_hash: PackageNameHash,
+        types_name_hash: PackageNameHash,
+    ) -> Result<(), AllocError> {
+        self.by_peer.put(peer_name_hash, types_name_hash)?;
+        self.names.put(types_name_hash, ())
+    }
+
+    /// The name hash of `@types/<peer>`, if the lockfile has that package.
+    pub(crate) fn companion_of(&self, peer_name_hash: PackageNameHash) -> Option<PackageNameHash> {
+        if self.is_empty() {
+            return None;
+        }
+        self.by_peer.get(&peer_name_hash).copied()
+    }
+
+    pub(crate) fn is_companion_name(&self, name_hash: PackageNameHash) -> bool {
+        !self.is_empty() && self.names.contains(&name_hash)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -591,6 +629,9 @@ pub mod node {
 
         // each node in this list becomes a symlink in the package's node_modules
         pub nodes: Vec<Id>,
+
+        /// The node that binds a peer of this node has no `@types/<peer>` to lend (`PeerTypes`).
+        pub missing_peer_types: bool,
     }
 
     bun_collections::multi_array_columns! {
@@ -601,6 +642,7 @@ pub mod node {
             dependencies: Vec<Ids>,
             peers: Peers,
             nodes: Vec<Id>,
+            missing_peer_types: bool,
         }
     }
 
@@ -613,15 +655,19 @@ pub mod node {
                 dependencies: Vec::new(),
                 peers: Peers::EMPTY,
                 nodes: Vec::new(),
+                missing_peer_types: false,
             }
         }
     }
 
+    /// A node holds one peer per name, and one companion per name beside it.
     #[derive(Copy, Clone)]
     pub struct TransitivePeer {
         pub(crate) dep_id: DependencyID,
         pub(crate) pkg_id: PackageID,
         pub(crate) auto_installed: bool,
+        /// The `@types/<peer>` lent with a peer (`PeerTypes`). It binds no peer of its own name.
+        pub(crate) companion: bool,
     }
 
     pub(crate) struct TransitivePeerOrderedArraySetCtx<'a> {
@@ -632,13 +678,13 @@ pub mod node {
     impl<'a> OrderedArraySetCtx<TransitivePeer> for TransitivePeerOrderedArraySetCtx<'a> {
         fn eql(&self, l_item: TransitivePeer, r_item: TransitivePeer) -> bool {
             let _ = self;
-            l_item.pkg_id == r_item.pkg_id
+            l_item.pkg_id == r_item.pkg_id && l_item.companion == r_item.companion
         }
 
         fn order(&self, l: TransitivePeer, r: TransitivePeer) -> Ordering {
             let l_pkg_id = l.pkg_id;
             let r_pkg_id = r.pkg_id;
-            if l_pkg_id == r_pkg_id {
+            if l_pkg_id == r_pkg_id && l.companion == r.companion {
                 return Ordering::Equal;
             }
 
@@ -647,7 +693,9 @@ pub mod node {
             let l_pkg_name = pkg_names[l_pkg_id as usize];
             let r_pkg_name = pkg_names[r_pkg_id as usize];
 
-            l_pkg_name.order(r_pkg_name, string_buf, string_buf)
+            l_pkg_name
+                .order(r_pkg_name, string_buf, string_buf)
+                .then(l.companion.cmp(&r.companion))
         }
     }
 }

@@ -1468,6 +1468,40 @@ describe("webstreams adapters (Node v26 sync)", () => {
       expect(exitCode).toBe(0);
     });
 
+    it("Duplex.toWeb: destroying the duplex with an error after the writer closed", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            import { Duplex } from "node:stream";
+            const duplex = new Duplex({
+              allowHalfOpen: false,
+              read() {},
+              write(chunk, encoding, callback) { callback(); },
+              final(callback) { setImmediate(callback); },
+            });
+            const { readable, writable } = Duplex.toWeb(duplex);
+            duplex.on("error", e => console.log("duplex error:" + e.message));
+            duplex.on("close", () => console.log("close event, errored:" + duplex.errored?.message));
+            duplex.push(null);
+            const { done } = await readable.getReader().read();
+            await writable.getWriter().close();
+            console.log("close resolved, done:" + done);
+            duplex.destroy(new Error("boom"));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: stdout, err: stderr }).toEqual({
+        out: "close resolved, done:true\nduplex error:boom\nclose event, errored:boom\n",
+        err: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
     it("Readable.toWeb: buffered data that flows after cancel()", async () => {
       await using proc = Bun.spawn({
         cmd: [

@@ -1570,7 +1570,7 @@ impl<'a> Linker<'a> {
             };
         let at_root = if in_subdir { target_basename } else { b"" };
         for candidate in [target, bin_name, at_root, &exe_name] {
-            if candidate.is_empty() {
+            if candidate.is_empty() || bin_target_escapes_package_dir(candidate) {
                 continue;
             }
             let found = join_z_checked::<PlatformLoose>(package_dir, buf, &[candidate])
@@ -1830,7 +1830,7 @@ impl<'a> Linker<'a> {
             }
             Tag::Dir => {
                 let target = below_package_dir(bin.dir().slice(string_buf));
-                if target.is_empty() {
+                if target.is_empty() || bin_target_escapes_package_dir(target) {
                     return;
                 }
 

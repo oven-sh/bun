@@ -1047,7 +1047,7 @@ pub fn normalize_npm_entry_path<'a>(
     })
 }
 
-/// Returns the path where the entry `path` is extracted. Either slash separates, and `..` stays below the root.
+/// Returns the path where the entry `path` is extracted. On POSIX either slash separates and neither lets `..` climb.
 pub fn normalize_entry_path<'a, T: bun_paths::PathChar>(
     path: &[T],
     buf: &'a mut [T],
@@ -1056,16 +1056,12 @@ pub fn normalize_entry_path<'a, T: bun_paths::PathChar>(
     if cfg!(windows) {
         return normalize_buf_t::<T, bun_paths::platform::Auto>(path, buf);
     }
-    let sep = T::from_u8(b'/');
-    if path.last() == Some(&sep) {
-        return normalize_string_generic_t::<T, false, true>(
-            path,
-            buf,
-            sep,
-            bun_paths::is_sep_any_t,
-        );
-    }
-    normalize_string_generic_t::<T, false, false>(path, buf, sep, bun_paths::is_sep_any_t)
+    normalize_string_generic_t::<T, false, true>(
+        path,
+        buf,
+        T::from_u8(b'/'),
+        bun_paths::is_sep_any_t,
+    )
 }
 
 /// Returns the first component of an entry's path, which is the archive's root folder.

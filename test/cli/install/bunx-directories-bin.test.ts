@@ -42,13 +42,15 @@ test.concurrent.skipIf(isWindows)("bunx runs the bin of a directories.bin packag
 // `bun install` links nothing for these values; bunx must not take a bin name
 // from the directory they point at either. `picked` is the entry bunx would
 // find there (and then run from node_modules/.bin) if it did.
-const rejected: [label: string, value: (dir: string) => string, picked: string][] = [
-  ["a relative path that leaves the package", () => "../../outside", "planted"],
-  ["an absolute path", dir => join(dir, "outside"), "planted"],
-  ["an empty string (the package directory itself)", () => "", "package.json"],
+const noBin = "could not determine executable to run for package tool";
+const rejected: [label: string, value: (dir: string) => string, picked: string, error: string][] = [
+  ["a relative path that leaves the package", () => "../../outside", "planted", noBin],
+  // A leading slash means nothing, so this is a directory of the package that does not exist.
+  ["an absolute path", dir => join(dir, "outside"), "planted", "Could not find an existing 'tool' binary to run"],
+  ["an empty string (the package directory itself)", () => "", "package.json", noBin],
 ];
 
-for (const [label, value, picked] of rejected) {
+for (const [label, value, picked, error] of rejected) {
   test.concurrent.skipIf(isWindows)(`bunx ignores a directories.bin that is ${label}`, async () => {
     using dir = tempDir("bunx-directories-bin-rejected", {
       "package.json": JSON.stringify({ name: "app", dependencies: { tool: "file:./tool" } }),
@@ -69,7 +71,7 @@ for (const [label, value, picked] of rejected) {
     const { stdout, stderr, exitCode } = await run(String(dir), ["x", "--no-install", "tool"], env);
 
     expect(stdout).toBe("");
-    expect(stderr).toContain("could not determine executable to run for package tool");
+    expect(stderr).toContain(error);
     expect(exitCode).toBe(1);
   });
 }

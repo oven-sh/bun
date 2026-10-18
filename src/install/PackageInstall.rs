@@ -706,7 +706,8 @@ impl FolderLink {
             && in_folder
             && let Some(text) = read_link(src, &rel[dir_len..])
             && !path::is_absolute(&text)
-            && !crate::bin::bin_target_escapes_package_dir(&[&rel[..dir_len], &text[..]].concat())
+            // `./`: on disk a leading `\` or `C:` is part of a name.
+            && !crate::bin::bin_target_escapes_package_dir(&[b"./", &rel[..dir_len], &text[..]].concat())
         {
             return FolderLink::Link(text);
         }

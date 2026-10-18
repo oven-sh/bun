@@ -1339,9 +1339,15 @@ fn extract_to_disk_filtered(
         if raw_pathname.len() >= normalized_buf.len() {
             continue;
         }
-        let pathname_z: &bun_core::ZStr = bun_paths::resolve_path::normalize_buf_z::<
-            bun_paths::platform::Loose,
-        >(raw_pathname, &mut normalized_buf[..]);
+        // The glob patterns match against `/`, which `Posix` prints on Windows.
+        let pathname_len = if cfg!(windows) {
+            use bun_paths::{platform::Posix, resolve_path::normalize_buf};
+            normalize_buf::<Posix>(raw_pathname, &mut normalized_buf[..]).len()
+        } else {
+            libarchive::normalize_entry_path(raw_pathname, &mut normalized_buf[..]).len()
+        };
+        normalized_buf[pathname_len] = 0;
+        let pathname_z = bun_core::ZStr::from_buf(&normalized_buf[..], pathname_len);
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)

@@ -937,16 +937,21 @@ describe("Bun.Archive", () => {
       );
     });
 
-    test.skipIf(isWindows)("`..` behind a leading backslash stays inside", async () => {
-      using dir = tempDir("archive-leading-backslash", {});
-      const out = join(String(dir), "a", "b", "out");
-      expect(await new Bun.Archive({ "\\..\\..\\up.txt": "up" }).extract(out)).toBe(1);
-      expect(readdirSync(String(dir), { recursive: true }).map(String).sort()).toEqual([
-        "a",
-        "a/b",
-        "a/b/out",
-        "a/b/out/up.txt",
-      ]);
+    describe.skipIf(isWindows).each([undefined, { glob: "**" }])("extract(path, %j)", options => {
+      test.each(["\\..\\..\\up.txt", "/../../up.txt"])(
+        "`..` behind the leading slash of %j stays inside",
+        async name => {
+          using dir = tempDir("archive-leading-slash", {});
+          const out = join(String(dir), "a", "b", "out");
+          expect(await new Bun.Archive({ [name]: "up" }).extract(out, options)).toBe(1);
+          expect(readdirSync(String(dir), { recursive: true }).map(String).sort()).toEqual([
+            "a",
+            "a/b",
+            "a/b/out",
+            "a/b/out/up.txt",
+          ]);
+        },
+      );
     });
 
     test("skips tar entries whose pathname exceeds the platform path limit", async () => {

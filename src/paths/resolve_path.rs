@@ -640,7 +640,6 @@ pub fn dirname_w(str: &[u16]) -> &[u16] {
     &str[..separator]
 }
 
-/// Splits at `\` too, like `relative_buf_z` and `relative_alloc`: most callers pass a path the resolver spelled.
 pub fn relative(from: &[u8], to: &[u8]) -> &'static [u8] {
     relative_platform::<platform::Auto, false>(from, to)
 }

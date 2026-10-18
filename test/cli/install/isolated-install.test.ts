@@ -1077,6 +1077,17 @@ describe.skipIf(isWindows).each(["isolated", "hoisted"] as const)("links in a fi
     },
   );
 
+  test.concurrent("one to a file whose name starts with a backslash is a link in the copy", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker },
+      files: { ...files, "vendor/lib/\\named.js": "module.exports = 'named';" },
+    });
+    symlinkSync("\\named.js", join(packageDir, "vendor", "lib", "alias.js"));
+
+    await runBunInstall(installEnv(packageDir), packageDir);
+    expect(readlinkSync(join(packageDir, "node_modules", "lib", "alias.js"))).toBe("\\named.js");
+  });
+
   test.concurrent("one that is left out is named in a warning when the folder is installed", async () => {
     using outside = tempDir("folder-links-outside", { "secret.txt": "secret" });
     const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker }, files });

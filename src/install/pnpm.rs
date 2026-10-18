@@ -1345,10 +1345,16 @@ fn declare_folder_dependencies_relative_to_their_package(
 
             literal.clear();
             literal.extend_from_slice(b"file:");
-            let relative = bun_paths::resolve_path::relative(
+            use bun_paths::resolve_path::{platform, relative_platform};
+            let (from, to) = (
                 pkg_dir.slice(string_bytes!(lockfile)),
                 folder.slice(string_bytes!(lockfile)),
             );
+            let relative = if cfg!(windows) {
+                relative_platform::<platform::Windows, false>(from, to)
+            } else {
+                relative_platform::<platform::Loose, false>(from, to)
+            };
             literal.extend_from_slice(if relative.is_empty() { b"." } else { relative });
             #[cfg(windows)]
             bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(

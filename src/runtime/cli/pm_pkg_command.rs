@@ -353,8 +353,11 @@ impl PmPkgCommand {
                     pkg_dir = cwd;
                 }
                 let mut buf = bun_paths::path_buffer_pool::get();
-                let full_path =
-                    path::resolve_path::join_abs_text_buf_checked(pkg_dir, &mut buf[..], bin_path);
+                let full_path = path::resolve_path::join_abs_text_buf_checked(
+                    pkg_dir,
+                    &mut buf[..],
+                    bun_install::bin::below_package_dir(bin_path),
+                );
 
                 if !full_path.is_some_and(bun_sys::exists) {
                     bun_core::warn!(

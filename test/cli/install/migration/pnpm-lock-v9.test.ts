@@ -1597,6 +1597,18 @@ snapshots:
     expect(await bunLockOf(String(dir))).toBe(bunLock);
   });
 
+  test.concurrent("a nested file: dependency whose directory is written with a backslash", async () => {
+    using dir = fixture("v9-file-directory");
+    const lockfile = join(String(dir), "pnpm-lock.yaml");
+    writeFileSync(lockfile, (await Bun.file(lockfile).text()).replaceAll("sub-dep/child", "sub-dep\\child"));
+
+    const { stderr, exitCode } = await migrate(String(dir));
+
+    expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(await bunLockOf(String(dir))).toContain(`{ "dependencies": { "nested-child": "file:child" } }`);
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("codeload tarballs with and without gitHosted: true", async () => {
     // ported from pnpm11/__fixtures__/with-git-protocol-dep and with-non-package-dep
     using dir = fixture("v9-codeload-tarballs");

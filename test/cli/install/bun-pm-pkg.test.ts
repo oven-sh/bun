@@ -1444,6 +1444,21 @@ describe.concurrent("bun pm pkg", () => {
       },
     );
 
+    it('a leading slash in "bin" means nothing, as for the bin linker', async () => {
+      using dir = tempDir("pm-pkg-bin-leading-slash", {
+        "package.json": JSON.stringify({
+          name: "p",
+          version: "1.0.0",
+          bin: { slash: "/bin/real.js", backslash: "\\bin\\real.js", missing: "/bin/missing.js" },
+        }),
+        "bin/real.js": "",
+      });
+
+      const { error, code } = await runPmPkg(["fix"], String(dir), false);
+      expect(error).toBe("warn: No bin file found at /bin/missing.js\n");
+      expect(code).toBe(0);
+    });
+
     it("should preserve all other package.json fields", async () => {
       using dir = makeFixDir();
       const { code } = await runPmPkg(["fix"], dir);

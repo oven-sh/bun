@@ -400,13 +400,18 @@ impl<'a> Lexer<'a> {
         self.all_comments.truncate(original.all_comments_len);
         self.comments_to_preserve_before
             .truncate(original.comments_to_preserve_before_len);
-        // The comments from the restored token on are lexed again.
         if !self.react_hooks_next_line_suppressions.is_empty() {
-            let kept = self
-                .react_hooks_next_line_suppressions
-                .partition_point(|comment| (comment.loc.start as usize) < original.start);
-            self.react_hooks_next_line_suppressions.truncate(kept);
+            self.forget_react_hooks_suppressions_from(original.start);
         }
+    }
+
+    /// The lexer went back to `start` and meets the comments from there on again.
+    #[cold]
+    fn forget_react_hooks_suppressions_from(&mut self, start: usize) {
+        let kept = self
+            .react_hooks_next_line_suppressions
+            .partition_point(|comment| (comment.loc.start as usize) < start);
+        self.react_hooks_next_line_suppressions.truncate(kept);
     }
 
     /// Look ahead at the next n codepoints without advancing the iterator.

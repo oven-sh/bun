@@ -460,12 +460,7 @@ static BIN_FOLDERS_LOCK: Mutex = Mutex::new();
 static BIN_FOLDERS_LOADED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-/// Real locations of installed package code that have no `node_modules`
-/// segment, so `Path::is_node_module()` is false for them: `bun install
-/// --backend=symlink` links `node_modules` file by file into the install cache,
-/// and auto-install resolves straight into that cache. The macro guard asks
-/// this set too. Append-only for the life of the process, like the `DirInfo`
-/// cache that fills it.
+/// Real paths of installed package code outside `node_modules` (symlink backend, auto-install).
 pub mod linked_package_roots {
     use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -475,8 +470,7 @@ pub mod linked_package_roots {
     static ROOTS: Guarded<Option<StringHashMap<()>>> = Guarded::new(None);
     static ANY: AtomicBool = AtomicBool::new(false);
 
-    /// `real_path` is the directory of an installed package, or one file that
-    /// `node_modules` links to on its own.
+    /// `real_path`: a package directory, or one file that `node_modules` links to on its own.
     pub(crate) fn record(real_path: &'static [u8]) {
         let real_path = bun_paths::strings::without_trailing_slash(real_path);
         if real_path.is_empty() {
@@ -519,20 +513,16 @@ pub mod linked_package_roots {
     }
 }
 
-/// Whether `dir` (no trailing separator) is a `node_modules` directory or is
-/// below one.
+/// `dir` has no trailing separator.
 fn dir_is_in_node_modules(dir: &[u8]) -> bool {
     let needle = bun_paths::NODE_MODULES_NEEDLE;
     strings::contains(dir, needle) || dir.ends_with(&needle[..needle.len() - 1])
 }
 
-/// A file directly in the `node_modules` directory `dir` resolved to
-/// `real_path` through a link.
 #[cold]
 #[inline(never)]
 fn record_file_linked_in_node_modules(dir: &DirInfo::DirInfo, real_path: &'static [u8]) {
-    // Below a directory link, `finalize_result` caches a real path on every
-    // entry. Such an entry is not a link itself.
+    // Under a directory link every entry has a cached real path but is not a link itself.
     if !dir.abs_real_path.is_empty() && bun_paths::dirname(real_path) == Some(dir.abs_real_path) {
         return;
     }
@@ -6194,21 +6184,16 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    /// `dir` is in `node_modules` and its package.json is a link: the layout of
-    /// `bun install --backend=symlink`, a real directory whose files are links
-    /// into the install cache. Records the directory the link points into, so
-    /// that files the package reaches by a relative import are covered too.
+    /// `dir` is in `node_modules` and its package.json is a link (`--backend=symlink`).
     #[cold]
     #[inline(never)]
     fn record_linked_package_root(&mut self, dir: &DirInfo::DirInfo) {
-        // A workspace or `bun link` package is one directory link to the
-        // project's own code.
+        // A workspace or `bun link` package is one directory link to the project's own code.
         if !dir.abs_real_path.is_empty() && !dir_is_in_node_modules(dir.abs_real_path) {
             return;
         }
 
-        // Read the link itself, not the file it leads to: a package can ship
-        // its package.json as a link to another of its files.
+        // Read the link itself: a package can ship package.json as a link to another file.
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut link_buf = bun_paths::path_buffer_pool::get();
         let link_len = self
@@ -6235,8 +6220,7 @@ impl<'a> Resolver<'a> {
             return;
         };
 
-        // `"lib": "file:.."`: the folder that the link leads to holds the
-        // project itself.
+        // `"lib": "file:.."`: the folder that the link leads to holds the project itself.
         for own in [dir.abs_path, dir.abs_real_path] {
             if !own.is_empty()
                 && bun_paths::resolve_path::is_parent_or_equal(root, own)

@@ -127,14 +127,11 @@ pub mod Macro {
         // `bun_js_parser_jsc`. See [`collect_vm_garbage`] for the call-site
         // contract.
         safe fn __bun_macro_collect_vm_garbage();
-        // Slice argument only; the body in `bun_js_parser_jsc` forwards to the
-        // resolver, which this crate cannot name (dep-cycle).
+        // Slice argument only. Defined in `bun_js_parser_jsc`, which can name the resolver.
         safe fn __bun_macro_call_site_is_in_linked_package(real_path: &[u8]) -> bool;
     }
 
-    /// Whether `real_path` is in a package directory that `node_modules` links
-    /// to file by file. Such a path has no `node_modules` segment, so
-    /// `Path::is_node_module()` is false for it.
+    /// Whether `real_path` is in a package that `node_modules` links to file by file.
     #[inline]
     pub(crate) fn call_site_is_in_linked_package(real_path: &[u8]) -> bool {
         __bun_macro_call_site_is_in_linked_package(real_path)

@@ -653,8 +653,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => unreachable!(),
         }
     }
-    /// Whether the file being visited is installed package code. A package
-    /// must not run code at build time, so a macro call in it is refused.
+    /// A package must not run code at build time, so its macro calls are refused.
     fn macro_call_site_is_in_installed_package(&self) -> bool {
         self.source.path.is_node_module()
             || crate::Macro::call_site_is_in_linked_package(self.source.path.text)

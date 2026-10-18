@@ -1547,9 +1547,10 @@ pub(crate) fn move_node_modules_aside(
 /// Whether a linker created the `node_modules` entry `name`. No package name begins with a dot, so
 /// a dot entry that no package manager creates belongs to another tool (`.vite`).
 fn is_a_linkers(name: &[u8]) -> bool {
-    const OF_A_PACKAGE_MANAGER: [&[u8]; 6] = [
+    const OF_A_PACKAGE_MANAGER: [&[u8]; 7] = [
         b".bin",
         b".bun",
+        b".bun-pending-scripts",
         b".modules.yaml",
         b".package-lock.json",
         b".yarn-integrity",
@@ -2111,6 +2112,9 @@ pub(crate) fn install_isolated_packages(
 
         break 'is_new_bun_modules true;
     };
+    // A `node_modules/.bun` that is new has no record of an earlier install beside it.
+    let runs_scripts = manager.options.do_.run_scripts();
+    (manager.pending_scripts.get_mut()).load(runs_scripts, !is_new_bun_modules);
 
     // Remove the fallback a previous install with hoisting on left behind.
     // `delete_tree` succeeds on a missing tree, so any error here is real.
@@ -2189,6 +2193,7 @@ pub(crate) fn install_isolated_packages(
                 result: installer::Result::None,
                 relink: installer::Relink::Off,
                 newly_trusted: false,
+                trusted: None,
                 blocked_scripts: 0,
                 left_out_links: Vec::new(),
                 task: bun_threading::thread_pool::CountedTask::new(
@@ -2274,6 +2279,10 @@ pub(crate) fn install_isolated_packages(
                 Output::flush();
                 Global::exit(1);
             }
+        }
+
+        if installer.manager().retries_pending_scripts() {
+            installer.discard_left_pending();
         }
 
         // add the pending task count upfront
@@ -2374,6 +2383,7 @@ pub(crate) fn install_isolated_packages(
                             continue;
                         }
                     }
+                    installer.list_pending_scripts(entry_id);
                     installer.start_task(entry_id);
                 }
 
@@ -2500,6 +2510,9 @@ pub(crate) fn install_isolated_packages(
                         installer.set_step(entry_id, Step::Done);
                         installer.on_task_complete(entry_id, state);
                         continue;
+                    }
+                    if !uses_global_store {
+                        installer.list_pending_scripts(entry_id);
                     }
 
                     // Downloads only produce the unpatched folder; `apply_package_patch` derives the rest.
@@ -2654,6 +2667,7 @@ pub(crate) fn install_isolated_packages(
         installer.unlink_left_out_entries();
         installer.warn_left_out_links();
         installer.record_update_request_trust();
+        installer.manager().pending_scripts.borrow_mut().finish();
 
         if installer.manager().options.log_level.show_progress() {
             progress.root.end();

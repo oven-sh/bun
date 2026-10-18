@@ -394,13 +394,8 @@ pub enum InstallCtx<'a> {
     /// The package is `node_modules/<package_name>` of this tree.
     Hoisted {
         tree_id: crate::lockfile_real::tree::Id,
-        unfinished: UnfinishedScripts,
     },
 }
-
-/// What the hoisted linker placed whose scripts have not all run yet. Main thread only.
-pub(crate) type UnfinishedScripts =
-    std::rc::Rc<core::cell::RefCell<Vec<(crate::lockfile_real::tree::Id, Box<[u8]>)>>>;
 
 impl<'a> InstallCtx<'a> {
     /// BACKREF accessor — single `unsafe` deref for the set-once `installer`
@@ -1127,45 +1122,45 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     fn forget_unfinished_scripts(&self) {
-        if let Some(InstallCtx::Hoisted {
-            tree_id,
-            unfinished,
-        }) = &self.ctx
-        {
-            unfinished.borrow_mut().retain(|(tree, folder_name)| {
-                tree != tree_id || **folder_name != *self.package_name
-            });
+        if let Some(InstallCtx::Hoisted { tree_id }) = &self.ctx {
+            (self.manager().pending_scripts.borrow_mut()).done(*tree_id, &self.package_name);
         }
     }
 
     /// Both linkers take a package in place for installed: removed, the next install runs them.
     fn discard_packages_with_unfinished_scripts(&self) {
         Output::flush();
-        if let Some(InstallCtx::Hoisted { unfinished, .. }) = &self.ctx {
-            for (tree_id, folder_name) in unfinished.borrow().iter() {
+        let manager = self.manager();
+        if let Some(InstallCtx::Hoisted { .. }) = &self.ctx {
+            (manager.pending_scripts.borrow_mut()).discard(|tree_id, folder_name| {
                 crate::package_installer::remove_placed_package(
-                    &self.manager().lockfile,
-                    *tree_id,
+                    &manager.lockfile,
+                    tree_id,
                     folder_name,
                 );
+            });
+        } else {
+            if let Some((entry_id, installer)) = self.ctx.as_ref().and_then(InstallCtx::isolated) {
+                installer.discard_entries_with_unfinished_scripts(entry_id);
             }
-        } else if let Some((entry_id, installer)) = self.ctx.as_ref().and_then(InstallCtx::isolated)
-        {
-            installer.discard_entries_with_unfinished_scripts(entry_id);
+            // What is not in place any more needs no record.
+            manager.pending_scripts.borrow_mut().finish();
         }
     }
 
     /// Frees `self`.
     fn discard_failed_optional_package(&mut self) {
-        self.forget_unfinished_scripts();
         self.decrement_pending_script_tasks();
         let deleted = match self.ctx.take() {
             Some(InstallCtx::Hoisted { tree_id, .. }) => {
+                let manager = self.manager();
                 crate::package_installer::remove_placed_package(
-                    &self.manager().lockfile,
+                    &manager.lockfile,
                     tree_id,
                     &self.package_name,
                 );
+                // After the removal: an install that dies in between leaves it listed.
+                (manager.pending_scripts.borrow_mut()).done(tree_id, &self.package_name);
                 true
             }
             Some(ctx) => ctx

@@ -123,6 +123,7 @@ pub mod package_install;
 #[path = "PackageInstaller.rs"]
 pub mod package_installer;
 pub mod patch_install;
+pub(crate) mod pending_scripts;
 pub mod pnpm;
 pub mod prune;
 #[path = "repository.rs"]

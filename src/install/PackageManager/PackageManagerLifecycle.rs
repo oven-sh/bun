@@ -295,6 +295,15 @@ impl PackageManager {
         }
     }
 
+    /// A dead install left records. `bun patch <pkg>` leaves them: it is not to fail on a script.
+    pub(crate) fn retries_pending_scripts(&self) -> bool {
+        self.pending_scripts.borrow().has_stale()
+            && !matches!(
+                self.options.patch_features,
+                crate::package_manager_real::options::PatchFeatures::Patch
+            )
+    }
+
     pub(crate) fn load_root_lifecycle_scripts(&mut self, root_package: &Package) {
         let buf = self.lockfile.buffers.string_bytes.as_slice();
         // need to clone because this is a copy before Lockfile.cleanWithLogger
@@ -302,9 +311,15 @@ impl PackageManager {
 
         let mut top_level_dir = AutoAbsPath::init_top_level_dir();
 
-        let add_node_gyp_rebuild_script = root_package
-            .scripts
-            .wants_default_node_gyp(FileSystem::instance().top_level_dir(), None);
+        // The root's listing is read already: without a `binding.gyp` in it there is nothing to stat.
+        let has_binding_gyp = {
+            let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            self.root_dir.has_comptime_query(b"binding.gyp")
+        };
+        let add_node_gyp_rebuild_script = has_binding_gyp
+            && root_package
+                .scripts
+                .wants_default_node_gyp(FileSystem::instance().top_level_dir(), None);
 
         if root_package.scripts.has_any() || add_node_gyp_rebuild_script {
             self.root_lifecycle_scripts = root_package.scripts.create_list(

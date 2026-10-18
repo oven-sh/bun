@@ -3898,20 +3898,10 @@ impl<'p, 's> Checker<'p, 's> {
         self.count_members_in_place();
     }
 
-    /// Like `note_members_in_place`, when the partial members belong to `key`.
+    /// Like `note_members_in_place`, when the partial members belong to `key`: the cycle starts at its `Query::Shape`.
     fn note_members_in_place_of(&mut self, key: TypeId) {
         let from = self.stack.iter().rposition(|&q| q == Query::Shape(key));
-        // The cycle contains only types and starts at a class or interface. The other types are created while that one's
-        // members are resolved, so no task can enter the cycle anywhere else, and every task gets the same result.
-        let is_same_in_every_task = matches!(self.data(key), TypeData::Ref { .. })
-            && from.is_some_and(|from| {
-                self.stack[from..]
-                    .iter()
-                    .all(|q| matches!(q, Query::Shape(_) | Query::Properties(_)) || !is_guarded(*q))
-            });
-        if !is_same_in_every_task {
-            self.close_ring(from.unwrap_or(0));
-        }
+        self.close_ring(from.unwrap_or(0));
         self.count_members_in_place();
     }
 

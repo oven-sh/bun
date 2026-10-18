@@ -769,6 +769,30 @@ const whole: never = routes;
     });
   });
 
+  // The members of `Loop` depend on themselves through its base type. `decl.ts` enters that cycle at the base type, when it
+  // checks the declaration, and `Loop` ends up without `b`. `user.ts` would enter it at the members of `Loop`.
+  test("reports the same members on every thread count for an interface whose base type picks from itself", async () => {
+    using dir = project({
+      "decl.ts": `export interface Big { a: 1; b: 2; c: 3 }
+export interface Loop extends Pick<Big & Pick<Loop, "own">, "b"> { own: 1 }
+`,
+      "user.ts":
+        `import type { Loop } from "./decl";\n` +
+        Array.from({ length: 40 }, (_, i) => `const u${i} = [${i}, "${i}"].map(it => [it]);\n`).join("") +
+        `declare const loop: Loop;\nexport const b: 2 = loop.b;\n`,
+    });
+    const threads = [1, 2, 2, 2, 2, 8, 8, 8, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(
+        [
+          `decl.ts(2,18): error TS2741: Property 'b' is missing in type 'Loop' but required in type 'Pick<Big & Pick<Loop, "own">, "b">'.`,
+          "user.ts(43,26): error TS2339: Property 'b' does not exist on type 'Loop'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    }
+  });
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

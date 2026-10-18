@@ -2241,6 +2241,39 @@ after/src/reader.ts(2,14): error TS2322: Type '"second"' is not assignable to ty
       }
     });
 
+    // Threads of the finished small projects join the large one.
+    test("a large project next to small ones reports the same errors with any number of threads", async () => {
+      const small = ["a", "b", "c", "d", "e"];
+      const numbers = Array.from({ length: 150 }, (_, i) => String(i).padStart(3, "0"));
+      const references = [...small, "large"].map(name => ({ path: `./${name}` }));
+      const files: Record<string, string> = {
+        "tsconfig.json": JSON.stringify({ files: [], references }),
+        "large/tsconfig.json": JSON.stringify({ compilerOptions: options, include: ["src"] }),
+      };
+      for (const name of small) {
+        files[`${name}/tsconfig.json`] = JSON.stringify({ compilerOptions: options, files: ["index.ts"] });
+        files[`${name}/index.ts`] = `export const wrong: "${name}" = 1;\n`;
+      }
+      for (const [i, number] of numbers.entries()) {
+        const before = numbers[i - 1];
+        files[`large/src/file${number}.ts`] =
+          (before ? `import { value${before} } from "./file${before}";\n` : "\n") +
+          `export const value${number} = { before: ${before ? `value${before}.own` : "0"}, own: ${i} };\n` +
+          `export const wrong: string = value${number}.before;\n`;
+      }
+      using dir = project(files);
+      const expected = [
+        ...small.map(name => `${name}/index.ts(1,14): error TS2322: Type '1' is not assignable to type '"${name}"'.`),
+        ...numbers.map(
+          number => `large/src/file${number}.ts(3,14): error TS2322: Type 'number' is not assignable to type 'string'.`,
+        ),
+      ].join("\n");
+      for (const threads of ["1", "2", "8"]) {
+        const { stdout, exitCode } = await check(dir, ["--threads", threads]);
+        expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 1 });
+      }
+    });
+
     test("checks every referenced project without a build", async () => {
       using dir = monorepo();
       const { stdout, stderr, exitCode } = await check(dir);

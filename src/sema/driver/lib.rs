@@ -41,7 +41,7 @@ use bun_sema::resolve::{
     Host, ModuleDetection, Options, Phase, ProjectFile, ProjectFiles, ancestors, contains_path,
     displayed_path, get_relative_path_from_directory, inside, is_declaration_file_name,
     is_javascript, is_javascript_file, is_relative, is_same_path, join,
-    output_declaration_file_name, to_path, to_path_in, typescript_path,
+    output_declaration_file_name, run_with_current_helpers, to_path, to_path_in, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
@@ -50,7 +50,7 @@ use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sema::verify::verify_project_references;
 use bun_threading::Guarded;
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
@@ -2991,6 +2991,8 @@ struct WithOutputs<'h> {
     /// How many projects are being built now. The thread that builds this one loads and checks it, so it has the stack of a
     /// worker, and `helpers` help it. `None`: it only waits, and the pool does the work.
     built_now: Option<&'h AtomicUsize>,
+    /// See `Host::ends_the_process`.
+    is_last_of_the_process: bool,
 }
 
 impl WithOutputs<'_> {
@@ -3153,6 +3155,12 @@ impl Host for WithOutputs<'_> {
     fn is_of_one_thread(&self) -> bool {
         (self.built_now).is_some_and(|built_now| self.helpers(built_now) == 0)
     }
+    fn ends_the_process(&self, _: bool) -> bool {
+        self.is_last_of_the_process
+    }
+    fn helpers_now(&self) -> Option<usize> {
+        self.built_now.map(|built_now| self.helpers(built_now))
+    }
     fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
         self.disk.with_helpers(helpers, count, work);
     }
@@ -3189,6 +3197,22 @@ impl Host for WithOutputs<'_> {
     }
 }
 
+/// A session that's dropped on all threads if the process is about to exit.
+struct Dropped<'a> {
+    session: Session,
+    /// `None` if the process keeps running or the request has more programs.
+    before_the_process_ends: Cell<Option<&'a dyn Host>>,
+}
+
+impl Drop for Dropped<'_> {
+    fn drop(&mut self) {
+        if let Some(host) = self.before_the_process_ends.get() {
+            let session = std::mem::take(&mut self.session);
+            session.drop_before_the_process_ends(&|count, work| host.parallel(count, work));
+        }
+    }
+}
+
 /// Checks what `tsc -b` checks: `root` and every project it references, each with its own options.
 /// Nothing is written: a project reads the declaration files of the projects it references from
 /// memory. Without `Request::build` only `root` is reported, as by `tsc`, which reads the
@@ -3208,7 +3232,12 @@ fn check_with_references(
     place: Option<&Place<'_>>,
 ) -> Report {
     // Declared before the session of any program, so it is dropped after them.
-    let of_build = Session::new();
+    let of_build = Dropped {
+        session: Session::new(),
+        before_the_process_ends: Cell::new(None),
+    };
+    // True if the process exits after this build, unless a program finds scripts that belong to another tsconfig.
+    let ends_the_process = host.ends_the_process(run.is_some()) && place.is_none();
     let is_case_sensitive = host.is_case_sensitive();
     let root_config_path = root.config_path.clone();
     let follows_references = !request.build && root.files.is_empty();
@@ -3346,7 +3375,8 @@ fn check_with_references(
     // The programs read the same declaration files: the libraries, what is in `node_modules`, and what one emits for the
     // others. Each is parsed once, and freed in the end.
     let of_this_build = (run.is_none() && !reads_sources && loaded().count() > 1).then(|| {
-        Run::new(&of_build, host.provided_paths().cloned().collect()).of_declaration_files()
+        let provided = host.provided_paths().cloned().collect();
+        Run::new(&of_build.session, provided).of_declaration_files()
     });
     let of_request = run.filter(|_| !reads_sources);
     let first_origin = match &of_this_build {
@@ -3447,7 +3477,11 @@ fn check_with_references(
     let built_now = (!reads_sources).then(|| AtomicUsize::new(0));
     // `built_before`: how many are built now. `Err`: the projects that have to be built first, besides
     // those that it references.
-    let build = |index: usize, built_before: usize| -> Result<Option<Report>, Vec<usize>> {
+    // `is_last`: every other project is already built.
+    let build = |index: usize,
+                 built_before: usize,
+                 is_last: bool|
+     -> Result<Option<Report>, Vec<usize>> {
         let (mut project, mut about_references) = inputs[index].clone();
         if project.files.is_empty() && project.has_references {
             // `upToDateStatusTypeSolution`: there is no program. `buildProject` reports each of
@@ -3489,6 +3523,7 @@ fn check_with_references(
             awaited: Guarded::new(Vec::new()),
             unreadable: Guarded::new(Vec::new()),
             built_now: built_now.as_ref(),
+            is_last_of_the_process: is_last && ends_the_process,
         };
         project.options.referenced_options = referenced
             .iter()
@@ -3627,8 +3662,13 @@ fn check_with_references(
             state.left -= 1;
             state.running += 1;
             let built_before = state.built;
+            let is_last = state.left == 0 && state.running == 1;
             drop(state);
-            let built = build(index, built_before);
+            let goes_on_elsewhere = |it: &Guarded<Option<Report>>| {
+                (it.lock().as_ref()).is_some_and(|it| !it.scripts_elsewhere.is_empty())
+            };
+            let is_last = is_last && !reports.iter().any(goes_on_elsewhere);
+            let built = build(index, built_before, is_last);
             state = builds.lock();
             let now = &mut *state;
             now.running -= 1;
@@ -3706,6 +3746,9 @@ fn check_with_references(
     }
     report.follows_references = follows_references && named.is_none();
     report.load_time = started.elapsed().saturating_sub(report.check_time);
+    if ends_the_process && report.scripts_elsewhere.is_empty() {
+        of_build.before_the_process_ends.set(Some(host));
+    }
     report
 }
 
@@ -4086,25 +4129,12 @@ fn check_named_files(
         request.plan_options.shares_at_once && request.plan_options.checkers == 0;
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
-    struct Dropped<'a> {
-        session: Session,
-        /// `None`: the process goes on, or the request has other programs.
-        before_the_process_ends: Option<&'a dyn Host>,
-    }
-    impl Drop for Dropped<'_> {
-        fn drop(&mut self) {
-            if let Some(host) = self.before_the_process_ends {
-                let session = std::mem::take(&mut self.session);
-                session.drop_before_the_process_ends(&|count, work| host.parallel(count, work));
-            }
-        }
-    }
     // Declared before everything that is allocated in it, so it is dropped last.
-    let session = Dropped {
+    let dropped = Dropped {
         session: Session::new(),
-        before_the_process_ends: (host.ends_the_process() && run.is_none()).then_some(host),
+        before_the_process_ends: Cell::new(host.ends_the_process(run.is_some()).then_some(host)),
     };
-    let session = &session.session;
+    let session = &dropped.session;
     let files_are_found = |until_it_is_loaded: usize| {
         if let Some(place) = in_room {
             place.has_found_its_files(session.allocated_bytes() + until_it_is_loaded);
@@ -4246,6 +4276,10 @@ fn check_named_files(
         }
         is_reached
     });
+    // `check_request` checks those scripts in another program afterwards.
+    if !scripts_elsewhere.is_empty() {
+        dropped.before_the_process_ends.set(None);
+    }
     report.scripts_elsewhere = scripts_elsewhere;
     if let Some(is_reached) = &is_reached {
         to_check.retain(|file| is_reached[file.idx()]);
@@ -5096,23 +5130,38 @@ fn check_named_files(
             task_times.lock().push((cost, done, first));
             upcoming
         };
-        host.parallel(workers, &|_| {
-            let mut run = 0..0;
-            let mut next = || {
-                if let Some(file) = take_lost_file_that_is_next() {
-                    return Some(file);
-                }
-                if run.is_empty() {
-                    run = take_run();
-                }
-                run.next().map(|at| queue[at])
-            };
-            // A task asks for its next file before it commits the last one, and that commit can make a lost file the next.
-            let mut first = None;
-            while let Some(file) = first.or_else(&mut next) {
-                first = run_task(file, &mut next);
+        // Returns a closure that runs one task per call on the current thread. It returns false once the queue is empty.
+        let shared = (&take_lost_file_that_is_next, &take_run, &run_task, &queue);
+        let worker = || {
+            let (take_lost_file_that_is_next, take_run, run_task, queue) = shared;
+            let (mut run, mut first) = (0..0, None);
+            move || {
+                let mut next = || {
+                    if let Some(file) = take_lost_file_that_is_next() {
+                        return Some(file);
+                    }
+                    if run.is_empty() {
+                        run = take_run();
+                    }
+                    run.next().map(|at| queue[at])
+                };
+                // A task asks for its next file before it commits the last one, and that commit can make a lost file the
+                // next.
+                let file = first.take().or_else(&mut next);
+                first = file.and_then(|file| run_task(file, &mut next));
+                file.is_some()
             }
-        });
+        };
+        let work = || {
+            let mut run_a_task = worker();
+            while run_a_task() {}
+        };
+        match host.helpers_now() {
+            Some(_) if workers > 1 => {
+                run_with_current_helpers(host, 0, &mut worker(), &work);
+            }
+            _ => host.parallel(workers, &|_| work()),
+        }
         let in_tasks = started.elapsed();
         let sums = std::mem::take(&mut *sums.lock());
         let mut slowest = std::mem::take(&mut *task_times.lock());

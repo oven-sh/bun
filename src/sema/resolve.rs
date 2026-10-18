@@ -66,6 +66,45 @@ impl Drop for Spent<'_> {
     }
 }
 
+/// Runs `step` on the calling thread until it returns false, while helper threads each run `work` once.
+///
+/// Polls `Host::helpers_now` before every step. When it allows more helpers than are running, the extra ones start and
+/// the calling thread keeps stepping. In a build with project references, this lets the threads of finished projects
+/// join the remaining ones. `helpers` is the number of helpers that are already running.
+pub fn run_with_current_helpers(
+    host: &dyn Host,
+    mut helpers: usize,
+    step: &mut (dyn FnMut() -> bool + Send),
+    work: &(dyn Fn() + Sync),
+) {
+    loop {
+        let allowed = host.helpers_now().unwrap_or(0);
+        if allowed <= helpers {
+            if !step() {
+                return;
+            }
+            continue;
+        }
+        let extra = allowed - helpers;
+        let caller = std::thread::current().id();
+        let pending = bun_threading::Guarded::new(Some(&mut *step));
+        host.with_helpers(extra, extra + 1, &|_| {
+            let is_caller = std::thread::current().id() == caller;
+            let step = pending.lock().take_if(|_| is_caller);
+            match step {
+                Some(step) => run_with_current_helpers(host, allowed, step, work),
+                None => work(),
+            }
+        });
+        // Helpers that find nothing to do can claim every index before the calling thread gets one. Its steps aren't
+        // finished then.
+        if pending.lock().is_none() {
+            return;
+        }
+        helpers = allowed;
+    }
+}
+
 /// The file system, and the parser. The bundler has its own of both.
 /// What only who has made it can read.
 pub type Kept = std::sync::Arc<dyn std::any::Any + Send + Sync>;
@@ -171,9 +210,15 @@ pub trait Host: Sync {
     fn is_of_one_thread(&self) -> bool {
         false
     }
-    /// The process ends when the program that is loaded through this host is checked and the report is printed.
-    fn ends_the_process(&self) -> bool {
+    /// Returns true if the process exits right after this host's program is checked and reported: no other program of the
+    /// request is running or will run. `has_a_run` is true if the program shares a `Run` with other programs.
+    fn ends_the_process(&self, _has_a_run: bool) -> bool {
         false
+    }
+    /// Returns how many other threads a `parallel` call would use if it started now. `None` unless `parallel` also runs on
+    /// the calling thread and the host's share of the threads changes over time.
+    fn helpers_now(&self) -> Option<usize> {
+        None
     }
     /// `parallel`, on the calling thread and on at most `helpers` others.
     fn with_helpers(&self, _helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {

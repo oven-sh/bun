@@ -17,8 +17,8 @@ use crate::resolve::{
     Spent, Tracer, ancestors, contains_path, displayed_path, file_extension_is_one_of, file_path,
     format_by_extension, get_base_file_name, get_lib_file_name, has_ts_implementation_extension,
     inside, is_javascript, is_javascript_file, is_relative, is_same_path, join, path_is_relative,
-    remove_file_extension, supported_extensions, to_file_name_lower_case, to_path, to_path_in,
-    typescript_path,
+    remove_file_extension, run_with_current_helpers, supported_extensions, to_file_name_lower_case,
+    to_path, to_path_in, typescript_path,
 };
 use crate::session::{
     Arena, ArenaBox, ArenaHashMap, ArenaHashSet, ArenaVec, Session, map_in, set_in, transfer_arena,
@@ -5989,11 +5989,17 @@ impl<'s> Files<'s> {
             has_to_read,
             has_loaded,
         } = ahead;
-        let load = |reads: bool, processes: bool| {
+        // With `once`, returns true after reading or processing one batch, or after one wait. Returns false once every
+        // file is loaded.
+        let load = |reads: bool, processes: bool, once: bool| -> bool {
             // A thread that only reads allocates nothing for the session, so it gets no arena.
             let mut arena = None;
             let mut state = shared.lock();
+            let mut is_first = true;
             loop {
+                if once && !std::mem::replace(&mut is_first, false) {
+                    return true;
+                }
                 if reads && !state.to_read.is_empty() && state.ready.len() <= AHEAD {
                     let count = state.to_read.len().min(RUN);
                     let some: Vec<_> = state.to_read.drain(..count).collect();
@@ -6181,7 +6187,7 @@ impl<'s> Files<'s> {
                 } else if state.in_progress == 0 && state.to_read.is_empty() {
                     has_changed.notify_all();
                     has_to_read.notify_all();
-                    return;
+                    return false;
                 } else if processes {
                     has_changed.wait_guarded(&mut state);
                 } else {
@@ -6195,17 +6201,30 @@ impl<'s> Files<'s> {
         let (threads, io) = (host.threads(), host.io_pool());
         let mut alone = io.map(|_| WAITS_ACROSS_POOLS.lock());
         let mut meanwhile = || meanwhile(&mut || drop(alone.take()));
-        let mut on_all_threads =
-            |work: &(dyn Fn(usize) + Sync)| host.parallel_while(threads, work, &mut meanwhile);
+        let mut on_all_threads = |reads: bool| {
+            let work = || {
+                load(reads, true, false);
+            };
+            match host.helpers_now() {
+                Some(_) => {
+                    let mut step = || load(reads, true, true);
+                    run_with_current_helpers(host, 0, &mut step, &work);
+                    meanwhile();
+                }
+                None => host.parallel_while(threads, &|_| work(), &mut meanwhile),
+            }
+        };
         match io {
             Some(io) => io.each_while(
                 (),
-                |(), (), _| load(true, false),
+                |(), (), _| {
+                    load(true, false, false);
+                },
                 &mut vec![(); io.max_threads()],
-                || on_all_threads(&|_| load(false, true)),
+                || on_all_threads(false),
             ),
             // Any one of these finishes the load by itself.
-            None => on_all_threads(&|_| load(true, true)),
+            None => on_all_threads(true),
         }
     }
 

@@ -1504,8 +1504,8 @@ impl Host for Disk {
     fn threads(&self) -> usize {
         self.threads
     }
-    fn ends_the_process(&self) -> bool {
-        self.ends_the_process
+    fn ends_the_process(&self, has_a_run: bool) -> bool {
+        self.ends_the_process && !has_a_run
     }
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
         // The threads that only read serve one load at a time.

@@ -30,7 +30,7 @@ bake.config.ts
 bun bake
 ```
 
-Each page is bundled with its scripts and stylesheets, the same as an [HTML import](/bundler/fullstack). Edits to pages reload in the browser. After you change `app/server.ts`, restart `bun bake`, or run it with `--watch` or `--hot` to pick up changes on their own.
+Each page is bundled with its scripts and stylesheets, the same as an [HTML import](/bundler/fullstack). Edits to pages reload in the browser. Changes to `app/server.ts` and the files that it imports apply without a restart. An error in them shows until you fix it.
 
 `bun bake` always runs the dev server, also with `NODE_ENV=production`. It is not for production.
 
@@ -80,22 +80,20 @@ export default defineConfig({
 
 The default export can also be a function. It gets `{ mode }`, which is `"development"` in `bun bake`. The plugins in `[serve.static] plugins` of `bunfig.toml` also apply, before the plugins of `bake.config.ts`.
 
-After you change `bake.config.ts`, restart `bun bake`, or run it with `--watch`.
+The plugins load once. When `bake.config.ts` changes, `bun bake` prints a note: restart it to use the new plugins.
 
 ## Options
 
-| Flag                               | Description                                                                |
-| ---------------------------------- | -------------------------------------------------------------------------- |
-| `--port <NUM>`                     | The port. The default is `$PORT`, or 3000.                                 |
-| `--host <STR>`, `--hostname <STR>` | The hostname. The default is `localhost`. `host:3000` also sets the port.  |
-| `--console`                        | Print the browser's console logs.                                          |
-| `--no-console`                     | Do not print the browser's console logs.                                   |
-| `--check`                          | Type check the project first. With type errors, `bun bake` does not start. |
-| `--watch`                          | Start again when a file that `bun bake` loaded changes.                    |
-| `--hot`                            | Reload `app/server.ts` in place when it changes.                           |
-| `--no-clear-screen`                | With `--watch` or `--hot`, do not clear the terminal on a reload.          |
+| Flag                               | Description                                                                                                         |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `--port <NUM>`                     | The port. The default is `$PORT`, or 3000.                                                                          |
+| `--host <STR>`, `--hostname <STR>` | The hostname. The default is `localhost`. `host:3000` also sets the port.                                           |
+| `--console`                        | Print the browser's console logs.                                                                                   |
+| `--no-console`                     | Do not print the browser's console logs.                                                                            |
+| `--check`                          | Type check the project first, and again after each change. With type errors, `bun bake` does not serve the project. |
+| `--no-clear-screen`                | Do not clear the terminal on a reload.                                                                              |
 
-A flag and its value can also be one argument: `--port=3000`. `--check`, `--watch`, `--hot` and `--no-clear-screen` mean the same before `bake`: `bun --check bake` is the same as `bun bake --check`. With `--watch`, `bun --check --watch bake` type checks again after each change, and starts the server when there are no errors.
+A flag and its value can also be one argument: `--port=3000`. `--check` and `--no-clear-screen` mean the same before `bake`: `bun --check bake` is the same as `bun bake --check`. With `--check`, `bun bake` starts again after each change instead of reloading in place, so that it can type check again. `bun bake` has no `--watch` or `--hot`: it always reloads.
 
 ## A `bake` script or file of your own
 

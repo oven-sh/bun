@@ -70,8 +70,7 @@ fn write(
         return Ok((same, Some(read)));
     }
     let whole = print_new_file(old, root, indentation)?;
-    // A tree that the printer cannot write either (a string that is not UTF-8) is not a
-    // bug here: the file gets what the printer writes, as on main.
+    // A tree that the printer cannot write either (a string that is not UTF-8) is not a bug here.
     if is_wrong
         && read(&whole, json::PACKAGE_JSON_OPTS, false, false)
             .is_some_and(|read| is_tree(&read.root, &root, stack))

@@ -4396,7 +4396,7 @@ impl<'p, 's> Checker<'p, 's> {
             && (self.signature_links).has(sig, signature_links::fact::HAS_NO_TYPE_PARAMETERS)
         {
             if signature_links::CHECKS_FACTS {
-                self.check_kept_signature_part(sig, "typeParameters", Vec::new(), |c| {
+                self.check_kept_signature_part(sig, "typeParameters", &Vec::new(), |c| {
                     c.look_up_sig_type_params(sig).into_vec()
                 });
             }
@@ -4406,7 +4406,7 @@ impl<'p, 's> Checker<'p, 's> {
             && let Some(kept) = self.signature_links.type_parameters(sig)
         {
             if signature_links::CHECKS_FACTS {
-                self.check_kept_signature_part(sig, "typeParameters", kept.to_vec(), |c| {
+                self.check_kept_signature_part(sig, "typeParameters", &kept.to_vec(), |c| {
                     c.look_up_sig_type_params(sig).into_vec()
                 });
             }
@@ -4817,7 +4817,7 @@ impl<'p, 's> Checker<'p, 's> {
             && let Some(kept) = self.signature_links.parameters(sig)
         {
             if signature_links::CHECKS_PARAMETERS {
-                self.check_kept_signature_part(sig, "parameters", kept.to_vec(), |c| {
+                self.check_kept_signature_part(sig, "parameters", &kept.to_vec(), |c| {
                     c.look_up_sig_params(sig, count).into_vec()
                 });
             }
@@ -5199,7 +5199,7 @@ impl<'p, 's> Checker<'p, 's> {
             && (self.signature_links).has(sig, signature_links::fact::HAS_NO_THIS_PARAMETER)
         {
             if signature_links::CHECKS_FACTS {
-                self.check_kept_signature_part(sig, "thisParameter", None, |c| {
+                self.check_kept_signature_part(sig, "thisParameter", &None, |c| {
                     c.look_up_sig_this_parameter(sig)
                 });
             }

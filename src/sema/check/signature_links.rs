@@ -204,7 +204,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let kept = TypeId::unpack(raw);
         if CHECKS_RETURN_TYPES {
-            self.check_kept_signature_part(sig, "resolvedReturnType", kept, |c| {
+            self.check_kept_signature_part(sig, "resolvedReturnType", &kept, |c| {
                 c.derive_return_type(sig)
             });
         }
@@ -269,7 +269,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         if CHECKS_TYPE_PREDICATES {
-            self.check_kept_signature_part(sig, "resolvedTypePredicate", kept, |c| {
+            self.check_kept_signature_part(sig, "resolvedTypePredicate", &kept, |c| {
                 c.derive_type_predicate(sig)
             });
         }
@@ -318,7 +318,7 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         sig: SigId,
         name: &str,
-        kept: V,
+        kept: &V,
         derive: impl FnOnce(&mut Self) -> V,
     ) {
         // There, or a few levels further in, the long way fails and reports it.
@@ -338,7 +338,7 @@ impl<'p, 's> Checker<'p, 's> {
         let derived = derive(self);
         self.instantiation_count = count;
         let computed_nothing = traces(self) == before;
-        if derived != kept || !computed_nothing {
+        if derived != *kept || !computed_nothing {
             let file =
                 (self.task.file).map(|file| bstr::BStr::new(self.files().module(file).file_name()));
             let data = self.types().sig(sig);

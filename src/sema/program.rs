@@ -103,7 +103,7 @@ const KEEPS_THE_PATTERN_OF_EVERY_SPECIFIER: bool = false;
 const LINKS_ALL_LEVELS_IN_ONE_REGION: bool = true;
 
 /// Off: `Files::link` goes level by level of the import graph, with a barrier after each.
-const LINKS_BY_COMPONENT: bool = true;
+const LINKS_BY_COMPONENT: bool = false;
 
 /// For `Files::link_by_level`. Not a function of the number of threads: which components share a buffer is part of the
 /// plan.
@@ -262,7 +262,7 @@ pub struct Module<'s> {
 
 /// On: a module stays where the thread that loaded it has put it, and `Files::modules` has its address. That is one more
 /// load wherever a module is looked up. Off: it is moved into `Files::modules`, thousands of bytes for each.
-const MODULES_STAY_WHERE_THEY_ARE_LOADED: bool = true;
+const MODULES_STAY_WHERE_THEY_ARE_LOADED: bool = false;
 
 /// What `Files::modules` has of a module.
 trait Holds {

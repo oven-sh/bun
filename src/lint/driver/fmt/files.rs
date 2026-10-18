@@ -575,7 +575,7 @@ impl Ignored {
         if let Some(found) = known.lock().get(directory) {
             return Some(found.clone());
         }
-        let read = OfGit::above_and_in_for_fmt(directory);
+        let read = OfGit::above_and_in_for_fmt(directory, &self.cwd);
         known.lock().insert(directory.to_vec(), read.clone());
         Some(read)
     }

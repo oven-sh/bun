@@ -188,12 +188,12 @@ const IGNORES_IN_THE_WHOLE_FILE: [&[u8]; 4] = [
     b"dprint-ignore-file",
 ];
 
-/// Whether `comment` is about the file, going by its text: the `#!` line, a pragma, which counts only before all code
+/// Whether a comment is about the file, going by its text: the `#!` line, a pragma, which counts only before all code
 /// (`// @ts-nocheck`, `/// <reference path="a" />`, `/** @jsx h */`), a directive for a linter, which counts from where it stands
 /// (`/* eslint-disable */`), a license, or what documents the file (`/** @module */`). `bun fmt` keeps such comments above the
-/// imports that it sorts.
-fn is_about_the_file(comment: &Token) -> bool {
-    let (text, content) = (comment.text(), strings::trim_js_whitespace(comment.value()));
+/// imports that it sorts. `text`: all of the comment. `content`: what is between its delimiters.
+pub fn is_comment_about_the_file(text: &[u8], content: &[u8]) -> bool {
+    let content = strings::trim_js_whitespace(content);
     let starts_with_word = |word: &[u8]| {
         (content.strip_prefix(word))
             .is_some_and(|rest| rest.first().is_none_or(u8::is_ascii_whitespace))
@@ -210,6 +210,10 @@ fn is_about_the_file(comment: &Token) -> bool {
         || IGNORES_IN_THE_WHOLE_FILE.into_iter().any(starts_with_word)
         || starts_license(content)
         || has_tag_about_the_file(content)
+}
+
+fn is_about_the_file(comment: &Token) -> bool {
+    is_comment_about_the_file(comment.text(), comment.value())
 }
 
 /// Whether `comment` is about the line, the statement or the expression after it, for a tool that reads it: a compiler, a linter,

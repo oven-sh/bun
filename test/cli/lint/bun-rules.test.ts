@@ -2947,6 +2947,38 @@ it("a", () => {});
       "5 test",
     ]);
   });
+
+  // The calls that are reported are those of globals. oxlint 1.87 writes the names whatever they stand for.
+  test.each([
+    ["jest", `const { it, describe } = require("@jest/globals");`, true],
+    ["vitest", `const { it, describe } = require("vitest");`, true],
+    ["vitest", `const { it, describe } = require("vite-plus/test");`, true],
+    ["vitest", `const { it, describe } = require("@effect/vitest");`, true],
+    ["vitest", `const { it, describe } = await import("vitest");`, true],
+    ["jest", `const { it, describe } = require("./helpers");`, false],
+    ["jest", `const { test: it, suite: describe } = require("@jest/globals");`, false],
+    ["jest", `const [it, describe] = require("@jest/globals");`, false],
+    ["jest", `const it = require("@jest/globals"), describe = it;`, false],
+  ])("%s: whether a fix writes the names of `%s`: %p", async (plugin, declaration, isWritten) => {
+    const code = `${declaration}
+xdescribe("a", () => {
+  test("b", () => {});
+});
+function inner() {
+  const { describe } = require("@jest/globals");
+  xdescribe("c", () => {});
+}
+`;
+    const rules = ["consistent-test-it", "no-test-prefixes"].map(rule => `"${plugin}/${rule}" = "error"\n`);
+    const files = { "bunfig.toml": `[lint.rules]\n${rules.join("")}`, "a.test.mjs": code };
+    const { stdout } = await lint(files, ["-f", "json", "a.test.mjs"]);
+    const [{ messages }] = JSON.parse(stdout) as { messages: Message[] }[];
+    expect(messages.filter(it => it.ruleId.startsWith(plugin)).map(it => `${it.line} ${it.fix?.text}`)).toEqual([
+      `2 ${isWritten ? "describe.skip" : undefined}`,
+      `3 ${isWritten ? "it" : undefined}`,
+      "7 undefined",
+    ]);
+  });
 });
 
 describe.concurrent("the plugin bun:test", () => {

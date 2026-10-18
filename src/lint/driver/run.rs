@@ -1036,7 +1036,7 @@ impl Run<'_> {
         let handed_back = Guarded::new(Vec::new());
         let (unread, needs_eslint) = (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
         let formatter = crate::fmt::ForRules::new(environment, options.of_bun_format.as_deref());
-        let only = (options.only.as_ref()).map(|it| git::Files::read(it, environment));
+        let only = (options.only.as_ref()).map(|it| git::Files::read(it, environment, true));
         let only = match only.transpose() {
             Ok(only) => only,
             Err(Fatal(error)) => return self.refuse_flag(&error),

@@ -727,7 +727,7 @@ pub(crate) fn find_files(
 }
 
 /// What [`find_files`] would find of `files` if they were on disk. `files`: absolute paths, each with the size of its text.
-/// `--staged` has these from the index. One is taken if it's in a directory that is an argument or a pattern matches it, and
+/// `--staged` has these from the index. One is taken if it's an argument, in a directory that is one, or a pattern matches it, and
 /// neither the configuration nor an ignore file leaves it out.
 pub(crate) fn find_files_not_on_disk<'f>(
     loader: &Loader,
@@ -743,7 +743,7 @@ pub(crate) fn find_files_not_on_disk<'f>(
             && patterns.iter().any(|pattern| {
                 let pattern = paths::from_native(pattern);
                 let resolved = paths::resolve(cwd, &pattern);
-                if paths::inside(&resolved, file).is_some() {
+                if paths::is_at_or_inside(&resolved, file) {
                     return true;
                 }
                 let base_path = paths::resolve(cwd, &bun_glob::scan::glob_parent(&pattern));

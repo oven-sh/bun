@@ -266,25 +266,30 @@ impl OfGit {
             is_for_oxc,
             ..Self::default()
         }
-        .with_all_above_and_in(directory)
+        .with_all_above_and_in(directory, None)
     }
 
     /// The same for `bun fmt` with no config of another tool. It reads the lines the way it reads those of `.prettierignore`.
-    pub(crate) fn above_and_in_for_fmt(directory: &[u8]) -> Self {
+    /// Outside of a repository Git ignores nothing, and Prettier reads the file in `cwd`: none above `cwd` counts.
+    pub(crate) fn above_and_in_for_fmt(directory: &[u8], cwd: &[u8]) -> Self {
         Self {
             stops_at_roots: true,
             reads_like_prettier: true,
             ..Self::default()
         }
-        .with_all_above_and_in(directory)
+        .with_all_above_and_in(directory, Some(cwd))
     }
 
-    fn with_all_above_and_in(mut self, directory: &[u8]) -> Self {
+    /// `top`: where the way up ends outside of a repository. From a directory that isn't in it, there is no way up.
+    fn with_all_above_and_in(mut self, directory: &[u8], top: Option<&[u8]>) -> Self {
         let mut directories: Vec<&[u8]> = paths::ancestors(directory).collect();
         let nearest = directories.iter().position(|it| is_root(it));
         self.stops_at_roots &= nearest.is_some();
         if let Some(nearest) = nearest.filter(|_| self.stops_at_roots) {
             directories.truncate(nearest + 1);
+        } else if let Some(top) = top {
+            let is_in_top = |it: &&&[u8]| paths::is_at_or_inside(top, it);
+            directories.truncate(directories.iter().take_while(is_in_top).count().max(1));
         }
         for (index, directory) in directories.iter().enumerate().rev() {
             let can_be_root = nearest.is_some_and(|nearest| nearest <= index);

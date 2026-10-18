@@ -57,6 +57,16 @@ const aboutTheFile = [
   "// SPDX-License-Identifier: MIT",
   "/* @license MIT */",
   "/*! x 1.0 */",
+  "/** @jest-environment jsdom */",
+  "// @vitest-environment happy-dom",
+  "/** @file What the file is for. */",
+  "/** @fileoverview What the file is for. */",
+  "/** @overview What the file is for. */",
+  "/** @module x */",
+  "/** @packageDocumentation */",
+  "// deno-lint-ignore-file",
+  "// deno-fmt-ignore-file",
+  "// dprint-ignore-file",
 ];
 const unsorted = `import z from "z";\nimport a from "a";\n`;
 const sorted = `import a from "a";\nimport z from "z";\n`;
@@ -112,6 +122,16 @@ const cases: [name: string, input: string, output: string][] = [
     "doesn't take the name of a package for a pragma",
     `// the types are in @bun/types\n${unsorted}`,
     `import a from "a";\n// the types are in @bun/types\nimport z from "z";\n`,
+  ],
+  [
+    "doesn't take @jest/globals for a pragma",
+    `// the mocks are in @jest/globals\n${unsorted}`,
+    `import a from "a";\n// the mocks are in @jest/globals\nimport z from "z";\n`,
+  ],
+  [
+    "moves deno-lint-ignore with the first import",
+    `// deno-lint-ignore no-explicit-any\n${unsorted}`,
+    `import a from "a";\n// deno-lint-ignore no-explicit-any\nimport z from "z";\n`,
   ],
   [
     "sorts names case-insensitively, with numbers in natural order, ignoring inline `type`",

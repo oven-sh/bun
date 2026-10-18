@@ -95,7 +95,7 @@ options = { printWidth = 120 }
 
 ## Ignore files
 
-Every `.gitignore` in the repository counts, whichever directory you run `bun fmt` from. With a Prettier config, only the `.gitignore` in the current directory does, because that's the only one Prettier reads.
+Every `.gitignore` in the repository counts, whichever directory you run `bun fmt` from. Outside a repository, those in the current directory and below it count. With a Prettier config, only the `.gitignore` in the current directory does, because that's the only one Prettier reads.
 
 To skip more than `.gitignore` does, list the files in `bunfig.toml`. A `.prettierignore` file works too.
 

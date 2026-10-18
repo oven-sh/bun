@@ -126,11 +126,14 @@ fn in_the_words_of_git(first: &str, finished: &Finished) -> Fatal {
 
 /// `stored`, a blob, with the line endings that a checkout gives it. Git can store LF for a file that it checks out with
 /// CRLF (`eol=crlf`, `core.autocrlf`). Every other file of the run is read as it's checked out, so this one has to match.
-/// Git only says what it converts in one more call, and the file at `path` on disk shows it too.
+/// Git only says what it converts in one more call, and the file at `path` on disk shows it too: every line of it ends in CRLF.
 fn with_line_endings_of(path: &[u8], stored: &[u8]) -> Vec<u8> {
     let is_converted = !strings::contains_char(stored, b'\r')
         && matches!(fs::link_kind_and_size(path), Some((fs::LinkKind::File, _)))
-        && fs::read(path).is_ok_and(|on_disk| strings::contains(&on_disk, b"\r\n"));
+        && fs::read(path).is_ok_and(|on_disk| {
+            let converted = strings::count(&on_disk, b"\r\n");
+            converted > 0 && converted == strings::count_char(&on_disk, b'\n')
+        });
     match is_converted {
         true => strings::split(stored, b"\n")
             .collect::<Vec<_>>()
@@ -154,7 +157,7 @@ pub(crate) struct Files<'e> {
     /// Absolute paths, in `top`.
     named: FxHashSet<Vec<u8>>,
     /// For `--staged`: what the index has of a file that is different on disk, or gone from it. It has the files in `named`,
-    /// and those that one of them can import.
+    /// and for a run that follows imports, those that one of them can import.
     in_the_index: FxHashMap<Vec<u8>, Vec<u8>>,
     /// The files in `named` that a search of the disk can't find: deleted since they were staged, or not a regular file now.
     not_on_disk: Vec<Vec<u8>>,
@@ -165,6 +168,7 @@ impl<'e> Files<'e> {
     pub(crate) fn read(
         only: &'e Only,
         environment: &'e Environment<'e>,
+        follows_imports: bool,
     ) -> Result<Files<'e>, Fatal> {
         let mut files = Files {
             only,
@@ -191,7 +195,7 @@ impl<'e> Files<'e> {
             Only::Staged => {
                 files.named = files.diff(&top, &[b"--cached", IS_THERE])?;
                 if !files.named.is_empty() {
-                    files.read_the_index(&top)?;
+                    files.read_the_index(&top, follows_imports)?;
                 }
             }
             Only::Changed(since) => {
@@ -257,7 +261,7 @@ impl<'e> Files<'e> {
     }
 
     /// Fills in `in_the_index`. What the index has as a symlink doesn't count as a file, whatever it is on disk.
-    fn read_the_index(&mut self, top: &[u8]) -> Result<(), Fatal> {
+    fn read_the_index(&mut self, top: &[u8], follows_imports: bool) -> Result<(), Fatal> {
         let finished = self.git(&[&DIFF[..], &[b"--raw", b"--no-abbrev"]].concat(), b"")?;
         if !finished.is_ok {
             return Err(self.unreadable(&finished));
@@ -279,9 +283,10 @@ impl<'e> Files<'e> {
                 is_no_file.insert(path);
                 continue;
             }
-            let can_be_imported = ScriptKind::from_file_name(name).is_some()
-                || name.ends_with(b".json")
-                || Framework::of(name).is_some();
+            let can_be_imported = follows_imports
+                && (ScriptKind::from_file_name(name).is_some()
+                    || name.ends_with(b".json")
+                    || Framework::of(name).is_some());
             let is_named = self.named.contains(&path);
             if is_named && !mode_on_disk.starts_with(b"100") {
                 self.not_on_disk.push(path.clone());

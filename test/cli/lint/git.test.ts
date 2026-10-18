@@ -777,6 +777,11 @@ describe.concurrent("bun lint --staged lints what the commit gets", () => {
     expect(await selected(root, root, ["lint", "--staged", ".", "!kept/other.js"])).toEqual(["sub/gone.js"]);
     expect(await selected(root, root, ["lint", "--staged", ".", "!sub/gone.js"])).toEqual([]);
     expect(await selected(root, root, ["lint", "--staged", "**/*.js", "!sub"])).toEqual([]);
+    // Without the flag, an argument that nothing on disk matches is an error.
+    const tolerant = ["lint", "--staged", "--no-error-on-unmatched-pattern"];
+    expect(await selected(root, root, [...tolerant, "sub/gone.js"])).toEqual(["sub/gone.js"]);
+    expect(await selected(root, root, [...tolerant, "sub"])).toEqual(["sub/gone.js"]);
+    expect(await selected(root, root, [...tolerant, "sub/gone.jsx"])).toEqual([]);
   });
 
   test("--fix doesn't bring back a file that was deleted after it was staged", async () => {
@@ -872,6 +877,17 @@ exports.format = async (text, { endOfLine }) =>
     expect(stdout + stderr).toContain("partly.js");
     expect(exitCode).toBe(1);
   });
+
+  test("git converts nothing, and one line on disk ends in CRLF", async () => {
+    using repo = await repository({ "partly.js": tidy });
+    const { root } = repo;
+    write(root, "partly.js", two);
+    await git(root, "add", "-A");
+    write(root, "partly.js", two + crlf(tidy.replace("a", "c")));
+    const { stdout, stderr, exitCode } = await bun(root, ["fmt", "--staged", "--check", "--end-of-line", "lf"]);
+    expect(stdout + stderr).not.toContain("partly.js");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test.concurrent.each(commands)("bun %s --staged only reads from the index what it has a use for", async command => {
@@ -890,7 +906,10 @@ test.concurrent.each(commands)("bun %s --staged only reads from the index what i
   // Not staged, and nothing can import it.
   write(root, "asset.bin", "2");
   expect(await reads()).toBe(false);
+  // Not staged either. A staged file can import it, which only matters to `bun lint`.
   write(root, "other.js", tidy + "\n");
+  expect(await reads()).toBe(command === "lint");
+  write(root, "whole.js", tidy);
   expect(await reads()).toBe(true);
 });
 

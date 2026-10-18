@@ -1473,6 +1473,23 @@ describe.concurrent("bun lint", () => {
         expect(exitCode).toBe(1);
       });
 
+      // `--ignore-path <(true)`
+      test("a pipe that somebody closes without writing to it is an empty file", async () => {
+        using dir = tempDir("bun-lint", { "a.js": bad });
+        await using proc = spawn({
+          cmd: ["sh", "-c", ': | "$0" "$@"', ...command, "-f", "unix", "--ignore-path", "/dev/stdin", "."],
+          env,
+          cwd: String(dir),
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("cannot read");
+        expect(stdout).toContain("a.js:2:15: ");
+        expect(exitCode).toBe(1);
+      });
+
       /** Runs `bun lint` with `args` in a directory with `files`, while `text` is written to the pipe called `name` there. */
       async function lintWhileWriting(files: Record<string, string>, args: string[], name: string, text: string) {
         using dir = tempDir("bun-lint", files);
@@ -8537,6 +8554,89 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect(result.stderr).toContain(refusal);
         expect(result.exitCode).toBe(2);
       }
+    });
+
+    describe.skipIf(isWindows)("--output-file names a pipe or a device", () => {
+      const withOutside = { ...tree, "outside/other": "" };
+
+      /** `bun lint -f unix -o <name>` in the project in `dir`, run by `sh`: `"$@"` in `script` is the command. */
+      async function throughShell(dir: string, script: string, name: string) {
+        await using proc = spawn({
+          cmd: ["sh", "-c", script, "sh", ...command, "-f", "unix", "-o", name],
+          env,
+          cwd: join(dir, "project"),
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr };
+      }
+
+      /** Makes a named pipe. It has a reader, so opening it for writing doesn't wait, and what is written stays until it is read. */
+      function pipeAt(path: string) {
+        expect(Bun.spawnSync(["mkfifo", path]).exitCode).toBe(0);
+        const reader = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+        return { read: () => readFileSync(reader, "utf8"), [Symbol.dispose]: () => closeSync(reader) };
+      }
+
+      /** What is printed without the flag, and the exit code. A file gets no line break at the end. */
+      async function withoutFlag(dir: string) {
+        const { stdout, exitCode } = await run(join(dir, "project"), ["-f", "unix"]);
+        expect(stdout).toContain("[Error/no-debugger]");
+        return { report: stdout.trimEnd(), exitCode };
+      }
+
+      test.each([
+        ["/dev/stdout", '{ "$@" 2> /dev/null; echo "exit code $?"; } | cat'],
+        ["/dev/stderr", '{ "$@" 2>&1 > /dev/null; echo "exit code $?"; } | cat'],
+      ])("%s that is a pipe gets the report", async (name, script) => {
+        using dir = tempDir("bun-lint", tree);
+        const { report, exitCode } = await withoutFlag(String(dir));
+        const { stdout } = await throughShell(String(dir), script, name);
+        expect(stdout).toStartWith(report);
+        expect(stdout).toEndWith(`exit code ${exitCode}\n`);
+      });
+
+      test("/dev/null takes the report", async () => {
+        const result = await lint(tree, ["-f", "unix", "-o", "/dev/null"], { cwd: "project" });
+        expect(result.raw).toBe("");
+        expect(result.exitCode).toBe(1);
+      });
+
+      test.each([
+        ["in the project", "project/pipe", "pipe"],
+        ["in the project, by a link in it", "project/pipe", "link"],
+        ["outside the repository, by a path that has no link in it", "outside/pipe", "../outside/pipe"],
+      ])("a named pipe %s gets the report", async (_, at, name) => {
+        using dir = tempDir("bun-lint", withOutside);
+        const expected = await withoutFlag(String(dir));
+        using pipe = pipeAt(join(String(dir), at));
+        symlinkSync(join(String(dir), at), join(String(dir), "project/link"));
+        const { exitCode } = await run(join(String(dir), "project"), ["-f", "unix", "-o", name]);
+        expect({ report: pipe.read(), exitCode }).toEqual(expected);
+      });
+
+      test("a link in the project to a named pipe outside the repository is refused", async () => {
+        using dir = tempDir("bun-lint", withOutside);
+        using pipe = pipeAt(join(String(dir), "outside/pipe"));
+        link("project/link", "outside/pipe")(String(dir));
+        const { stderr, exitCode } = await run(join(String(dir), "project"), ["-f", "unix", "-o", "link"]);
+        expect(stderr).toContain(refusal);
+        expect({ written: pipe.read(), exitCode }).toEqual({ written: "", exitCode: 2 });
+      });
+
+      test.each([
+        ["/dev/stdout, which is a pipe", "/dev/stdout", '{ "$@"; echo "exit code $?"; } | cat'],
+        ["/dev/stdout, which is a device", "/dev/stdout", '"$@" > /dev/null; echo "exit code $?"'],
+        ["/dev/null", "/dev/null", '"$@"; echo "exit code $?"'],
+      ])("a link in the project to %s is refused", async (_, to, script) => {
+        using dir = tempDir("bun-lint", tree);
+        symlinkSync(to, join(String(dir), "project/link"));
+        const { stdout, stderr } = await throughShell(String(dir), script, "link");
+        expect(stderr).toContain(refusal);
+        expect(stdout).toBe("exit code 2\n");
+      });
     });
   });
 

@@ -2236,6 +2236,36 @@ describe.concurrent("bun fmt", () => {
         expect(result.files).toEqual({ "a.md": after, "a.mdx": after });
         expect(result.exitCode).toBe(0);
       });
+
+      describe("indented code in a template", () => {
+        const template = (title: string, code: string[], item: string) =>
+          [
+            "const a = markdown`",
+            `  ${title}`,
+            "",
+            ...code.map(line => `      ${line}`),
+            "",
+            `  ${item}`,
+            "`;",
+            "",
+          ].join("\n");
+
+        test.each([
+          ["none", ["abc", "def"]],
+          ["before the last line", ["abc  ", "def"]],
+        ])("%s: the template is formatted", async (_, code) => {
+          const result = await format({ "a.js": template("#  a", code, "*  b") }, [], { reads: ["a.js"] });
+          expect(result.files).toEqual({ "a.js": template("# a", code, "- b") });
+          expect(result.exitCode).toBe(0);
+        });
+
+        test("at the end of the last line: the template stays as it is", async () => {
+          const text = template("#  a", ["abc", "def \t"], "*  b");
+          const result = await format({ "a.js": text }, [], { reads: ["a.js"] });
+          expect(result.files).toEqual({ "a.js": text });
+          expect(result.exitCode).toBe(0);
+        });
+      });
     });
 
     /** What a reader sees, with every run of white space as one blank. */
@@ -6082,10 +6112,13 @@ exports.format = async text => "by Prettier";
     },
   );
 
-  test.skipIf(isWindows)("a pipe that somebody writes to is read", async () => {
+  test.skipIf(isWindows).each([
+    ["writes to is read", "echo a.js", "b.js\n"],
+    ["closes without writing to it is an empty file", ":", "a.js\nb.js\n"],
+  ])("a pipe that somebody %s", async (_, writer, expected) => {
     using dir = tempDir("bun-format", { "a.js": ugly, "b.js": ugly });
     await using proc = spawn({
-      cmd: ["sh", "-c", 'echo a.js | "$0" "$@"', ...command, "-l", "--ignore-path", "/dev/stdin"],
+      cmd: ["sh", "-c", `${writer} | "$0" "$@"`, ...command, "-l", "--ignore-path", "/dev/stdin"],
       env,
       cwd: String(dir),
       stdin: "ignore",
@@ -6093,7 +6126,7 @@ exports.format = async text => "by Prettier";
       stderr: "pipe",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe("b.js\n");
+    expect(stdout).toBe(expected);
     expect(exitCode).toBe(1);
   });
 
@@ -7805,6 +7838,36 @@ try {
       test("those above the root of an inner repository don't count in it", async () => {
         const files = { ...project, "vendor/lib/.git/HEAD": "", "vendor/lib/dist/i.json": json, "dist/o.json": json };
         expect(await different(files, ["vendor", "dist"])).toEqual(["vendor/lib/dist/i.json"]);
+      });
+
+      test("one above the root of the repository doesn't count", async () => {
+        const inside = Object.entries(project).map(([name, text]) => [`repository/${name}`, text]);
+        const files = { ".gitignore": "src/\n", ...Object.fromEntries(inside) };
+        expect(await different(files, [], { cwd: "repository/packages/app" })).toEqual(left);
+      });
+
+      // Git ignores nothing there, and Prettier reads the one in the working directory.
+      test.skipIf(isInRepository)("outside of a repository, none above the working directory counts", async () => {
+        const files = {
+          "home/.gitignore": "*.json\n",
+          "home/other/e.json": json,
+          "home/project/.gitignore": "dist/\n",
+          "home/project/a.json": json,
+          "home/project/dist/b.json": json,
+          "home/project/src/.gitignore": "c.json\n",
+          "home/project/src/c.json": json,
+          "home/project/src/d.json": json,
+        };
+        const inProject = { cwd: "home/project" };
+        expect(
+          await Promise.all([
+            different(files, [], inProject),
+            different(files, ["a.json", "dist/b.json", "src/c.json", "src/d.json"], inProject),
+            different(files, ["../other"], inProject),
+            different(files, [], { cwd: "home/project/src" }),
+            different(files, [], { cwd: "home" }),
+          ]),
+        ).toEqual([["a.json", "src/d.json"], ["a.json", "src/d.json"], ["../other/e.json"], ["d.json"], []]);
       });
 
       test("with a Prettier config they don't", async () => {

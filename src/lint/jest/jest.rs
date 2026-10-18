@@ -74,8 +74,8 @@ impl<'a> Ctx<'a, '_> {
     }
 
     /// Whether a fix may write the name `name` at `at`: whether it is the runner's function there. For Jest and Vitest that is a
-    /// global, or imported. In a file that imports from `bun:test` nothing else is declared than what it imports: `bun test`
-    /// declares `it` and the like only where nothing is imported from there.
+    /// global, imported, or required at the top level. In a file that imports from `bun:test` nothing else is declared than what
+    /// it imports: `bun test` declares `it` and the like only where nothing is imported from there.
     pub(crate) fn can_write(&self, name: &[u8], at: Expr<'a>) -> bool {
         let is_bun = self.runner == Runner::Bun;
         let Some(symbol) = Node::Expr(at).scope().resolve_bytes(name) else {
@@ -86,11 +86,11 @@ impl<'a> Ctx<'a, '_> {
             false => source == b"@jest/globals" || is_vitest_import_source(source),
         };
         let is_required = || {
-            let patterns = all_required_from_bun_test(self.file).take_while(|_| is_bun);
-            let properties = patterns.filter_map(|it| match it.kind() {
-                PatKind::Object(properties) => Some(properties),
-                _ => None,
-            });
+            let properties =
+                all_required(self.file).filter_map(|(pattern, source)| match pattern.kind() {
+                    PatKind::Object(properties) if is_of_runner(source.bytes()) => Some(properties),
+                    _ => None,
+                });
             properties.flatten().any(|it| {
                 it.value().symbol() == Some(symbol)
                     && (it.key().and_then(|it| it.name())).is_some_and(|it| it.bytes() == name)
@@ -393,8 +393,8 @@ fn per_file<'a>(file: &'a File<'a>) -> Option<&'a PerFile> {
     })
 }
 
-/// The `{ test: t }` of `const { test: t } = require("bun:test")` and of `.. = await import("bun:test")`.
-fn required_from_bun_test(declarator: VarDecl<'_>) -> Option<Pat<'_>> {
+/// The `{ test: t }` and the `a` of `const { test: t } = require("a")` and of `.. = await import("a")`.
+fn required(declarator: VarDecl<'_>) -> Option<(Pat<'_>, Name<'_>)> {
     let init = declarator.init()?;
     let source = match init.kind() {
         ExprKind::Call(call) => common_js_require(call),
@@ -404,13 +404,18 @@ fn required_from_bun_test(declarator: VarDecl<'_>) -> Option<Pat<'_>> {
         },
         _ => None,
     };
-    (static_string(source?)?.bytes() == BUN_TEST).then(|| declarator.pat())
+    Some((declarator.pat(), static_string(source?)?))
 }
 
-/// The declarations at the top level of [`required_from_bun_test`].
-fn all_required_from_bun_test<'a>(file: &'a File<'a>) -> impl Iterator<Item = Pat<'a>> {
+/// [`required`] of the declarations at the top level.
+fn all_required<'a>(file: &'a File<'a>) -> impl Iterator<Item = (Pat<'a>, Name<'a>)> {
     let declarators = file.body().iter().filter_map(Stmt::as_var).flatten();
-    declarators.filter_map(required_from_bun_test)
+    declarators.filter_map(required)
+}
+
+fn all_required_from_bun_test<'a>(file: &'a File<'a>) -> impl Iterator<Item = Pat<'a>> {
+    all_required(file)
+        .filter_map(|(pattern, source)| (source.bytes() == BUN_TEST).then_some(pattern))
 }
 
 fn imports_bun_test<'a>(file: &'a File<'a>) -> bool {

@@ -172,9 +172,10 @@ impl NamedPipes {
                 continue;
             }
             let cannot_read = |why: &[u8]| [b"cannot read ", &written[..], b": ", why].concat();
+            // A pipe that has had a writer hangs up at its end: `<(true)` is an empty file.
+            let had_writer = || bun_core::is_readable(file.handle()) == bun_core::Pollable::Hup;
             match read_stream(&file) {
-                // A writer that closed the pipe without writing looks the same.
-                Ok(text) if text.is_empty() => {
+                Ok(text) if text.is_empty() && !had_writer() => {
                     return Err(cannot_read(b"nothing is writing to this pipe"));
                 }
                 Ok(text) => self.0.push((path, text)),
@@ -531,9 +532,48 @@ fn real_path_of_new(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
     }
 }
 
+/// The identity of what keeps nothing that is written to it: a pipe, a socket, a terminal, `/dev/null`.
+fn identity_if_stream(found: &bun_sys::Stat) -> Option<Identity> {
+    let kind = bun_sys::kind_from_mode(found.st_mode as _);
+    (!matches!(kind, EntryKind::File | EntryKind::Directory))
+        .then_some((found.st_dev as _, found.st_ino as _))
+}
+
+/// Writes `text` to `stream`, which `path` leads to. Nothing is made, replaced or cut.
+fn write_to_stream(cwd: &[u8], path: &[u8], stream: Identity, text: &[u8]) -> Result<(), Vec<u8>> {
+    // `/dev/stdout` that is a pipe has no path without links, and nothing in a repository is without one.
+    let real = real_path(path);
+    let is_refused = match &real {
+        Some(real) => leads_out(cwd, path, real),
+        None => paths::inside(cwd, &paths::from_native(path)).is_some(),
+    };
+    if is_refused {
+        return Err(LEADS_OUT.to_vec());
+    }
+    let (checked, last_link) = match &real {
+        Some(real) => (&real[..], O::NOFOLLOW),
+        None => (path, 0),
+    };
+    let file = File::openat(Fd::cwd(), checked, O::WRONLY | O::CLOEXEC | last_link, 0)
+        .map_err(|error| describe(&error))?;
+    let opened = file.stat().map_err(|error| describe(&error))?;
+    // Something else can be there by now, and a file would keep the rest of its text. The links of `path` can lead elsewhere too.
+    let is_as_checked = |opened: Identity| real.is_some() || opened == stream;
+    match identity_if_stream(&opened).is_some_and(is_as_checked) {
+        true => file.write_all(text).map_err(|error| describe(&error)),
+        false => Err(b"it was replaced while it was opened".to_vec()),
+    }
+}
+
 /// Writes a file that need not exist, and makes the directories that it is in. `Err`: why it is not written. As for
-/// [`write_atomically`], a link below `cwd` is not followed out of the repository.
+/// [`write_atomically`], a link below `cwd` is not followed out of the repository. A pipe or a device gets `text`: `/dev/stdout`.
 pub(crate) fn write_new(cwd: &[u8], path: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
+    if cfg!(unix)
+        && let Ok(found) = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get()))
+        && let Some(stream) = identity_if_stream(&found)
+    {
+        return write_to_stream(cwd, path, stream, text);
+    }
     let real = real_path_of_new(path).map_err(|error| describe(&error))?;
     if leads_out(cwd, path, &real) {
         return Err(LEADS_OUT.to_vec());

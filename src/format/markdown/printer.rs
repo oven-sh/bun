@@ -1976,8 +1976,9 @@ impl<'a> Printer<'a, '_> {
         let value = self.str(node.value);
         if formatted.is_none() && is_indented_code(self.original, self.tree, id) {
             // What follows the code starts with a `hardline`. A last line of nothing but blanks is not part of the code.
-            let end = match value.trim_ascii_end().len() {
-                len if bun_core::strings::contains_char(&value[len..], b'\n') => Doc::EMPTY,
+            let end = match &value[value.trim_ascii_end().len()..] {
+                b"" => Doc::EMPTY,
+                blanks if bun_core::strings::contains_char(blanks, b'\n') => Doc::EMPTY,
                 _ => Doc::KeepBlanks,
             };
             let code = docs!["    ", self.code_as_written(value, true), end];

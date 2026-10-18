@@ -1613,7 +1613,7 @@ impl Run<'_> {
         let asks_for_different = (options.check || options.list_different) && !options.write;
         let only_looks = asks_for_different || options.debug_check;
         let is_oxfmt = configs.flavor == Flavor::Oxfmt;
-        let only = (options.only.as_ref()).map(|it| git::Files::read(it, self.environment));
+        let only = (options.only.as_ref()).map(|it| git::Files::read(it, self.environment, false));
         let only = match only.transpose() {
             Ok(only) => only,
             Err(Fatal(error)) => return self.fail(&error),

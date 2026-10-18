@@ -2582,7 +2582,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
         let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
-        let candidate = p.enter_react_compiler_candidate(None, expr.loc, e_.body.loc, dupe);
+        let prev_may_replace_body = p.react_compiler_may_replace_body;
+        let rc_binding = p.take_react_compiler_candidate(None, expr.loc, e_.body.loc, dupe);
 
         let args_mut: &mut [G::Arg] = e_.args.slice_mut();
         p.visit_args(
@@ -2609,7 +2610,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()
         };
-        let rc_binding = candidate.binding;
         if rc_binding.is_some() {
             let mut flags = bun_ast::flags::FUNCTION_NONE;
             if e_.is_async {
@@ -2624,7 +2624,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 body_loc: e_.body.loc,
                 args_loc: e_.body.loc,
                 binding: rc_binding,
-                in_react_hoc: candidate.in_react_hoc,
+                in_react_hoc: core::mem::take(&mut p.react_compiler_in_react_hoc),
             });
         }
         p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, &mut temp_opts)
@@ -2642,7 +2642,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_scope();
         p.pop_scope();
 
-        p.react_compiler_may_replace_body = candidate.prev_may_replace_body;
+        p.react_compiler_may_replace_body = prev_may_replace_body;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
         // Restore before any further `p.*` call so the stack-local pointer

@@ -485,16 +485,21 @@ const dir = String(
         const server = graph.run(() => app.serve());
         // A request for a page starts its build, which holds a pending request on the server until it is
         // done. That is a later turn's business: the build seen here is still going when dispose() runs.
+        // (All of them can be done before a turn here sees one. Such a server shows nothing.)
+        const answered = new Set();
         for (const path of app.paths)
-          Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open: socket => void socket.write("GET " + path + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"), data() {}, close() {}, error() {} } }).catch(() => {});
-        await until(() => server.pendingRequests >= 1);
+          Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open: socket => void socket.write("GET " + path + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"), data() { answered.add(path); }, close() {}, error() {} } }).catch(() => {});
+        await until(() => server.pendingRequests >= 1 || answered.size === app.paths.length);
+        const building = server.pendingRequests >= 1;
         graph.dispose();
+        if (!building) console.error("every build was done before a turn saw one");
+        return building;
       };
       // (One first, so the class's own cells are there before counting.)
       await use();
       let none;
       await until(() => { const before = none; return (none = servers()) === before; });
-      for (let i = 0; i < 3; i++) await use();
+      for (let i = 0; i < 3; ) if (await use()) i++;
       // (No more than before, not as many: the first one may have outlived that reading.)
       let turns = 0;
       await until(() => servers() <= none || ++turns === 2000);

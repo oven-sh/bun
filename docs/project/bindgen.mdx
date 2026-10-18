@@ -70,7 +70,7 @@ not compile.
 
 To reach the function:
 
-- from `src/js`: `$bindgen("bindgen_test.bind.ts", "add")`, which is typed from the schema;
+- from `src/js`: `$bindgen("bindgen_test.bind.ts", "add")`, which is typed from the schema. An argument's type is what it takes, so one that coerces (`.loose`, `.wrap`, `.enforceRange()`) is `any`;
 - from a C++ static property table: `Bun::Bindgen::Generated::BindgenTest::jsAdd` in `GeneratedBindgenTest.h`.
 
 ### Namespaces
@@ -149,7 +149,7 @@ own Rust function, which gets exactly the types of that signature:
 
 ```ts
 export const read = b.overloads(
-  { args: { path: b.string.utf8, options: ReadOptions.optional }, rustPath: "crate::read_path" },
+  { args: { path: b.string.utf8, options: ReadOptions.default({}) }, rustPath: "crate::read_path" },
   { args: { fd: b.i32, buffer: b.bytes({ from: ["buffer"] }), offset: b.u32.default(0) }, rustPath: "crate::read_fd" },
 );
 ```
@@ -198,7 +198,7 @@ any other: nothing looks at how many there are.
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
 | `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
-| `b.dictionary(members)`                          | a generated `struct`             | an object that is not an array                                |
+| `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |
 | `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
 | `b.class(options)`                               | `JsWrapper<'a, T>`               | an instance                                                   |
 
@@ -265,9 +265,9 @@ export const BracesOptions = b.dictionary({
 Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
 `{ type, rustName, altNames }` to rename its field or to accept other spellings.
-A dictionary whose members can all be absent implements `Default`. The thunk hands the struct
-over by value, so the body of one over 64 bytes needs
-`#[allow(clippy::large_types_passed_by_value)]`.
+A dictionary whose members can all be absent implements `Default`. As an argument, with
+`.default()` or without, the struct stays in the frame of the thunk and the body borrows it:
+`options: &BracesOptions`. Inside `.optional`, a union or an array it is held by value.
 
 A member is looked up on the object and its prototype chain, **stopping before
 the calling realm's `Object.prototype`**, so a polluted `Object.prototype` cannot
@@ -361,7 +361,7 @@ export const gzipSync = b.fn({
 ```
 
 ```rust
-fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: ZlibCompressionOptions<'a>) -> bindgen::Result<'a, JsLocal<'a, BufferSource>>
+fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: &ZlibCompressionOptions<'a>) -> bindgen::Result<'a, JsLocal<'a, BufferSource>>
 ```
 
 | Option      | Values                                               | Meaning                                                                |
@@ -560,3 +560,4 @@ thread when the work completes.
 ## Tests
 
 - `test/internal/bindgen.test.ts`: conversions with hostile inputs, through `src/jsc/bindgen_test.bind.ts`. A schema named `*_test.bind.ts` is only part of a build with assertions (a debug build, CI's ASAN lane), so nothing it binds ships; `$bindgen` of one is `undefined` elsewhere, and its Rust module is `#[cfg(debug_assertions)]`. What that schema does not use is covered by the suites of the APIs that do.
+- `test/integration/bun-types/bun-types.test.ts`: `packages/bun-types` promises nothing that a schema breaks. Every call the published types allow has arguments the schema takes, every result they name is one it gives, and no object has a member that the schema's dictionary or class lacks. A new schema file is listed in `PUBLISHED_AS` there, with what the published types call its exports.

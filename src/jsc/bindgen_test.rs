@@ -64,7 +64,7 @@ pub(crate) fn next_color(color: TestColor) -> TestColor {
     }
 }
 
-pub(crate) fn options_echo<'a>(_: &JsHeap<'a>, options: TestOptions<'a>) -> TestOptionsEcho<'a> {
+pub(crate) fn options_echo<'a>(_: &JsHeap<'a>, options: &TestOptions<'a>) -> TestOptionsEcho<'a> {
     TestOptionsEcho {
         count: options.count,
         flag: options.flag,
@@ -110,8 +110,8 @@ pub(crate) fn describe_anything<'a>(cx: &mut JsScope<'a>, value: TestAnything<'a
     }
 }
 
-pub(crate) fn describe_defaults<'a>(heap: &JsHeap<'a>, options: TestOuter<'a>) -> Vec<u8> {
-    let inner = match options.inner {
+pub(crate) fn describe_defaults<'a>(heap: &JsHeap<'a>, options: &TestOuter<'a>) -> Vec<u8> {
+    let inner = match &options.inner {
         Some(inner) => {
             let name = bstr::BStr::new(inner.name);
             format!("a={} b={} name={name}", inner.a, inner.b)

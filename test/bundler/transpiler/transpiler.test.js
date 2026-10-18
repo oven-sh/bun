@@ -216,6 +216,22 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = (1 ? obj.m : 0)`a`", "x = (0, obj.m)`a`");
       ts.expectPrintedMin_("x = (0 ? 0 : obj.m)`a`", "x = (0, obj.m)`a`");
       ts.expectPrintedMin_("x = (0, y)`a`", "x = y`a`");
+      // The comma is decided as a callee before its left side is visited.
+      ts.expectPrintedMin_("x = (() => f(), obj.m)()", "x = (0, obj.m)()");
+      ts.expectPrintedMin_("x = (() => f`a`, obj.m)`a`", "x = (0, obj.m)`a`");
+      // A test with no side effect of its own still strips `this`.
+      ts.expectPrintedMin_("x = (typeof y ? obj.m : 0)()", "x = (0, obj.m)()");
+      ts.expectPrintedMin_("x = ({} ? obj.m : 0)`a`", "x = (0, obj.m)`a`");
+      ts.expectPrintedMin_("x = (!typeof y ? 0 : obj.m)()", "x = (0, obj.m)()");
+      // A single-use local is not substituted into a tag either.
+      ts.expectPrintedMin_(
+        "function f() { let t = obj.m; return t`x` }",
+        "function f() {\n  let t = obj.m;\n  return t`x`;\n}",
+      );
+      ts.expectPrintedMin_(
+        "function f() { let t = obj.m; return t() }",
+        "function f() {\n  let t = obj.m;\n  return t();\n}",
+      );
       // `new` does not thread `this` through the callee Reference, so the
       // fold still fires there.
       ts.expectPrintedMin_("x = new [C][0]()", "x = new C");

@@ -3131,6 +3131,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::ETemplate(mut e) => {
                     if let Some(tag) = e.tag.as_mut() {
+                        // A tag is called like a callee: don't substitute something that changes "this"
+                        if matches!(
+                            replacement.data,
+                            js_ast::ExprData::EDot(_) | js_ast::ExprData::EIndex(_)
+                        ) && matches!(tag.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
+                        {
+                            break 'outer;
+                        }
                         if let Some(done) = self.substitute_single_use_symbol_in_child(
                             tag,
                             expr,

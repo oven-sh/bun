@@ -783,10 +783,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `BinaryExpressionVisitor.e` is the `StoreRef<E::Binary>` arena
         // handle — `Copy` + safe `Deref`/`DerefMut`, so no raw-pointer detach
         // is needed here.
+        let e_ptr = e_.as_ptr();
         let mut v: BinaryExpressionVisitor = BinaryExpressionVisitor {
             e: e_,
             loc: expr.loc,
             left_in: ExprIn::default(),
+            is_call_target: matches!(p.call_target, Data::EBinary(ct) if core::ptr::eq(ct.as_ptr(), e_ptr))
+                || matches!(p.template_tag, Data::EBinary(tag) if core::ptr::eq(tag.as_ptr(), e_ptr)),
         };
 
         // Everything uses a single stack to reduce allocation overhead. This stack
@@ -834,6 +837,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 e: left_binary.unwrap(),
                 loc: left.loc,
                 left_in: ExprIn::default(),
+                is_call_target: false,
             };
         }
 
@@ -1508,24 +1512,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(&mut e_.no);
             p.is_control_flow_dead = old;
 
-            if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                *e = SideEffects::simplify_unused_expr(p, e_.test)
-                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                    .join_with_comma(e_.yes);
-                return;
-            }
-
-            // "(1 ? fn : 2)()" => "fn()"
-            // "(1 ? this.fn : 2)" => "this.fn"
-            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if is_call_target && e_.yes.has_value_for_this_in_call() {
-                *e = p
-                    .new_expr(E::Number::new(0.0), e_.test.loc)
-                    .join_with_comma(e_.yes);
-                return;
-            }
-
-            *e = e_.yes;
+            *e = Self::keep_branch(
+                p,
+                e_.test,
+                e_.yes,
+                side_effects.side_effects,
+                is_call_target,
+            );
         } else {
             // "false ? dead : live"
             let old = p.is_control_flow_dead;
@@ -1534,24 +1527,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = old;
             p.visit_expr(&mut e_.no);
 
-            // "(a, false) ? b : c" => "a, c"
-            if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                *e = SideEffects::simplify_unused_expr(p, e_.test)
-                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                    .join_with_comma(e_.no);
-                return;
-            }
+            *e = Self::keep_branch(p, e_.test, e_.no, side_effects.side_effects, is_call_target);
+        }
+    }
 
-            // "(1 ? fn : 2)()" => "fn()"
-            // "(1 ? this.fn : 2)" => "this.fn"
-            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if is_call_target && e_.no.has_value_for_this_in_call() {
-                *e = p
-                    .new_expr(E::Number::new(0.0), e_.test.loc)
-                    .join_with_comma(e_.no);
-                return;
-            }
-            *e = e_.no;
+    /// The branch of a `?:` with a known test.
+    /// "(1 ? fn : 2)()" => "fn()"
+    /// "(a, false) ? b : c" => "a, c"
+    /// "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+    fn keep_branch(
+        p: &mut Self,
+        test: Expr,
+        live: Expr,
+        side_effects: SideEffects,
+        is_call_target: bool,
+    ) -> Expr {
+        let mut prefix = if side_effects == SideEffects::CouldHaveSideEffects {
+            SideEffects::simplify_unused_expr(p, test)
+        } else {
+            None
+        };
+        if prefix.is_none() && is_call_target && live.has_value_for_this_in_call() {
+            prefix = Some(p.new_expr(E::Number::new(0.0), test.loc));
+        }
+        match prefix {
+            Some(prefix) => prefix.join_with_comma(live),
+            None => live,
         }
     }
 

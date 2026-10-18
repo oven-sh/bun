@@ -492,6 +492,7 @@ const dir = String(
         await until(() => server.pendingRequests >= 1 || answered.size === app.paths.length);
         const building = server.pendingRequests >= 1;
         graph.dispose();
+        if (!building) console.error("every build was done before a turn saw one");
         return building;
       };
       // (One first, so the class's own cells are there before counting.)

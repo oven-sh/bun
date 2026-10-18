@@ -2394,6 +2394,20 @@ describe("a vm timeout in a listener that native code called ends the script", (
       `threw ERR_SCRIPT_EXECUTION_TIMEOUT [] then ["2 listeners"]`,
     ],
     [
+      // The abort algorithms run before the 'abort' event: the dispatch of the event starts over the termination.
+      "abort(), in an abort algorithm of pipeTo(): the once listener of events.once() stays registered",
+      `const { once, EventEmitter, getEventListeners } = require("node:events");
+       const controller = new AbortController();
+       const sinks = [];
+       new ReadableStream({ cancel: spin })
+         .pipeTo(new WritableStream({ start(sink) { sinks.push(sink); } }), { signal: controller.signal })
+         .catch(() => {});
+       once(new EventEmitter(), "never", { signal: controller.signal }).catch(() => ran.push("events.once() rejected"));
+       const call = () => { for (const sink of sinks) sink.error(new Error("sink failed")); controller.abort(); };
+       const afterwards = () => ran.push(getEventListeners(controller.signal, "abort").length + " listeners");`,
+      `threw ERR_SCRIPT_EXECUTION_TIMEOUT [] then ["1 listeners"]`,
+    ],
+    [
       // The context's own microtask checkpoint runs inside the run, under its timeout.
       "dispatchEvent() from a microtask of an afterEvaluate context",
       `const target = new EventTarget();
@@ -2406,41 +2420,69 @@ describe("a vm timeout in a listener that native code called ends the script", (
     ],
   ];
 
-  test.concurrent.each(cases)("%s", async (_name, setup, expected) => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const vm = require("node:vm");
-        // Long enough for the timeout to land in it. It ends by itself, so a timeout that is lost fails the test and does not hang it.
-        // The inner loop keeps the thread in script: a loop that only calls performance.now() is slow to interrupt once the JIT optimized it.
-        const spin = () => { const end = performance.now() + 3000; while (performance.now() < end) for (let i = 0; i < 1e4; i++); };
-        const ran = [];
-        ${setup}
-        let outcome;
-        try {
-          outcome = "returned " + (typeof run === "function" ? run() : vm.runInNewContext("call(); ran.push('script after the call'); 1", { call, ran }, { timeout: 50 }));
-        } catch (e) {
-          outcome = "threw " + e.code;
-        }
-        outcome += " " + JSON.stringify(ran);
-        if (typeof afterwards === "function") {
-          ran.length = 0;
-          afterwards();
-          outcome += " then " + JSON.stringify(ran);
-        }
-        console.log(outcome);
-        process.exit(0);
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  // A child runs four cases in turn. Each case keeps a core busy until its timeout lands: a child for each case
+  // would load the machine while the tests next to these ones measure time.
+  const casesPerChild = 4;
+  const children: Promise<{ outcomes: Record<string, string>; stderr: string; exitCode: number }>[] = [];
+  const runChild = (index: number) =>
+    (children[index] ??= (async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const vm = require("node:vm");
+          // Long enough for the timeout to land in it. It ends by itself, so a timeout that is lost fails the test and does not hang it.
+          // The inner loop keeps the thread in script: a loop that only calls performance.now() is slow to interrupt once the JIT optimized it.
+          const spin = () => { const end = performance.now() + 3000; while (performance.now() < end) for (let i = 0; i < 1e4; i++); };
+          ` +
+            cases
+              .slice(index * casesPerChild, (index + 1) * casesPerChild)
+              .map(
+                ([name, setup]) => `
+          {
+            const ran = [];
+            ${setup}
+            let outcome;
+            try {
+              outcome = "returned " + (typeof run === "function" ? run() : vm.runInNewContext("call(); ran.push('script after the call'); 1", { call, ran }, { timeout: 50 }));
+            } catch (e) {
+              outcome = "threw " + e.code;
+            }
+            outcome += " " + JSON.stringify(ran);
+            if (typeof afterwards === "function") {
+              ran.length = 0;
+              afterwards();
+              outcome += " then " + JSON.stringify(ran);
+            }
+            console.log(JSON.stringify([${JSON.stringify(name)}, outcome]));
+            for (const event of ["spin", "throw", "uncaughtException"]) process.removeAllListeners(event);
+          }`,
+              )
+              .join("") +
+            `
+          process.exit(0);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const outcomes = Object.fromEntries(
+        stdout
+          .split("\n")
+          .filter(Boolean)
+          .map(line => JSON.parse(line)),
+      );
+      return { outcomes, stderr, exitCode };
+    })());
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+  test.concurrent.each(
+    cases.map(([name, , expected], index) => [name, expected, Math.floor(index / casesPerChild)] as const),
+  )("%s", async (name, expected, child) => {
+    const { outcomes, stderr, exitCode } = await runChild(child);
+    expect({ outcome: outcomes[name], stderr, exitCode }).toEqual({ outcome: expected, stderr: "", exitCode: 0 });
   });
 
   // The same with no deadline to race: the first listener interrupts the run itself.

@@ -7427,6 +7427,325 @@ describe("fs.Utf8Stream", () => {
     });
     await done;
   });
+
+  describe("after a short write", () => {
+    type Fault = number | "EAGAIN" | "NO_COUNT";
+    type Call = [type: "string" | "buffer", text: string, encodingOrOffset: unknown];
+
+    // Replaces fs.write and fs.writeSync through `options.fs`. Each call takes
+    // one entry of `plan`: a number caps the bytes that reach the fd, "EAGAIN"
+    // fails the call, and "NO_COUNT" writes everything but reports no count. A
+    // call past the end of the plan writes everything. The bytes go to the real
+    // fd from the offset that the stream passes, as fs.write does it.
+    function faultyFs(plan: Fault[], calls: Call[] = []) {
+      function writeSync(fd: number, data: string | Buffer, encodingOrOffset: unknown) {
+        calls.push([typeof data === "string" ? "string" : "buffer", data.toString(), encodingOrOffset]);
+        const fault = plan.shift();
+        if (fault === "EAGAIN") throw Object.assign(new Error("EAGAIN"), { code: "EAGAIN" });
+        const bytes = typeof data === "string" ? Buffer.from(data) : data.subarray(encodingOrOffset as number);
+        const n = fs.writeSync(fd, bytes.subarray(0, typeof fault === "number" ? fault : bytes.length));
+        return fault === "NO_COUNT" ? undefined : n;
+      }
+      function write(fd: number, data: string | Buffer, encodingOrOffset: unknown, cb: (...args: any[]) => void) {
+        let n: number | undefined;
+        try {
+          n = writeSync(fd, data, encodingOrOffset);
+        } catch (err) {
+          return void process.nextTick(cb, err);
+        }
+        process.nextTick(cb, null, n);
+      }
+      return { writeSync, write };
+    }
+
+    function open(dir: string, options: Record<string, unknown>, name = "out.log") {
+      const dest = path.join(dir, name);
+      const stream = new fs.Utf8Stream({ fd: openSync(dest, "w"), ...options });
+      const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+      stream.on("close", resolve);
+      return { stream, closed, reject, written: () => readFileSync(dest).toString("hex") };
+    }
+
+    const hex = (text: string) => Buffer.from(text).toString("hex");
+    const nextError = (stream: fs.Utf8Stream) => {
+      const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException>();
+      stream.once("error", resolve);
+      return promise;
+    };
+
+    const cuts: [text: string, plan: Fault[]][] = [
+      ["aéb", [2]],
+      ["a€b", [2]],
+      ["a€b", [3]],
+      ["a€b", [2, 1]],
+      ["a€b", [0, 2]],
+      ["a€b", [2, 0, 1]],
+      ["€€€", [4, 4]],
+      ["hello🌍world", [6]],
+      ["hello🌍world", [7]],
+      ["hello🌍world", [8]],
+      ["hello🌍world", [6, 1, 1]],
+      ["ñandú", [1]],
+      ["a\ud83dz", [2]],
+      ["a\ud83dz", [3, 2]],
+      ["a€b", [2, "NO_COUNT"]],
+    ];
+
+    it.each(["sync", "async", "flushSync"])("that ends inside a character, no byte goes out twice (%s)", async mode => {
+      using dir = tempDir("utf8stream-short-write", {});
+      const got: Record<string, string> = {};
+      const want: Record<string, string> = {};
+      for (const [text, plan] of cuts) {
+        const name = `${JSON.stringify(text)} with ${plan.join(", ")}`;
+        const { stream, closed, reject, written } = open(
+          String(dir),
+          { sync: mode !== "async", minLength: mode === "flushSync" ? 4096 : 0, fs: faultyFs([...plan]) },
+          `${Object.keys(want).length}.log`,
+        );
+        stream.on("error", reject);
+        stream.write(text);
+        if (mode === "flushSync") stream.flushSync();
+        stream.end();
+        await closed;
+        got[name] = written();
+        want[name] = hex(text);
+      }
+      expect(got).toEqual(want);
+    });
+
+    // Node passes the rest as text from the cut character, which sends the
+    // bytes of that character that the fd already took a second time. Only
+    // that call differs here: it gets the encoded rest plus the offset.
+    it("the next write gets text, or bytes and an offset when the cut is inside a character", async () => {
+      using dir = tempDir("utf8stream-short-write-seam", {});
+      const seen: Record<string, { calls: Call[]; modes: string[] }> = {};
+      for (const [name, text, cut] of [
+        ["ascii", "abcdef", 2],
+        ["between characters", "abc€def", 3],
+        ["inside a character", "abc€def", 4],
+      ] as const) {
+        const calls: Call[] = [];
+        const modes: string[] = [];
+        const { stream, closed, reject } = open(
+          String(dir),
+          { sync: false, fs: faultyFs([cut], calls) },
+          `${name}.log`,
+        );
+        stream.on("error", reject);
+        stream.on("write", () => modes.push(stream.contentMode));
+        stream.write(text);
+        stream.end();
+        await closed;
+        seen[name] = { calls, modes };
+      }
+      expect(seen).toEqual({
+        "ascii": {
+          calls: [
+            ["string", "abcdef", "utf8"],
+            ["string", "cdef", "utf8"],
+          ],
+          modes: ["utf8", "utf8"],
+        },
+        "between characters": {
+          calls: [
+            ["string", "abc€def", "utf8"],
+            ["string", "€def", "utf8"],
+          ],
+          modes: ["utf8", "utf8"],
+        },
+        "inside a character": {
+          calls: [
+            ["string", "abc€def", "utf8"],
+            ["buffer", "€def", 1],
+          ],
+          modes: ["utf8", "utf8"],
+        },
+      });
+    });
+
+    it.each(["end", "write", "flushSync"])("and an error, %s() resumes at the byte the fd stopped at", async resume => {
+      using dir = tempDir("utf8stream-short-write-error", {});
+      const retries: number[][] = [];
+      const { stream, closed, written } = open(String(dir), {
+        sync: false,
+        retryEAGAIN: (_err: unknown, writing: number, remaining: number) => {
+          retries.push([writing, remaining]);
+          return false;
+        },
+        fs: faultyFs([2, "EAGAIN"]),
+      });
+      const failed = nextError(stream);
+      stream.write("a€b");
+      stream.write("cd");
+      expect((await failed).code).toBe("EAGAIN");
+      // The rest of "a€b" still counts as the two characters "€b", as in Node.
+      expect(retries).toEqual([[2, 2]]);
+
+      if (resume === "write") stream.write("Z");
+      if (resume === "flushSync") stream.flushSync();
+      stream.end();
+      await closed;
+      expect(written()).toBe(hex(resume === "write" ? "a€bcdZ" : "a€bcd"));
+    });
+
+    it("flushSync() that throws keeps its progress", async () => {
+      using dir = tempDir("utf8stream-short-write-flushsync-throw", {});
+      const seen: Record<string, { calls: Call[]; written: string }> = {};
+      for (const [name, first, cut, second] of [
+        ["ascii", "abcdef", 3, "gh"],
+        ["inside a character", "a€b", 2, "Z"],
+      ] as const) {
+        const calls: Call[] = [];
+        const { stream, closed, reject, written } = open(
+          String(dir),
+          { sync: true, minLength: 4096, retryEAGAIN: () => false, fs: faultyFs([cut, "EAGAIN"], calls) },
+          `${name}.log`,
+        );
+        stream.on("error", reject);
+        stream.write(first);
+        expect(() => stream.flushSync()).toThrow(expect.objectContaining({ code: "EAGAIN" }));
+        stream.write(second);
+        stream.flushSync();
+        stream.end();
+        await closed;
+        seen[name] = { calls, written: written() };
+      }
+      expect(seen).toEqual({
+        "ascii": {
+          calls: [
+            ["string", "abcdef", "utf8"],
+            ["string", "def", "utf8"],
+            ["string", "defgh", "utf8"],
+          ],
+          written: hex("abcdefgh"),
+        },
+        "inside a character": {
+          calls: [
+            ["string", "a€b", "utf8"],
+            ["buffer", "€b", 1],
+            ["buffer", "€bZ", 1],
+          ],
+          written: hex("a€bZ"),
+        },
+      });
+    });
+
+    it.each([true, false])("flushSync() in a 'write' listener writes the rest first (sync: %p)", async sync => {
+      using dir = tempDir("utf8stream-short-write-listener", {});
+      const { stream, closed, reject, written } = open(String(dir), { sync, fs: faultyFs([2]) });
+      stream.on("error", reject);
+      stream.once("write", () => {
+        stream.write("Q");
+        stream.flushSync();
+      });
+      stream.write("a€b");
+      stream.end();
+      await closed;
+      expect(written()).toBe(hex("a€bQ"));
+    });
+
+    it("flushSync() takes over a write that waits for its EAGAIN retry", async () => {
+      using dir = tempDir("utf8stream-short-write-retry", {});
+      const calls: Call[] = [];
+      const { stream, closed, reject, written } = open(String(dir), {
+        sync: false,
+        retryEAGAIN: () => {
+          // Runs after the retry timer is set.
+          process.nextTick(() => stream.flushSync());
+          return true;
+        },
+        fs: faultyFs([2, "EAGAIN"], calls),
+      });
+      stream.on("error", reject);
+      stream.write("a€b");
+      stream.write("Q");
+      stream.end();
+      await closed;
+      expect({ calls, written: written() }).toEqual({
+        calls: [
+          ["string", "a€b", "utf8"],
+          ["buffer", "€b", 1],
+          ["buffer", "€b", 1],
+          ["string", "Q", "utf8"],
+        ],
+        written: hex("a€bQ"),
+      });
+    });
+
+    // flushSync() writes the queue while the write of "p€q" is in flight, so the
+    // two chunks interleave. Each of them is cut inside "€" and then fails, and
+    // both must resume at their own byte.
+    it("two partly written chunks each resume at their own byte", async () => {
+      using dir = tempDir("utf8stream-short-write-two", {});
+      const io = faultyFs([2, 2, "EAGAIN", "EAGAIN", "EAGAIN"]);
+      let finishFirstWrite: (() => void) | undefined;
+      const { stream, closed, written } = open(String(dir), {
+        sync: false,
+        retryEAGAIN: () => false,
+        fs: {
+          writeSync: io.writeSync,
+          write(fd: number, data: string | Buffer, encodingOrOffset: unknown, cb: (...args: any[]) => void) {
+            if (finishFirstWrite) return io.write(fd, data, encodingOrOffset, cb);
+            const n = io.writeSync(fd, data, encodingOrOffset);
+            finishFirstWrite = () => cb(null, n);
+          },
+        },
+      });
+      stream.write("p€q");
+      stream.write("a€b");
+      expect(() => stream.flushSync()).toThrow(expect.objectContaining({ code: "EAGAIN" }));
+
+      const failed = nextError(stream);
+      finishFirstWrite!();
+      expect((await failed).code).toBe("EAGAIN");
+      expect(() => stream.flushSync()).toThrow(expect.objectContaining({ code: "EAGAIN" }));
+
+      stream.flushSync();
+      stream.end();
+      await closed;
+      expect(written()).toBe("70e2" + "61e2" + "82ac71" + "82ac62");
+    });
+
+    it("a new file after reopen() starts with the whole character", async () => {
+      using dir = tempDir("utf8stream-short-write-reopen", {});
+      const first = path.join(String(dir), "first.log");
+      const second = path.join(String(dir), "second.log");
+      const stream = new fs.Utf8Stream({
+        dest: first,
+        sync: false,
+        retryEAGAIN: () => false,
+        fs: faultyFs([2, "EAGAIN"]),
+      });
+      const { promise: closed, resolve } = Promise.withResolvers<void>();
+      stream.on("close", resolve);
+      const failed = nextError(stream);
+      stream.write("a€b");
+      expect((await failed).code).toBe("EAGAIN");
+
+      stream.reopen(second);
+      stream.end();
+      await closed;
+      expect({ first: readFileSync(first, "hex"), second: readFileSync(second, "hex") }).toEqual({
+        first: "61e2",
+        second: hex("€b"),
+      });
+    });
+  });
+
+  it("writes the chunks that wait behind a whole write of non-ASCII text", async () => {
+    using dir = tempDir("utf8stream-full-write", {});
+    const dest = path.join(String(dir), "out.log");
+    // maxWrite: 1 puts every write() in its own chunk.
+    const stream = new fs.Utf8Stream({ fd: openSync(dest, "w"), sync: false, maxWrite: 1 });
+    const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("error", reject).on("close", resolve);
+    stream.write("€");
+    stream.write("€");
+    stream.write("€");
+    stream.end();
+    await closed;
+    expect(readFileSync(dest, "utf8")).toBe("€€€");
+  });
 });
 
 describe("module init", () => {

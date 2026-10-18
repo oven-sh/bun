@@ -28,6 +28,17 @@ const kContentModeBuffer = "buffer";
 const kContentModeUtf8 = "utf8";
 const kNullPrototype = { __proto__: null };
 
+// What flushSync() finds, as in Node's #beginFlushSync().
+// No write is in flight.
+const kFlushSyncIdle = 0;
+// An EAGAIN/EBUSY retry timer was pending and is now cancelled.
+const kFlushSyncRetry = 1;
+// Called from a 'write' listener: the write that completed is released.
+const kFlushSyncInWriteEvent = 2;
+// An asynchronous fs.write() of #writingBuf is in flight. Only the queued
+// chunks can be written.
+const kFlushSyncInFlight = 3;
+
 // A synchronous sleep, used only on the EAGAIN/EBUSY retry paths.
 function sleep(ms) {
   Bun.sleepSync(ms);
@@ -59,6 +70,16 @@ class Utf8Stream extends EventEmitter {
   #retryEAGAIN: (err: unknown, writeBufferLen: number, remainingBufferLen: number) => boolean = () => true;
   #mkdir = false;
   #writingBuf: any = "";
+  // utf8 mode, after a short write that ended inside a character: #writingBuf
+  // is the encoded rest of the chunk from the first byte of that character,
+  // #skip counts its leading bytes that the fd already took, and #units is what
+  // it still holds in #len. #headSkip is the same count for the text in #bufs[0].
+  #skip = 0;
+  #units = 0;
+  #headSkip = 0;
+  #contentMode = kContentModeUtf8;
+  #emittingWrite = false;
+  #retryTimer: ReturnType<typeof setTimeout> | null = null;
   #write;
   #flush;
   #flushSync;
@@ -125,6 +146,7 @@ class Utf8Stream extends EventEmitter {
     validateBoolean(this.#mkdir, "options.mkdir");
     validateFunction(this.#retryEAGAIN, "options.retryEAGAIN");
     validateOneOf(contentMode, "options.contentMode", [kContentModeBuffer, kContentModeUtf8]);
+    this.#contentMode = contentMode;
 
     // Bound methods instead of node's rest/spread arrows: the arrows allocate an
     // arguments array on every write()/flush(), and the per-write inner release
@@ -149,10 +171,16 @@ class Utf8Stream extends EventEmitter {
       this.#flushSync = this.#flushSyncUtf8.bind(this);
       this.#actualWrite = this.#actualWriteUtf8.bind(this);
       this.#fsWriteSync = function fsWriteSyncUtf8(this: Utf8Stream) {
-        return this.#fs.writeSync(this.#fd, this.#writingBuf, "utf8");
+        const chunk = this.#writingBuf;
+        return typeof chunk === "string"
+          ? this.#fs.writeSync(this.#fd, chunk, "utf8")
+          : this.#fs.writeSync(this.#fd, chunk, this.#skip);
       }.bind(this);
       this.#fsWrite = function fsWriteUtf8(this: Utf8Stream) {
-        return this.#fs.write(this.#fd, this.#writingBuf, "utf8", boundRelease);
+        const chunk = this.#writingBuf;
+        return typeof chunk === "string"
+          ? this.#fs.write(this.#fd, chunk, "utf8", boundRelease)
+          : this.#fs.write(this.#fd, chunk, this.#skip, boundRelease);
       }.bind(this);
     }
 
@@ -314,7 +342,7 @@ class Utf8Stream extends EventEmitter {
   }
 
   get contentMode() {
-    return this.#writingBuf instanceof Buffer ? kContentModeBuffer : kContentModeUtf8;
+    return this.#contentMode;
   }
 
   get mkdir() {
@@ -327,9 +355,10 @@ class Utf8Stream extends EventEmitter {
 
   #release(err?, n?) {
     if (err) {
+      const writingLen = this.#writingLen();
       if (
         (err.code === "EAGAIN" || err.code === "EBUSY") &&
-        this.#retryEAGAIN(err, this.#writingBuf.length, this.#len - this.#writingBuf.length)
+        this.#retryEAGAIN(err, writingLen, this.#len - writingLen)
       ) {
         if (this.#sync) {
           // This error code should not happen in sync mode, because it is
@@ -343,7 +372,10 @@ class Utf8Stream extends EventEmitter {
           }
         } else {
           // Let's give the destination some time to process the chunk.
-          setTimeout(() => this.#fsWrite(), BUSY_WRITE_TIMEOUT);
+          this.#retryTimer = setTimeout(() => {
+            this.#retryTimer = null;
+            this.#fsWrite();
+          }, BUSY_WRITE_TIMEOUT);
         }
       } else {
         this.#writing = false;
@@ -353,10 +385,17 @@ class Utf8Stream extends EventEmitter {
       return;
     }
 
-    this.emit("write", n);
-    const releasedBufObj = releaseWritingBuf(this.#writingBuf, this.#len, n);
-    this.#len = releasedBufObj.len;
-    this.#writingBuf = releasedBufObj.writingBuf;
+    this.#advance(n);
+
+    // As Node since nodejs/node#66473: 'write' comes after the release, so a
+    // listener that calls flushSync() finds no write in flight and flushSync()
+    // can write the rest of #writingBuf before the queue.
+    this.#emittingWrite = true;
+    try {
+      this.emit("write", n);
+    } finally {
+      this.#emittingWrite = false;
+    }
 
     if (this.#writingBuf.length) {
       if (!this.#sync) {
@@ -366,10 +405,7 @@ class Utf8Stream extends EventEmitter {
 
       try {
         do {
-          const n = this.#fsWriteSync();
-          const releasedBufObj = releaseWritingBuf(this.#writingBuf, this.#len, n);
-          this.#len = releasedBufObj.len;
-          this.#writingBuf = releasedBufObj.writingBuf;
+          this.#advance(this.#fsWriteSync());
         } while (this.#writingBuf.length);
       } catch (err) {
         this.#release(err);
@@ -408,6 +444,74 @@ class Utf8Stream extends EventEmitter {
     }
   }
 
+  // What #writingBuf holds in #len: code units in utf8 mode, bytes in buffer mode.
+  #writingLen() {
+    const chunk = this.#writingBuf;
+    return typeof chunk === "string" || this.#contentMode === kContentModeBuffer ? chunk.length : this.#units;
+  }
+
+  // Releases the n bytes that fs.write took from #writingBuf.
+  #advance(n) {
+    const chunk = this.#writingBuf;
+    let bytes, end, held;
+    if (typeof chunk === "string") {
+      if (typeof n !== "number" || Buffer.byteLength(chunk) === n) {
+        this.#len = Math.max(this.#len - chunk.length, 0);
+        this.#writingBuf = "";
+        return;
+      }
+      if (n === 0) return;
+      bytes = Buffer.from(chunk);
+      end = n;
+      held = chunk.length;
+    } else if (this.#contentMode === kContentModeBuffer) {
+      this.#len = Math.max(this.#len - n, 0);
+      this.#writingBuf = chunk.slice(n);
+      return;
+    } else {
+      if (n === 0) return;
+      bytes = chunk;
+      end = typeof n === "number" ? this.#skip + n : bytes.length;
+      held = this.#units;
+    }
+
+    if (end >= bytes.length) {
+      this.#len = Math.max(this.#len - held, 0);
+      this.#writingBuf = "";
+      this.#skip = 0;
+      this.#units = 0;
+      return;
+    }
+
+    const start = characterStart(bytes, end);
+    const done = bytes.toString("utf8", 0, start).length;
+    this.#len = Math.max(this.#len - done, 0);
+    if (start === end && typeof chunk === "string") {
+      this.#writingBuf = chunk.slice(done);
+      return;
+    }
+
+    // Node v26.3.0 and Node main keep the rest as text from the cut character
+    // and write it with fs.write(fd, text, "utf8"), so the bytes of that
+    // character that the fd already took go out a second time. The rest stays
+    // encoded here (pinojs/sonic-boom#238), as a view from the cut character,
+    // and the write starts at #skip. test-fastutf8stream-partial-write-utf8.js
+    // expects the data of the next write to start with that character.
+    this.#writingBuf = bytes.subarray(start);
+    this.#skip = end - start;
+    this.#units = held - done;
+  }
+
+  // #writingBuf is the text that flushSync() left in #bufs[0] with #headSkip
+  // bytes of its first character written.
+  #encodeHead() {
+    const head = this.#writingBuf;
+    this.#writingBuf = Buffer.from(head);
+    this.#skip = this.#headSkip;
+    this.#units = head.length;
+    this.#headSkip = 0;
+  }
+
   #openFile(file) {
     this.#opening = true;
     this.#writing = true;
@@ -437,6 +541,9 @@ class Utf8Stream extends EventEmitter {
 
       this.#fd = fd;
       this.#file = file;
+      // A new file gets the whole character, as in Node.
+      this.#skip = 0;
+      this.#headSkip = 0;
       this.#reopening = false;
       this.#opening = false;
       this.#writing = false;
@@ -505,6 +612,7 @@ class Utf8Stream extends EventEmitter {
     this.#destroyed = true;
     this.#bufs = [];
     this.#lens = [];
+    this.#headSkip = 0;
 
     const done = err => {
       if (err) {
@@ -548,7 +656,7 @@ class Utf8Stream extends EventEmitter {
     } else {
       // fs.write will need to copy string to buffer anyway so
       // we do it here to avoid the overhead of calculating the buffer size
-      // in releaseWritingBuf.
+      // in #advance.
       this.#writingBuf = Buffer.from(this.#writingBuf);
       this.#fsWrite();
     }
@@ -556,11 +664,18 @@ class Utf8Stream extends EventEmitter {
 
   #actualWriteUtf8() {
     this.#writing = true;
-    this.#writingBuf ||= this.#bufs.shift() || "";
+    if (!this.#writingBuf) {
+      this.#writingBuf = this.#bufs.shift() || "";
+      if (this.#headSkip !== 0) this.#encodeHead();
+    }
 
     if (this.#sync) {
       try {
-        const written = this.#fs.writeSync(this.#fd, this.#writingBuf, "utf8");
+        const chunk = this.#writingBuf;
+        const written =
+          typeof chunk === "string"
+            ? this.#fs.writeSync(this.#fd, chunk, "utf8")
+            : this.#fs.writeSync(this.#fd, chunk, this.#skip);
         this.#release(null, written);
       } catch (err) {
         this.#release(err);
@@ -609,7 +724,7 @@ class Utf8Stream extends EventEmitter {
     }
   }
 
-  #flushSyncUtf8() {
+  #beginFlushSync() {
     if (this.#destroyed) {
       throw $ERR_INVALID_STATE("Utf8Stream is destroyed");
     }
@@ -618,32 +733,107 @@ class Utf8Stream extends EventEmitter {
       throw $ERR_INVALID_STATE("Invalid file descriptor");
     }
 
-    if (!this.#writing && this.#writingBuf.length > 0) {
-      this.#bufs.unshift(this.#writingBuf);
-      this.#writingBuf = "";
+    // While reopening, #writing is set but no write is in flight and #fd is
+    // still the previous file.
+    if (!this.#writing || this.#opening) {
+      return kFlushSyncIdle;
     }
 
-    let buf = "";
-    while (this.#bufs.length || buf) {
-      if (buf.length <= 0) {
-        buf = this.#bufs[0];
-      }
-      try {
-        const n = this.#fs.writeSync(this.#fd, buf, "utf8");
-        const releasedBufObj = releaseWritingBuf(buf, this.#len, n);
-        buf = releasedBufObj.writingBuf;
-        this.#len = releasedBufObj.len;
-        if (buf.length <= 0) {
-          this.#bufs.shift();
-        }
-      } catch (err) {
-        const shouldRetry =
-          (err as NodeJS.ErrnoException).code === "EAGAIN" || (err as NodeJS.ErrnoException).code === "EBUSY";
-        if (shouldRetry && !this.#retryEAGAIN(err, buf.length, this.#len - buf.length)) {
-          throw err;
-        }
+    if (this.#retryTimer !== null) {
+      clearTimeout(this.#retryTimer);
+      this.#retryTimer = null;
+      return kFlushSyncRetry;
+    }
 
-        sleep(BUSY_WRITE_TIMEOUT);
+    if (this.#emittingWrite) {
+      return kFlushSyncInWriteEvent;
+    }
+
+    return kFlushSyncInFlight;
+  }
+
+  // flushSync() took over the write whose retry timer it cancelled. Continues
+  // with what #release() does after that write.
+  #endFlushSyncRetry() {
+    this.#writing = false;
+    process.nextTick(() => {
+      if (this.#destroyed || this.#writing) return;
+      if (this.#reopening) {
+        this.#reopening = false;
+        this.reopen();
+      } else if (this.#len > this.#minLength) {
+        this.#actualWrite();
+      } else if (this.#ending) {
+        if (this.#len > 0) {
+          this.#actualWrite();
+        } else {
+          this.#actualClose();
+        }
+      } else {
+        this.emit("drain");
+      }
+    });
+  }
+
+  #flushSyncUtf8() {
+    const state = this.#beginFlushSync();
+
+    // The chunk of an fs.write() in flight is set aside: only the queue can be
+    // written, and that write's callback releases it later.
+    const inFlight = state === kFlushSyncInFlight;
+    const inFlightBuf = this.#writingBuf;
+    const inFlightSkip = this.#skip;
+    const inFlightUnits = this.#units;
+    if (inFlight) {
+      this.#writingBuf = "";
+      this.#skip = 0;
+      this.#units = 0;
+    }
+
+    // The rest of #writingBuf goes first, then the queue. The progress is in
+    // #writingBuf after every write, so a throw loses none of it.
+    try {
+      for (;;) {
+        if (!this.#writingBuf) {
+          if (this.#bufs.length === 0) break;
+          this.#writingBuf = this.#bufs.shift();
+          if (this.#headSkip !== 0) this.#encodeHead();
+        }
+        try {
+          this.#advance(this.#fsWriteSync());
+        } catch (err) {
+          const shouldRetry =
+            (err as NodeJS.ErrnoException).code === "EAGAIN" || (err as NodeJS.ErrnoException).code === "EBUSY";
+          const writingLen = this.#writingLen();
+          if (shouldRetry && !this.#retryEAGAIN(err, writingLen, this.#len - writingLen)) {
+            throw err;
+          }
+
+          sleep(BUSY_WRITE_TIMEOUT);
+        }
+      }
+    } finally {
+      // After a throw the rest goes back to the head of the queue, where a
+      // later write() can append to it. It stays in #writingBuf only when the
+      // head is itself partly written and owns #headSkip.
+      const rest = this.#writingBuf;
+      if (rest.length && this.#headSkip === 0) {
+        if (typeof rest === "string") {
+          this.#bufs.unshift(rest);
+        } else {
+          this.#bufs.unshift(rest.toString());
+          this.#headSkip = this.#skip;
+        }
+        this.#writingBuf = "";
+        this.#skip = 0;
+        this.#units = 0;
+      }
+      if (inFlight) {
+        this.#writingBuf = inFlightBuf;
+        this.#skip = inFlightSkip;
+        this.#units = inFlightUnits;
+      } else if (state === kFlushSyncRetry) {
+        this.#endFlushSyncRetry();
       }
     }
 
@@ -823,28 +1013,13 @@ class Utf8Stream extends EventEmitter {
   }
 }
 
-/**
- * Release the writingBuf after fs.write n bytes data
- */
-function releaseWritingBuf(writingBuf, len, n) {
-  if (typeof writingBuf === "string") {
-    const byteLength = Buffer.byteLength(writingBuf);
-    if (byteLength !== n) {
-      // Since fs.write returns the number of bytes written, we need to find
-      // how many complete characters fit within those n bytes. If a partial
-      // write splits a multi-byte UTF-8 character, we must back up to the
-      // start of that character to avoid data corruption.
-      const buf = Buffer.from(writingBuf);
-      // UTF-8 continuation bytes have the pattern 10xxxxxx (0x80-0xBF).
-      while (n > 0 && (buf[n] & 0xc0) === 0x80) {
-        n--;
-      }
-      n = buf.subarray(0, n).toString().length;
-    }
+// The offset of the first byte of the character that holds the byte at `end`.
+function characterStart(bytes, end) {
+  // UTF-8 continuation bytes have the pattern 10xxxxxx (0x80-0xBF).
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) {
+    end--;
   }
-  len = Math.max(len - n, 0);
-  writingBuf = writingBuf.slice(n);
-  return { writingBuf, len };
+  return end;
 }
 
 function mergeBuf(bufs, len) {

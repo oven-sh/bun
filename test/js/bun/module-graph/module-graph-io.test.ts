@@ -885,12 +885,12 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
       dropRedisConnections() {
         for (const socket of host.redisConnections.splice(0)) socket.end();
       },
-      async closedUdpPort() {
+      // Taken until close(): a socket made for sending to the port cannot be given that very port
+      // as its own, which would leave it hearing itself and never refused.
+      async udpPortToClose() {
         const s = dgram.createSocket("udp4");
         await new Promise(r => s.bind(0, "127.0.0.1", r));
-        const port = s.address().port;
-        await new Promise(r => s.close(r));
-        return port;
+        return { port: s.address().port, close: () => new Promise(r => s.close(r)) };
       },
     };
   `;
@@ -1052,8 +1052,10 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
         import { host } from "./host.mjs";
         const { promise, resolve } = Promise.withResolvers();
         process.on("uncaughtException", error => resolve("host: " + error.code));
-        const graph = new Bun.ModuleGraph({ globals: { closedPort: await host.closedUdpPort() }, onError: error => resolve("graph: " + error.code) });
+        const { port, close } = await host.udpPortToClose();
+        const graph = new Bun.ModuleGraph({ globals: { closedPort: port }, onError: error => resolve("graph: " + error.code) });
         const { stop } = await graph.import(import.meta.dir + "/tenant.mjs");
+        await close();
         console.log(await promise);
         stop();
         process.exit(0);

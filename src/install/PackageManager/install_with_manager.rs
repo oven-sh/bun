@@ -802,13 +802,7 @@ pub fn install_with_manager(
                         .unwrap_or(false))
                 };
                 if same_packages {
-                    // Same packages, other rows: a save would rewrite it. A migration is exempt.
-                    if load_result.migrated_from().is_some()
-                        || !manager.summary.changes_dependencies()
-                    {
-                        break 'frozen_lockfile;
-                    }
-                    changed_section = Some("dependencies");
+                    break 'frozen_lockfile;
                 }
             }
 

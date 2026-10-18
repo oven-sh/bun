@@ -1,7 +1,6 @@
 // `--frozen-lockfile` / `bun ci` on a checkout where package.json and the lockfile disagree (an edited package.json, a
-// mis-merged bun.lock) in ways that leave every package resolved exactly as locked. A frozen install fails on a
-// dependency of the root or of a workspace that was added, removed, moved to another group or given another range.
-// It passes on every other difference, and on every lockfile bun itself wrote for the files on disk, also an older bun.
+// mis-merged bun.lock). A frozen install passes as long as every package resolves exactly as locked, and fails once
+// an edit adds a package, drops one or moves one to another version.
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "fs/promises";
@@ -107,8 +106,6 @@ type Edit = {
   root?: (json: PackageJson) => PackageJson;
   member?: (json: PackageJson) => PackageJson;
   vendored?: (json: PackageJson) => PackageJson;
-  /** What the error of a frozen install says about the first dependency that differs. */
-  names?: string;
 };
 
 async function apply(dir: string, edit: Edit) {
@@ -140,30 +137,24 @@ const transitive: PackageJson = { name: "root", version: "1.0.0", dependencies: 
 const dependencyRows: Record<string, Edit> = {
   "a dependency's range is loosened but still satisfied by the locked version": {
     root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": ">=1.0.0" } }),
-    names: "no-deps is >=1.0.0, was ^1.0.0",
   },
   "a dependency's range is raised to the locked version": {
     root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "^1.1.0" } }),
-    names: "no-deps is ^1.1.0, was ^1.0.0",
   },
   "a dependency's range is pinned to the locked version": {
     root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "1.1.0" } }),
-    names: "no-deps is 1.1.0, was ^1.0.0",
   },
   "a dependency is added that the lockfile already resolves transitively": {
     from: transitive,
     root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "1.0.1" } }),
-    names: "no-deps was added",
   },
   "a dependency that stays in the tree transitively is removed": {
     from: { ...transitive, dependencies: { ...transitive.dependencies, "no-deps": "1.0.1" } },
     root: json => ({ ...json, dependencies: without(json.dependencies, "no-deps") }),
-    names: "no-deps was removed",
   },
   "a catalog: dependency moves to another catalog with the same range": {
     from: twoCatalogs,
     root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "catalog:other" } }),
-    names: "no-deps is catalog:other, was catalog:",
   },
   "a dependency moves from dependencies to devDependencies": {
     root: json => ({
@@ -171,32 +162,47 @@ const dependencyRows: Record<string, Edit> = {
       dependencies: without(json.dependencies, "no-deps"),
       devDependencies: { "no-deps": "^1.0.0" },
     }),
-    names: "no-deps is listed in other dependency groups",
   },
   "a peer dependency becomes optional": {
     from: { ...transitive, peerDependencies: { "no-deps": "1.0.1" } },
     root: json => ({ ...json, peerDependenciesMeta: { "no-deps": { optional: true } } }),
-    names: "no-deps changed in peerDependenciesMeta",
   },
   "a workspace drops a dependency that the root still needs": {
     member: json => ({ ...json, dependencies: without(json.dependencies, "a-dep") }),
-    names: "a-dep in packages/member was removed",
   },
   // https://github.com/oven-sh/bun/issues/22689
   "a workspace adds a dependency that the lockfile already resolves for another workspace": {
     member: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "^1.0.0" } }),
-    names: "no-deps in packages/member was added",
   },
   "a workspace's range is retyped": {
     member: json => ({ ...json, dependencies: { "a-dep": "^1.0.1" } }),
-    names: "a-dep in packages/member is ^1.0.1, was 1.0.1",
+  },
+};
+
+// Each edit changes which packages are installed.
+const packageRows: Record<string, Edit & { names: string }> = {
+  "a dependency's range rules out the locked version": {
+    root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "^2.0.0" } }),
+    names: "no-deps is ^2.0.0, was ^1.0.0",
+  },
+  "a dependency is added that the lockfile does not have": {
+    root: json => ({ ...json, dependencies: { ...json.dependencies, "basic-1": "1.0.0" } }),
+    names: "basic-1 was added",
+  },
+  "a dependency that nothing else needs is removed": {
+    root: json => ({ ...json, dependencies: without(json.dependencies, "no-deps") }),
+    names: "no-deps was removed",
+  },
+  "a workspace adds a dependency that the lockfile does not have": {
+    member: json => ({ ...json, dependencies: { ...json.dependencies, "basic-1": "1.0.0" } }),
+    names: "basic-1 in packages/member was added",
   },
 };
 
 describe.each(["bun.lock", "bun.lockb"] as const)("%s", lockfile => {
   describe.concurrent("--frozen-lockfile fails when", () => {
-    test.each(Object.entries(dependencyRows))("%s", async (_name, edit) => {
-      const { packageDir, lock } = await installed(edit.from ?? root, member, lockfile);
+    test.each(Object.entries(packageRows))("%s", async (_name, edit) => {
+      const { packageDir, lock } = await installed(root, member, lockfile);
       await apply(packageDir, edit);
 
       for (const args of [["install", "--frozen-lockfile"], ["ci"]]) {
@@ -207,8 +213,22 @@ describe.each(["bun.lock", "bun.lockb"] as const)("%s", lockfile => {
         expect(await lockText(packageDir, lockfile)).toBe(lock);
         expect(frozen.exitCode).toBe(1);
       }
+    });
+  });
 
-      // What the failure protects: the lockfile a plain install leaves behind differs.
+  describe.concurrent("--frozen-lockfile passes when", () => {
+    test.each(Object.entries(dependencyRows))("%s", async (_name, edit) => {
+      const { packageDir, lock } = await installed(edit.from ?? root, member, lockfile);
+      await apply(packageDir, edit);
+
+      for (const args of [["install", "--frozen-lockfile"], ["ci"]]) {
+        const frozen = await bun(packageDir, ...args);
+
+        expect(frozen.stderr).not.toContain("error:");
+        expect(await lockText(packageDir, lockfile)).toBe(lock);
+        expect(frozen.exitCode).toBe(0);
+      }
+
       const plain = await bun(packageDir, "install");
 
       expect(plain.stderr).toContain("Saved lockfile");
@@ -225,7 +245,7 @@ describe.each(["bun.lock", "bun.lockb"] as const)("%s", lockfile => {
   });
 });
 
-describe.concurrent("--frozen-lockfile fails when", () => {
+describe.concurrent("--frozen-lockfile passes when", () => {
   // `git merge` joins two branches' bun.lock without conflict markers when a workspace's block ends with the same line
   // as the root's, and the new root dependency lands in the workspace's block. The tree is the same either way.
   test("a merge put a root dependency into a workspace's block of bun.lock", async () => {
@@ -241,10 +261,9 @@ describe.concurrent("--frozen-lockfile fails when", () => {
 
     const frozen = await bun(packageDir, "install", "--frozen-lockfile");
 
-    expect(frozen.stderr).toContain(frozenError);
-    expect(frozen.stderr).toContain(dependenciesNote());
+    expect(frozen.stderr).not.toContain("error:");
     expect(await lockText(packageDir)).toBe(merged);
-    expect(frozen.exitCode).toBe(1);
+    expect(frozen.exitCode).toBe(0);
 
     const plain = await bun(packageDir, "install");
 
@@ -257,7 +276,9 @@ describe.concurrent("--frozen-lockfile fails when", () => {
     expect(after.stderr).not.toContain("error:");
     expect(after.exitCode).toBe(0);
   });
+});
 
+describe.concurrent("--frozen-lockfile fails when", () => {
   // https://github.com/oven-sh/bun/issues/43795: taking one side of a package.json conflict reverts a bump but leaves
   // the lockfile's resolution ahead of it (or behind it). The range in bun.lock and in package.json agree.
   test.each([
@@ -300,13 +321,13 @@ describe.concurrent("--frozen-lockfile fails when", () => {
   test("and says what changed, also as bun install --production", async () => {
     const unpatched = without(root, "patchedDependencies");
     const { packageDir, lock } = await installed(unpatched);
-    await writeRoot(packageDir, { ...unpatched, dependencies: { ...unpatched.dependencies, "no-deps": ">=1.0.0" } });
+    await writeRoot(packageDir, { ...unpatched, dependencies: without(unpatched.dependencies, "no-deps") });
 
     const { stdout, stderr, exitCode } = await bun(packageDir, "install", "--frozen-lockfile");
 
     expect(normalizeBunSnapshot(stderr, packageDir)).toMatchInlineSnapshot(`
       "error: lockfile had changes, but lockfile is frozen
-      note: dependencies in package.json changed since bun.lock was saved: no-deps is >=1.0.0, was ^1.0.0
+      note: dependencies in package.json changed since bun.lock was saved: no-deps was removed
       note: try re-running without --frozen-lockfile and commit the updated lockfile"
     `);
     expect(normalizeBunSnapshot(stdout, packageDir)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);

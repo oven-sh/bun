@@ -1470,19 +1470,17 @@ describe("hoisted", () => {
     expect(await installedPackages(productionDir, linker)).toEqual(survivorsOnDisk);
   });
 
-  // pnpm#5794: a pruned bun.lock whose dependency rows a plain install would rewrite also fails frozen. The locked a-dep
-  // is what package.json asks for, so no package moves.
+  // The locked a-dep is what package.json asks for, so no package moves.
   test.concurrent(
-    "a hand-edited specifier in the pruned bun.lock fails frozen and is rewritten by a plain install",
+    "a hand-edited specifier in the pruned bun.lock passes frozen and is rewritten by a plain install",
     async () => {
       const { packageDir, pruned, full } = await prunedTree(linker);
       const edited = pruned.replace('"a-dep": "1.0.1"', '"a-dep": "1.0.0"');
       expect(edited).not.toBe(pruned);
       await write(join(packageDir, "bun.lock"), edited);
 
-      await frozenFails(packageDir, linker, frozenFailure(dependencyNote("a-dep in packages/app is 1.0.1, was 1.0.0")));
+      await frozen(packageDir, linker, []);
       expect(await lockText(packageDir)).toBe(edited);
-      expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
 
       await install(packageDir, linker);
 

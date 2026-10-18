@@ -3184,6 +3184,13 @@ declare module "bun" {
   interface BuildConfig {
     /**
      * Enable code splitting
+     *
+     * A chunk that several entrypoints load runs its modules in one order:
+     * the order of the imports of one of those entrypoints. The build warns
+     * when the imports of another of them run a module that is imported for
+     * its side effects (`import "./setup"`) at another place in that order.
+     *
+     * @see [Evaluation order in a shared chunk](https://bun.com/docs/bundler#evaluation-order-in-a-shared-chunk)
      */
     splitting?: boolean;
 

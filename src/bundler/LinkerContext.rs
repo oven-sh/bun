@@ -4,7 +4,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::Error as BunError;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast::{Data, Loc, Log, Range, Source};
-use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt, index_sort};
+use bun_collections::{
+    ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, StringHashMap, VecExt, index_sort,
+};
 use bun_core::{self as bun, FeatureFlags, Output};
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
 use bun_sourcemap::{
@@ -139,6 +141,9 @@ pub struct LinkerContext<'a> {
     /// `merge_small_chunks` proved to be no-ops where it moved them: a chunk
     /// their chunk imports makes the same calls first.
     pub(crate) inits_already_done: Option<AutoBitSet>,
+    /// Set by `merge_small_chunks` unless it returns at once: per chunk key of two or more entry points that no split
+    /// `require()` loads, the entry points that can be the first to load the chunk (`load_class`, from before the folds).
+    pub(crate) first_loaders_of_key: Option<StringHashMap<AutoBitSet>>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
 }
@@ -180,6 +185,7 @@ impl<'a> Default for LinkerContext<'a> {
             renamer_rows: None,
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
+            first_loaders_of_key: None,
             entry_point_part_indices: Vec::new(),
         }
     }
@@ -567,6 +573,7 @@ impl<'a> LinkerContext<'a> {
         });
         self.cycle_detector = Vec::new();
         self.inits_already_done = None;
+        self.first_loaders_of_key = None;
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.

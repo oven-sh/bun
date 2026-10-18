@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join, relative } from "node:path";
 import { SourceMapConsumer, type RawSourceMap } from "source-map";
 import { itBundled, type BundlerTestBundleAPI, type BundlerTestInput } from "./expectBundled";
 import { checkGraph, run } from "./splitting-fuzz";
@@ -511,6 +511,32 @@ describe("bundler", () => {
   const launchHashedEntry = (api: BundlerTestBundleAPI, entry: string) => {
     const hashed = jsFilesIn(api).find(f => f.startsWith(entry + ".entry-"));
     if (hashed) api.writeFile(`/out/${entry}.js`, `import "./${hashed}";`);
+  };
+
+  // What the build says about a chunk that several entry points can be the first to load. `loader` runs `first` before
+  // `second`. Their chunk follows `owner`, which runs them the other way round.
+  const orderConflictWarning = (loader: string, first: string, second: string, owner: string) =>
+    `The imports of "${loader}" run "${first}" before "${second}", but the chunk that holds both files follows "${owner}" and runs "${second}" first`;
+  const orderConflictNote = (first: string, second: string) =>
+    `A chunk runs its files in one order for every entry point that loads it. If "${second}" needs "${first}" to run first, add an import of "${first}" to "${second}".`;
+  const orderConflictNoteOnCycle = (first: string, second: string) =>
+    `A chunk runs its files in one order for every entry point that loads it. "${first}" and "${second}" are on an import cycle: which of the two runs first depends on the file that an entry point imports first.`;
+  // The lines of `bun build --splitting` that have such a warning, its note, or the same as a debug message.
+  const orderConflictMessages = async (files: Record<string, string>, entryPoints: string[], bunfig = "") => {
+    using dir = tempDir("splitting-order-messages", {
+      ...Object.fromEntries(Object.entries(files).map(([path, contents]) => [path.slice(1), contents])),
+      "bunfig.toml": bunfig,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--splitting", "--target=bun", "--outdir=out", ...entryPoints.map(path => "." + path)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const messages = stderr.split("\n").filter(line => /The imports of|A chunk runs its files/.test(line));
+    return { messages, exitCode };
   };
 
   // An entry point takes a fold only with [hash] in its name, so a fold test runs with both kinds of name.
@@ -1601,28 +1627,45 @@ describe("bundler", () => {
   });
 
   // m6.js names v5 only in a function that it stores, so the order of a.js breaks no read and the chunk stays with it.
-  // m5.js needs what m6.js sets on cfg.
+  // m5.js needs what m6.js sets on cfg. b.js enters the cycle at m6.js and runs m5.js first, which throws from source:
+  // in the build, b.js gets the order of a.js, and the build says so.
+  const cycleWithStoredFunction = {
+    "/a.js": `import { label } from "./m5.js"; console.log("a", label);`,
+    "/b.js": `import { getV5 } from "./m6.js"; console.log("b", typeof getV5);`,
+    "/m5.js": /* js */ `
+      import "./m6.js"; import { cfg } from "./cfg.js";
+      export let v5 = 1;
+      export const label = cfg.name.toUpperCase();
+    `,
+    "/m6.js": /* js */ `
+      import { v5 } from "./m5.js"; import { cfg } from "./cfg.js";
+      cfg.name = "app";
+      export const getV5 = () => v5;
+    `,
+    "/cfg.js": `export const cfg = {};`,
+  };
   itBundled("splitting/SharedChunkOwnerKeepsChunkWithStoredFunction", {
-    files: {
-      "/a.js": `import { label } from "./m5.js"; console.log("a", label);`,
-      "/b.js": `import { getV5 } from "./m6.js"; console.log("b", typeof getV5);`,
-      "/m5.js": /* js */ `
-        import "./m6.js"; import { cfg } from "./cfg.js";
-        export let v5 = 1;
-        export const label = cfg.name.toUpperCase();
-      `,
-      "/m6.js": /* js */ `
-        import { v5 } from "./m5.js"; import { cfg } from "./cfg.js";
-        cfg.name = "app";
-        export const getV5 = () => v5;
-      `,
-      "/cfg.js": `export const cfg = {};`,
-    },
+    files: cycleWithStoredFunction,
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
     outdir: "/out",
     format: "esm",
-    run: { file: "/out/a.js", stdout: "a APP" },
+    bundleWarnings: { "/m5.js": [orderConflictWarning("b.js", "m5.js", "m6.js", "a.js")] },
+    run: [
+      { file: "/out/a.js", stdout: "a APP" },
+      { file: "/out/b.js", stdout: "b function" },
+    ],
+  });
+
+  // The note of that warning does not ask for an import that the cycle already has.
+  test("splitting/SharedChunkOrderConflictOnImportCycle", async () => {
+    expect(await orderConflictMessages(cycleWithStoredFunction, ["/a.js", "/b.js"])).toEqual({
+      messages: [
+        `warn: ${orderConflictWarning("b.js", "m5.js", "m6.js", "a.js")}`,
+        `note: ${orderConflictNoteOnCycle("m5.js", "m6.js")}`,
+      ],
+      exitCode: 0,
+    });
   });
 
   // Ported from Rolldown's code_splitting/issue_5276_2.
@@ -2478,6 +2521,424 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     run: { file: "/out/entry.js", stdout: "late2 b late1 b" },
+  });
+
+  // worker.js and the import() in index.js share the chunk of p.js, q.js and a.js. a.js imports p.js first, for what it
+  // sets, so index.js prints "ok aqP" from source. worker.js runs q.js first and the chunk follows worker.js, so the
+  // build says what that does to the import().
+  const orderConflict = {
+    "/index.js": `import("./a.js").then(m => console.log("ok", m.a));`,
+    "/worker.js": `import { q } from "./q.js"; import { a } from "./a.js"; console.log("worker", q, a);`,
+    "/a.js": `import "./p.js"; import { q } from "./q.js"; export const a = "a" + q;`,
+    "/p.js": `globalThis.P = { v: "P" };`,
+    "/q.js": `export const q = "q" + (globalThis.P?.v ?? "-noP");`,
+  };
+  for (const [name, options] of Object.entries<Partial<Parameters<typeof itBundled>[1]>>({
+    "": {},
+    "EntriesSwapped": { entryPoints: ["/worker.js", "/index.js"] },
+    "Browser": { target: "browser" },
+    "HashedEntry": {
+      entryNaming: "[name].entry-[hash].[ext]",
+      onAfterBundle(api) {
+        launchHashedEntry(api, "index");
+        launchHashedEntry(api, "worker");
+      },
+    },
+  })) {
+    itBundled("splitting/SharedChunkOrderConflictWarns" + name, {
+      files: orderConflict,
+      entryPoints: ["/index.js", "/worker.js"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      ...options,
+      bundleWarnings: { "/a.js": [orderConflictWarning("a.js", "p.js", "q.js", "worker.js")] },
+      run: [
+        { file: "/out/index.js", stdout: "ok aq-noP" },
+        { file: "/out/worker.js", stdout: "worker q-noP aq-noP" },
+      ],
+    });
+  }
+
+  // The same with the import() in the second entry point: index.js owns the chunk.
+  itBundled("splitting/SharedChunkOrderConflictWarnsForImportCallOfLaterEntryPoint", {
+    files: {
+      ...orderConflict,
+      "/index.js": `import { q } from "./q.js"; import { a } from "./a.js"; console.log("index", q, a);`,
+      "/worker.js": `import("./a.js").then(m => console.log("ok", m.a));`,
+    },
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    bundleWarnings: { "/a.js": [orderConflictWarning("a.js", "p.js", "q.js", "index.js")] },
+    run: [
+      { file: "/out/index.js", stdout: "index q-noP aq-noP" },
+      { file: "/out/worker.js", stdout: "ok aq-noP" },
+    ],
+  });
+
+  // Two entry points of the build share the chunk: it follows the one that the build names first.
+  for (const [name, entryPoints, warning, stdout] of [
+    ["", ["/e1.js", "/e2.js"], orderConflictWarning("e2.js", "q.js", "p.js", "e1.js"), ["e1 qP", "e2 qP"]],
+    [
+      "EntriesSwapped",
+      ["/e2.js", "/e1.js"],
+      orderConflictWarning("e1.js", "p.js", "q.js", "e2.js"),
+      ["e1 q-noP", "e2 q-noP"],
+    ],
+  ] as const) {
+    itBundled("splitting/SharedChunkOrderConflictFollowsFirstEntryPoint" + name, {
+      files: {
+        "/e1.js": `import "./p.js"; import { q } from "./q.js"; console.log("e1", q);`,
+        "/e2.js": `import { q } from "./q.js"; import "./p.js"; console.log("e2", q);`,
+        "/p.js": orderConflict["/p.js"],
+        "/q.js": orderConflict["/q.js"],
+      },
+      entryPoints: [...entryPoints],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      bundleWarnings: { [entryPoints[1]]: [warning] },
+      run: [
+        { file: "/out/e1.js", stdout: stdout[0] },
+        { file: "/out/e2.js", stdout: stdout[1] },
+      ],
+    });
+  }
+
+  // The same in an executable: the main thread loads the chunk with import(), the worker with its own imports, and
+  // the chunk follows the worker.
+  itBundled("splitting/SharedChunkOrderConflictWarnsInExecutable", {
+    backend: "cli",
+    compile: true,
+    splitting: true,
+    files: {
+      ...orderConflict,
+      "/index.js": /* js */ `
+        const m = await import("./a.js");
+        console.log("ok", m.a);
+        new Worker("./worker.js");
+      `,
+    },
+    entryPointsRaw: ["./index.js", "./worker.js"],
+    outfile: "dist/out",
+    bundleWarnings: { "/a.js": [orderConflictWarning("a.js", "p.js", "q.js", "worker.js")] },
+    run: { file: "dist/out", stdout: "ok aq-noP\nworker q-noP aq-noP" },
+  });
+
+  // a.js and b.js are import() targets of one entry point, and either can load first. Their chunk follows a.js, whose
+  // import() the build meets first. From source, `index.js b` prints "b bq-noP" and "a aq-noP".
+  itBundled("splitting/SharedChunkOrderConflictWarnsForTwoImportCalls", {
+    files: {
+      "/index.js": /* js */ `
+        const load = name => (name === "a" ? import("./a.js") : import("./b.js"));
+        const [first, second] = process.argv[2] === "b" ? ["b", "a"] : ["a", "b"];
+        load(first).then(m => (console.log(first, m.v), load(second))).then(m => console.log(second, m.v));
+      `,
+      "/a.js": `import "./p.js"; import { q } from "./q.js"; export const v = "a" + q;`,
+      "/b.js": `import { q } from "./q.js"; import "./p.js"; export const v = "b" + q;`,
+      "/p.js": orderConflict["/p.js"],
+      "/q.js": orderConflict["/q.js"],
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    bundleWarnings: { "/b.js": [orderConflictWarning("b.js", "q.js", "p.js", "a.js")] },
+    run: [
+      { file: "/out/index.js", args: ["a"], stdout: "a aqP\nb bqP" },
+      { file: "/out/index.js", args: ["b"], stdout: "b bqP\na aqP" },
+    ],
+  });
+
+  // x.js imports q.js too, and it loads only after a.js. So chunk folding puts q.js into the chunk of p.js and a.js,
+  // and the build warns about that chunk.
+  itBundled("splitting/SharedChunkOrderConflictWarnsInFoldedChunk", {
+    files: {
+      ...orderConflict,
+      "/a.js": /* js */ `
+        import "./p.js"; import { q } from "./q.js";
+        export const a = "a" + q;
+        globalThis.later = () => import("./x.js");
+      `,
+      "/x.js": `import { q } from "./q.js"; export const x = "x" + q;`,
+    },
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    bundleWarnings: { "/a.js": [orderConflictWarning("a.js", "p.js", "q.js", "worker.js")] },
+    run: [
+      { file: "/out/index.js", stdout: "ok aq-noP" },
+      { file: "/out/worker.js", stdout: "worker q-noP aq-noP" },
+    ],
+  });
+
+  // Two pages share the chunk of p.js and q.js. It follows the first page.
+  itBundled("splitting/SharedChunkOrderConflictWarnsForHTMLEntryPoints", {
+    files: {
+      "/one.html": `<!DOCTYPE html><html><head><script type="module" src="./one.js"></script></head><body></body></html>`,
+      "/two.html": `<!DOCTYPE html><html><head><script type="module" src="./two.js"></script></head><body></body></html>`,
+      "/one.js": `import "./p.js"; import { q } from "./q.js"; console.log("one", q);`,
+      "/two.js": `import { q } from "./q.js"; import "./p.js"; console.log("two", q);`,
+      "/p.js": orderConflict["/p.js"],
+      "/q.js": orderConflict["/q.js"],
+    },
+    entryPoints: ["/one.html", "/two.html"],
+    splitting: true,
+    outdir: "/out",
+    bundleWarnings: { "/two.js": [orderConflictWarning("two.html", "q.js", "p.js", "one.html")] },
+    onAfterBundle(api) {
+      for (const page of ["one", "two"]) {
+        const script = api.readFile(`/out/${page}.html`).match(/<script type="module" crossorigin src="([^"]+)">/)![1];
+        api.writeFile(`/out/run-${page}.js`, `import "${script}";`);
+      }
+    },
+    run: [
+      { file: "/out/run-one.js", stdout: "one qP" },
+      { file: "/out/run-two.js", stdout: "two qP" },
+    ],
+  });
+
+  // worker.js loads first, but its order breaks the read of v6 in m5.js, so the chunk follows the import() of m5.js
+  // (SharedChunkOwnerLoadTimeRead). The warning names that entry point, and it is about worker.js.
+  itBundled("splitting/SharedChunkOrderConflictWarnsForEntryPointThatGaveUpChunk", {
+    files: {
+      ...cycleWithLoadTimeRead,
+      "/worker.js": `import "./flag.js"; import "./log1.js"; import "./log2.js"; import "./m6.js"; console.log("worker");`,
+      "/m5.js": /* js */ `
+        import { v2 } from "./m2.js"; import { v6 } from "./m6.js"; import "./log2.js"; import "./log1.js";
+        export function v5() { return v2 }
+        export const w5 = globalThis.IS_WORKER ? null : v6.toUpperCase();
+      `,
+      "/log1.js": `console.log("log1");`,
+      "/log2.js": `console.log("log2");`,
+    },
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    bundleWarnings: { "/worker.js": [orderConflictWarning("worker.js", "log1.js", "log2.js", "m5.js")] },
+    run: [
+      { file: "/out/index.js", stdout: "log2\nlog1\nok SIX" },
+      { file: "/out/worker.js", stdout: "log2\nlog1\nworker" },
+    ],
+  });
+
+  // No warning: each build runs what the source runs, or the build does not take the pair for one that matters.
+  for (const [name, files, stdout] of [
+    // Both entry points run p.js first.
+    [
+      "SameOrder",
+      {
+        "/worker.js": `import "./p.js"; import { q } from "./q.js"; import { a } from "./a.js"; console.log("worker", q, a);`,
+      },
+      ["ok aqP", "worker qP aqP"],
+    ],
+    // q.js imports p.js, as the note of the warning says: every entry point runs p.js first.
+    [
+      "AfterRemedy",
+      { "/q.js": `import "./p.js"; export const q = "q" + (globalThis.P?.v ?? "-noP");` },
+      ["ok aqP", "worker qP aqP"],
+    ],
+    // index.js has run q.js and p.js when its import() loads a.js, so a.js is never the first to load them.
+    [
+      "OwnImportCall",
+      {
+        "/index.js": `import { q } from "./q.js"; import "./p.js"; import("./a.js").then(m => console.log("ok", q, m.a));`,
+        "/worker.js": `console.log("worker");`,
+      },
+      ["ok q-noP aq-noP", "worker"],
+    ],
+    // a.js imports p.js for a binding. Where p.js runs is then not something that a.js asks for.
+    [
+      "NoSideEffectImport",
+      {
+        "/a.js": `import { p } from "./p.js"; import { q } from "./q.js"; export const a = "a" + q + p;`,
+        "/p.js": `globalThis.P = { v: "P" }; export const p = "p";`,
+      },
+      ["ok aq-noPp", "worker q-noP aq-noPp"],
+    ],
+    // p.js runs nothing.
+    ["OnlyDeclarations", { "/p.js": `export function p() {}` }, ["ok aq-noP", "worker q-noP aq-noP"]],
+    // The side-effect import is in a package, where the author of the build cannot change it.
+    [
+      "ImportInNodeModules",
+      {
+        "/index.js": `import("pkg").then(m => console.log("ok", m.a));`,
+        "/worker.js": `import { q } from "pkg/q.js"; import { a } from "pkg"; console.log("worker", q, a);`,
+        "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "./index.js" }`,
+        "/node_modules/pkg/index.js": orderConflict["/a.js"],
+        "/node_modules/pkg/p.js": orderConflict["/p.js"],
+        "/node_modules/pkg/q.js": orderConflict["/q.js"],
+      },
+      ["ok aq-noP", "worker q-noP aq-noP"],
+    ],
+    // p.js is CommonJS: it runs where a.js calls its wrapper, and the build does not compare that place.
+    [
+      "CommonJSImport",
+      { "/p.js": `globalThis.P = { v: "P" }; module.exports = {};` },
+      ["ok aq-noP", "worker q-noP aq-noP"],
+    ],
+  ] as const) {
+    itBundled("splitting/SharedChunkOrderNoWarning" + name, {
+      backend: "cli",
+      files: { ...orderConflict, ...files },
+      entryPoints: ["/index.js", "/worker.js"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      run: [
+        { file: "/out/index.js", stdout: stdout[0] },
+        { file: "/out/worker.js", stdout: stdout[1] },
+      ],
+    });
+  }
+
+  // z.js loads only after a.js or c.js, which ran q.js and p.js, so z.js is never the first to load their chunk. With
+  // minChunkSize, f.js and its import() of z.js move into a chunk that b.js loads too. b.js does not load q.js, and it
+  // does not call the import() either.
+  itBundled("splitting/SharedChunkOrderNoWarningAfterFoldOfImportCall", {
+    backend: "cli",
+    files: {
+      "/a.js": /* js */ `
+        import { q } from "./q.js"; import "./p.js"; import { lazy } from "./f.js"; import { s } from "./s.js";
+        console.log("a", q, s); lazy().then(m => console.log("a lazy", m.z));
+      `,
+      "/b.js": `import { s } from "./s.js"; import { big } from "./big.js"; console.log("b", s, big.length);`,
+      "/c.js": /* js */ `
+        import { q } from "./q.js"; import "./p.js"; import { lazy } from "./f.js"; import { s } from "./s.js";
+        console.log("c", q, s); lazy().then(m => console.log("c lazy", m.z));
+      `,
+      "/d.js": `import { q } from "./q.js"; import "./p.js"; console.log("d", q);`,
+      "/f.js": `export function lazy() { return import("./z.js"); }`,
+      "/z.js": `import "./p.js"; import { q } from "./q.js"; export const z = "z" + q;`,
+      "/p.js": orderConflict["/p.js"],
+      "/q.js": orderConflict["/q.js"],
+      "/s.js": `export const s = "s";`,
+      "/big.js": `export const big = "${Buffer.alloc(9000, "x").toString()}";`,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js", "/d.js"],
+    splitting: true,
+    minChunkSize: 20000,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "a q-noP s\na lazy zq-noP" },
+      { file: "/out/d.js", stdout: "d q-noP" },
+    ],
+  });
+
+  // Chunk folding finds which entry points can be the first to load a chunk. Only tests turn it off, and the build
+  // then does not look for such chunks.
+  for (const foldChunks of [undefined, false] as const) {
+    itBundled(`splitting/SharedChunkOrderConflictNeedsChunkFolding/${foldChunks === false ? "off" : "on"}`, {
+      backend: "api",
+      files: orderConflict,
+      entryPoints: ["/index.js", "/worker.js"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      foldChunks,
+      onAfterApiBundle(build) {
+        expect(build.logs.map(log => log.level)).toEqual(foldChunks === false ? [] : ["warn"]);
+      },
+      run: [
+        { file: "/out/index.js", stdout: "ok aq-noP" },
+        { file: "/out/worker.js", stdout: "worker q-noP aq-noP" },
+      ],
+    });
+  }
+
+  // The example of docs/bundler/index.mdx. Bun.build() has the warning and its note in `logs`. a.ts imports both files
+  // for their side effects: the warning is at the `import` of the one that a.ts runs first.
+  test("splitting/SharedChunkOrderConflictWarnsInBuildLogs", async () => {
+    using dir = tempDir("splitting-order-logs", {
+      "index.ts": `import("./a.ts");`,
+      "worker.ts": `import "./q.ts";\nimport "./a.ts";`,
+      "a.ts": `import "./p.ts";\nimport "./q.ts";`,
+      "p.ts": `process.env.APP_MODE = "production";`,
+      "q.ts": `console.log(process.env.APP_MODE);`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "index.ts"), join(String(dir), "worker.ts")],
+      outdir: join(String(dir), "out"),
+      splitting: true,
+      target: "bun",
+    });
+    const name = (file: string) => relative(process.cwd(), join(String(dir), file)).replaceAll("\\", "/");
+    expect(
+      result.logs.map(log => ({
+        level: log.level,
+        message: log.message.replaceAll("\\", "/"),
+        notes: (log as unknown as { notes: BuildMessage[] }).notes.map(note => note.message.replaceAll("\\", "/")),
+        file: log.position && basename(log.position.file),
+        line: log.position?.line,
+        column: log.position?.column,
+      })),
+    ).toEqual([
+      {
+        level: "warn",
+        message: orderConflictWarning(name("a.ts"), name("p.ts"), name("q.ts"), name("worker.ts")),
+        notes: [orderConflictNote(name("p.ts"), name("q.ts"))],
+        file: "a.ts",
+        line: 1,
+        column: 8,
+      },
+    ]);
+    expect(result.success).toBe(true);
+
+    const run = async (file: string) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), file], env: bunEnv, cwd: String(dir), stdout: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { stdout: stdout.trim(), exitCode };
+    };
+    expect({
+      source: [await run("index.ts"), await run("worker.ts")],
+      build: [await run("out/index.js"), await run("out/worker.js")],
+    }).toEqual({
+      source: [
+        { stdout: "production", exitCode: 0 },
+        { stdout: "undefined", exitCode: 0 },
+      ],
+      build: [
+        { stdout: "undefined", exitCode: 0 },
+        { stdout: "undefined", exitCode: 0 },
+      ],
+    });
+  });
+
+  // The log level decides what the build says: with `logLevel = "debug"`, it lists a pair that no import names for its
+  // side effects, and with `logLevel = "error"`, it does not warn.
+  test("splitting/SharedChunkOrderConflictFollowsLogLevel", async () => {
+    const importsForBindings = {
+      ...orderConflict,
+      "/a.js": `import { p } from "./p.js"; import { q } from "./q.js"; export const a = "a" + q + p;`,
+      "/p.js": `globalThis.P = { v: "P" }; export const p = "p";`,
+    };
+    const entryPoints = ["/index.js", "/worker.js"];
+    const message = orderConflictWarning("a.js", "p.js", "q.js", "worker.js");
+    expect({
+      debug: await orderConflictMessages(importsForBindings, entryPoints, `logLevel = "debug"`),
+      default: await orderConflictMessages(importsForBindings, entryPoints),
+      warn: await orderConflictMessages(orderConflict, entryPoints),
+      error: await orderConflictMessages(orderConflict, entryPoints, `logLevel = "error"`),
+    }).toEqual({
+      debug: { messages: [`debug: ${message}`], exitCode: 0 },
+      default: { messages: [], exitCode: 0 },
+      warn: { messages: [`warn: ${message}`, `note: ${orderConflictNote("p.js", "q.js")}`], exitCode: 0 },
+      error: { messages: [], exitCode: 0 },
+    });
   });
 
   // The namespace object of barrel.js names a before b, but b.js runs first: the shared chunk follows late_b.js.

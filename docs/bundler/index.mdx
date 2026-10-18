@@ -562,6 +562,57 @@ Each `import()` of a bundled JavaScript module also becomes its own chunk. Tree 
 
 With `target: "bun"`, a `require()` of a bundled ES module becomes a chunk of its own as well. The call is emitted as `import.meta.require("./chunk-<hash>.js")` and stays synchronous — Bun evaluates the chunk when the call runs — so a `require()` inside a function that never runs keeps its module out of the startup working set entirely. Tree shaking treats these chunks like `import()` chunks. `require()` of a CommonJS module is unaffected and keeps returning `module.exports`. A `require()` cycle between such chunks follows Bun's runtime `require()` of an ES module: a module required again while its chunk is still being loaded sees the partially initialized CommonJS placeholder (`{}`) rather than the live bindings the in-chunk wrapper provides. For other targets — and with `splitRequire: false` (`--no-split-require`) — the required module is inlined into the calling chunk behind a lazy wrapper instead, because the call must return synchronously.
 
+#### Evaluation order in a shared chunk
+
+A chunk runs its modules in one order. When more than one entrypoint loads a chunk, the chunk follows the imports of one of them. Every other entrypoint that loads the chunk runs its modules in that order too. That order can differ from the order in which its own source imports the modules.
+
+The difference shows when a module needs a side effect of another module that it does not import:
+
+<CodeGroup>
+
+```ts index.ts icon="/icons/typescript.svg"
+import("./a.ts");
+```
+
+```ts worker.ts icon="/icons/typescript.svg"
+import "./q.ts";
+import "./a.ts";
+```
+
+```ts a.ts icon="/icons/typescript.svg"
+import "./p.ts";
+import "./q.ts";
+```
+
+```ts p.ts icon="/icons/typescript.svg"
+process.env.APP_MODE = "production";
+```
+
+```ts q.ts icon="/icons/typescript.svg"
+console.log(process.env.APP_MODE);
+```
+
+</CodeGroup>
+
+From source, `index.ts` prints `production` and `worker.ts` prints `undefined`. In the build, `p.ts` and `q.ts` are in one chunk. That chunk follows `worker.ts`, which runs `q.ts` first. So `import("./a.ts")` in `index.ts` also runs `q.ts` before `p.ts`, and both entrypoints print `undefined`.
+
+Bun warns about such a pair of modules when an `import` statement in your code names one of the two for its side effects only, as `import "./p.ts"` does. The warning names the entrypoint that the chunk follows:
+
+```txt
+warn: The imports of "a.ts" run "p.ts" before "q.ts", but the chunk that holds both files follows "worker.ts" and runs "q.ts" first
+   at a.ts:1:8
+
+note: A chunk runs its files in one order for every entry point that loads it. If "q.ts" needs "p.ts" to run first, add an import of "p.ts" to "q.ts".
+```
+
+To get one order under every entrypoint, import the module that has to run first from the module that needs it. Here that is `import "./p.ts"` in `q.ts`: both entrypoints then print `production`, from source and from the build.
+
+Bun does not warn in these cases:
+
+- Both modules are imported for their bindings, as in `import { q } from "./q.ts"`. Most such pairs do not depend on each other. With `logLevel = "debug"` in [`bunfig.toml`](/runtime/bunfig#loglevel), the build lists one such pair for each shared chunk.
+- The `import` statement is in a file inside `node_modules`.
+- The module that runs in another order is CommonJS.
+
 #### Tree-shaking `import()` and `require()` results
 
 When the result of a string-literal `import()` or `require()` of an ES module is only ever used to read specific exports, the exports nobody reads are dropped from that module — and whatever only they depended on tree-shakes with them. This applies with and without `splitting`; the module is still loaded lazily, exactly where the call is written.

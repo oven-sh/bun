@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use bun_ast::{ImportKind, ImportRecord, StmtData, StmtOrExpr};
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, StmtData, StmtOrExpr};
 use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
 
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
@@ -36,9 +36,13 @@ pub(crate) fn find_all_imported_parts_in_js_order(
 
     let mut plan = WalkPlan::new(this, chunks);
     let mut walks = plan.create_walks(this);
+    plan.watch = OrderWatch::new(this, chunks, &mut walks)?;
     run_walks(this, &plan, chunks, &mut walks);
     let safe_walks = plan.find_safe_walks(this, chunks, &walks);
     walks.extend(safe_walks);
+    if let Some(watch) = &plan.watch {
+        watch.report(this, &plan.rank, &walks);
+    }
     let order = WalkOrder::collect(this, chunks.len(), walks);
 
     struct Ctx<'a, 'f> {
@@ -234,6 +238,8 @@ struct WalkPlan {
     entry_id_of_file: Vec<u32>,
     /// With code splitting: `load_rank`.
     rank: Vec<u32>,
+    /// With code splitting, when another entry point than the owner can be the first to load a chunk.
+    watch: Option<OrderWatch>,
 }
 
 impl WalkPlan {
@@ -247,6 +253,7 @@ impl WalkPlan {
             slot_of_chunk: vec![0; chunks.len()],
             entry_id_of_file: Vec::new(),
             rank: Vec::new(),
+            watch: None,
         };
 
         if code_splitting {
@@ -321,6 +328,8 @@ impl WalkPlan {
                     entry_id: owner,
                     owned: Vec::new(),
                     entered: Vec::new(),
+                    watch_slots: Vec::new(),
+                    watched: Vec::new(),
                 });
             }
             let walk = &mut walks[*walk_index as usize];
@@ -404,6 +413,378 @@ impl WalkPlan {
             }
         }
     }
+}
+
+/// A chunk prints its files in the order of one entry point, its owner. Another entry point that can be the first to
+/// load the chunk then runs them in that order too, which can be another order than the one of its own imports.
+/// `OrderWatch` finds such chunks before the walks, has the walks of those entry points record their order, and reports
+/// the files that an entry point runs the other way round.
+struct OrderWatch {
+    /// Per chunk: its number among the watched chunks (`u32::MAX`: not watched).
+    watch_of_chunk: Vec<u32>,
+    /// Per file: the number of its chunk, when the file runs code at load there (`u32::MAX`: it does not).
+    watch_of_file: Vec<u32>,
+    /// How many chunks are watched. They are numbered from 0.
+    chunks_len: u32,
+    /// `files_with_bare_import`.
+    has_bare_import: Vec<bool>,
+    /// The log takes debug messages: every pair of files counts, not only a pair with a file of `has_bare_import`.
+    all_pairs: bool,
+}
+
+impl OrderWatch {
+    /// `None`: no chunk of the build is watched, and the walks record nothing.
+    fn new(
+        c: &LinkerContext,
+        chunks: &[Chunk],
+        walks: &mut [EntryWalk],
+    ) -> Result<Option<OrderWatch>, crate::Error> {
+        // Without chunk folding (only tests turn it off), no pass says which entry points can load a chunk first.
+        if !c.graph.code_splitting || !c.options.fold_chunks {
+            return Ok(None);
+        }
+        let entry_points_len = c.graph.entry_points.len();
+        let mut watch = OrderWatch {
+            watch_of_chunk: Vec::new(),
+            watch_of_file: Vec::new(),
+            chunks_len: 0,
+            has_bare_import: Vec::new(),
+            all_pairs: bun_ast::Kind::Debug.should_print(c.log().level),
+        };
+        let mut looked_for_bare_imports = false;
+        // Per watched chunk: the entry points that can be the first to load it.
+        let mut first_loaders_of_watch: Vec<&AutoBitSet> = Vec::new();
+        for (chunk_index, chunk) in chunks.iter().enumerate() {
+            if !matches!(chunk.content, chunk::Content::Javascript(_))
+                || chunk.entry_bits().count() < 2
+            {
+                continue;
+            }
+            let first_loaders = match &c.first_loaders_of_key {
+                // A chunk that has one first loader, or that a split `require()` loads, is not in the map.
+                Some(first_loaders_of_key) => {
+                    match first_loaders_of_key.get(chunk.entry_bits().bytes(entry_points_len)) {
+                        Some(first_loaders) => first_loaders,
+                        None => continue,
+                    }
+                }
+                // `merge_small_chunks` returned at once: the build has no `import()` target, so every entry point of
+                // the chunk is one that the build names, and each of them can load first.
+                None => chunk.entry_bits(),
+            };
+            let files = chunk.files_with_parts_in_chunk.keys();
+            let runs_code = |source_index: &&IndexInt| c.file_runs_code_in_chunk(**source_index);
+            if files.iter().filter(runs_code).take(2).count() < 2 {
+                continue;
+            }
+            // Only a build that comes this far reads its import records.
+            if !looked_for_bare_imports {
+                looked_for_bare_imports = true;
+                watch.has_bare_import = files_with_bare_import(c);
+            }
+            if !watch.all_pairs
+                && !files.iter().any(|&source_index| {
+                    watch.has_bare_import(source_index) && c.file_runs_code_in_chunk(source_index)
+                })
+            {
+                continue;
+            }
+            if watch.chunks_len == 0 {
+                watch.watch_of_chunk = vec![u32::MAX; chunks.len()];
+                watch.watch_of_file = vec![u32::MAX; c.graph.files.len()];
+            }
+            for &source_index in files.iter().filter(runs_code) {
+                watch.watch_of_file[source_index as usize] = watch.chunks_len;
+            }
+            watch.watch_of_chunk[chunk_index] = watch.chunks_len;
+            watch.chunks_len += 1;
+            first_loaders_of_watch.push(first_loaders);
+        }
+        if watch.chunks_len == 0 {
+            return Ok(None);
+        }
+        for walk in walks.iter_mut() {
+            for (watch_index, first_loaders) in first_loaders_of_watch.iter().enumerate() {
+                if !first_loaders.is_set(walk.entry_id as usize) {
+                    continue;
+                }
+                if walk.watch_slots.is_empty() {
+                    walk.watch_slots = vec![u32::MAX; watch.chunks_len as usize];
+                }
+                walk.watch_slots[watch_index] = walk.watched.len() as u32;
+                walk.watched.push(Vec::new());
+            }
+        }
+        Ok(Some(watch))
+    }
+
+    fn has_bare_import(&self, source_index: IndexInt) -> bool {
+        self.has_bare_import
+            .get(source_index as usize)
+            .is_some_and(|&has_bare_import| has_bare_import)
+    }
+
+    /// One message for each watched chunk in which an entry point runs two files the other way round: a warning when an
+    /// `import` statement names one of the two for its side effects only, so that where the file runs is something
+    /// that the source asks for, and a debug message for another pair.
+    fn report(&self, c: &LinkerContext, rank: &[u32], walks: &[EntryWalk]) {
+        // The order that prints, and the entry point that it is the order of. A walk of `find_safe_walks` comes after
+        // the owner's, and replaces it.
+        let mut layouts: Vec<(u32, Vec<IndexInt>)> =
+            vec![(u32::MAX, Vec::new()); self.chunks_len as usize];
+        for walk in walks {
+            for owned in &walk.owned {
+                let watch_index = self.watch_of_chunk[owned.chunk_index as usize];
+                if watch_index == u32::MAX {
+                    continue;
+                }
+                let (owner, layout) = &mut layouts[watch_index as usize];
+                *owner = walk.entry_id;
+                layout.clear();
+                layout.extend(
+                    owned
+                        .runs
+                        .iter()
+                        .filter(|run| {
+                            run.end == u32::MAX
+                                && self.watch_of_file[run.source_index as usize] == watch_index
+                        })
+                        .map(|run| run.source_index),
+                );
+            }
+        }
+        // The entry point that loads first is the one that a message names.
+        let mut loaders: Vec<&EntryWalk> = walks
+            .iter()
+            .filter(|walk| !walk.watch_slots.is_empty())
+            .collect();
+        loaders.sort_by_key(|walk| rank[walk.entry_id as usize]);
+
+        // Per file of the chunk at hand: its place in the order of the entry point at hand.
+        let mut their_place: Vec<u32> = vec![u32::MAX; c.graph.files.len()];
+        let mut conflicts: Vec<OrderConflict> = Vec::new();
+        for (watch_index, (owner, layout)) in layouts.iter().enumerate() {
+            let mut with_bare_import: Option<OrderConflict> = None;
+            let mut other_pair: Option<OrderConflict> = None;
+            for walk in &loaders {
+                let slot = walk.watch_slots[watch_index];
+                if slot == u32::MAX || walk.entry_id == *owner {
+                    continue;
+                }
+                let theirs = &walk.watched[slot as usize];
+                for (index, &source_index) in theirs.iter().enumerate() {
+                    their_place[source_index as usize] = index as u32;
+                }
+                let conflict =
+                    |runs_first: IndexInt, runs_second: IndexInt, is_warning: bool| OrderConflict {
+                        loader: walk.entry_id,
+                        owner: *owner,
+                        runs_first,
+                        runs_second,
+                        is_warning,
+                    };
+                // One pass over the order of the chunk. Of the files so far, `last` is the one that this entry point
+                // runs last, and `last_bare` the one with a bare import that it runs last. A file that this entry
+                // point runs ahead of one of the two runs after it in the chunk.
+                let mut last: Option<IndexInt> = None;
+                let mut last_bare: Option<IndexInt> = None;
+                for &source_index in layout {
+                    // Chunk folding can move a file into a chunk whose entry points do not import it: such a file
+                    // has no place in the order of this entry point.
+                    let place = their_place[source_index as usize];
+                    if place == u32::MAX {
+                        continue;
+                    }
+                    let runs_ahead_of = |other: Option<IndexInt>| {
+                        other.filter(|&other| place < their_place[other as usize])
+                    };
+                    let has_bare_import = self.has_bare_import(source_index);
+                    let other = runs_ahead_of(last_bare)
+                        .or_else(|| runs_ahead_of(last).filter(|_| has_bare_import));
+                    if let Some(other) = other {
+                        with_bare_import = Some(conflict(other, source_index, true));
+                        break;
+                    }
+                    if self.all_pairs
+                        && other_pair.is_none()
+                        && let Some(other) = runs_ahead_of(last)
+                    {
+                        other_pair = Some(conflict(other, source_index, false));
+                    }
+                    if runs_ahead_of(last).is_none() {
+                        last = Some(source_index);
+                    }
+                    if has_bare_import && runs_ahead_of(last_bare).is_none() {
+                        last_bare = Some(source_index);
+                    }
+                }
+                for &source_index in theirs.iter() {
+                    their_place[source_index as usize] = u32::MAX;
+                }
+                if with_bare_import.is_some() {
+                    break;
+                }
+            }
+            conflicts.extend(with_bare_import.or(other_pair));
+        }
+
+        let sources = c.parse_graph().input_files.items_source();
+        let entry_points = c.graph.entry_points.items_source_index();
+        let name =
+            |source_index: IndexInt| bstr::BStr::new(sources[source_index as usize].path.pretty);
+        let log = c.log_disjoint();
+        for conflict in &conflicts {
+            let loader = name(entry_points[conflict.loader as usize]);
+            let owner = name(entry_points[conflict.owner as usize]);
+            let (runs_first, runs_second) = (name(conflict.runs_first), name(conflict.runs_second));
+            macro_rules! message {
+                () => {
+                    format_args!(
+                        "The imports of \"{loader}\" run \"{runs_second}\" before \"{runs_first}\", but the chunk that holds both files follows \"{owner}\" and runs \"{runs_first}\" first"
+                    )
+                };
+            }
+            if !conflict.is_warning {
+                log.add_debug_fmt(None, bun_ast::Loc::EMPTY, message!());
+                continue;
+            }
+            if !bun_ast::Kind::Warn.should_print(log.level) {
+                continue;
+            }
+            // The statement that asks for the file that the entry point runs first, if that is the one of the two.
+            let bare_file = if self.has_bare_import(conflict.runs_second) {
+                conflict.runs_second
+            } else {
+                conflict.runs_first
+            };
+            let (importer, range) = find_bare_import(c, bare_file, conflict.loader);
+            // The file that the chunk runs first can only lead to the other one on an import cycle. Off a cycle, an
+            // `import` of the other one in it puts that one first for every entry point.
+            let note = if leads_to(c, conflict.runs_first, conflict.runs_second) {
+                bun_ast::alloc_print(format_args!(
+                    "A chunk runs its files in one order for every entry point that loads it. \"{runs_second}\" and \"{runs_first}\" are on an import cycle: which of the two runs first depends on the file that an entry point imports first."
+                ))
+            } else {
+                bun_ast::alloc_print(format_args!(
+                    "A chunk runs its files in one order for every entry point that loads it. If \"{runs_first}\" needs \"{runs_second}\" to run first, add an import of \"{runs_second}\" to \"{runs_first}\"."
+                ))
+            };
+            let note = bun_ast::range_data(None, bun_ast::Range::NONE, note);
+            log.add_range_warning_fmt_with_notes(
+                Some(&sources[importer as usize]),
+                range,
+                Box::new([note]),
+                message!(),
+            );
+        }
+    }
+}
+
+/// Calls `each` with every `import "./file.js"` statement of a bundled JavaScript file that is written outside
+/// `node_modules`, and with the file that holds it: the statement is there for what the file does when it runs, and
+/// the author of the build can change it. `each` returns true to stop.
+fn for_each_bare_import(c: &LinkerContext, mut each: impl FnMut(IndexInt, &ImportRecord) -> bool) {
+    let css = c.graph.ast.items_css();
+    let sources = c.parse_graph().input_files.items_source();
+    for source_index in c.graph.reachable_files.iter() {
+        let importer = source_index.get();
+        if !c.graph.files_live.is_set(importer as usize)
+            || css[importer as usize].is_some()
+            || sources[importer as usize].path.is_node_module()
+        {
+            continue;
+        }
+        for record in c.graph.ast.items_import_records()[importer as usize].as_slice() {
+            if record.kind == ImportKind::Stmt
+                && record.source_index.is_valid()
+                && record
+                    .flags
+                    .contains(ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT)
+                && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                && css[record.source_index.get() as usize].is_none()
+                && each(importer, record)
+            {
+                return;
+            }
+        }
+    }
+}
+
+/// Per file: a statement of `for_each_bare_import` names it. Empty: no file has one.
+fn files_with_bare_import(c: &LinkerContext) -> Vec<bool> {
+    let mut has_bare_import: Vec<bool> = Vec::new();
+    for_each_bare_import(c, |_, record| {
+        if has_bare_import.is_empty() {
+            has_bare_import = vec![false; c.graph.files.len()];
+        }
+        has_bare_import[record.source_index.get() as usize] = true;
+        false
+    });
+    has_bare_import
+}
+
+/// Where a warning about `bare_file` points: a statement of `for_each_bare_import` that names it. The first one in the
+/// file of the entry point `loader` if there is one, else the first one in a file that `loader` loads.
+fn find_bare_import(
+    c: &LinkerContext,
+    bare_file: IndexInt,
+    loader: u32,
+) -> (IndexInt, bun_ast::Range) {
+    let entry_bits = c.graph.files.items_entry_bits();
+    let loader_file = c.graph.entry_points.items_source_index()[loader as usize];
+    // With how close the statement is to `loader`: 2 in its file, 1 in a file that it loads.
+    let mut best: Option<(u8, IndexInt, bun_ast::Range)> = None;
+    for_each_bare_import(c, |importer, record| {
+        if record.source_index.get() != bare_file {
+            return false;
+        }
+        let closeness = if importer == loader_file {
+            2
+        } else {
+            u8::from(entry_bits[importer as usize].is_set(loader as usize))
+        };
+        if best.is_none_or(|(best, ..)| closeness > best) {
+            best = Some((closeness, importer, record.range));
+        }
+        closeness == 2
+    });
+    best.map_or((bare_file, bun_ast::Range::NONE), |(_, importer, range)| {
+        (importer, range)
+    })
+}
+
+/// The `import` statements of `from`, and of the files that they name, lead to `to`.
+fn leads_to(c: &LinkerContext, from: IndexInt, to: IndexInt) -> bool {
+    let mut seen = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
+    let mut stack = vec![from];
+    while let Some(source_index) = stack.pop() {
+        if source_index == to {
+            return true;
+        }
+        if seen.is_set(source_index as usize) {
+            continue;
+        }
+        seen.set(source_index as usize);
+        for_each_edge(c, source_index, true, |_, edge| {
+            if let Edge::Import(other) | Edge::LoadNow(other) = edge {
+                stack.push(other);
+            }
+        });
+    }
+    false
+}
+
+/// When `loader` is the first to load their chunk, `runs_first` runs ahead of `runs_second`. In the import order of
+/// `loader` it runs after it.
+#[derive(Clone, Copy)]
+struct OrderConflict {
+    loader: u32,
+    /// The entry point that the chunk has the order of.
+    owner: u32,
+    runs_first: IndexInt,
+    runs_second: IndexInt,
+    /// An `import` statement names one of the two for its side effects only.
+    is_warning: bool,
 }
 
 /// What the live parts do at load, and which parts name a binding of which.
@@ -783,6 +1164,8 @@ enum WalkFrame {
     Place { run: PartRun, slot: u32 },
     /// The class-name object of a CSS file goes at the end of `owned[slot].runs`, unless the list has it.
     PlaceCss { source_index: IndexInt, slot: u32 },
+    /// The walk is past a file of a chunk of `OrderWatch` that it does not lay out.
+    Leave(IndexInt),
 }
 
 struct OwnedChunk {
@@ -799,16 +1182,31 @@ struct EntryWalk {
     owned: Vec<OwnedChunk>,
     /// With code splitting: the files placed, in the order the walk entered them.
     entered: Vec<IndexInt>,
+    /// Per chunk of `OrderWatch` that this entry point can be the first to load: its index in `watched`
+    /// (`u32::MAX` for the other chunks). Empty: none.
+    watch_slots: Vec<u32>,
+    /// The files of such a chunk that run code at load, in the order in which the walk left them.
+    watched: Vec<Vec<IndexInt>>,
 }
 
 impl EntryWalk {
+    /// The list of `watched` that a file belongs in.
+    fn watch_slot_of(&self, plan: &WalkPlan, source_index: IndexInt) -> Option<u32> {
+        let watch = plan.watch.as_ref()?;
+        let watch_index = *watch.watch_of_file.get(source_index as usize)?;
+        self.watch_slots
+            .get(watch_index as usize)
+            .copied()
+            .filter(|&slot| slot != u32::MAX)
+    }
+
     fn run(&mut self, c: &LinkerContext, plan: &WalkPlan, chunks: &[Chunk]) {
         let mut seen = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut left = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut stack: Vec<WalkFrame> = Vec::new();
         let mut css_placed: HashMap<u64, ()> = HashMap::default();
         let root = c.graph.entry_points.items_source_index()[self.entry_id as usize];
-        self.walk(
+        self.walk_from(
             c,
             plan,
             &mut seen,
@@ -824,7 +1222,7 @@ impl EntryWalk {
             let chunk = &chunks[self.owned[slot].chunk_index as usize];
             for &source_index in chunk.files_with_parts_in_chunk.keys() {
                 if source_index != runtime && !seen.is_set(source_index as usize) {
-                    self.walk(
+                    self.walk_from(
                         c,
                         plan,
                         &mut seen,
@@ -838,8 +1236,27 @@ impl EntryWalk {
         }
     }
 
+    /// `walk`, with `WATCH` only for an entry point that `OrderWatch` gave a list to fill.
+    fn walk_from(
+        &mut self,
+        c: &LinkerContext,
+        plan: &WalkPlan,
+        seen: &mut AutoBitSet,
+        left: &mut AutoBitSet,
+        stack: &mut Vec<WalkFrame>,
+        css_placed: &mut HashMap<u64, ()>,
+        root: IndexInt,
+    ) {
+        if self.watch_slots.is_empty() {
+            self.walk::<false>(c, plan, seen, left, stack, css_placed, root);
+        } else {
+            self.walk::<true>(c, plan, seen, left, stack, css_placed, root);
+        }
+    }
+
     /// Depth first along every `import` statement, also through dropped files; places the files of the owned chunks.
-    fn walk(
+    /// With `WATCH`, it also fills `watched`.
+    fn walk<const WATCH: bool>(
         &mut self,
         c: &LinkerContext,
         plan: &WalkPlan,
@@ -882,6 +1299,15 @@ impl EntryWalk {
                     self.owned[slot as usize].runs.push(run);
                     if run.end == u32::MAX {
                         left.set(run.source_index as usize);
+                        if WATCH && let Some(slot) = self.watch_slot_of(plan, run.source_index) {
+                            self.watched[slot as usize].push(run.source_index);
+                        }
+                    }
+                    continue;
+                }
+                WalkFrame::Leave(source_index) => {
+                    if let Some(slot) = self.watch_slot_of(plan, source_index) {
+                        self.watched[slot as usize].push(source_index);
                     }
                     continue;
                 }
@@ -993,6 +1419,8 @@ impl EntryWalk {
                     },
                     slot,
                 });
+            } else if WATCH && self.watch_slot_of(plan, source_index).is_some() {
+                stack.push(WalkFrame::Leave(source_index));
             }
             stack[mark..].reverse();
         }

@@ -1,7 +1,7 @@
 use crate::mal_prelude::*;
 use bun_alloc::Arena;
 use bun_ast::{ImportKind, ImportRecordFlags};
-use bun_collections::{ArrayHashMap, AutoBitSet, MapEntry};
+use bun_collections::{ArrayHashMap, AutoBitSet, MapEntry, StringHashMap};
 
 use crate::linker_context_mod::debug;
 use crate::options::{Loader, Target};
@@ -108,6 +108,26 @@ impl LinkerContext<'_> {
                             .import_record_indices
                             .iter()
                             .all(|&i| import_has_no_side_effects(&records[i as usize])))
+            })
+    }
+
+    /// The file prints in its chunk without a wrapper, and one of its live
+    /// parts runs code of its own where it prints: not a declaration, and not
+    /// only the `init_x()` / `require_x()` of an import.
+    pub(crate) fn file_runs_code_in_chunk(&self, source_index: u32) -> bool {
+        if source_index == crate::Index::RUNTIME.get()
+            || self.graph.meta.items_flags()[source_index as usize].wrap != WrapKind::None
+            || self.file_has_no_side_effects(source_index)
+        {
+            return false;
+        }
+        let parts_live = &self.graph.parts_live[source_index as usize];
+        self.graph.ast.items_parts()[source_index as usize]
+            .as_slice()
+            .iter()
+            .enumerate()
+            .any(|(part_index, part)| {
+                parts_live.is_set(part_index) && !part_has_no_side_effects(part)
             })
     }
 
@@ -1206,6 +1226,12 @@ pub(crate) fn merge_small_chunks(
     }
     if !fold_pure {
         rekey_files(this, group_of_file, groups.values())?;
+        this.first_loaders_of_key = Some(first_loaders_of_keys(
+            groups.values(),
+            &classes,
+            &required_sync,
+            entry_points_len,
+        )?);
         debug!(
             "mergeSmallChunks: {} chunks folded into chunks with the same load conditions",
             folded_same
@@ -1601,6 +1627,12 @@ pub(crate) fn merge_small_chunks(
     }
 
     rekey_files(this, group_of_file, groups)?;
+    this.first_loaders_of_key = Some(first_loaders_of_keys(
+        groups,
+        &classes,
+        &required_sync,
+        entry_points_len,
+    )?);
     debug!(
         "mergeSmallChunks: {} chunks folded into chunks with the same load conditions, {} side-effect-free chunks folded into a superset in {} passes (min size {} bytes)",
         folded_same, folded_pure, passes, min_chunk_size
@@ -1624,4 +1656,29 @@ fn rekey_files(
         }
     }
     Ok(())
+}
+
+/// `LinkerContext::first_loaders_of_key`: the class of each group that is left, under the key that its files now have.
+/// A file that runs code at load keeps the class of its group: rule 1 folds groups of one class, and rule 2 moves only
+/// files that run nothing.
+fn first_loaders_of_keys(
+    groups: &[Group],
+    classes: &ArrayHashMap<&[u8], (AutoBitSet, Vec<usize>)>,
+    required_sync: &AutoBitSet,
+    entry_points_len: usize,
+) -> crate::Result<StringHashMap<AutoBitSet>> {
+    let mut first_loaders_of_key = StringHashMap::default();
+    for (class, members) in classes.values() {
+        if class.count() < 2 {
+            continue;
+        }
+        for &member in members {
+            let group = &groups[member];
+            if group.merged_into.is_some() || required_sync.has_intersection(&group.bits) {
+                continue;
+            }
+            first_loaders_of_key.put(group.bits.bytes(entry_points_len), class.clone()?)?;
+        }
+    }
+    Ok(first_loaders_of_key)
 }

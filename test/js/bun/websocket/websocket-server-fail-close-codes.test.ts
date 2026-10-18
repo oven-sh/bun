@@ -3,7 +3,7 @@
 // error message as the reason. The close handler gets 1006 with the same
 // message. A peer can't send 1006, so it always means the server aborted.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tls as cert } from "harness";
+import { bunEnv, bunExe, tls as cert, isASAN } from "harness";
 import path from "node:path";
 import { deflateRawSync } from "node:zlib";
 import {

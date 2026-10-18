@@ -728,7 +728,7 @@ describe("bun pm cache unpack", () => {
     },
   );
 
-  test.concurrent("does not touch what the cache has, complete or not", async () => {
+  test.concurrent("doesn't touch existing cache entries, complete or not", async () => {
     using box = sandbox({
       cache: {
         ...populatedCache,
@@ -781,7 +781,7 @@ describe("bun pm cache unpack", () => {
     expect(code).toBe(0);
   });
 
-  test.concurrent("several at once: every entry is created once, by one of them", async () => {
+  test.concurrent("several at the same time: every entry is created once, by one of them", async () => {
     using box = sandbox();
     const names = Array.from(
       { length: 40 },
@@ -989,7 +989,7 @@ describe("bun pm cache pack", () => {
     }
   });
 
-  test.concurrent("leaves out, and reports, what the cache does not have or has in part", async () => {
+  test.concurrent("skips and reports entries that the cache doesn't have or only has in part", async () => {
     using box = sandbox();
     await installedProject(box);
     const [gone, partial] = entryNames(box.cache).filter(name => /^(no-deps|what-bin)@/.test(name));

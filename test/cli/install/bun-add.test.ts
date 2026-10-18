@@ -294,8 +294,8 @@ it("bun add --only-missing should not install existing package", async () => {
   }
 });
 
-// Writes `source` to entry-point.ts and returns what `bun <command> --analyze` adds to package.json.
-// `urls` collects what it asks the registry for.
+// Writes `source` to entry-point.ts and returns what `bun <command> --analyze` adds to package.json. `urls` collects
+// its registry requests.
 async function analyze(
   command: "add" | "install",
   source: string,
@@ -388,7 +388,7 @@ it.each([
   expect(urls).toEqual([`${root_url}/bar`]);
 });
 
-it("bun add --analyze goes by the package.json with a name that is nearest to the importing file", async () => {
+it("bun add --analyze uses the nearest package.json with a name above the importing file", async () => {
   const urls: string[] = [];
   const member = join(package_dir, "packages", "member");
   await mkdir(join(member, "nested"), { recursive: true });
@@ -3523,7 +3523,7 @@ it("should add multiple dependencies specified on command line", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
-it("requests the manifests of all the packages on the command line at once", async () => {
+it("requests the manifests of all the packages on the command line at the same time", async () => {
   const registry = dummyRegistry([]);
   const lastWasRequested = Promise.withResolvers<void>();
   setHandler(async request => {
@@ -4079,7 +4079,8 @@ describe("a spec without a name that resolves to a dependency package.json alrea
     installed: (await file(join(project, "node_modules", "pkga", "package.json")).json()).version,
   });
 
-  // package.json, bun.lock and node_modules agree, and stay as they are: no key twice, a frozen install passes, a second install changes nothing.
+  // package.json, bun.lock and node_modules agree and are stable: no key appears twice, a frozen install passes, and a
+  // second install changes nothing.
   async function settled(project: string, frozen = true) {
     const after = await state(project);
     expect(duplicateKeys(after.packageJson)).toEqual([]);
@@ -4118,7 +4119,8 @@ describe("a spec without a name that resolves to a dependency package.json alrea
       peerDependencies: { lists: ["peerDependencies"] },
     },
   };
-  // Every cell with a folder. The other kinds only where the list can change the outcome, so that the file stays fast.
+  // Every cell with a folder. The other kinds are only tested where the list can change the outcome, to keep the file
+  // fast.
   const cell = (declared: Declared, kind: Kind, flag: Flag) => ({ declared, kind, flag });
   const cells = [
     ...(Object.keys(outcomes) as Flag[]).flatMap(flag =>
@@ -4483,7 +4485,7 @@ describe("-g and a package.json above the global directory", () => {
 
   const lock = JSON.stringify({ lockfileVersion: 1, workspaces: { "": { dependencies: { pkg: "1.0.0" } } } });
 
-  // Nor do they create an empty global package.json, against which the lockfile would lose every package.
+  // They don't create an empty global package.json either, which would make the lockfile lose every package.
   it.each([
     [["update"], "nothing to update"],
     [["remove", "pkg"], "nothing to remove"],

@@ -2517,6 +2517,61 @@ test.concurrent.each(["hoisted", "isolated"] as const)(
 
 // The host bundles no-deps@1.0.0, which is what peer-deps-fixed (peer no-deps@^1.0.0) finds next to
 // itself under the host. At the root it would find 2.0.0.
+// `a` has a peer dependency on `host@1`, and nothing provides it. The project already uses `host@2`.
+describe.concurrent("adding an unrelated package doesn't split a plugin from its host", () => {
+  const plugin = (optional: boolean) => ({
+    n: { "1.0.0": { dependencies: { host: "^2.1.0", plug: "1.0.0" } } },
+    plug: { "1.0.0": { peerDependencies: { host: ">=1.0.0" }, peerDependenciesMeta: { host: { optional } } } },
+  });
+  // `a` gets its own host@1 at the top, and plug stays next to the host@2 that n provides.
+  const nested = ["a@1.0.0", "host@1.5.0", "n@1.0.0", "n/host@2.1.0", "n/plug@1.0.0"];
+
+  test.each([
+    ["the host depends on it", plugin(false), { n: "1.0.0" }, nested],
+    ["the host depends on it, and the plugin's peer dependency is optional", plugin(true), { n: "1.0.0" }, nested],
+    [
+      // No version satisfies tg, cx and a, so a shares the host@2 that tg and cx use.
+      "the host only has a peer dependency on it",
+      {
+        tg: { "1.0.0": { dependencies: { cx: "1.0.0" }, peerDependencies: { host: "^2.1.0" } } },
+        cx: { "1.0.0": { peerDependencies: { host: "^1.0.0 || ^2.0.0" } } },
+        holder: { "1.0.0": { dependencies: { host: "^2.1.0" } } },
+      },
+      { holder: "1.0.0", tg: "1.0.0" },
+      ["a@1.0.0", "cx@1.0.0", "holder@1.0.0", "host@2.1.0", "tg@1.0.0"],
+    ],
+  ])("%s", async (_, graph, dependencies, expected) => {
+    using server = await serveGraph({
+      host: { "1.5.0": {}, "2.1.0": {} },
+      a: { "1.0.0": { peerDependencies: { host: "^1.0.0" } } },
+      ...graph,
+    });
+    const packageJson = (more: object) => JSON.stringify({ name: "root", dependencies: { ...dependencies, ...more } });
+    using tmp = tempDir("hoist-unrelated-peer", {
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+      "package.json": packageJson({}),
+    });
+    const dir = String(tmp);
+    const lockfile = () => readFileSync(join(dir, "bun.lock"), "utf8");
+
+    await run(dir, "install");
+    await write(join(dir, "package.json"), packageJson({ a: "1.0.0" }));
+    await run(dir, "install");
+    expect(layout(dir)).toEqual(expected);
+    const saved = lockfile();
+
+    // bun.lock is stable, and a fresh install gives the same result.
+    await run(dir, "install");
+    await run(dir, "install", "--frozen-lockfile");
+    expect(lockfile()).toBe(saved);
+    await rm(join(dir, "node_modules"), { recursive: true, force: true });
+    await rm(join(dir, "bun.lock"));
+    await run(dir, "install");
+    expect(layout(dir)).toEqual(expected);
+    expect(lockfile()).toBe(saved);
+  });
+});
+
 test.concurrent("a package stays under the host that bundles the version that its peer accepts", async () => {
   const host = {
     name: "host",

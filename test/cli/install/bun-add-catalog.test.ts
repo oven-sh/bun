@@ -690,7 +690,7 @@ describe.concurrent("bun add --catalog", () => {
       const plainPkg1 = await plain.pkg1();
       const catalogPkg1 = await catalog.pkg1();
       expect(Object.keys(catalogPkg1)).toStrictEqual(Object.keys(plainPkg1));
-      // The peer entry is left alone; --dev adds a devDependencies entry next to it.
+      // The peer entry isn't changed. --dev adds a devDependencies entry next to it.
       expect(plainPkg1).toStrictEqual({
         name: "pkg1",
         peerDependencies: { "no-deps": ">=1" },
@@ -825,7 +825,7 @@ describe.concurrent("bun add --catalog", () => {
     });
   });
 
-  describe("leading whitespace in what a package.json declares", () => {
+  describe("leading whitespace in a package.json value", () => {
     test("the target's named reference stays in that catalog", async () => {
       const pkg1 = pretty({ name: "pkg1", dependencies: { "no-deps": " catalog:testing" } });
       const dir = await createDir(workspacesObject({ catalogs: { testing: { "no-deps": "1.0.0" } } }), pkg1);

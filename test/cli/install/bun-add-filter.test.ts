@@ -1336,7 +1336,8 @@ test.concurrent("remove --filter re-links only the selected workspace", async ()
 
   const { stdout, stderr, exitCode } = await run(["remove", "no-deps", "--filter", "api"], dir, { linker: "hoisted" });
   expect(stderr).toBe("Saved lockfile\n");
-  // As with an unfiltered remove, the summary is the install count once something had to be linked: here api alone.
+  // Like with an unfiltered remove, the summary is the install count once something had to be linked, which here is
+  // only api.
   expect(stdoutLines(stdout)).toStrictEqual([HEADER("remove"), "", "1 package installed"]);
   expect(exitCode).toBe(0);
 
@@ -2013,8 +2014,8 @@ test.concurrent.each(
     const fresh = await run(["install", omit], dir, { linker });
     expect(fresh.stderr).not.toContain("error:");
     const { packages, bins } = await topLevel();
-    // `add` takes out the folders of the packages it names. What they depend on is in a place that the run leaves out,
-    // and no install removes that: `bun prune` does.
+    // `add` removes the folders of the packages that it's given. Their dependencies are in a slot that this install
+    // skips, and no install removes that. `bun prune` does.
     expect(after).toStrictEqual({ packages: linker === "hoisted" ? [...packages, "no-deps"].sort() : packages, bins });
     expect(after.packages).not.toContain("one-fixed-dep");
     expect(fresh.exitCode).toBe(0);

@@ -508,7 +508,7 @@ describe.concurrent("auto-install reads every dependency group of the project's 
     expect(exitCode).toBe(0);
   });
 
-  test("a package.json further up lists what the nearest one does not", async () => {
+  test("a package.json further up lists a dependency that the nearest one doesn't", async () => {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-group-up", {
       "package.json": JSON.stringify({
@@ -568,7 +568,7 @@ describe.concurrent("auto-install reads every dependency group of the project's 
     expect(exitCode).toBe(0);
   });
 
-  // Nothing is auto-installed here, so what the packages depend on is never looked at.
+  // Nothing is auto-installed here, so the packages' own dependencies are never read.
   test("the dependencies of packages that load from node_modules take no memory", async () => {
     const range = "^1.2.3 || ^2.0.0 || >=3.1.0 <4.0.0-beta.1 || ~5.6.7";
     const dependencies = Object.fromEntries(Array.from({ length: 400 }, (_, i) => [`dep-number-${i}`, range]));
@@ -901,7 +901,7 @@ describe.concurrent("auto-install reads a package.json dependency version from t
   ])("JSON escape in a dependency %s", async (_, dependency) => {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-escaped", {
-      // left-pad has no escape, but shares the buffer with the one that does
+      // left-pad has no escape, but it shares the buffer with the one that does.
       "package.json": `{"name":"app","dependencies":{"left-pad":"npm:no-deps@1.0.1",${dependency}}}`,
       "index.js": `for (const id of ["my-alias", "left-pad"]) {\n  const { name, version } = require(id);\n  console.log(name + "@" + version);\n}\n`,
       "bunfig.toml": registry.bunfig,
@@ -1259,7 +1259,7 @@ const optionalPackageGuards = Object.entries({
 
 // `bun install` prints these and exits. In a running program they belong to the
 // import that asked for the package.
-describe.concurrent("auto-install throws what it cannot do instead of ending the process", () => {
+describe.concurrent("auto-install throws when it can't do something instead of exiting the process", () => {
   test.each(optionalPackageGuards)("no directory to extract into, %s", async (_, guard) => {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-no-tmpdir", {
@@ -1339,7 +1339,7 @@ describe.concurrent("auto-install throws what it cannot do instead of ending the
       return { stdout, stderr, exitCode };
     }
 
-    test("and lacks the package", async () => {
+    test("and doesn't have the package", async () => {
       using registry = fixtureRegistry();
       using dir = tempDir("autoinstall-read-only-cache", {
         "index.js": optionalPackageGuards[0][1]("no-deps"),
@@ -1407,7 +1407,7 @@ describe.concurrent("auto-install throws what it cannot do instead of ending the
 // `npm pack` puts bundledDependencies under node_modules in the tarball. bundled-conflict-host
 // ships bundled-shipped-inner, which ships no-deps@1.0.0, and takes no-deps@2.0.0 from the registry.
 describe.concurrent("auto-install of a package whose tarball ships a node_modules folder", () => {
-  test("loads what it ships from there, and its other dependencies from the cache", async () => {
+  test("loads the packages that it ships from there, and its other dependencies from the cache", async () => {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-bundled", {
       "index.js": `console.log(JSON.stringify(require("bundled-conflict-host")));\n`,
@@ -1466,11 +1466,12 @@ test.concurrent("--install=fallback to install missing packages", async () => {
 // program's own fetch() calls at 4 at a time.
 describe.concurrent("a failed auto-install download does not lower the concurrency of fetch()", () => {
   const fixture = /* js */ `
-    // A burst is as large as the cap: all of it is in flight at once only while the cap is whole.
+    // A burst is as large as the limit, so all of it can only be in flight at the same time if the whole limit is
+    // available.
     const requests = Number(process.env.BUN_CONFIG_MAX_HTTP_REQUESTS);
     let inFlight = 0;
     let release;
-    // Holds every response until all the requests of a burst are in flight at once.
+    // Holds every response until all the requests of a burst are in flight.
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -1560,10 +1561,9 @@ describe.concurrent("a failed auto-install download does not lower the concurren
   });
 });
 
-// Without node_modules the runtime keeps one package manager for the life of
-// the process. A manifest request that failed stayed recorded in it as "already
-// requested", so every later resolve of that name failed without a request,
-// also after the registry was healthy again.
+// Without node_modules, the runtime keeps one package manager for the life of the process. A failed manifest request
+// stayed recorded in it as "already requested", so every later resolve of that name failed without a request, even
+// after the registry was healthy again.
 describe.concurrent("a failed registry lookup is asked again by the next resolve", () => {
   // Fails every manifest (or tarball) request with `respond` until the script asks for /__heal.
   // The script asks for /__next between its resolves: `lookups` is one list of requests per resolve.
@@ -1644,8 +1644,8 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
     using dir = tempDir("autoinstall-failed-lookup", {
       ...files,
       "bunfig.toml": `[install]\nregistry = "${registry.url}"\n`,
-      // A failed lookup stands until the event loop has run something. An awaited fetch() is enough,
-      // also when its continuation runs in the iteration of the loop that started it.
+      // A failed lookup is remembered until the event loop has run something. An awaited fetch() is enough, even if its
+      // continuation runs in the same iteration of the loop that started it.
       "index.js": `const registry = ${JSON.stringify(registry.url)};
         const next = path => fetch(registry + path);
         ${script}`,
@@ -1672,7 +1672,8 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
     expect(requests).toEqual(Array(requestsPerLookup).fill(path));
   }
 
-  // A 404 is an answer, and stands for as long as a manifest would (300 seconds) unless the registry says otherwise.
+  // A 404 is a real response. It's remembered for as long as a manifest would be (300 seconds), unless the registry
+  // says otherwise.
   const notFound = (headers: HeadersInit = { "Cache-Control": "no-cache" }) =>
     new Response("{}", { status: 404, headers });
 
@@ -1809,8 +1810,8 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
     expect(exitCode).toBe(0);
   });
 
-  // Now and then the fetch() was answered before the thread went to sleep. Its continuation then ran
-  // in the same iteration of the loop, and the second attempt failed without a request.
+  // Occasionally, the fetch() got its response before the thread went to sleep. Its continuation then ran in the same
+  // iteration of the loop, and the second attempt failed without a request.
   test.each(["manifest", "tarball"] as const)("after nothing but an awaited fetch(): the %s", async failing => {
     using registry = flakyRegistry(() => notFound(), failing);
     const { stdout, exitCode } = await run(
@@ -1834,7 +1835,7 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
     expect(exitCode).toBe(0);
   });
 
-  // The package is resolved by then. The failed download stayed recorded, and no later import asked again.
+  // The package is resolved by then. The failed download stayed recorded, and no later import requested it again.
   describe.each([
     ["found through its manifest", {}],
     [
@@ -2029,8 +2030,8 @@ describe.concurrent("auto-install does not run the event loop inside", () => {
               process.kill(process.pid, "SIGUSR2");
             }
 
-            // Nothing may read the request before the call: a read copies the head
-            // out of the receive buffer, and the url below has to come from there.
+            // Nothing may read the request before the call. A read copies the head out of the receive buffer, and the
+            // url below has to come from there.
             insideTheCall = true;
             try {
               door("not-installed");
@@ -2640,7 +2641,7 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     expect({ ...result, stderr: "" }).toEqual({ stdout: "", stderr: "", exitCode: 1, requests: [] });
   });
 
-  // What Docker makes of a `-v` mount of a file that the host does not have. It holds no settings.
+  // This is what Docker creates for a `-v` mount of a file that doesn't exist on the host. It contains no settings.
   test.each(["home/.bunfig.toml", "home/.npmrc", "app/.npmrc", "app/bunfig.toml"])(
     "on when %s is a directory",
     async path => {
@@ -2664,7 +2665,7 @@ describe.concurrent("auto-install is off when a security scanner is configured",
 // to the registry that `.npmrc` names, but the runtime's auto-install read
 // only bunfig.toml and asked the default registry.
 describe("auto-install reads the registries and credentials of .npmrc", () => {
-  // An ASAN build starts too slowly to run all of these at once within the default timeout.
+  // An ASAN build starts too slowly to run all of these at the same time within the default timeout.
   const cell = test.concurrentIf(!isASAN);
   const token = "SECRET-TOKEN";
 
@@ -3065,7 +3066,7 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
     });
   });
 
-  // Whether `app` is the project of `app/<folder>` is what `bun install` in that folder says.
+  // `app` is the project of `app/<folder>` if `bun install` in that folder says so.
   cell.each([
     [true, "packages/member", ["packages/*"]],
     [true, "packages/member", ["./packages/*/"]],
@@ -3364,7 +3365,7 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
     expect(result).toEqual({ ...fromPrivateRegistry, created: ["app", "bun-install", "home"] });
   });
 
-  // Neither `.npmrc` path fits a path buffer, so the default registry answers.
+  // Neither `.npmrc` path fits in a path buffer, so the default registry is used.
   cell.skipIf(!isLinux)("a start directory and a home directory at the path length limit", async () => {
     const atLimit = (dir: string, name: string) => directoryPathOfLength(join(dir, name), 4092);
     const result = await autoInstall({

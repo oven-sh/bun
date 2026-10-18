@@ -564,9 +564,10 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) linked: reachable::Linked,
 }
 
-/// The required peers of the package that's being hoisted, each with the in-range copy that the
-/// package loads from the highest folder checked so far. The bit sets cache which packages have
-/// peers, and which packages a regular dependency resolves to.
+/// The peers of the package that's being hoisted, each with the in-range copy that the package
+/// loads from the highest folder checked so far. An optional peer is only listed if the package's
+/// owner provides it. The bit sets cache which packages have peers, and which packages a regular
+/// dependency resolves to.
 #[derive(Default)]
 pub(crate) struct PeerProbes(
     Vec<(DependencyID, Option<PackageID>)>,
@@ -590,9 +591,7 @@ impl PeerProbes {
         }
 
         let is_probed = |peer: &Dependency| {
-            peer.behavior.is_peer()
-                && !peer.behavior.is_optional_peer()
-                && peer.version.tag == crate::dependency::VersionTag::Npm
+            peer.behavior.is_peer() && peer.version.tag == crate::dependency::VersionTag::Npm
         };
         let with_peers = self.1.get_or_insert_with(|| {
             let lists = lockfile.packages.items_resolutions();
@@ -643,7 +642,7 @@ impl PeerProbes {
                         && resolutions[dep_id as usize] != invalid_package_id
                 })
                 .map(|dep_id| resolutions[dep_id as usize]);
-            if owner_copy.is_none_or(|id| {
+            if owner_copy.map_or(!peer.behavior.is_optional_peer(), |id| {
                 pkg_resolutions[id as usize].satisfies_dependency_version(&peer.version, buf, buf)
             }) {
                 self.0.push((peer_dep_id, owner_copy));
@@ -653,7 +652,7 @@ impl PeerProbes {
 
     /// Returns true if the package must not be hoisted into tree `tree_id`, because it would stop
     /// loading the copy of a peer that it loads now. That's the case if the tree has:
-    /// - an out-of-range version, or
+    /// - an out-of-range version of a required peer, or
     /// - a different version that was only installed for another package's peer dependency. Adding
     ///   an unrelated package to a project must not split a plugin from its host.
     fn is_hidden_by(
@@ -684,10 +683,12 @@ impl PeerProbes {
                 buf,
                 buf,
             );
+            let is_optional = peer.behavior.is_optional_peer();
             match provided {
-                Some(_) if !in_range => return true,
+                Some(_) if !in_range && !is_optional => return true,
                 Some(provided)
-                    if held != provided
+                    if in_range
+                        && held != provided
                         && !(self.2)
                             .get_or_insert_with(|| regular_targets(lockfile, deps, resolutions))
                             .is_set(held as usize) =>
@@ -695,7 +696,9 @@ impl PeerProbes {
                     return true;
                 }
                 _ if in_range => {
-                    self.0[i].1 = Some(held);
+                    if !is_optional {
+                        self.0[i].1 = Some(held);
+                    }
                     i += 1;
                 }
                 // Out of range wherever the package ends up.

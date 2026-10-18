@@ -551,8 +551,8 @@ describe.concurrent("backoff", () => {
   const busy = (status: number, retryAfter?: string | null) =>
     new Response("busy", { status, headers: retryAfter == null ? {} : { "Retry-After": retryAfter } });
 
-  // There is one dependency: while its request backs off nothing is in flight,
-  // and the install goes on only because the timer wakes it.
+  // There's only one dependency. While its request backs off, nothing is in flight, and the install only continues
+  // because the timer wakes it.
   it.each(["manifest", "tarball"] as const)("waits longer before each retry of a %s", async failing => {
     using registry = flakyRegistry((kind, hit) => (kind === failing && hit <= 3 ? busy(503) : undefined));
     using dir = project(registry.url);
@@ -613,7 +613,7 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("waits a minute at most, and says so at once", async () => {
+  it("waits a minute at most, and says so immediately", async () => {
     using registry = flakyRegistry((kind, hit) => (kind === "manifest" && hit === 1 ? busy(429, "86400") : undefined));
     using dir = project(registry.url);
     await using proc = spawn({
@@ -819,7 +819,7 @@ describe.concurrent("backoff", () => {
       return { err, exitCode };
     }
 
-    // Whoever typed the command has waited for as long as the timeout allows.
+    // By now, the user has waited for as long as the timeout allows.
     it("does not ask again a registry that takes the connection and never answers", async () => {
       let connections = 0;
       using silent = Bun.listen({
@@ -907,7 +907,7 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(1);
   });
 
-  // What `bun init` writes. Peers are resolved after everything else, so offline they doubled the wait.
+  // This is what `bun init` writes. Peers are resolved after everything else, so offline they used to double the wait.
   it("does not ask for the project's peers once a dependency has failed", async () => {
     const requested: string[] = [];
     using server = Bun.serve({
@@ -964,7 +964,8 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(1);
   });
 
-  // yarn.lock and pnpm-lock.yaml do not record `bin`, so a migration asks the registry for it and goes on without an answer.
+  // yarn.lock and pnpm-lock.yaml don't record `bin`, so a migration asks the registry for it and continues without a
+  // response.
   describe.each(["yarn.lock", "pnpm-lock.yaml"] as const)("the manifests a migrated %s is completed from", name => {
     const integrity = "sha512-" + Buffer.alloc(86, "A").toString() + "==";
     const lockfile = {
@@ -978,7 +979,7 @@ describe.concurrent("backoff", () => {
       using dir = project(closed.url.href);
       await writeFile(join(String(dir), name), lockfile);
       const { lines, exitCode } = await install(String(dir), {}, "--lockfile-only", "--verbose");
-      // macOS refuses a closed loopback port in connect(2) itself, which has its own name.
+      // macOS refuses a closed loopback port in connect(2) itself, which is a different error.
       expect(lines.filter(line => line.includes("downloading package manifest"))).toEqual([
         expect.stringMatching(/^warn: (ConnectionRefused|FailedToOpenSocket) downloading package manifest bar$/),
       ]);
@@ -1055,7 +1056,7 @@ describe.concurrent("backoff", () => {
     }
 
     // A lower limit leaves the held manifests waiting for one that is never sent, until the server drops them.
-    it("stays as it is after one dropped connection", async () => {
+    it("isn't changed by one dropped connection", async () => {
       expect(await peakAfter(1, 8)).toEqual([
         "warn: ConnectionClosed downloading package manifest bar. Retry 1/5 in 1ms...",
       ]);
@@ -1340,7 +1341,7 @@ describe.concurrent("a failed download that several dependencies share", () => {
         errorLines = lines.filter(line => line.startsWith("error:"));
         return {
           errors: errorLines.length,
-          // Not the ones about peers.
+          // Excludes the ones about peers.
           warnings: lines.filter(line => line.startsWith("warn: GET ")).length,
           failed: out.includes("Failed to install"),
           exitCode,
@@ -1474,8 +1475,8 @@ describe.concurrent("a failed download that several dependencies share", () => {
     expect(await p.install(root)).toEqual(leftOut);
   });
 
-  // What a peer needs is the copy the tree gives it, which is not always the one it resolved to:
-  // a dependency of the root provides a peer whatever its version.
+  // A peer needs the copy that the tree gives it, which isn't always the one that it resolved to. A dependency of the
+  // root provides a peer regardless of its version.
   describe("hoisted: a peer that is served the root's version", () => {
     const packages = [
       baz,

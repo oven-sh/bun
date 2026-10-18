@@ -3540,21 +3540,30 @@ fn get_or_put_resolved_package(
             };
             let manifest: &Npm::PackageManifest = manifest;
 
+            let peer_ranges = if install_peer && behavior.is_peer() && !version_was_replaced {
+                ranges_of_every_asker(this, dependency, dependency_id)
+            } else {
+                Vec::new()
+            };
             let version_result: Npm::FindVersionResult = if latest_for_target {
                 manifest.find_by_dist_tag_with_filter(
                     b"latest",
                     this.options.minimum_release_age_ms,
                     this.options.minimum_release_age_excludes,
                 )
-            } else if let Some(shared) =
-                (install_peer && behavior.is_peer() && !version_was_replaced)
-                    .then(|| version_every_peer_accepts(this, manifest, dependency, dependency_id))
-                    .flatten()
-            {
+            } else if let Some(shared) = version_every_peer_accepts(this, manifest, &peer_ranges) {
                 shared
             } else if install_peer
                 && behavior.is_peer()
                 && let Some(id) = installed_peer_target(this, name_hash, version, dependency_id)
+                    .or_else(|| {
+                        installed_version_in_any_range(
+                            &this.lockfile,
+                            name_hash,
+                            dependency_id,
+                            &peer_ranges,
+                        )
+                    })
             {
                 return bind_existing(this, dependency_id, id, success_fn);
             } else {
@@ -4044,6 +4053,29 @@ fn installed_version_in_ranges(
     })
 }
 
+/// No version satisfies every range in `ranges`, and no installed version satisfies `row`. Returns
+/// the highest installed version that satisfies one of the other ranges.
+///
+/// pnpm installs nothing in this case. A second version would often end up at the top of a hoisted
+/// `node_modules`, where it splits packages that have to share one copy, like `type-graphql` and its
+/// helpers with `graphql`. So `row` shares the copy that's already used as a peer, out of range.
+fn installed_version_in_any_range(
+    lockfile: &Lockfile::Lockfile,
+    name_hash: PackageNameHash,
+    row: DependencyID,
+    ranges: &[dependency::Version],
+) -> Option<PackageID> {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let resolutions = lockfile.packages.items_resolution();
+    let shared = (lockfile.packages_named(name_hash).iter().copied()).find(|&id| {
+        let resolution = &resolutions[id as usize];
+        resolution.tag == ResolutionTag::Npm
+            && (ranges.iter())
+                .any(|range| (range.npm().version).satisfies(resolution.npm().version, buf, buf))
+    })?;
+    (!would_revive_leftover(lockfile, row, shared)).then_some(shared)
+}
+
 /// Returns the package that `row`'s owner, or the nearest package above it, loads under this name. As
 /// in pnpm, the peer uses that package even if its version is out of range:
 /// - Every library under a workspace that depends on `react@17` uses `react@17`.
@@ -4279,22 +4311,16 @@ fn ranges_of_every_asker(
     ranges
 }
 
-/// Returns the newest version that satisfies every range from `ranges_of_every_asker`. Returns
-/// `None` if the range of `row` alone should decide.
+/// Returns the newest version that satisfies every range in `ranges`, which come from
+/// `ranges_of_every_asker`.
 fn version_every_peer_accepts<'m>(
     this: &PackageManager,
     manifest: &'m Npm::PackageManifest,
-    peer: &Dependency,
-    row: DependencyID,
+    ranges: &[dependency::Version],
 ) -> Option<Npm::FindVersionResult<'m>> {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
-    let ranges = ranges_of_every_asker(this, peer, row);
-    if ranges.is_empty() {
-        return None;
-    }
-
     let mut best: Option<(Semver::Version, Npm::FindVersionResult<'m>)> = None;
-    for range in &ranges {
+    for range in ranges {
         let found = manifest.find_for_dependency(
             range,
             buf,

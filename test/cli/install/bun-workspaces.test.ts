@@ -318,8 +318,8 @@ test.concurrent("a negative workspace pattern does not remove a member listed by
   expect(Object.values(parseLockfile(packageDir).workspace_paths)).toEqual(["packages/pkg1"]);
 });
 
-// Only a root directory of its own can hold a `/package.json`: a chroot in a private user and mount namespace.
-// Skipped where those are turned off, as in most containers.
+// A `/package.json` is only possible with a private root directory: a chroot in a private user and mount namespace.
+// Skipped where those are disabled, like in most containers.
 const canChangeRoot =
   isLinux &&
   Bun.which("unshare") !== null &&
@@ -638,7 +638,7 @@ describe.concurrent("dist-tag on the name of a workspace that the registry does 
   });
 
   test.each(["", "linkWorkspacePackages = false\n"])(
-    "a tag that the registry's package of the name lacks, with %j in bunfig.toml",
+    "a tag that the registry's package with that name doesn't have, with %j in bunfig.toml",
     async bunfig => {
       using repo = project({ dependencies: { sib: "beta" } }, undefined, bunfig, true);
       expect(await repo.bun("install")).toEqual({ errors: [], exitCode: 0, requests: ["/sib"] });
@@ -646,8 +646,8 @@ describe.concurrent("dist-tag on the name of a workspace that the registry does 
   );
 });
 
-// What the command installs and locks is what a clean install of the package.json it wrote gives.
-// The installed registry package has the same name and version as the new workspace.
+// The command installs and locks the same thing as a clean install of the package.json that it wrote. The installed
+// registry package has the same name and version as the new workspace.
 test.concurrent.each(["hoisted", "isolated"])(
   "links a new workspace that has the same name and version as an installed package (%s)",
   async linker => {
@@ -2196,7 +2196,7 @@ describe.each(["hoisted", "isolated"])("the root package by its name (%s)", link
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("a member of that name comes first", async () => {
+  test.concurrent("a workspace with that name comes first", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -4189,7 +4189,7 @@ for (const linker of ["hoisted", "isolated"]) {
   test.concurrent.skipIf(isWindows)(`workspace globs match a symlinked member directory (${linker})`, async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
-    // Its own version of no-deps goes into its own node_modules, behind the link.
+    // Its own version of no-deps is installed in its own node_modules, behind the link.
     const member = { name: "s", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } };
     await Promise.all([
       write(
@@ -4431,7 +4431,7 @@ describe("a workspace outside the project", () => {
   });
 });
 
-describe.skipIf(isWindows)("in a member that is a link to a folder elsewhere", () => {
+describe.skipIf(isWindows)("in a workspace that's a link to a folder somewhere else", () => {
   /** `cwd` and `pwd` are relative to the directory that holds `repo` and `other`. */
   async function install(cwd: string, pwd: string) {
     using ctx = await setupTest();
@@ -4849,7 +4849,7 @@ describe("links of a renamed or removed workspace", () => {
 
   // The isolated linker only links the workspaces the root depends on, so nothing is
   // ever linked for `a` here and the directory under its name is not bun's to remove.
-  test.concurrent("a directory under the old name is left alone", async () => {
+  test.concurrent("a directory under the old name isn't touched", async () => {
     using ctx = await setupTest();
     const { packageDir } = ctx;
     const rootNodeModules = join(packageDir, "node_modules");
@@ -4981,7 +4981,7 @@ describe("aliased project root", () => {
         expect({ linker, exitCode }).toEqual({ linker, exitCode: 0 });
 
         const lockfile = await file(join(packageDir, "ws", "bun.lock")).text();
-        // workspace keys must stay relative, never the machine-absolute realpath
+        // Workspace keys have to stay relative. They're never the absolute real path on this machine.
         expect(lockfile).toContain('"packages/a"');
         expect(lockfile).not.toContain(packageDir.replaceAll("\\", "/"));
         expect(await exists(join(packageDir, "ws", "node_modules", "pkg-a", "package.json"))).toBe(true);
@@ -5138,7 +5138,7 @@ describe("the git and github dependencies that bun.lock has already resolved", (
     await run(cwd, env, "install", "--linker=isolated");
     expect(requests).toBe(afterFirstInstall);
 
-    // Nothing is fetched to resolve the row, so the linker is the one to clone and check out.
+    // Nothing is fetched to resolve the dependency, so the linker has to clone and check out.
     await Promise.all(
       ["node_modules", "packages/a/node_modules", ".bun-cache"].map(path =>
         rm(join(cwd, path), { recursive: true, force: true }),

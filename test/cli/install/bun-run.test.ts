@@ -748,7 +748,7 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     });
 
-    // What is not a workspace flag of this `npm run`, or cannot be told, stays where it is.
+    // Anything that isn't a workspace flag of this `npm run`, or that's ambiguous, is left where it is.
     it.each([
       "npm run greet -- -w app",
       "npm run greet -w --if-present",

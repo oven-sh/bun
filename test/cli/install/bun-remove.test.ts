@@ -511,7 +511,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
         expect(exitCode).toBe(0);
       }
 
-      // The global bin dir can be a folder like ~/.local/bin, where a dead link is somebody else's business.
+      // The global bin directory can be a folder like ~/.local/bin, where a dead link may belong to another tool.
       const foreign = isWindows ? [] : ["foreign-absolute", "foreign-relative"];
       if (!isWindows) {
         symlinkSync(join(String(dir), "gone", "cli.js"), join(globalBin, "foreign-absolute"));
@@ -559,7 +559,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
     }
     expect(join(globalBin, "serve")).toBeValidBin(serveOf("second"));
 
-    // As long as both are installed, the one named last keeps the name.
+    // As long as both are installed, the one that was added last keeps the name.
     for (const [name, bins, owner] of [
       ["what-bin", ["serve"], "second"],
       ["second", ["serve"], "first"],
@@ -595,7 +595,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
 }
 
 // https://github.com/oven-sh/bun/issues/9351, https://github.com/oven-sh/bun/issues/7215
-it.concurrent("bun remove keeps the order of the keys that stay", async () => {
+it.concurrent("bun remove keeps the order of the remaining keys", async () => {
   const manifest = (groups: Record<string, unknown>) =>
     JSON.stringify(
       {
@@ -663,7 +663,7 @@ it.concurrent("bun remove of a package that is not declared does not write packa
 
 // A path has no package name. The folder removed for it used to be `node_modules/` + "".
 it.concurrent.each(["../src", "./bar", "file:./bar"])(
-  "bun remove foo %s removes foo and leaves the rest of node_modules alone",
+  "bun remove foo %s removes foo and doesn't touch the rest of node_modules",
   async path => {
     using dir = tempDir("bun-remove-path", {
       ...local("foo"),
@@ -839,7 +839,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
         "packages/a/package.json": JSON.stringify({ name: "a", dependencies: { foo: "npm:bar@1" } }),
         "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { foo: "^1" } }),
       });
-      // What `import "foo"` in packages/a finds.
+      // Returns what `import "foo"` in packages/a finds.
       const fooOfA = async () => {
         for (const from of [join(String(dir), "packages", "a"), String(dir)]) {
           const manifest = file(join(from, "node_modules", "foo", "package.json"));
@@ -874,7 +874,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
     expect(exitCode).toBe(0);
   });
 
-  // The hoisted linker has `b` at the top for `a`. The isolated linker has it there for the project only.
+  // The hoisted linker has `b` at the top for `a`. The isolated linker only has it there for the project.
   it.concurrent(`bun remove of a package that another dependency still needs (${linker})`, async () => {
     await using registry = serveAnyPackage({ a: { dependencies: { b: "1.0.0" } } });
     using dir = tempDir(`bun-remove-still-needed-${linker}`, {
@@ -898,7 +898,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
       "packages/w/package.json": JSON.stringify({ name: "w", dependencies: { b: "1.0.0", c: "1.0.0" } }),
     });
     const workspace = join(String(dir), "packages", "w");
-    // Where `import` in packages/w looks.
+    // The folders that `import` in packages/w searches.
     const found = (name: string) => [workspace, String(dir)].some(from => existsSync(join(from, "node_modules", name)));
     expect(await run(String(dir), "install")).toMatchObject({ exitCode: 0 });
     expect([found("b"), found("c")]).toEqual([true, true]);

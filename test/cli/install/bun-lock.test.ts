@@ -4381,7 +4381,8 @@ it.each<OrderedShape>([
     z: { "z": "z@1.0.0" },
   },
   {
-    // No version satisfies both, and neither package is above the other, so each one gets a version in its own range.
+    // No version satisfies both, so they share one copy. The first package in declaration order decides which one, not
+    // the first manifest to arrive.
     shape: "a peers z@^1.0.0 next to b peers z@^2.0.0",
     manifests: {
       a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
@@ -4393,7 +4394,7 @@ it.each<OrderedShape>([
       "a's manifest last": [{ manifest: "a", until: "/b" }],
       "b's manifest last": [{ manifest: "b", until: "/a-1.0.0.tgz" }],
     },
-    z: { "z": "z@1.1.0", "b/z": "z@2.0.0" },
+    z: { "z": "z@1.1.0" },
   },
   {
     // m is itself installed as a peer, so its range may not be known yet when z is first picked. Once it is, all three

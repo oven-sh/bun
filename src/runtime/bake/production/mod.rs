@@ -570,6 +570,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 .collect(),
             style: fsr.style,
             allow_layouts: fsr.allow_layouts,
+            client_pages: fsr.client_pages,
             server_file: OpaqueFileId::init(server_file.get()),
             client_file: client_file.map(|f| OpaqueFileId::init(f.get())),
             server_file_string: bun_jsc::StrongOptional::empty(),

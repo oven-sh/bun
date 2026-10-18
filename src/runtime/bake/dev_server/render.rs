@@ -594,6 +594,12 @@ impl DevServer {
             }
         }
 
+        let route_page_files = match &route_bundle.data {
+            route_bundle::Data::Framework(fw) => Some(self.client_page_files(fw.route_index)),
+            route_bundle::Data::Html(_) => None,
+        }
+        .filter(|files| files.page.is_some() || !files.layouts.is_empty());
+
         let client_file: Option<incremental_graph::ClientFileIndex> = match &route_bundle.data {
             route_bundle::Data::Framework(fw) => {
                 let type_idx = self.router.route_ptr(fw.route_index).r#type;
@@ -642,6 +648,7 @@ impl DevServer {
                     react_refresh_entry_point: react_fast_refresh_id,
                     script_id,
                     console_log: self.should_receive_console_log_from_browser(),
+                    route_page_files: route_page_files.as_ref(),
                 })?;
         Ok(client_bundle)
     }

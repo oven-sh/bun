@@ -55,6 +55,10 @@ pub(crate) struct FileSystemRouterType {
     pub(crate) extensions: Vec<Utf8Bytes<'static>>,
     pub(crate) style: router::Style,
     pub(crate) allow_layouts: bool,
+    /// The page and layout files also run in the browser: the dev server adds them to the client
+    /// graph, and the client entry gets them from `route` of `bun:bake/client`. For a renderer that
+    /// hydrates the server's HTML without server components (the default React renderer of `bun bake`).
+    pub(crate) client_pages: bool,
 }
 
 /// A "Framework" is simply a set of bundler options that a framework author
@@ -526,6 +530,7 @@ impl Framework {
                     extensions,
                     ignore_dirs,
                     allow_layouts: layouts,
+                    client_pages: false,
                 });
                 i += 1;
             }

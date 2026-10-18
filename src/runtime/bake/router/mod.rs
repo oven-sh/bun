@@ -140,6 +140,8 @@ pub(crate) struct Type {
     pub(crate) extensions: Box<[Box<[u8]>]>,
     pub(crate) style: Style,
     pub(crate) allow_layouts: bool,
+    /// `FrameworkRouter` itself does not use this value. See `FileSystemRouterType::client_pages`.
+    pub(crate) client_pages: bool,
     /// `FrameworkRouter` itself does not use this value.
     pub(crate) client_file: OpaqueFileIdOptional,
     /// `FrameworkRouter` itself does not use this value.
@@ -160,6 +162,7 @@ impl Default for Type {
             extensions: Box::default(),
             style: Style::NextjsPages,
             allow_layouts: false,
+            client_pages: false,
             client_file: None,
             server_file: OpaqueFileId::init(0),
             server_file_string: StrongOptional::empty(),

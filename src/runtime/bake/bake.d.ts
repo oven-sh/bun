@@ -602,6 +602,16 @@ declare module "bun:bake/client" {
    * Only one callback can be set. This function overwrites the previous one.
    */
   export function onServerSideReload(cb: () => void | Promise<void>): Promise<void>;
+
+  /**
+   * For a router whose pages also run in the browser (the default React renderer of `bun bake`):
+   * loads the page and the layouts (inner-most first) of the route the page is on. `null` for
+   * any other router.
+   */
+  export const route: null | {
+    page(): Promise<any | null>;
+    layouts(): Promise<any[]>;
+  };
 }
 
 /** Available during development */

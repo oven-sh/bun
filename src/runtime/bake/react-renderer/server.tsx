@@ -39,6 +39,12 @@ export async function render(request: Request, meta: RouteMetadata): Promise<Res
       </head>
       <body>
         <div id="root">{element}</div>
+        {/* `client.tsx` reads the params from here, to hydrate the same tree. */}
+        <script
+          id="__bun_bake_params"
+          type="application/json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(params).replaceAll("<", "\\u003c") }}
+        />
         {meta.modules.map(src => (
           <script key={src} type="module" src={src} />
         ))}

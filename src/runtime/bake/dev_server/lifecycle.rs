@@ -499,6 +499,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                     .collect(),
                 style: fsr.style,
                 allow_layouts: fsr.allow_layouts,
+                client_pages: fsr.client_pages,
                 server_file: to_opaque_file_id::<{ bake::Side::Server }>(server_file),
                 client_file: if let Some(client) = &fsr.entry_client {
                     Some(to_opaque_file_id::<{ bake::Side::Client }>(

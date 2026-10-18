@@ -2,7 +2,7 @@
 //! `filter_suppressions_that_affect_function` (`react_compiler/entrypoint/suppression.rs`).
 //!
 //! The comments are found where the source is read: `js_parser/lexer.rs` for `bun build`, which then asks this in
-//! `P::enter_react_compiler_candidate`, and `lint/react_compiler/suppression.rs` for `bun lint`.
+//! `P::has_react_hooks_suppression`, and `lint/react_compiler/suppression.rs` for `bun lint`.
 
 /// Whether the suppression is within the function or wraps it.
 ///

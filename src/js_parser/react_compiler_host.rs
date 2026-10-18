@@ -243,6 +243,9 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
             return true;
         }
         // A function without its end on record was left before the lexer met the first of the comments.
+        if self.react_compiler_fn_spans.is_empty() {
+            return false;
+        }
         let Some(span) = self.react_compiler_fn_spans.get(&body_loc.start) else {
             return false;
         };

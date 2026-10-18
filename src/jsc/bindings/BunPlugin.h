@@ -103,6 +103,28 @@ public:
             WTF::UncheckedKeyHashSet<String> waitingModules;
         };
         Vector<RunningModuleMock> runningModuleMocks = {};
+        // See waitForTurn().
+        struct WaitingModuleMock {
+            JSC::Strong<JSC::JSObject> mock;
+            JSC::Strong<JSC::JSObject> turn;
+            // The module at the top of the load that asked for the mock, and the mock's place in that load. 0 until the load has fetched all it can.
+            String load;
+            unsigned rank { 0 };
+        };
+        Vector<WaitingModuleMock> waitingModuleMocks = {};
+        struct ModuleMockWithTurn {
+            JSC::Strong<JSC::JSObject> mock;
+            String load;
+        };
+        Vector<ModuleMockWithTurn> moduleMocksWithTurn = {};
+        // Reactions that giveTurns() left behind carry the number it had then, and do nothing if it has moved on.
+        unsigned turnsGiven = 0;
+        bool willGiveTurns = false;
+        // Since the waiting mocks were ranked, a module has left the registry, so a load may be fetching it again, or another load asks for one of them.
+        bool ranksAreStale = false;
+        WTF::UncheckedKeyHashSet<String> modulesGivenTimeToRequestImports = {};
+        // The first module of each load that import() or a factory started, oldest first.
+        WTF::ListHashSet<String> modulesAskedFor = {};
         // Preload mocks that the running test file replaced or removed. Restored when the file ends.
         Vector<JSC::Strong<JSC::JSObject>> displacedPreloadModuleMocks = {};
         // Modules a preload loaded that the running test file evicted. Restored when the file ends.
@@ -145,6 +167,10 @@ public:
             mustDoExpensiveRelativeLookup = false;
             displacedPreloadModuleMocks.clear();
             runningModuleMocks.clear();
+            waitingModuleMocks.clear();
+            moduleMocksWithTurn.clear();
+            modulesGivenTimeToRequestImports.clear();
+            modulesAskedFor.clear();
             moduleMocksBeingLoaded.clear();
             loadedByImportActual.clear();
         }

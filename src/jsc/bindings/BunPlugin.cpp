@@ -722,6 +722,7 @@ static ExportVariable findExportVariable(JSC::JSGlobalObject* globalObject, JSC:
 
 static JSC::JSPromise* importModuleKey(Zig::GlobalObject* globalObject, const String& key)
 {
+    globalObject->onLoadPlugins.modulesAskedFor.add(key);
     return Bun::testFileModuleLoader(globalObject)->loadModule(globalObject, JSC::Identifier::fromString(globalObject->vm(), key), nullptr, nullptr, { JSC::ModuleLoadFlag::Evaluate, JSC::ModuleLoadFlag::Dynamic });
 }
 
@@ -916,11 +917,18 @@ static BunPlugin::OnLoad::RunningModuleMock* findRunningModuleMock(Zig::GlobalOb
     return nullptr;
 }
 
-static void addToImportChain(BunPlugin::OnLoad::RunningModuleMock& running, const String& key)
+static void giveTurnsSoon(Zig::GlobalObject*);
+
+static void addToImportChain(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::RunningModuleMock& running, const String& key)
 {
     running.importChain.add(key);
     if (size_t query = key.find('?'); query != notFound)
         running.importChainWithoutQuery.add(key.left(query));
+    // See giveTurns(). The load that now asks for it has to be fetched first.
+    if (globalObject->onLoadPlugins.waitingModuleMocks.containsIf([&](auto& waiting) { return uncheckedDowncast<JSModuleMock>(waiting.mock.get())->specifier->tryGetValue().data == key; })) [[unlikely]] {
+        globalObject->onLoadPlugins.ranksAreStale = true;
+        giveTurnsSoon(globalObject);
+    }
 }
 
 static String dependencyKeyOfModuleMock(JSC::JSGlobalObject* globalObject, JSModuleMock* mock)
@@ -938,6 +946,7 @@ static String dependencyKeyOfModuleMock(JSC::JSGlobalObject* globalObject, JSMod
 static JSC::JSPromise* thenWithContext(Zig::GlobalObject*, JSC::JSPromise*, JSC::NativeFunction onFulfilled, JSC::NativeFunction onRejected, JSValue context);
 static JSC::JSPromise* importOriginalModule(Zig::GlobalObject*, JSModuleMock*, bool mayLoadOthersFirst, const String& from);
 static String keyOfModuleThatDoesNotWait(Zig::GlobalObject*, BunPlugin::OnLoad::RunningModuleMock&, const String& key, const String& mocked);
+static void returnTurn(Zig::GlobalObject*, JSModuleMock*);
 
 // Asks `functor` about the modules that evaluating `start` would evaluate too, or find in the middle of it, until it returns true.
 template<typename Functor>
@@ -1074,14 +1083,14 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
 
     if (running) {
         key = keyOfModuleThatDoesNotWait(globalObject, *running, key, specifier);
-        addToImportChain(*running, key);
+        addToImportChain(globalObject, *running, key);
         // If another factory called vi.importActual(), it waits for the module too.
         for (JSObject* factory : factoriesInAsyncContext(globalObject)) {
             auto* asking = findRunningModuleMock(globalObject, uncheckedDowncast<JSModuleMock>(factory));
             if (!asking || asking == running)
                 continue;
             key = keyOfModuleThatDoesNotWait(globalObject, *asking, key, uncheckedDowncast<JSModuleMock>(factory)->specifier->tryGetValue().data);
-            addToImportChain(*asking, key);
+            addToImportChain(globalObject, *asking, key);
         }
     } else if (mayBeAnotherFactory)
         key = Bun::keyOfImportWhileModuleMocksRun(globalObject, key, from, true);
@@ -1118,7 +1127,7 @@ static JSValue requireOriginalModule(Zig::GlobalObject* globalObject, JSModuleMo
         return builtin;
     if (auto* running = findRunningModuleMock(globalObject, mock)) {
         keyOfModuleThatDoesNotWait(globalObject, *running, key, specifier);
-        addToImportChain(*running, key);
+        addToImportChain(globalObject, *running, key);
     }
     RELEASE_AND_RETURN(scope, requireModuleKey(globalObject, specifier, key));
 }
@@ -1240,7 +1249,7 @@ JSValue JSModuleMock::callFactory(Zig::GlobalObject* globalObject, bool synchron
     RETURN_IF_EXCEPTION(scope, {});
     if (auto* running = findRunningModuleMock(globalObject, this)) {
         keyOfModuleThatDoesNotWait(globalObject, *running, key, specifier->tryGetValue().data);
-        addToImportChain(*running, key);
+        addToImportChain(globalObject, *running, key);
     }
 
     if (synchronous) {
@@ -1267,6 +1276,7 @@ static Vector<String> stopRunning(Zig::GlobalObject* globalObject, JSModuleMock*
 static void didStopRunning(Zig::GlobalObject* globalObject, JSModuleMock* mock)
 {
     evictModulesAndTheirImporters(globalObject, stopRunning(globalObject, mock));
+    returnTurn(globalObject, mock);
 }
 
 void JSModuleMock::didFail(Zig::GlobalObject* globalObject, JSValue error)
@@ -1282,8 +1292,7 @@ void JSModuleMock::abandon(Zig::GlobalObject* globalObject)
 {
     state = State::NotCalled;
     result.clear();
-    for (auto& module : stopRunning(globalObject, this))
-        globalObject->onLoadPlugins.modulesToEvictOnceLoaded.add(module);
+    detach(globalObject);
 }
 
 void JSModuleMock::giveUp(Zig::GlobalObject* globalObject)
@@ -1299,6 +1308,7 @@ void JSModuleMock::detach(Zig::GlobalObject* globalObject)
 {
     for (auto& module : stopRunning(globalObject, this))
         globalObject->onLoadPlugins.modulesToEvictOnceLoaded.add(module);
+    returnTurn(globalObject, this);
 }
 
 static bool readsExportsOfModule(JSC::JSGlobalObject* globalObject, JSObject* object, const String& key, UncheckedKeyHashSet<JSObject*>& seen)
@@ -1510,109 +1520,237 @@ static bool isBeingFetchedWithoutFactory(Zig::GlobalObject* globalObject, JSC::M
     return !mock || mock->state == JSModuleMock::State::Settled || (mock->state == JSModuleMock::State::NotCalled && mock->importsOriginal);
 }
 
-static void appendImportsOf(JSC::AbstractModuleRecord* record, Vector<UniquedStringImpl*>& imports)
-{
-    for (auto& resolved : record->resolvedRequests().values())
-        imports.append(resolved.get());
-    for (auto& loaded : record->loadedModules().values())
-        imports.append(loaded.m_module->moduleKey().impl());
-}
+JSC_DECLARE_HOST_FUNCTION(jsFunctionGiveTurnsToModuleMocks);
 
-// `fetches`[0] is a JSSet of the registry entries visited so far. The rest are the visited entries whose fetch is still awaited.
-__attribute__((minsize)) static bool comesBy(Zig::GlobalObject* globalObject, JSC::JSArray* fetches, JSC::ModuleRegistryEntry* entry, bool remembers = true)
-{
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    auto* comeBy = uncheckedDowncast<JSC::JSSet>(fetches->getIndexQuickly(0).asCell());
-    bool has = comeBy->has(globalObject, entry);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (has)
-        return false;
-    if (remembers) {
-        comeBy->add(globalObject, entry);
-        RETURN_IF_EXCEPTION(scope, false);
-    }
-    return true;
-}
-
-static void followImports(Zig::GlobalObject* globalObject, JSC::JSArray* fetches, JSC::ModuleRegistryEntry* start)
+static void giveTurnsAfter(Zig::GlobalObject* globalObject, JSC::JSPromise* promise)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* loader = Bun::testFileModuleLoader(globalObject);
-    Vector<JSC::ModuleRegistryEntry*> work { start };
-    Vector<UniquedStringImpl*> imports;
-    while (!work.isEmpty()) {
-        auto* entry = work.takeLast();
-        if (!entry->record()) {
-            if (isBeingFetchedWithoutFactory(globalObject, entry)) {
-                fetches->push(globalObject, entry);
-                RETURN_IF_EXCEPTION(scope, );
-            }
-            continue;
-        }
-        if (entry->isLoaded())
-            continue;
-        imports.shrink(0);
-        appendImportsOf(entry->record(), imports);
-        for (auto* key : imports) {
-            auto* imported = loader->registryEntry(JSC::Identifier::fromUid(vm, key));
-            bool isNew = imported && comesBy(globalObject, fetches, imported);
-            RETURN_IF_EXCEPTION(scope, );
-            if (isNew)
-                work.append(imported);
-        }
+    if (!promise) {
+        promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+        promise->fulfill(vm, jsUndefined());
     }
+    thenWithContext(globalObject, promise, jsFunctionGiveTurnsToModuleMocks, jsFunctionGiveTurnsToModuleMocks, jsNumber(globalObject->onLoadPlugins.turnsGiven));
 }
 
-static void followImporters(Zig::GlobalObject* globalObject, JSC::JSArray* fetches, const String& mocked)
+// Finds the load each waiting mock belongs to. Once a load has fetched all it can without a factory, ranks its mocks in the order
+// their modules would be evaluated, which is the order Vitest calls the factories in. isWaitingForModule() then sees the whole graph.
+// Fetches of other loads aren't waited for, because those may never end.
+__attribute__((minsize)) static void rankWaitingModuleMocks(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& plugins = globalObject->onLoadPlugins;
     auto* loader = Bun::testFileModuleLoader(globalObject);
 
-    UncheckedKeyHashMap<UniquedStringImpl*, Vector<JSC::ModuleRegistryEntry*>> importersOf;
-    Vector<UniquedStringImpl*> imports;
-    for (auto& entry : loader->moduleMap().values()) {
-        if (!entry->record() || entry->isLoaded())
-            continue;
-        imports.shrink(0);
-        appendImportsOf(entry->record(), imports);
-        for (auto* key : imports)
-            importersOf.add(key, Vector<JSC::ModuleRegistryEntry*>()).iterator->value.append(entry.get());
+    Vector<JSC::Identifier> keys;
+    UncheckedKeyHashMap<UniquedStringImpl*, size_t> indexOf;
+    for (size_t i = 0; i < plugins.waitingModuleMocks.size(); ++i) {
+        plugins.waitingModuleMocks[i].rank = 0;
+        plugins.waitingModuleMocks[i].load = String();
+        keys.append(JSC::Identifier::fromString(vm, uncheckedDowncast<JSModuleMock>(plugins.waitingModuleMocks[i].mock.get())->specifier->tryGetValue().data));
+        indexOf.add(keys.last().impl(), i);
+    }
+    UncheckedKeyHashMap<UniquedStringImpl*, size_t> holderOf;
+    for (size_t i = 0; i < plugins.moduleMocksWithTurn.size(); ++i) {
+        keys.append(JSC::Identifier::fromString(vm, uncheckedDowncast<JSModuleMock>(plugins.moduleMocksWithTurn[i].mock.get())->specifier->tryGetValue().data));
+        holderOf.add(keys.last().impl(), i);
     }
 
-    UncheckedKeyHashSet<UniquedStringImpl*> seen;
-    Vector<UniquedStringImpl*> work { JSC::Identifier::fromString(vm, mocked).impl() };
-    while (!work.isEmpty()) {
-        auto importers = importersOf.find(work.takeLast());
-        if (importers == importersOf.end())
+    auto unfinishedRecord = [&](JSC::ModuleRegistryEntry* entry) -> JSC::CyclicModuleRecord* {
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
+        return cyclic && !cyclic->isSCCEvaluated() ? cyclic : nullptr;
+    };
+    auto importOf = [&](JSC::AbstractModuleRecord* record, const JSC::AbstractModuleRecord::ModuleRequest& request) -> UniquedStringImpl* {
+        JSC::ModuleMapKey key { request.m_specifier.impl(), request.type() };
+        if (auto* resolved = record->resolvedRequests().get(key))
+            return resolved;
+        auto loaded = record->loadedModules().find(key);
+        return loaded == record->loadedModules().end() ? nullptr : loaded->value.m_module->moduleKey().impl();
+    };
+
+    // A load starts at a module that nothing unfinished imports. If its imports lead back to it, at the module that was asked for.
+    UncheckedKeyHashSet<UniquedStringImpl*> imported;
+    Vector<UniquedStringImpl*> loads;
+    for (auto& [key, entry] : loader->moduleMap()) {
+        auto* record = unfinishedRecord(entry.get());
+        if (!record)
             continue;
-        for (auto* importer : importers->value) {
-            if (!seen.add(importer->key().impl()).isNewEntry)
-                continue;
-            work.append(importer->key().impl());
-            bool isNew = comesBy(globalObject, fetches, importer);
-            RETURN_IF_EXCEPTION(scope, );
-            if (!isNew)
-                continue;
-            followImports(globalObject, fetches, importer);
-            RETURN_IF_EXCEPTION(scope, );
+        loads.append(key.first);
+        for (auto& request : record->requestedModules()) {
+            if (auto* import = importOf(record, request))
+                imported.add(import);
         }
     }
-}
-
-static bool isFetchingAnythingElse(Zig::GlobalObject* globalObject, JSC::JSArray* fetches)
-{
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    for (auto& entry : Bun::testFileModuleLoader(globalObject)->moduleMap().values()) {
-        if (!isBeingFetchedWithoutFactory(globalObject, entry.get()))
-            continue;
-        bool isNew = !fetches || comesBy(globalObject, fetches, entry.get(), false);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (isNew)
+    loads.removeAllMatching([&](auto* key) { return imported.contains(key); });
+    std::ranges::sort(loads, [](auto* a, auto* b) { return WTF::codePointCompareLessThan(String(a), String(b)); });
+    plugins.modulesAskedFor.removeIf([&](const String& key) {
+        auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key));
+        if (!entry || (entry->record() && !unfinishedRecord(entry)))
             return true;
+        if (entry->record())
+            loads.append(entry->key().impl());
+        return false;
+    });
+
+    // Loads that share a module count as one: a factory's import of a module of the load that called it, for one.
+    Vector<unsigned> mergedInto;
+    auto merged = [&](unsigned load) {
+        while (mergedInto[load] != load)
+            load = mergedInto[load];
+        return load;
+    };
+    UncheckedKeyHashMap<UniquedStringImpl*, unsigned> seen;
+    Vector<std::pair<JSC::CyclicModuleRecord*, size_t>> stack;
+    Vector<std::pair<size_t, unsigned>> found, holders;
+    Vector<bool> isBeingFetched;
+    for (unsigned load = 0; load < loads.size(); ++load) {
+        mergedInto.append(load);
+        isBeingFetched.append(false);
+        JSC::JSPromise* fetch = nullptr;
+        bool needsTime = false;
+        auto enter = [&](UniquedStringImpl* key) {
+            if (auto added = seen.add(key, load); !added.isNewEntry) {
+                auto [earlier, later] = std::minmax(merged(added.iterator->value), merged(load));
+                mergedInto[later] = earlier;
+                return;
+            }
+            if (auto index = indexOf.find(key); index != indexOf.end()) {
+                found.append({ index->value, load });
+                return;
+            }
+            if (auto holder = holderOf.find(key); holder != holderOf.end())
+                holders.append({ holder->value, load });
+            auto* entry = loader->registryEntry(JSC::Identifier::fromUid(vm, key));
+            if (!entry)
+                return;
+            if (auto* record = unfinishedRecord(entry))
+                stack.append({ record, 0 });
+            else if (!fetch && isBeingFetchedWithoutFactory(globalObject, entry))
+                fetch = entry->ensureModulePromise(globalObject);
+        };
+        enter(loads[load]);
+        while (!stack.isEmpty()) {
+            auto [record, next] = stack.last();
+            if (next == record->requestedModules().size()) {
+                stack.removeLast();
+                continue;
+            }
+            stack.last().second++;
+            if (auto* import = importOf(record, record->requestedModules()[next]))
+                enter(import);
+            // The loader requests a module's imports in a microtask that is already queued. If the load has failed, it never will.
+            else if (plugins.modulesGivenTimeToRequestImports.add(record->moduleKey().string()).isNewEntry)
+                needsTime = true;
+        }
+        if (fetch || needsTime) {
+            isBeingFetched[load] = true;
+            giveTurnsAfter(globalObject, fetch);
+        }
     }
-    return false;
+    for (unsigned load = 0; load < loads.size(); ++load) {
+        if (isBeingFetched[load])
+            isBeingFetched[merged(load)] = true;
+    }
+    for (auto [holder, load] : holders)
+        plugins.moduleMocksWithTurn[holder].load = String(loads[merged(load)]);
+    unsigned rank = 0;
+    for (auto [index, load] : found) {
+        if (isBeingFetched[merged(load)])
+            continue;
+        plugins.waitingModuleMocks[index].rank = ++rank;
+        plugins.waitingModuleMocks[index].load = String(loads[merged(load)]);
+    }
+
+    // Nothing unfinished imports these: import() asked for them.
+    for (auto& [key, index] : indexOf) {
+        if (seen.contains(key))
+            continue;
+        plugins.waitingModuleMocks[index].rank = 1;
+        plugins.waitingModuleMocks[index].load = String(key);
+    }
+}
+
+static void giveTurns(Zig::GlobalObject* globalObject)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    plugins.turnsGiven++;
+    if (plugins.waitingModuleMocks.isEmpty())
+        return;
+    if (std::exchange(plugins.ranksAreStale, false) || plugins.waitingModuleMocks.containsIf([](auto& waiting) { return !waiting.rank; }))
+        rankWaitingModuleMocks(globalObject);
+    auto hasToWait = [&](auto& waiting) {
+        String specifier = uncheckedDowncast<JSModuleMock>(waiting.mock.get())->specifier->tryGetValue().data;
+        return plugins.moduleMocksWithTurn.containsIf([&](auto& other) {
+            if (other.load != waiting.load)
+                return false;
+            // A factory that waits for this module would never return its turn.
+            auto* running = findRunningModuleMock(globalObject, uncheckedDowncast<JSModuleMock>(other.mock.get()));
+            return !running || !running->importChain.contains(specifier);
+        });
+    };
+    while (true) {
+        size_t next = notFound;
+        for (size_t i = 0; i < plugins.waitingModuleMocks.size(); ++i) {
+            auto& waiting = plugins.waitingModuleMocks[i];
+            if (!waiting.rank || hasToWait(waiting))
+                continue;
+            if (next == notFound || (waiting.load == plugins.waitingModuleMocks[next].load && waiting.rank < plugins.waitingModuleMocks[next].rank))
+                next = i;
+        }
+        if (next == notFound)
+            return;
+        auto waiting = plugins.waitingModuleMocks[next];
+        plugins.waitingModuleMocks.removeAt(next);
+        plugins.moduleMocksWithTurn.append({ waiting.mock, waiting.load });
+        uncheckedDowncast<JSC::JSPromise>(waiting.turn.get())->fulfill(globalObject->vm(), jsUndefined());
+    }
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionGiveTurnsToModuleMocks, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& plugins = globalObject->onLoadPlugins;
+    if (callframe->argument(1).isUndefined())
+        plugins.willGiveTurns = false;
+    else if (callframe->argument(1).asNumber() != plugins.turnsGiven)
+        return JSValue::encode(jsUndefined());
+    giveTurns(globalObject);
+    return JSValue::encode(jsUndefined());
+}
+
+// From a microtask, so the mocks that the loader asks for next are waiting by then.
+static void giveTurnsSoon(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (std::exchange(globalObject->onLoadPlugins.willGiveTurns, true))
+        return;
+    JSC::JSPromise* fulfilled = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    fulfilled->fulfill(vm, jsUndefined());
+    thenWithContext(globalObject, fulfilled, jsFunctionGiveTurnsToModuleMocks, nullptr, jsUndefined());
+}
+
+static void returnTurn(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    if (globalObject->onLoadPlugins.moduleMocksWithTurn.removeFirstMatching([&](auto& other) { return other.mock.get() == mock; }))
+        giveTurns(globalObject);
+}
+
+// The factories that one load calls run one at a time, as in Vitest, and only once the load has fetched all it can without them.
+// So what a factory imports doesn't depend on how far another factory's imports have come, or on which module was fetched first.
+// Returns null if `mock` can call its factory now, else a promise that is fulfilled when it should ask again.
+static JSC::JSPromise* waitForTurn(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto& plugins = globalObject->onLoadPlugins;
+    if (plugins.moduleMocksWithTurn.containsIf([&](auto& other) { return other.mock.get() == mock; }))
+        return nullptr;
+    for (auto& waiting : plugins.waitingModuleMocks) {
+        if (waiting.mock.get() == mock)
+            return uncheckedDowncast<JSC::JSPromise>(waiting.turn.get());
+    }
+    JSC::JSPromise* turn = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    plugins.waitingModuleMocks.append({ JSC::Strong<JSC::JSObject> { vm, mock }, JSC::Strong<JSC::JSObject> { vm, turn }, String(), 0 });
+    giveTurnsSoon(globalObject);
+    return turn;
 }
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionRunModuleMockLater, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
@@ -1631,42 +1769,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionRunModuleMockLater, __attribu
     String specifier = mock->specifier->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Let the fetches of the mock's importers finish before calling the factory, so isWaitingForModule() sees their whole import graph.
-    // Fetches of unrelated loads aren't waited for, because those loads may never end.
-    bool callsFactory = isInUse && mock->state == JSModuleMock::State::NotCalled;
     auto& moduleMocksBeingLoaded = globalObject->onLoadPlugins.moduleMocksBeingLoaded;
-    auto* fetches = dynamicDowncast<JSC::JSArray>(waiting->getInternalField(1));
-    while (callsFactory) {
-        while (fetches && fetches->length() > 1) {
-            auto* entry = uncheckedDowncast<JSC::ModuleRegistryEntry>(fetches->pop(globalObject));
-            RETURN_IF_EXCEPTION(scope, {});
-            JSC::JSPromise* fetching = isBeingFetchedWithoutFactory(globalObject, entry) ? entry->ensureModulePromise(globalObject) : nullptr;
-            if (fetching && fetching->status() == JSC::JSPromise::Status::Pending) {
-                fetches->push(globalObject, entry);
-                RETURN_IF_EXCEPTION(scope, {});
-                JSValue later = callframe->jsCallee();
-                fetching->performPromiseThenWithContext(vm, globalObject, later, later, jsUndefined(), context);
-                return JSValue::encode(jsUndefined());
-            }
-            followImports(globalObject, fetches, entry);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        // The fetches that just finished may have revealed new importers of the mock.
-        bool isFetching = isFetchingAnythingElse(globalObject, fetches);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!isFetching)
-            break;
-        if (!fetches) {
-            fetches = JSC::constructEmptyArray(globalObject, nullptr);
-            RETURN_IF_EXCEPTION(scope, {});
-            fetches->push(globalObject, JSC::JSSet::create(vm, globalObject->setStructure()));
-            RETURN_IF_EXCEPTION(scope, {});
-            waiting->putInternalField(vm, 1, fetches);
-        }
-        followImporters(globalObject, fetches, specifier);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (fetches->length() == 1)
-            break;
+    if (JSC::JSPromise* turn = isInUse && mock->state == JSModuleMock::State::NotCalled ? waitForTurn(globalObject, mock) : nullptr) {
+        JSValue later = callframe->jsCallee();
+        turn->performPromiseThenWithContext(vm, globalObject, later, later, jsUndefined(), context);
+        return JSValue::encode(jsUndefined());
     }
 
     // Drop runModuleMock()'s entry, unless the factory already ran and the mock was replaced since (keepModuleMockOfLoadInFlight).
@@ -1674,6 +1781,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionRunModuleMockLater, __attribu
         moduleMocksBeingLoaded.remove(waiting);
 
     JSC::JSPromise* pending = isInUse ? mock->run(globalObject, false) : nullptr;
+    if (!findRunningModuleMock(globalObject, mock))
+        returnTurn(globalObject, mock);
     if (scope.exception()) [[unlikely]]
         settled->rejectWithCaughtException(vm, scope);
     else if (pending)
@@ -2179,6 +2288,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             giveLoadedModuleBackToPreloadModuleMock(globalObject, key);
             keepPreloadModule(key, loader->getRegisteredMayBeNull(identifier, JSC::ScriptFetchParameters::Type::JavaScript));
             loader->removeEntry(identifier);
+            plugins.ranksAreStale = true;
         }
         if (leavesRegistry) {
             plugins.moduleMocksBeingLoaded.remove(key);
@@ -3161,6 +3271,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
     plugins.testFile++;
     plugins.loadedByImportActual.clear();
     ModulesToEvict evict;
+    for (auto& waiting : std::exchange(plugins.waitingModuleMocks, {}))
+        evict.abandonedModules.append(uncheckedDowncast<JSModuleMock>(waiting.mock.get())->specifier->tryGetValue().data);
+    plugins.moduleMocksWithTurn.clear();
+    plugins.modulesGivenTimeToRequestImports.clear();
+    plugins.modulesAskedFor.clear();
     while (!plugins.runningModuleMocks.isEmpty()) {
         auto* mock = uncheckedDowncast<JSModuleMock>(plugins.runningModuleMocks.last().mock.get());
         evict.abandonedModules.append(mock->specifier->tryGetValue().data);
@@ -3353,6 +3468,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateModuleMockWithDependency, (JSC::JSGlo
     RELEASE_AND_RETURN(scope, JSValue::encode(evaluateModuleMock(defaultGlobalObject(globalObject), record, dependency)));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateModuleMockInTurn, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto [mock, context] = toModuleMockWith<JSC::InternalFieldTuple>(globalObject, scope, callframe->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* record = uncheckedDowncast<JSC::AbstractModuleRecord>(context->getInternalField(0));
+    auto* dependency = uncheckedDowncast<JSC::JSModuleNamespaceObject>(context->getInternalField(1));
+    JSValue evaluated = evaluateModuleMock(globalObject, record, dependency);
+    // The module may be another mock's by now, or nobody's.
+    if (!findRunningModuleMock(globalObject, mock))
+        returnTurn(globalObject, mock);
+    RELEASE_AND_RETURN(scope, JSValue::encode(evaluated));
+}
+
 // `evaluate(mock, original)` in the source that sourceCodeOfModuleMock() generates.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateModuleMock, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
@@ -3410,6 +3540,13 @@ __attribute__((minsize)) static JSValue evaluateModuleMock(Zig::GlobalObject* gl
     String wanted = dependencyKeyOfModuleMock(globalObject, mock);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // The generated module only awaits a mock that has a factory.
+    bool callsFactory = mock->state == JSModuleMock::State::NotCalled && mock->factory && mock->factory.get().isCallable();
+    if (JSC::JSPromise* turn = callsFactory ? waitForTurn(globalObject, mock) : nullptr) {
+        auto* context = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), record, dependency);
+        return thenWithContext(globalObject, turn, jsFunctionEvaluateModuleMockInTurn, nullptr, moduleMockWith(globalObject, mock, context));
+    }
+
     JSC::JSPromise* pending = mock->run(globalObject, false, isModuleOrCopyOfIt(dependencyKey, wanted) ? dependency : nullptr);
     if (auto* exception = scope.exception()) [[unlikely]] {
         if (scope.tryClearException()) {
@@ -3449,7 +3586,7 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
             waiting.append(key);
             return;
         }
-        if (running.importChain.contains(key))
+        if (running.importChain.contains(key) || isModuleMockEvaluatorKey(key))
             return;
         if (auto* record = recordOf(key)) {
             auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
@@ -3512,7 +3649,7 @@ static String keyOfModuleThatDoesNotWait(Zig::GlobalObject* globalObject, BunPlu
         unfinished.clear();
     }
     for (auto& module : unfinished)
-        addToImportChain(running, module);
+        addToImportChain(globalObject, running, module);
     return instead;
 }
 
@@ -4074,7 +4211,7 @@ bool isModuleMockWaitingForFactory(Zig::GlobalObject* globalObject, const String
     auto* mock = Zig::registeredModuleMock(globalObject, key);
     if (!mock)
         mock = dynamicDowncast<Zig::JSModuleMock>(globalObject->onLoadPlugins.moduleMocksBeingLoaded.get(key).get());
-    return mock && mock->state == Zig::JSModuleMock::State::Running;
+    return mock && (mock->state == Zig::JSModuleMock::State::Running || globalObject->onLoadPlugins.waitingModuleMocks.containsIf([&](auto& waiting) { return waiting.mock.get() == mock; }));
 }
 
 // Vitest loads packages outside the module graph it mocks, so a module in node_modules gets the original of what vi.mock() mocked.
@@ -4206,7 +4343,7 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
             if (isESM)
                 instead = copy;
             else
-                Zig::addToImportChain(running, instead);
+                Zig::addToImportChain(globalObject, running, instead);
             if (instead != given && isInChain && !importer.contains("?actual"_s) && !importer.contains("&actual"_s))
                 running.givenTheOriginal.append(importer);
             given = instead;
@@ -4247,9 +4384,13 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     }
     auto moduleMocksBeingLoaded = std::exchange(plugins.moduleMocksBeingLoaded, {});
     auto runningModuleMocks = std::exchange(plugins.runningModuleMocks, {});
+    auto waitingModuleMocks = std::exchange(plugins.waitingModuleMocks, {});
+    auto moduleMocksWithTurn = std::exchange(plugins.moduleMocksWithTurn, {});
     plugins.clear();
     plugins.moduleMocksBeingLoaded = WTF::move(moduleMocksBeingLoaded);
     plugins.runningModuleMocks = WTF::move(runningModuleMocks);
+    plugins.waitingModuleMocks = WTF::move(waitingModuleMocks);
+    plugins.moduleMocksWithTurn = WTF::move(moduleMocksWithTurn);
     global->onResolvePlugins.clear();
 
     return JSC::JSValue::encode(JSC::jsUndefined());

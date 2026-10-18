@@ -416,6 +416,8 @@ This also works when the mocked module is part of an import cycle. The modules t
 
 If the factory loads another module with `import()`, `require()` or `vi.importActual()`, and that module imports the one being mocked, it gets the original instead of waiting for the mock. That copy is private to the factory. The rest of the program loads the module again and gets the mock.
 
+When one import leads to several mocked modules, Bun calls their factories one at a time, in the order the modules are imported, as Vitest does. A factory that imports another mocked module gets that mock, whose factory is called first if it hasn't been.
+
 ### Getters and Missing Exports
 
 Bun reads an export from the object the factory returned every time it's used, so getters stay live.
@@ -799,8 +801,8 @@ test("lazy import", async () => {
 - Where a loaded package is updated in place (see [Mocking a Package](#mocking-a-package)), a module inside `node_modules` that imports it gets the mock. In Vitest it gets the real package.
 - If a module that is imported with a static import calls `vi.mock()` for a module that is waiting for an import with an async factory, the original still runs, and assigns its `const`, `let` and `class` exports. A module that reads one of those while it loads gets the original. What it reads later is the mock, and so are the `function` exports all along.
 - Every module outside `node_modules` that imports the mocked module gets the mock. In Vitest, a module that's first loaded while the factory runs gets the original and keeps it.
-- If a module imports two mocked modules, their async factories run at the same time. In Vitest, the second one starts after the first has returned. A factory that imports the other's module waits for that mock, so it gets the same thing as in Vitest. If each factory imports the other's module, the one that asks last gets the original. Vitest calls one of the two factories a second time instead.
-- A factory that uses `importOriginal` is called after the original module is evaluated, not before. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
+- If two factories import each other's modules, the one that asks last gets the original. Vitest calls one of the two factories a second time instead.
+- A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
 

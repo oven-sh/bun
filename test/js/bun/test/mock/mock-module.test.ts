@@ -1628,7 +1628,7 @@ test("jest.mock() and friends return jest, and vi.doMock() returns a disposable"
   expect(await import(a)).toBe(ns);
 });
 
-describe.concurrent("two factories in one file that run at the same time", () => {
+describe.concurrent("factories that import each other's modules", () => {
   const second = `vi.mock("./second", async () => ({ name: "second with " + (await import("./first")).name }));`;
   test.each([
     [
@@ -1657,7 +1657,7 @@ describe.concurrent("two factories in one file that run at the same time", () =>
       `vi.mock("./first", async () => (await import("./slow"), { name: "first with " + (await import("./second")).name }));
        ${second}`,
       `(await import("./both")).names`,
-      ["first with real second", "second with first with real second"],
+      ["first with second with real first", "second with real first"],
     ],
     [
       "a factory that the other one started gets the original",
@@ -1666,31 +1666,30 @@ describe.concurrent("two factories in one file that run at the same time", () =>
       `[(await import("./first")).name]`,
       ["first with second with real first"],
     ],
-    // Which one gets the original depends on which module is transpiled first.
     [
-      "if each loads a module that imports the other's module, they don't wait for each other",
+      "also if each loads a module that imports the other's module",
       `vi.mock("./first", async () => ({ name: "first with " + (await import("./through-second")).name }));
        vi.mock("./second", async () => ({ name: "second with " + (await import("./through")).name }));`,
-      `(await import("./both")).names.map(name => name.split(" ")[0])`,
-      ["first", "second"],
+      `(await import("./both")).names`,
+      ["first with second with real first", "second with real first"],
     ],
     [
       "also if they load it with vi.importActual()",
       `vi.mock("./first", async () => ({ name: "first with " + (await vi.importActual("./through-second")).name }));
        vi.mock("./second", async () => ({ name: "second with " + (await vi.importActual("./through")).name }));`,
-      `(await import("./both")).names.map(name => name.split(" ")[0])`,
-      ["first", "second"],
+      `(await import("./both")).names`,
+      ["first with second with real first", "second with real first"],
     ],
     [
       "also in a ring of three, where one loads the original of a module whose factory is running",
       `vi.mock("./first", async () => ({ name: "first with " + (await import("./third")).name }));
        vi.mock("./second", async () => ({ name: "second with " + (await vi.importActual("./first")).third }));
        vi.mock("./third", async () => ({ name: "third with " + (await import("./through-second")).name }));`,
-      `(await import("./all")).names.map(name => name.split(" ")[0])`,
-      ["first", "second", "third"],
+      `(await import("./all")).names`,
+      ["first with third with second with real third", "second with real third", "third with second with real third"],
     ],
     [
-      "with no importer in common the second doesn't wait, and gets the original",
+      "if import() asks for each of them, the second doesn't wait for the first, and gets the original",
       `const gate = vi.hoisted(() => Promise.withResolvers());
        vi.mock("./first", async () => (await gate.promise, { name: "first" }));
        ${second}`,
@@ -1726,6 +1725,57 @@ describe.concurrent("two factories in one file that run at the same time", () =>
       1,
     );
   });
+});
+
+test.concurrent("the factories that one import calls run one at a time, in the order of the imports", async () => {
+  const file = `
+    import { expect, test, vi } from "vitest";
+    const log = vi.hoisted(() => []);
+    vi.mock("./a", async () => (log.push("a starts"), await import("./slow"), log.push("a ends"), {}));
+    vi.mock("./b", async () => (log.push("b starts"), await import("./plain"), log.push("b ends"), {}));
+    vi.mock("./c", async () => (log.push("c starts"), await new Promise(setImmediate), log.push("c ends"), {}));
+    import "./page";
+    test("order", () => expect(log).toEqual(["c starts", "c ends", "b starts", "b ends", "a starts", "a ends"]));
+  `;
+  await expectFixturesToPass(
+    {
+      "a.ts": ``,
+      "b.ts": ``,
+      "c.ts": ``,
+      "plain.ts": ``,
+      "slow.ts": `import "./slower";`,
+      "slower.ts": ``,
+      "inner.ts": `import "./b"; import "./a";`,
+      // Leads back to the module that the test file imports.
+      "last.ts": `import "./page";`,
+      "page.ts": `import "./c"; import "./inner"; import "./last";`,
+      // With the sources in memory, the modules of the second file load in fewer turns of the event loop.
+      "first.test.ts": file,
+      "second.test.ts": file,
+    },
+    2,
+    ["--isolate"],
+  );
+});
+
+test.concurrent("a factory that another factory's import calls also waits for what that import fetches", async () => {
+  await expectFixturesToPass(
+    {
+      "one.ts": `import { name as two } from "./two"; export const name = "real one with " + two;`,
+      "two.ts": `export const name = "real two";`,
+      "three.ts": `export const name = "real three";`,
+      "page.ts": `import { name as one } from "./one"; import { name as three } from "./three"; export const names = [one, three];`,
+      "nested.test.ts": `
+        import { expect, test, vi } from "vitest";
+        vi.mock("./three", async importOriginal => ({ ...(await importOriginal()), name: "three" }));
+        vi.mock("./one", async () => ({ name: "one with " + (await vi.importActual("./page")).names }));
+        vi.mock("./two", async () => ({ name: "two with " + (await import("./three")).name }));
+        import { name } from "./one";
+        test("name", () => expect(name).toBe("one with real one with two with three,three"));
+      `,
+    },
+    1,
+  );
 });
 
 test.concurrent("a factory can load a partly mocked module while another one is being loaded", async () => {

@@ -3756,8 +3756,10 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         Bun::evictModuleThatNothingFetches(globalObject, resolvedKey);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    if (isImportCall) [[unlikely]]
+    if (isImportCall) [[unlikely]] {
         globalObject->onLoadPlugins.keyOfImportCall = resolved;
+        globalObject->onLoadPlugins.modulesAskedFor.add(resolved);
+    }
     return resolvedKey;
 }
 

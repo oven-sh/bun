@@ -1911,6 +1911,9 @@ it("internal FixedQueue backing list is not holey (test-fixed-queue.js)", () => 
 // The promise API drops the PassThrough that pipelineImpl builds for a
 // function tail, so nothing read it and the pump stalled at the high water
 // mark (16 objects). nodejs/node#65559 resumes it in the promise wrapper.
+// These tests use a plain `await` instead of `expect(p).resolves` on purpose:
+// the matcher spins the event loop until the promise settles, so the per-test
+// timeout never fires on a hang (oven-sh/bun#33261).
 describe("promise pipeline with a function as the last entry (nodejs/node#65559)", () => {
   const { pipeline: pipelineP } = require("node:stream/promises");
   const { promisify } = require("node:util");
@@ -1918,6 +1921,27 @@ describe("promise pipeline with a function as the last entry (nodejs/node#65559)
   async function* passThrough(source) {
     for await (const chunk of source) yield chunk;
   }
+
+  it("callback pipeline still returns a paused stream that a later pipe() can drain", async () => {
+    const received = [];
+    const done = Promise.withResolvers();
+    const tail = Stream.pipeline(Readable.from(chunks()), passThrough, err =>
+      err ? done.reject(err) : done.resolve(),
+    );
+    const sink = new Writable({
+      objectMode: true,
+      write(chunk, enc, cb) {
+        received.push(chunk);
+        cb();
+      },
+    });
+    const sinkFinished = new Promise(resolve => sink.on("finish", resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    tail.pipe(sink);
+    await done.promise;
+    await sinkFinished;
+    expect(received.length).toBe(100);
+  });
 
   it("resolves when more than the high water mark flows through an async generator", async () => {
     expect(await pipelineP(Readable.from(chunks()), passThrough)).toBeUndefined();

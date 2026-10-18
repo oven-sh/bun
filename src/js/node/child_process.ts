@@ -1144,7 +1144,7 @@ class ChildProcess extends EventEmitter {
   #handle;
   #closesNeeded = 1;
   #closesGot = 0;
-  #pendingMessages;
+  #pendingMessages = [];
 
   declare send?: (message, handle?, options?, callback?) => boolean;
   declare disconnect?: () => void;
@@ -1513,7 +1513,6 @@ class ChildProcess extends EventEmitter {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
         this.channel = new Control();
-        this.#pendingMessages = [];
         this.on("newListener", () => {
           process.nextTick(() => this.#emitPendingMessages());
         });
@@ -1580,6 +1579,7 @@ class ChildProcess extends EventEmitter {
     if (!this.connected || !this.listenerCount("message")) return;
     const messages = this.#pendingMessages;
     const { length } = messages;
+    if (!length) return;
     for (let i = 0; i < length; i++) this.emit("message", messages[i][0], messages[i][1]);
     this.#pendingMessages = [];
   }

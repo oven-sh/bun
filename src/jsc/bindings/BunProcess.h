@@ -50,6 +50,7 @@ public:
     bool m_reportOnUncaughtException = false;
     // [message, handle, ...] that arrived while 'message' had no listener, like Node's kPendingMessages.
     WriteBarrier<JSArray> m_pendingMessages;
+    LazyProperty<Process, JSFunction> m_emitPendingMessagesFunction;
 
     static void destroy(JSC::JSCell* cell)
     {

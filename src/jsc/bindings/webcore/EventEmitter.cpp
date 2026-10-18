@@ -233,6 +233,14 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         //     continue;
 
         auto& callback = registeredListener->callback();
+        if (callback.type() == EventListener::NativeEventListenerType) {
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            fired = true;
+            static_cast<NativeEventListener&>(callback).call();
+            if (scope.exception()) [[unlikely]]
+                break;
+            continue;
+        }
 
         // Make sure the JS wrapper and function stay alive until the end of this scope. Otherwise,
         // event listeners with 'once' flag may get collected as soon as they get unregistered below,

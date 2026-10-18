@@ -101,13 +101,14 @@ pub mod ffi {
 
         /// The PID to forward signals to. Set to 0 when unregistering.
         ///
-        /// C++ declares this as plain `int64_t`; `AtomicI64` is `#[repr(C)]`
-        /// with the same size/align, and the C side only does word-sized
-        /// loads/stores from the signal handler, so `Relaxed` here matches.
+        /// C++ declares this as `std::atomic<int64_t>`, which has the same
+        /// size and alignment as `AtomicI64`.
         pub safe static Bun__currentSyncPID: core::sync::atomic::AtomicI64;
 
-        /// Race condition: a signal could be sent before `spawn_process_posix`
-        /// returns. Call after the child PID is known.
+        /// Forwards a signal that arrived before `spawn_process_posix`
+        /// returned. Call after a `SeqCst` store of the child PID: the
+        /// handler stores the signal and then re-reads the PID, so one of
+        /// the two sides always sees the other's store.
         pub safe fn Bun__sendPendingSignalIfNecessary();
     }
 }

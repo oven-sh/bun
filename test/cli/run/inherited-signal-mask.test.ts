@@ -34,18 +34,22 @@ int main(int argc, char** argv) {
 const KILL_SELF = "kill -TERM $$";
 
 // Runs that script through each way bun has of starting a process and reports
-// how each of them saw it end.
+// how each of them saw it end. The PTY spawn is the one that reaches
+// posix_spawn_bun's fork() path on macOS; the others use libc posix_spawn there.
 const CHILDREN_KILLED_FIXTURE = /* js */ `
   import { spawnSync as nodeSpawnSync } from "node:child_process";
   const script = ${JSON.stringify(KILL_SELF)};
   const sync = Bun.spawnSync({ cmd: ["sh", "-c", script] });
   const spawned = Bun.spawn({ cmd: ["sh", "-c", script] });
   await spawned.exited;
+  await using pty = Bun.spawn({ cmd: ["sh", "-c", script], terminal: {} });
+  await pty.exited;
   const node = nodeSpawnSync("sh", ["-c", script]);
   const shell = await Bun.$\`sh -c \${script}\`.nothrow().quiet();
   console.log(JSON.stringify({
     spawnSync: [sync.exitCode, sync.signalCode],
     spawn: [spawned.exitCode, spawned.signalCode],
+    pty: [pty.exitCode, pty.signalCode],
     child_process: [node.status, node.signal],
     shell: shell.exitCode,
   }));
@@ -54,6 +58,7 @@ const CHILDREN_KILLED_FIXTURE = /* js */ `
 const CHILDREN_KILLED = {
   spawnSync: [null, "SIGTERM"],
   spawn: [null, "SIGTERM"],
+  pty: [null, "SIGTERM"],
   child_process: [null, "SIGTERM"],
   shell: 128 + SIGTERM,
 };
@@ -220,32 +225,44 @@ const canListChildren =
 // bun's children the moment it is created, while bun is still suspended in
 // vfork, so a signal sent right then is delivered before bun has the pid.
 // Whether or not an attempt wins that race, bun has to die from SIGTERM.
-test.skipIf(!canListChildren)("bun run forwards a signal that arrives before it knows the script's pid", async () => {
-  using project = tempDir("inherited-signal-mask-early", {
-    "package.json": JSON.stringify({ name: "inherited-signal-mask", scripts: { start: "exec sleep 30" } }),
-  });
-  for (let attempt = 0; attempt < 2; attempt++) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "start"],
-      cwd: String(project),
-      env: bunEnv,
-      stdout: "ignore",
-      stderr: "pipe",
-      killSignal: "SIGKILL",
+const SPAWN_DEADLINE_MS = 15_000;
+test.skipIf(!canListChildren)(
+  "bun run forwards a signal that arrives before it knows the script's pid",
+  async () => {
+    using project = tempDir("inherited-signal-mask-early", {
+      "package.json": JSON.stringify({ name: "inherited-signal-mask", scripts: { start: "exec sleep 30" } }),
     });
-    const children = `/proc/${proc.pid}/task/${proc.pid}/children`;
-    // Spinning, not awaiting: the window is the script's pre-exec setup, a
-    // fraction of a millisecond. The deadline only bounds a bun that never spawns.
-    const deadline = performance.now() + 3_000;
-    while (procRead(children).trim() === "" && performance.now() < deadline) {}
-    proc.kill("SIGTERM");
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "start"],
+        cwd: String(project),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+        killSignal: "SIGKILL",
+      });
+      const children = `/proc/${proc.pid}/task/${proc.pid}/children`;
+      // Spinning, not awaiting: the window is the script's pre-exec setup, a
+      // fraction of a millisecond. A SIGTERM sent before bun has installed its
+      // forwarding handler kills bun outright, so the spin has to outlast a slow
+      // (debug, sanitizer) startup. The deadline is only for a bun that never
+      // spawns; the test timeout allows for both attempts to reach it.
+      const deadline = performance.now() + SPAWN_DEADLINE_MS;
+      while (procRead(children).trim() === "") {
+        if (performance.now() > deadline) {
+          throw new Error(`attempt ${attempt}: bun run did not start the script within ${SPAWN_DEADLINE_MS}ms`);
+        }
+      }
+      proc.kill("SIGTERM");
 
-    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain('script "start" was terminated by signal SIGTERM');
-    expect({ attempt, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
-      attempt,
-      exitCode: null,
-      signalCode: "SIGTERM",
-    });
-  }
-});
+      const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('script "start" was terminated by signal SIGTERM');
+      expect({ attempt, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+        attempt,
+        exitCode: null,
+        signalCode: "SIGTERM",
+      });
+    }
+  },
+  3 * SPAWN_DEADLINE_MS,
+);

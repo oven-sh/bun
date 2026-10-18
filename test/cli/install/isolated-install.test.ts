@@ -1539,6 +1539,52 @@ describe.concurrent("link: dependencies", () => {
 // A `file:` dependency declared by a registry package points at a folder inside
 // that package (the same fixtures as "transitive file dependencies" in
 // bun-install-registry.test.ts, which covers the hoisted linker).
+describe.concurrent("transitive file dependencies of a tarball, written with a backslash", () => {
+  // Installs a tarball `p` that declares `"q": "file:<folder>"`, and returns what is beside `p` in its store entry.
+  async function install(folder: string, options?: Parameters<typeof runBunInstall>[2]) {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const q = JSON.stringify({ name: "q", version: "1.0.0" });
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "tarball-file-deps", dependencies: { p: "file:./p.tgz" } })),
+      write(
+        join(packageDir, "p.tgz"),
+        await new Bun.Archive({
+          "package/package.json": JSON.stringify({
+            name: "p",
+            version: "1.0.0",
+            dependencies: { q: `file:${folder}` },
+          }),
+          "package/sub/inner/package.json": q,
+        }).bytes("gzip"),
+      ),
+      // Outside of `p`, and inside the directory of this test.
+      write(join(packageDir, "outside", "package.json"), q),
+    ]);
+
+    const { err } = await runBunInstall(installEnv(packageDir), packageDir, options);
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const entry = (await readdirSorted(bunDir)).find(name => name.startsWith("p@"))!;
+    return { err, beside: join(bunDir, entry, "node_modules") };
+  }
+
+  test("are linked from inside the package that declares them", async () => {
+    const { beside } = await install("sub\\inner");
+    expect(await readdirSorted(beside)).toEqual(["p", "q"]);
+    expect(realpathSync(join(beside, "q"))).toBe(realpathSync(join(beside, "p", "sub", "inner")));
+  });
+
+  test("are not linked when `..` leads out of the package", async () => {
+    // Six folders down where `\` separates, and one where it does not. `<project>/outside` is six up from there.
+    const { err, beside } = await install(`a\\a\\a\\a\\a\\a/${"../".repeat(6)}outside`, {
+      allowErrors: true,
+      savesLockfile: false,
+      expectedExitCode: 1,
+    });
+    expect(err).toContain("failed to read package.json");
+    expect(await readdirSorted(beside)).toEqual(["p"]);
+  });
+});
+
 describe.concurrent("transitive file dependencies of registry packages", () => {
   const dependencies = {
     // depends on file-dep@1.0.0

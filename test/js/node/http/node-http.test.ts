@@ -4696,6 +4696,83 @@ it("statusCode = 204 with an empty first write still discards the body", async (
   }
 });
 
+it("writeHead(200) followed by write('') terminates the header section", async () => {
+  // Node's _send("") prepends the rendered header block, so the client sees
+  // the status line, the headers and the empty line without waiting for a
+  // non-empty write (the SSE pattern writeHead(200); write("")).
+  const server = createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.write("");
+    req.on("data", () => {});
+    server.once("flush-done", () => res.end("data: bye\n\n"));
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { head, tail } = await new Promise<{ head: string; tail: string }>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1");
+      let data = "";
+      let head: string | undefined;
+      socket.on("data", chunk => {
+        data += chunk;
+        if (head === undefined && data.includes("\r\n\r\n")) {
+          head = data;
+          server.emit("flush-done");
+        }
+        if (data.endsWith("0\r\n\r\n")) {
+          socket.end();
+          resolve({ head: head!, tail: data.slice(head!.length) });
+        }
+      });
+      socket.on("error", reject);
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    });
+
+    expect(head).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(head).toContain("Transfer-Encoding: chunked\r\n");
+    expect(head).toEndWith("\r\n\r\n");
+    expect(tail).toBe("b\r\ndata: bye\n\n\r\n0\r\n\r\n");
+  } finally {
+    server.close();
+  }
+});
+
+it("write('') then end(chunk) frames the body as chunked", async () => {
+  // The empty first write commits the header block (chunked, no
+  // Content-Length) like Node, so end(chunk) cannot switch to Content-Length.
+  const server = createServer((req, res) => {
+    res.write("");
+    res.end("hello");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const out = await new Promise<string>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1");
+      let data = "";
+      socket.on("data", chunk => {
+        data += chunk;
+        if (data.endsWith("0\r\n\r\n")) {
+          socket.end();
+          resolve(data);
+        }
+      });
+      socket.on("error", reject);
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    });
+
+    expect(out).toContain("Transfer-Encoding: chunked\r\n");
+    expect(out).not.toContain("Content-Length");
+    expect(out).toEndWith("\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
+  } finally {
+    server.close();
+  }
+});
+
 it("res.shouldKeepAlive = false renders Connection: close and ends the socket", async () => {
   // Graceful-shutdown helpers (stoppable, http-terminator) clear
   // shouldKeepAlive on in-flight responses; the rendered header and the

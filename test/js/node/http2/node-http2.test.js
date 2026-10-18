@@ -6303,48 +6303,92 @@ describe.concurrent("write() after end()", () => {
       return Buffer.concat([header, payload]);
     }
 
+    // Calls onFrame(type, flags, streamId, length) for each HTTP/2 frame that the socket receives.
+    function readFrames(socket, onFrame) {
+      let received = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        received = Buffer.concat([received, chunk]);
+        while (received.length >= 9) {
+          const length = received.readUIntBE(0, 3);
+          if (received.length < 9 + length) break;
+          const [type, flags, streamId] = [received[3], received[4], received.readUInt32BE(5)];
+          received = received.subarray(9 + length);
+          onFrame(type, flags, streamId, length);
+        }
+      });
+    }
+
+    // HEADERS with END_STREAM: :method GET, :scheme http, :path <path>, :authority x
+    function rawRequest(streamId, path) {
+      const block = [0x82, 0x86, 0x44, path.length, ...Buffer.from(path), 0x41, 0x01, 0x78];
+      return frame(1, 5, streamId, Buffer.from(block));
+    }
+
     // Raw HTTP/2 client: one GET on stream 1. Resolves with [length, END_STREAM flag] of each DATA
     // frame of the response, once the server has answered a PING that follows the first END_STREAM.
     function rawGet(port) {
       return new Promise((resolve, reject) => {
         const socket = net.connect(port, "127.0.0.1");
         const data = [];
-        let received = Buffer.alloc(0);
         let pinged = false;
         socket.on("error", reject);
         socket.on("close", () => reject(new Error("closed before the PING was answered")));
         socket.on("connect", () => {
           socket.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
           socket.write(frame(4, 0, 0));
-          // :method GET, :scheme http, :path /, :authority x
-          socket.write(frame(1, 5, 1, Buffer.from([0x82, 0x86, 0x84, 0x41, 0x01, 0x78])));
+          socket.write(rawRequest(1, "/"));
         });
-        socket.on("data", chunk => {
-          received = Buffer.concat([received, chunk]);
-          while (received.length >= 9) {
-            const length = received.readUIntBE(0, 3);
-            if (received.length < 9 + length) break;
-            const type = received[3];
-            const endStream = received[4] & 1;
-            received = received.subarray(9 + length);
-            if (type === 4 && !endStream) socket.write(frame(4, 1, 0));
-            if (type === 6 && endStream) {
-              resolve(data);
-              socket.destroy();
-              return;
-            }
-            if (type !== 0) continue;
-            data.push([length, endStream]);
-            if (length > 0) {
-              const increment = Buffer.alloc(4);
-              increment.writeUInt32BE(length);
-              socket.write(frame(8, 0, 0, increment));
-              if (!endStream) socket.write(frame(8, 0, 1, increment));
-            }
-            if (endStream && !pinged) {
-              pinged = true;
-              socket.write(frame(6, 0, 0, Buffer.alloc(8)));
-            }
+        readFrames(socket, (type, flags, streamId, length) => {
+          const endStream = flags & 1;
+          if (type === 4 && !endStream) socket.write(frame(4, 1, 0));
+          if (type === 6 && endStream) {
+            resolve(data);
+            socket.destroy();
+          }
+          if (type !== 0) return;
+          data.push([length, endStream]);
+          if (length > 0) {
+            const increment = Buffer.alloc(4);
+            increment.writeUInt32BE(length);
+            socket.write(frame(8, 0, 0, increment));
+            if (!endStream) socket.write(frame(8, 0, 1, increment));
+          }
+          if (endStream && !pinged) {
+            pinged = true;
+            socket.write(frame(6, 0, 0, Buffer.alloc(8)));
+          }
+        });
+      });
+    }
+
+    // Raw HTTP/2 client with a stream window of 1024 bytes that it never reopens. It asks for
+    // /blocked on stream 1 and, once that stream has used its window, for /late on stream 3. Then it
+    // is silent. Resolves with [length, END_STREAM flag] of each DATA frame of stream 3.
+    function rawBlockedThenLate(port) {
+      return new Promise((resolve, reject) => {
+        const socket = net.connect(port, "127.0.0.1");
+        const data = [];
+        let blocked = 0;
+        socket.on("error", reject);
+        socket.on("close", () => reject(new Error("closed before stream 3 ended")));
+        socket.on("connect", () => {
+          socket.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+          // SETTINGS_INITIAL_WINDOW_SIZE = 1024
+          socket.write(frame(4, 0, 0, Buffer.from([0, 4, 0, 0, 4, 0])));
+          socket.write(rawRequest(1, "/blocked"));
+        });
+        readFrames(socket, (type, flags, streamId, length) => {
+          const endStream = flags & 1;
+          if (type === 4 && !endStream) socket.write(frame(4, 1, 0));
+          if (type !== 0) return;
+          if (streamId === 1) {
+            if (blocked < 1024 && (blocked += length) >= 1024) socket.write(rawRequest(3, "/late"));
+            return;
+          }
+          data.push([length, endStream]);
+          if (endStream) {
+            resolve(data);
+            socket.destroy();
           }
         });
       });
@@ -6556,6 +6600,45 @@ describe.concurrent("write() after end()", () => {
             .replace(/^0+/, ""),
           events: await serverClosed.promise,
         }).toEqual({ length: big.length, endStream: "1", events: lateWriteEvents });
+      } finally {
+        server.close();
+      }
+    });
+
+    it("late write on a later turn while another stream of the session is blocked", async () => {
+      // The frames of the blocked stream stay queued on the session, so the END_STREAM of the other
+      // stream is queued too. The peer sends nothing more, and the error path has to flush it.
+      const server = http2.createServer();
+      try {
+        const serverClosed = Promise.withResolvers();
+        let queued;
+        server.on("stream", (stream, headers) => {
+          stream.respond({ ":status": 200 });
+          if (headers[":path"] === "/blocked") {
+            stream.on("error", () => {});
+            // 1024 bytes fit the window of the peer. The rest stays queued for the whole test.
+            stream.write(Buffer.alloc(8192, "x"));
+            return;
+          }
+          const late = record(stream, serverClosed);
+          setImmediate(() => {
+            queued = stream.session.state.outboundQueueSize;
+            stream.write("done");
+            stream.end();
+            stream.write("late", late);
+          });
+        });
+        const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+        const data = await rawBlockedThenLate(port);
+        expect({
+          queued,
+          length: data.reduce((sum, [length]) => sum + length, 0),
+          endStream: data
+            .map(([, endStream]) => endStream)
+            .join("")
+            .replace(/^0+/, ""),
+          events: await serverClosed.promise,
+        }).toEqual({ queued: 1, length: 4, endStream: "1", events: lateWriteEvents });
       } finally {
         server.close();
       }

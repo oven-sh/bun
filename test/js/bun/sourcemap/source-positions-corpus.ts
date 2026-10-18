@@ -49,7 +49,7 @@ export const cases: Record<string, Case> = {
 `,
   },
   "branches.ts": {
-    functions: "3/3",
+    functions: "4/5",
     lines: `
  2|export function f(x: boolean) {
  2|  if (x) {
@@ -77,9 +77,18 @@ export const cases: Record<string, Case> = {
  1|    f(true);
  -|  }
  -|}
+ 1|export function k(x: boolean) {
+ 1|  if (x) {
+ 0|    const inner = () => true;
+ 0|    f(inner());
+ 0|    f(true);
+ -|  }
+ 1|  return x;
+ -|}
  1|f(true);
  1|g(2);
  1|h();
+ 1|k(false);
 `,
   },
   "else.ts": {

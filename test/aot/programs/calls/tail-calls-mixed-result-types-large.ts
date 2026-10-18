@@ -1,15 +1,17 @@
 // Chains of tail calls between functions that are too large to be inlined: some return values of a declared type on one path, some only
 // pass on what another returns, some return `any`, some are arrow functions that are only ever called as values. All run in constant space,
 // whether the chain is entered by a direct call or by a call of a value.
-// A function that returns something of its own on some path keeps its declared result type, so that its callers need not check it:
-// IR+ function [0-9]+ "numbers" Plain flags [0-9]+ .*annotated\) result number$
-// IR+ function [0-9]+ "flags" Plain flags [0-9]+ .*annotated\) result boolean$
-// IR+ function [0-9]+ "items" Plain flags [0-9]+ .*annotated\) result undefined\|null\|Item
-// IR+ function [0-9]+ "onlyForwards" Plain flags [0-9]+ .*annotated\) result number$
-// IR+ tail drops = Call v
-// IR+ tail drops = CallDirect f
-// IR+ tail droppable = CallDirect f
-// One that only passes on what a call of a value returns does not:
+// A function that may be received as any value and ends in a call whose result has to be checked gives up its declared result type: the call
+// is a plain tail call that drops no frame, and whoever receives the result as a type checks it:
+// IR+ function [0-9]+ "numbers" Plain flags [0-9]+ .*annotated\) result -$
+// IR+ function [0-9]+ "flags" Plain flags [0-9]+ .*annotated\) result -$
+// IR+ function [0-9]+ "items" Plain flags [0-9]+ .*annotated\) result -$
+// IR+ function [0-9]+ "onlyForwards" Plain flags [0-9]+ .*annotated\) result -$
+// IR+ tail = Call v
+// IR+ tail = CallDirect f
+// IR- tail drops
+// IR- tail droppable
+// So does one that only passes on what a call of a value returns:
 // IR+ function [0-9]+ "onlyPassesOn" Plain flags [0-9]+ .*annotated\) result -$
 const lines: string[] = [];
 function say(...parts: unknown[]) {

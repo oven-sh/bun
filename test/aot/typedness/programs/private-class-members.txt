@@ -23,9 +23,9 @@ method-identity-top-level-class-expression-no-capture: 4 layouts, 0 given, 1 ope
 method-identity-top-level-class-expression-with-capture: 4 layouts, 0 given, 1 open, places 71 of 132, reads 8 of 83
 method-identity-top-level-class-no-capture: 4 layouts, 0 given, 1 open, places 71 of 132, reads 8 of 83
 method-identity-top-level-class-with-capture: 4 layouts, 0 given, 1 open, places 71 of 132, reads 8 of 83
-method-identity-top-level-for-no-capture: 3 layouts, 0 given, 1 open, places 73 of 134, reads 8 of 45
-method-identity-top-level-for-with-capture: 3 layouts, 0 given, 1 open, places 73 of 134, reads 8 of 45
-method-identity-top-level-while-no-capture: 3 layouts, 0 given, 1 open, places 73 of 134, reads 9 of 45
+method-identity-top-level-for-no-capture: 3 layouts, 0 given, 1 open, places 73 of 134, reads 8 of 94
+method-identity-top-level-for-with-capture: 3 layouts, 0 given, 1 open, places 73 of 134, reads 8 of 94
+method-identity-top-level-while-no-capture: 3 layouts, 0 given, 1 open, places 73 of 134, reads 9 of 94
 methods-as-values: 0 layouts, 0 given, 1 open, places 63 of 107, reads 5 of 64
 module-cycle: 2 layouts, 0 given, 1 open, places 23 of 52, reads 1 of 28
 private-member-calls: 1 layouts, 0 given, 1 open, places 33 of 120, reads 10 of 26

@@ -1,6 +1,5 @@
 // Spread of a value whose static type also admits opaque objects: a record of the type, a record of another type, a record with an undeclared property, a frozen record, a plain object, an object with its own prototype, an array, null and undefined.
 // CALLS+ rename CloneObjectAndExtend
-// CALLS+ resize CloneObjectAndExtendWithNumber
 // CALLS- rename TryCopyRecordAsAt
 type Shape = { name: string; sides: number; label?: string };
 type Other = { extra: number[]; sides: number; name: string };

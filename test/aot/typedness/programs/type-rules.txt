@@ -98,8 +98,8 @@ numeric-discriminant-unions: 5 layouts, 0 given, 1 open, places 19 of 27, reads 
 object-and-class-prototypes: 5 layouts, 7 given, 4 open, places 83 of 107, reads 15 of 85
 object-assign: 1 layouts, 0 given, 2 open, places 14 of 28, reads 6 of 35
 object-cast-to-primitive-throws-on-use: 9 layouts, 0 given, 10 open, places 20 of 58, reads 0 of 12
-object-create-class-prototype-not-instance: 1 layouts, 0 given, 1 open, places 13 of 22, reads 2 of 27
-object-create-through-interfaces: 6 layouts, 0 given, 6 open, places 20 of 41, reads 6 of 44
+object-create-class-prototype-not-instance: 1 layouts, 0 given, 1 open, places 13 of 22, reads 2 of 28
+object-create-through-interfaces: 6 layouts, 0 given, 6 open, places 20 of 41, reads 6 of 45
 object-missing-required-properties: 3 layouts, 0 given, 2 open, places 9 of 18, reads 1 of 5
 object-prototype-not-extensible: 0 layouts, 0 given, 0 open, places 1 of 9, reads 0 of 5
 object-rest-patterns: 4 layouts, 0 given, 4 open, places 18 of 32, reads 4 of 10
@@ -149,10 +149,10 @@ type-error-with-decorators: is refused
 typed-functions-via-any-missing-arguments: 1 layouts, 0 given, 0 open, places 19 of 28, reads 6 of 11
 typed-object-prototype-immutable: 2 layouts, 0 given, 2 open, places 8 of 16, reads 2 of 10
 undefined-bang-placeholders: 3 layouts, 0 given, 0 open, places 19 of 38, reads 0 of 4
-undefined-into-number-variable: 2 layouts, 0 given, 0 open, places 13 of 25, reads 5 of 7
+undefined-into-number-variable: 2 layouts, 0 given, 1 open, places 13 of 25, reads 5 of 7
 undefined-stored-via-untyped-ref: 2 layouts, 0 given, 2 open, places 15 of 26, reads 2 of 10
 under-allocation-pressure: 2 layouts, 0 given, 2 open, places 37 of 46, reads 8 of 9
-undiscriminated-unions: 1 layouts, 0 given, 2 open, places 7 of 16, reads 1 of 13
+undiscriminated-unions: 1 layouts, 0 given, 2 open, places 7 of 16, reads 1 of 14
 uninitialized-fields: 7 layouts, 0 given, 0 open, places 84 of 99, reads 35 of 82
 uninitialized-number-variable: 0 layouts, 0 given, 1 open, places 9 of 19, reads 1 of 6
 uninitialized-variables: 1 layouts, 0 given, 0 open, places 50 of 67, reads 2 of 35

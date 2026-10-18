@@ -5,11 +5,7 @@ import { join } from "node:path";
 import { test } from "../supported";
 import { traceCallsAndReturns, whyTracingIsUnavailable } from "./trace-calls-and-returns";
 
-const tracedCalls = 4;
-const callsDroppedByTailCallThroughFunctionValue = 2;
-const knownUnbalanced: Record<string, number> = {
-  "typed: closureArgument": tracedCalls * callsDroppedByTailCallThroughFunctionValue,
-};
+const knownUnbalanced: Record<string, number> = {};
 
 const reason = await whyTracingIsUnavailable();
 

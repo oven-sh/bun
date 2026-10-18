@@ -276,7 +276,7 @@ objects-reaching-untyped-code-indirectly: 3 layouts, 0 given, 2 open, places 49 
 objects-with-extra-properties: 3 layouts, 9 given, 3 open, places 47 of 83, reads 12 of 64
 old-containers-hold-young-objects: 8 layouts, 0 given, 3 open, places 139 of 158, reads 109 of 203
 old-objects-keep-stored-values: 2 layouts, 0 given, 0 open, places 91 of 104, reads 25 of 28
-old-style-inheritance-spares-arrays: 10 layouts, 0 given, 5 open, places 55 of 97, reads 9 of 85
+old-style-inheritance-spares-arrays: 10 layouts, 0 given, 5 open, places 55 of 97, reads 9 of 86
 old-weak-maps-written-between-gcs: 2 layouts, 0 given, 0 open, places 87 of 100, reads 16 of 30
 one-object-class-and-interface: 2 layouts, 0 given, 2 open, places 27 of 36, reads 5 of 10
 one-object-many-types: 12 layouts, 0 given, 1 open, places 79 of 89, reads 117 of 147
@@ -289,7 +289,7 @@ optional-field-on-class-prototype-chain: 6 layouts, 7 given, 4 open, places 59 o
 optional-field-on-prototype-chain: 6 layouts, 7 given, 4 open, places 49 of 75, reads 13 of 40
 optional-fields-absent: 4 layouts, 0 given, 1 open, places 50 of 68, reads 40 of 79
 optional-fields-on-prototype: 8 layouts, 7 given, 4 open, places 62 of 90, reads 19 of 54
-optional-fields-restored-after-extra-properties: 3 layouts, 0 given, 2 open, places 28 of 41, reads 18 of 20
+optional-fields-restored-after-extra-properties: 4 layouts, 0 given, 2 open, places 29 of 43, reads 18 of 20
 optional-reference-read-as-value: 2 layouts, 0 given, 0 open, places 49 of 58, reads 33 of 41
 other-new-target-vs-same-field-class: 3 layouts, 0 given, 1 open, places 10 of 21, reads 1 of 8
 out-of-bounds-array-reads: 1 layouts, 0 given, 1 open, places 53 of 73, reads 58 of 153
@@ -458,7 +458,7 @@ unallocated-type-accepts-record-with-members: 6 layouts, 0 given, 9 open, places
 undefined-bang-placeholders: 5 layouts, 7 given, 1 open, places 39 of 60, reads 32 of 65
 under-allocation-pressure: 6 layouts, 0 given, 1 open, places 116 of 128, reads 72 of 96
 undersized-plain-object-mismatch-rejected: 1 layouts, 0 given, 2 open, places 32 of 41, reads 3 of 13
-undersized-plain-object-unchanged: 22 layouts, 0 given, 25 open, places 395 of 412, reads 44 of 101
+undersized-plain-object-unchanged: 22 layouts, 0 given, 28 open, places 395 of 412, reads 44 of 101
 undiscriminated-unions: 21 layouts, 4 given, 5 open, places 100 of 118, reads 25 of 64
 uninitialized-fields: 8 layouts, 0 given, 0 open, places 64 of 81, reads 74 of 95
 uninitialized-variable-declarations: 0 layouts, 0 given, 1 open, places 11 of 21, reads 1 of 6

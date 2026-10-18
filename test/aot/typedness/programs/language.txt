@@ -6,7 +6,7 @@ array-subclass-iteration: 0 layouts, 0 given, 1 open, places 56 of 180, reads 17
 as-on-nullish-and-primitives: 1 layouts, 0 given, 0 open, places 15 of 26, reads 6 of 9
 bigint-update: 1 layouts, 0 given, 0 open, places 5 of 13, reads 2 of 3
 bitwise-on-integers: 0 layouts, 0 given, 0 open, places 61 of 71, reads 23 of 25
-borrowed-builtin-iterators: 16 layouts, 0 given, 6 open, places 120 of 285, reads 59 of 138
+borrowed-builtin-iterators: 17 layouts, 0 given, 6 open, places 128 of 307, reads 59 of 138
 both-branch-sides: 7 layouts, 0 given, 0 open, places 66 of 81, reads 27 of 32
 builtins-cannot-be-replaced: 0 layouts, 7 given, 0 open, places 0 of 8, reads 0 of 0
 builtins-only-inspect-arguments: 5 layouts, 0 given, 6 open, places 26 of 37, reads 10 of 20

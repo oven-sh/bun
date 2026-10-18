@@ -13,7 +13,8 @@ Checked against JavaScriptCore's optimized IR (`dump.js -- <IR> optimized`), on 
     // IR+ <regex>                     some line matches
     // IR- <regex>                     no line matches
     // IR= <n> <function> <regex>      exactly n lines match in the function of that name (not in copies inlined elsewhere)
-    // IRT= <n> <function> <regex>     the same, only in its typed body (the one whose first line says `annotated`)
+    // IRT= <n> <function> <regex>     the same, only in its typed body (the one whose first line says `annotated`); a function that also has a copy
+                                       that checks its own result has two typed bodies, and n lines match in each
     // IRM= <n> <regex>                the same, in the top-level code of the program's own module
 Checked against the remarks of the string-building pass (`dump.js -- <IR> string-builders`), on every platform:
     // REMARK+ <function> <regex>      a line about the function matches
@@ -220,8 +221,9 @@ def one(name):
                 body = bodies(ir, lambda head: head.split(' ')[2] == '"%s"' % fn and (kind == 'IR=' or ' annotated' in head))
             # A function all of whose calls were copied has no body any more: nothing is found in it, whatever is looked for.
             if not any(' = ' in line for line in body): bad.append('the function %s has no body in the dump' % fn); continue
+            typed_bodies = sum(1 for line in body if line.startswith('function ')) if kind == 'IRT=' else 1
             got = sum(1 for line in body if re.search(pattern, line))
-            if got != int(count): bad.append('%s has %d of /%s/, not %s' % (fn, got, pattern, count))
+            if got != int(count) * typed_bodies: bad.append('%s has %d of /%s/, not %s%s' % (fn, got, pattern, count, ' in each of its %d typed bodies' % typed_bodies if typed_bodies > 1 else ''))
         elif kind in ('REMARK+', 'REMARK-'):
             fn, pattern = rest.split(' ', 1)
             about = [line for line in remarks.split('\n') if re.search(r'(^|\W)%s(\W|$)' % re.escape(fn), line)]

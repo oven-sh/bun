@@ -23,7 +23,7 @@ key-order-with-late-and-deleted-fields: 1 layouts, 0 given, 2 open, places 21 of
 keyed-caches-across-collections: 2 layouts, 0 given, 2 open, places 98 of 145, reads 10 of 40
 keyed-read-cache-misses: 7 layouts, 0 given, 9 open, places 124 of 173, reads 12 of 41
 keyed-reads-and-stores-share-cache: 1 layouts, 0 given, 1 open, places 42 of 56, reads 6 of 22
-keyed-store-cache-misses: 8 layouts, 0 given, 8 open, places 101 of 185, reads 15 of 80
+keyed-store-cache-misses: 9 layouts, 0 given, 8 open, places 103 of 193, reads 15 of 80
 large-constants-in-huge-frame: 0 layouts, 0 given, 0 open, places 181 of 189, reads 0 of 850
 literal-accessors-in-type: 13 layouts, 0 given, 8 open, places 55 of 84, reads 17 of 30
 literal-accessors-with-data-members: 7 layouts, 0 given, 7 open, places 55 of 83, reads 18 of 43

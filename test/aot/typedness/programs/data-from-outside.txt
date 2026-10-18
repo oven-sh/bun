@@ -58,7 +58,7 @@ parameters-typed-by-dts: 5 layouts, 0 given, 9 open, places 32 of 63, reads 0 of
 parsed-array-reads: 0 layouts, 2 given, 1 open, places 24 of 78, reads 0 of 26
 parsed-data-through-cast-chain: 0 layouts, 13 given, 0 open, places 8 of 24, reads 1 of 19
 parsed-in-container-dictionary: 2 layouts, 0 given, 2 open, places 30 of 42, reads 13 of 21
-parsed-in-container-items-of-body: 2 layouts, 0 given, 2 open, places 30 of 42, reads 11 of 21
+parsed-in-container-items-of-body: 2 layouts, 0 given, 3 open, places 30 of 42, reads 11 of 21
 parsed-in-container-map: 2 layouts, 0 given, 2 open, places 30 of 42, reads 11 of 21
 parsed-in-container-mismatch-throws: 2 layouts, 0 given, 2 open, places 30 of 42, reads 12 of 20
 parsed-in-container-push-of-either: 2 layouts, 0 given, 2 open, places 34 of 47, reads 11 of 21

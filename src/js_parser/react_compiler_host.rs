@@ -211,39 +211,34 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     ) -> ReactCompilerCandidate {
         let prev_may_replace_body = self.react_compiler_may_replace_body;
         // Few functions are a candidate, and none is without the compiler: the rest is out of line.
-        let Some(binding) = self.react_compiler_candidate_name.take() else {
+        if self.react_compiler_candidate_name.is_none() {
             return ReactCompilerCandidate {
                 prev_may_replace_body,
                 binding: None,
                 in_react_hoc: false,
             };
-        };
-        let in_react_hoc = self.decide_react_compiler_candidate(binding, name, loc, body_loc, body);
-        ReactCompilerCandidate {
-            prev_may_replace_body,
-            binding: Some(binding),
-            in_react_hoc,
         }
+        self.take_react_compiler_candidate(prev_may_replace_body, name, loc, body_loc, body)
     }
 
-    /// Sets `react_compiler_may_replace_body` for the candidate. Returns whether it is the argument of a `memo()`
-    /// or `forwardRef()` call.
     #[inline(never)]
-    fn decide_react_compiler_candidate(
+    fn take_react_compiler_candidate(
         &mut self,
-        binding: js_ast::Ref,
+        prev_may_replace_body: bool,
         name: Option<js_ast::Ref>,
         loc: bun_ast::Loc,
         body_loc: bun_ast::Loc,
         body: &[js_ast::Stmt],
-    ) -> bool {
+    ) -> ReactCompilerCandidate {
+        let binding = self.react_compiler_candidate_name.take();
         let in_react_hoc = core::mem::take(&mut self.react_compiler_in_react_hoc);
-        if !self.react_compiler_may_replace_body
+        if !prev_may_replace_body
+            && let Some(candidate) = binding
             && let Some(rc) = self.react_compiler.as_deref()
         {
             let name = name
                 .filter(|r| r.is_valid())
-                .or(Some(binding))
+                .or(Some(candidate))
                 .filter(|r| *r != js_ast::Ref::NONE)
                 .map(|r| self.load_name_from_ref(r));
             self.react_compiler_may_replace_body = rc.may_compile(
@@ -253,7 +248,11 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
                 body,
             );
         }
-        in_react_hoc
+        ReactCompilerCandidate {
+            prev_may_replace_body,
+            binding,
+            in_react_hoc,
+        }
     }
 
     /// Whether a comment keeps the React Compiler from the function at `loc` whose body is at `body_loc`: an

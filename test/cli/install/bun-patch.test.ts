@@ -3523,6 +3523,96 @@ describe.concurrent("a missing patch file", () => {
     expect(exitCode).toBe(1);
   });
 
+  // The progress bar leaves the cursor at the end of its line, and what bun prints next continues
+  // that line. bunEnv sets CI, which turns the bar off, so the tests turn it on with
+  // BUN_INSTALL_PROGRESS=1. Windows is skipped: there the bar is drawn on a console only, so a
+  // pipe gets no progress line.
+  const progressBar = [
+    ["without colors", { BUN_INSTALL_PROGRESS: "1" }],
+    ["with colors", { BUN_INSTALL_PROGRESS: "1", NO_COLOR: undefined, FORCE_COLOR: "1" }],
+  ] as const;
+  const barFrame = /Resolving \[\d+\/\d+\] /;
+  /** The lines a terminal shows. The bar erases its line: cursor back, then clear to the end of the line. */
+  const shownLines = (output: string) => Bun.stripANSI(output.replace(/[^\n]*\x1b\[\d+D\x1b\[0K/g, "")).split("\n");
+  /** A project that patches basic-1, with `patches` being all it has of the patch file. */
+  const notInstalled = (patches: DirectoryTree = {}) =>
+    tempDir("bun-patch-progress", {
+      "package.json": JSON.stringify({
+        name: "root",
+        dependencies: { "basic-1": "1.0.0" },
+        patchedDependencies: { "basic-1@1.0.0": "patches/basic-1@1.0.0.patch" },
+      }),
+      ...patches,
+    });
+
+  describe.skipIf(isWindows).each(progressBar)("while the progress bar is on (%s)", (_, barOn) => {
+    test.each([
+      ["that is not there", {}, "error: patch file not found: 'patches/basic-1@1.0.0.patch'"],
+      [
+        "that is empty",
+        { patches: { "basic-1@1.0.0.patch": "" } },
+        expect.stringMatching(/^error: patchfile .+basic-1@1\.0\.0\.patch is empty, please restore or delete it\.$/),
+      ],
+    ])("the error for a patch file %s starts its own line", async (_, patches, error) => {
+      using dir = notInstalled(patches);
+      const { stderr, exitCode } = await runBun(String(dir), { ...projectEnv(String(dir)), ...barOn }, "install");
+      expect(stderr).toMatch(barFrame);
+      expect(shownLines(stderr).filter(line => line.includes("error"))).toEqual([error]);
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  // Before that exit, a pending `bun patch --commit` writes its own patch file. That can fail too.
+  test.skipIf(isWindows)(
+    "while the progress bar is on, the error of a --commit that cannot write its patch file starts its own line",
+    async () => {
+      await using project = await withoutPatchFiles(["basic-1", "no-deps"]);
+      // package.json is a file, so no directory can be made below it.
+      const args = ["patch", "--commit", "basic-1", "--patches-dir=package.json/patches"];
+      const { stderr, exitCode } = await runBun(project.dir, { ...project.env, BUN_INSTALL_PROGRESS: "1" }, ...args);
+      expect(stderr).toMatch(barFrame);
+      expect(shownLines(stderr).filter(line => line.includes("failed to make patches dir"))).toEqual([
+        expect.stringMatching(/^E[A-Z]+: /),
+      ]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  // On a terminal the bar erases its line with or without colors. Windows is skipped: ConPTY
+  // rewrites what bun writes.
+  test.skipIf(isWindows)(
+    "on a terminal, the error for a patch file that is not there starts its own line",
+    async () => {
+      using dir = notInstalled();
+      const decoder = new TextDecoder();
+      let terminal = "";
+      const closed = Promise.withResolvers<void>();
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: { ...projectEnv(String(dir)), BUN_INSTALL_PROGRESS: "1" },
+        terminal: {
+          cols: 120,
+          rows: 24,
+          data(_, chunk) {
+            terminal += decoder.decode(chunk, { stream: true });
+          },
+          // The terminal is closed once the process has exited and the rest of its output was delivered.
+          exit() {
+            closed.resolve();
+          },
+        },
+      });
+      const [exitCode] = await Promise.all([proc.exited, closed.promise]);
+      terminal = (terminal + decoder.decode()).replaceAll("\r\n", "\n");
+      expect(terminal).toMatch(barFrame);
+      expect(shownLines(terminal).filter(line => line.includes("error"))).toEqual([
+        "error: patch file not found: 'patches/basic-1@1.0.0.patch'",
+      ]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
   test("committing the unmodified package removes the entry from package.json", async () => {
     await using project = await withoutPatchFiles(["basic-1"]);
     const { dir, env } = project;

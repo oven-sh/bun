@@ -2188,7 +2188,7 @@ fn set_eval_entry_point_bindings(
     // `// @bun` text keeps the wrapper it was built with.
     if resolved_source.is_commonjs_module
         && !resolved_source.already_bundled
-        && is_eval_entry_point(vm, vm.main() == path.text)
+        && is_eval_entry_point(vm, vm.main() == Some(path.text))
     {
         resolved_source.cjs_bindings = if vm.module_loader.eval_entry_reads_import_meta_global {
             CommonJSBindings::ScriptGlobalsWithImportMeta

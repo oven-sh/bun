@@ -1584,7 +1584,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
         }
         WTF::String sourceString = source.source_code.transferToWTFString();
         // Remove the wrapper from the source string, since the transpiler has added it.
-        auto trimStart = sourceString.find('\n');
+        auto trimStart = source.cjs_bindings == CommonJSBindings::WrapperParameters ? sourceString.find('\n') : WTF::notFound;
         WTF::String sourceStringWithoutWrapper;
         if (trimStart != WTF::notFound) {
             auto wrapperStart = globalObject->m_moduleWrapperStart;

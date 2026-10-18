@@ -1,6 +1,6 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { renameSync, rmSync, writeFileSync } from "fs";
+import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
@@ -525,16 +525,24 @@ describe("import.meta in a CommonJS eval program", () => {
         text += Buffer.from(value).toString();
       }
     }
-    // An uncaught error does not end the process, so what stderr gets first ends the wait for the first line.
-    const error = proc.stderr
-      .getReader()
-      .read()
-      .then(({ value }) => Buffer.from(value ?? []).toString());
-    expect(await Promise.race([line("false"), error])).toBe("false function [eval] 1");
-    // One rename, so that the program never sees a half-written file.
-    writeFileSync(join(String(dir), "next.cjs"), `module.exports = 2;`);
-    renameSync(join(String(dir), "next.cjs"), join(String(dir), "dep.cjs"));
-    expect(await line("true")).toBe("true function [eval] 2");
+    // An uncaught error does not end the process. It is a line on stderr, and that ends each wait.
+    // A debug build reports each reload there too, as "DEBUG: ...".
+    const failed = (async () => {
+      let errors = "";
+      for await (const chunk of proc.stderr) {
+        errors += Buffer.from(chunk).toString();
+        const lines = errors
+          .split("\n")
+          .slice(0, -1)
+          .filter(line => line && !line.startsWith("DEBUG: "));
+        if (lines.length > 0) return lines.join("\n");
+      }
+      return await new Promise<string>(() => {});
+    })();
+    expect(await Promise.race([line("false"), failed])).toBe("false function [eval] 1");
+    // The same length, in place, so that the program never sees a half-written file.
+    writeFileSync(join(String(dir), "dep.cjs"), `module.exports = 2;`, { flag: "r+" });
+    expect(await Promise.race([line("true"), failed])).toBe("true function [eval] 2");
   });
 });
 
@@ -546,6 +554,17 @@ describe("CommonJS text in a wrapper, under the filename of the eval program", (
     using dir = tempDir("eval-cjs-wrapper", {});
     const code = `module._compile("module.exports = 42", __filename); console.log(module.exports);`;
     expect(await runIn(String(dir), ["-e", code])).toEqual({ stdout: "42\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("an overridden module._compile gets the whole text of the program", async () => {
+    using dir = tempDir("eval-cjs-wrapper", {});
+    const code = `var Module = require("module");
+if (!globalThis.again) {
+  globalThis.again = true;
+  module._compile = source => console.log(source.startsWith("var Module"), source.trimEnd().endsWith("}"));
+  Module._extensions[".js"](module, __filename);
+}`;
+    expect(await runIn(String(dir), ["-e", code])).toEqual({ stdout: "true true\n", stderr: "", exitCode: 0 });
   });
 
   test.concurrent("a `// @bun @bun-cjs` program on stdin runs the body of its wrapper", async () => {

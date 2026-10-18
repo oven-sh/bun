@@ -1485,7 +1485,7 @@ impl<'p, 's> Checker<'p, 's> {
                 } else {
                     params.len().min(args.len())
                 };
-                let mut pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(actual + 1);
+                let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = SmallVec::new();
                 pairs.extend(
                     params
                         .iter()
@@ -1494,7 +1494,7 @@ impl<'p, 's> Checker<'p, 's> {
                         .take(actual),
                 );
                 pairs.push((self.intern(TypeData::ThisParam(target)), this));
-                let mapper = self.types().mapper(pairs);
+                let mapper = self.types().mapper_of(&pairs);
                 let binding = match self.gets_early_symbols_for_good(target, ty) {
                     true => MemberBinding::Early,
                     false => MemberBinding::Late,
@@ -2686,7 +2686,7 @@ impl<'p, 's> Checker<'p, 's> {
         else {
             return None;
         };
-        let mut pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(flags.len() + 1);
+        let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = SmallVec::new();
         let arguments = self.type_arguments(ty);
         for (i, &argument) in (0..).zip(arguments) {
             let parameter = self.intern(TypeData::Marker(Marker::TupleElement(i)));
@@ -2708,7 +2708,7 @@ impl<'p, 's> Checker<'p, 's> {
             resolved.kept = None;
         }
         pairs.push((this, this_argument));
-        Some((resolved, self.types().mapper(pairs)))
+        Some((resolved, self.types().mapper_of(&pairs)))
     }
 
     /// `resolveStructuredTypeMembers(getTypeWithThisArgument(ty, this_argument))`

@@ -4444,6 +4444,106 @@ test.concurrent.skipIf(!tsc)("members of another file, on any number of threads,
   for (const lines of ours) expect(byFile(lines)).toEqual(byFile(theirs));
 });
 
+// A new union or intersection takes its flags from its constituents, of which a type holds up to 7 itself. Here they are of
+// another file or of the file that asks, object types, mapped types with and without a type variable, intersections that
+// are and are not `never`, `null` and `undefined`, and fresh and regular literal types.
+const constituentsOfAnotherFile = (count: number) => `
+${each(count, i => `export interface P${i} { kind: ${i}; p${i}: string; all: ${i % 2 ? "string" : "number"} }`, "\n")}
+${each(count, i => `export interface Q${i} { q${i}: ${i} }`, "\n")}
+export type Copy<T> = { [K in keyof T]: T[K] };
+export type Plain = ${each(count, i => `P${i}`)};
+export type OrNothing = Plain | null | undefined;
+export type Both = ${each(count, i => `Q${i}`, " & ")};
+export type Reduced = ${each(count, i => (i === 1 ? "(P0 & P1)" : i === 2 ? "(P2 & Q2)" : `P${i}`))};
+export type Literals = ${each(count, i => (i % 2 ? `"s${i}"` : `${i}`))};
+`;
+const constituentsOfThisFile = (count: number, n: number) => `
+import type { Both, Copy, Literals, OrNothing, Plain, Reduced, ${each(count, i => `P${i}, Q${i}`, ", ")} } from "./shared${count}";
+const plain${n}: never = null! as Plain;
+const orNothing${n}: never = null! as OrNothing;
+const both${n}: never = null! as Both;
+const reduced${n}: never = null! as Reduced;
+const kinds${n}: never = (null! as Reduced).kind;
+const own${n}: never = null! as ${each(count, i => `{ own${n}: ${i} }`)};
+const ownBoth${n}: never = null! as ${each(count, i => `{ own${i}: ${n} }`, " & ")};
+const mixed${n}: never = null! as Plain | { own: ${n} } | (Q0 & { own: ${n} });
+function generic${n}<T, U extends Plain>(mapped: Copy<T> & Both, closed: Copy<P0> & Both, u: U | Plain, t: T | OrNothing) {
+  const a: never = mapped.q0;
+  const b: never = closed.p0;
+  const c: never = mapped;
+  const d: never = closed;
+  const e: never = u;
+  const f: never = t;
+  const g: never = null! as keyof (Copy<T> & Both);
+  const h: never = null! as keyof (Copy<P0> & Both);
+}
+let widened${n} = [${each(count, i => (i === 0 ? "null" : i === 1 ? "undefined" : i === 2 ? `{ a: ${n} }` : i === 3 ? "[]" : `${i}`), ", ")}];
+const widenedIs${n}: never = widened${n};
+let literal${n} = null! as Literals;
+const fresh${n} = [${each(count, i => (i % 2 ? `"s${i}"` : `${i}`), ", ")}] as const;
+let element${n} = fresh${n}[null! as number];
+const elementIs${n}: never = element${n};
+const literalIs${n}: never = literal${n};
+declare function pick${n}<T>(...values: T[]): T;
+const picked${n}: never = pick${n}(${each(count, i => `null! as P${i}`, ", ")});
+const pickedOwn${n}: never = pick${n}(${each(count, i => `{ v: ${i}, w: null }`, ", ")});
+export {};
+`;
+
+test.concurrent.skipIf(!tsc)("2 to 9 constituents of this file and of another, as in TypeScript", async () => {
+  const sizes = [2, 7, 8, 9];
+  using dir = tempDir("bun-check-constituents", {
+    "tsconfig.json": tsconfig,
+    ...Object.fromEntries(sizes.map(size => [`shared${size}.ts`, constituentsOfAnotherFile(size)])),
+    ...Object.fromEntries(
+      sizes.flatMap(size => [0, 1].map(n => [`user${size}_${n}.ts`, constituentsOfThisFile(size, n)])),
+    ),
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  const errors = Object.values(byFile(theirs)).map(about => about.filter(it => /^\w+\.ts\(/.test(it)).length);
+  expect(errors).toEqual(sizes.flatMap(() => [22, 22]));
+  for (const lines of ours) expect(byFile(lines)).toEqual(byFile(theirs));
+});
+
+// A type mapper has its pairs in the order in which the type parameters were created. The first one here has the last one
+// for its constraint, so that one is created first, and the pairs that are made in the order of the declaration have to be
+// sorted: up to 8 of them without an allocation.
+const parametersOutOfOrder = (count: number) => `
+declare function last<${each(count, i => (i === 0 ? `T0 extends T${count - 1}` : `T${i}`), ", ")}>(${each(count, i => `t${i}: T${i}`, ", ")}): [${each(count, i => `T${count - 1 - i}`, ", ")}];
+const a: never = last(${each(count, i => (i % 2 ? `"s${i}"` : `${i}`), ", ")});
+class Chain<${each(count, i => (i === 0 ? `T0 extends T${count - 1}` : `T${i}`), ", ")}> {
+  constructor(${each(count, i => `public t${i}: T${i}`, ", ")}) {}
+  turn(): Chain<${each(count, i => (i === 0 ? `T${count - 1}` : i === count - 1 ? "T0" : `T${i}`), ", ")}> { return null!; }
+  pair<U extends T${count - 1}>(u: U): [U, ${each(count, i => `T${i}`, ", ")}] { return null!; }
+}
+const b: never = new Chain(${each(count, i => `${i}`, ", ")}).turn();
+const c: never = new Chain(${each(count, i => `${i} as number`, ", ")}).pair(1);
+type Swap<${each(count, i => `T${i}`, ", ")}> = { ${each(count, i => `k${i}: T${count - 1 - i}`, "; ")} };
+type Twice<${each(count, i => `T${i}`, ", ")}> = Swap<${each(count, i => `T${count - 1 - i}`, ", ")}>;
+const d: never = null! as Twice<${each(count, i => `${i}`, ", ")}>["k0"];
+const e: never = null! as Swap<${each(count, i => `${i}`, ", ")}>["k0"];
+export {};
+`;
+
+test.concurrent.skipIf(!tsc)("2 to 21 type parameters that are not created in their order, as in TypeScript", async () => {
+  const sizes = [2, 3, 4, 8, 9, 21];
+  using dir = tempDir("bun-check-mappers", {
+    "tsconfig.json": tsconfig,
+    ...Object.fromEntries(sizes.map(size => [`params${size}.ts`, parametersOutOfOrder(size)])),
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    ...[1, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  expect(Object.keys(byFile(theirs)).length).toBe(sizes.length);
+  for (const lines of ours) expect(byFile(lines)).toEqual(byFile(theirs));
+});
+
 // The style rules of a theme: an indexed access into an interface of `count` props types, each an intersection, by a type
 // parameter, intersected with `Record<string, unknown>` and with object types that share none, one or all of their names.
 // One of the props types has an `ownerState` and a `theme` of its own.

@@ -966,6 +966,11 @@ impl<'u> Run<'u> {
         }
     }
 
+    /// A session for one of its programs.
+    pub fn session_of_program(&self) -> Session {
+        Session::beside(self.session)
+    }
+
     /// Of the files, its programs have only the declaration files in common.
     pub fn of_declaration_files(self) -> Run<'u> {
         Run {

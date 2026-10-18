@@ -647,7 +647,7 @@ impl<'s> Program<'s> {
 
     pub fn checker(&self) -> Checker<'_, 's> {
         let arena = self.session.arena();
-        let mut task = Task::new_in(arena);
+        let mut task = Task::new_in(arena, &self.types);
         if self.types.shares_records() {
             task.own.set_sharing(Sharing::Finds);
         }

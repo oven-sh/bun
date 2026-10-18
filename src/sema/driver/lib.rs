@@ -4058,7 +4058,7 @@ fn check_named_files(
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that is allocated in it, so it is dropped last.
-    let session = Session::new();
+    let session = run.map_or_else(Session::new, Run::session_of_program);
     let files_are_found = |until_it_is_loaded: usize| {
         if let Some(place) = in_room {
             place.has_found_its_files(session.allocated_bytes() + until_it_is_loaded);

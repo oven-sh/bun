@@ -27,7 +27,7 @@ use crate::node::Node;
 use crate::program::{FileId, Sym};
 use crate::session::Arena;
 use crate::table::{Applied, Entries, Finishing, Handle, Payload, Publish, Share};
-use crate::types::{Link, Marks, OwnRecords, OwnStore, Sharing};
+use crate::types::{Link, Marks, OwnRecords, OwnStore, Sharing, TypeStore};
 use crate::util::SharedSort;
 use crate::util::{InParallel, for_each_mut};
 use std::cell::{Cell, RefCell, UnsafeCell};
@@ -66,8 +66,6 @@ pub struct Open;
 
 /// One per `Checker`.
 pub struct Task<'s> {
-    /// Of the thread that runs the task: for the records that the task creates.
-    arena: &'s Arena,
     /// The step, and the index of the task in it. `None`: the task is outside the plan.
     place: Option<(u32, u32)>,
     /// See `Task::begin`.
@@ -122,10 +120,9 @@ pub struct Task<'s> {
 
 impl<'s> Task<'s> {
     /// A task outside the plan. It reads the published state, and what it writes is dropped with it.
-    /// `arena`: of the calling thread, which runs the task.
-    pub(super) fn new_in(arena: &'s Arena) -> Task<'s> {
+    /// `arena`: of the calling thread, which runs the task. `types`: the published records.
+    pub(super) fn new_in(arena: &'s Arena, types: &TypeStore<'s>) -> Task<'s> {
         Task {
-            arena,
             place: None,
             is_read_later: true,
             withheld: 0,
@@ -147,7 +144,7 @@ impl<'s> Task<'s> {
             at_once_unless_stopped: 0,
             logged_before_the_stop: Cell::new(usize::MAX),
             differing: RefCell::default(),
-            own: OwnStore::new_in(arena),
+            own: OwnStore::new_in(arena, types),
             buffer: UnsafeCell::new(Buffer::new()),
             file_local: UnsafeCell::new(FileLocalTables::new()),
         }
@@ -391,10 +388,9 @@ impl<'s> Task<'s> {
         self.logged_before_the_stop.set(usize::MAX);
         *self.differing.get_mut() = DifferingEntries::default();
         // Outside the plan it publishes nothing.
-        let (sharing, jitter) = (self.own.sharing().min(Sharing::Finds), self.own.jitter());
-        self.own = OwnStore::new_in(self.arena);
+        let sharing = self.own.sharing().min(Sharing::Finds);
+        self.own.clear();
         self.own.set_sharing(sharing);
-        self.own.set_jitter(jitter);
         self.buffer.get_mut().clear();
         self.file_local.get_mut().clear();
     }

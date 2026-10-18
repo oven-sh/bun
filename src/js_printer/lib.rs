@@ -23,9 +23,9 @@ use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use bun_options_types::bundle_enums as bundle_opts;
 
-/// Local stand-in for `bun_core::strings::Encoding` that derives `ConstParamTy` so it can
-/// be used as a const-generic parameter (`const ENCODING: Encoding`). The variant set is
-/// identical; convert at the boundary if a `strings::Encoding` is ever needed.
+/// Encoding of the text passed to the string-escape helpers; derives `ConstParamTy` so it can be
+/// used as a const-generic parameter (`const ENCODING: Encoding`). `bun_core::strings::Encoding`
+/// is the runtime-valued `Utf8`/`Latin1` subset used by `bun_core::printer`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum Encoding {
     Ascii,
@@ -786,7 +786,7 @@ pub mod analyze_transpiled_module {
         }
 
         /// find any exports marked as 'local' that are actually 'indirect' and fix them
-        pub fn finalize(&mut self) -> Result<(), ()> {
+        pub fn finalize(&mut self) {
             debug_assert!(!self.finalized);
             #[derive(Clone, Copy)]
             struct LocalImport {
@@ -862,7 +862,6 @@ pub mod analyze_transpiled_module {
                 }
             }
             self.finalized = true;
-            Ok(())
         }
     }
 }
@@ -7854,12 +7853,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let have_module_info = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO
         && printer.module_info.is_some();
     if have_module_info {
-        printer
-            .module_info
-            .as_mut()
-            .unwrap()
-            .finalize()
-            .map_err(|()| crate::Error::Alloc(bun_alloc::AllocError))?;
+        printer.module_info.as_mut().unwrap().finalize();
     }
 
     let mut source_maps_chunk: Option<SourceMap::Chunk> = if GENERATE_SOURCE_MAP {
@@ -8120,9 +8114,7 @@ pub fn serialize_module_info(
 ) -> Option<Box<[u8]>> {
     let mi = module_info?;
     if !mi.finalized {
-        if mi.finalize().is_err() {
-            return None;
-        }
+        mi.finalize();
     }
     let deserialized = mi.as_deserialized();
     let mut buf: Vec<u8> = Vec::new();

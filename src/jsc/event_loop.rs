@@ -12,7 +12,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 
-use bun_io::{self as Async, Waker};
+use bun_io as Async;
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
@@ -81,7 +81,6 @@ pub struct EventLoop {
     pub global: Option<NonNull<JSGlobalObject>>,
     // BACKREF — owning `*VirtualMachine` (EventLoop is a value field of it).
     pub virtual_machine: Option<NonNull<VirtualMachine>>,
-    pub waker: Option<Waker>,
     // see `hold_forever_poll`
     #[cfg(windows)]
     pub forever_timer: Option<NonNull<uws::Timer>>,
@@ -127,7 +126,6 @@ impl Default for EventLoop {
             isolated_poster: None,
             global: None,
             virtual_machine: None,
-            waker: None,
             #[cfg(windows)]
             forever_timer: None,
             #[cfg(not(windows))]

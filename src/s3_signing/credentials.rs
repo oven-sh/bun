@@ -796,7 +796,6 @@ impl S3Credentials {
             // SignResult implements Drop, so struct-update `..default()`
             // is forbidden; mutate a default in place instead.
             let mut r = SignResult::default();
-            r.acl = sign_options.acl;
             r.url = authorization;
             r.storage_class = sign_options.storage_class;
             return Ok(r);
@@ -831,9 +830,7 @@ impl S3Credentials {
         result.amz_date = amz_date;
         result.host = host;
         result.authorization = authorization;
-        result.acl = sign_options.acl;
         result.storage_class = sign_options.storage_class;
-        result.request_payer = request_payer;
         result.url = url;
         result._headers_len = 4;
         // Self-referential: _headers borrows from owned Box<[u8]> fields on SignResult.
@@ -975,9 +972,7 @@ pub struct SignResult {
     pub(crate) content_encoding: Box<[u8]>,
     pub(crate) content_md5: Box<[u8]>,
     pub(crate) session_token: Box<[u8]>,
-    pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
-    pub(crate) request_payer: bool,
     // Self-referential: entries borrow from the Box<[u8]> fields above. PicoHeader
     // must be a raw (ptr,len) pair; see note in sign_request.
     pub(crate) _headers: [PicoHeader; Self::MAX_HEADERS],
@@ -1017,9 +1012,7 @@ impl Default for SignResult {
             content_encoding: Box::default(),
             content_md5: Box::default(),
             session_token: Box::default(),
-            acl: None,
             storage_class: None,
-            request_payer: false,
             _headers: [pico_header_empty(); Self::MAX_HEADERS],
             _headers_len: 0,
         }

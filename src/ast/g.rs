@@ -124,7 +124,6 @@ impl Class {
 
 // invalid shadowing if left as Comment
 pub struct Comment {
-    pub loc: crate::Loc,
     pub text: StoreStr,
 }
 

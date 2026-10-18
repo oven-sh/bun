@@ -994,7 +994,6 @@ impl IoRequestLoop {
                                 Flags::PollReadable,
                                 readable.tag,
                                 watcher_fd,
-                                true,
                                 readable.fd,
                             ) {
                                 Err(err) => {
@@ -1008,7 +1007,6 @@ impl IoRequestLoop {
                                 Flags::PollWritable,
                                 writable.tag,
                                 watcher_fd,
-                                true,
                                 writable.fd,
                             ) {
                                 Err(err) => {
@@ -1482,7 +1480,6 @@ pub enum Flags {
     // What did the event loop tell us?
     Process,
 
-    OneShot,
     NeedsRearm,
 
     WasEverRegistered,
@@ -1694,29 +1691,18 @@ impl Poll {
         flag: Flags,
         tag: PollableTag,
         watcher_fd: Fd,
-        one_shot: bool,
         fd: Fd,
     ) -> sys::Result<()> {
         log!("register: {:?} ({})", flag as u8, fd);
 
         debug_assert!(fd != Fd::INVALID);
 
-        if one_shot {
-            self.flags.insert(Flags::OneShot);
-        }
-
-        let one_shot_flag: u32 = if !self.flags.contains(Flags::OneShot) {
-            0
-        } else {
-            linux::EPOLL_ONESHOT
-        };
-
         let flags: u32 = match flag {
             Flags::Process | Flags::PollReadable => {
-                linux::EPOLL_IN | linux::EPOLL_HUP | linux::EPOLL_ERR | one_shot_flag
+                linux::EPOLL_IN | linux::EPOLL_HUP | linux::EPOLL_ERR | linux::EPOLL_ONESHOT
             }
             Flags::PollWritable => {
-                linux::EPOLL_OUT | linux::EPOLL_HUP | linux::EPOLL_ERR | one_shot_flag
+                linux::EPOLL_OUT | linux::EPOLL_HUP | linux::EPOLL_ERR | linux::EPOLL_ONESHOT
             }
             _ => unreachable!(),
         };

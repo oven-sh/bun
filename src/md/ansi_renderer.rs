@@ -660,8 +660,6 @@ impl<'a> AnsiRenderer<'a> {
             SpanType::Img => {
                 if self.image_depth == 1 {
                     self.emit_image();
-                    self.image_src = None;
-                    self.image_title = None;
                     self.image_alt.clear();
                 }
                 if self.image_depth > 0 {
@@ -1927,8 +1925,6 @@ impl<'a> AnsiRenderer<'a> {
                 self.emit_kitty_image_direct(payload);
                 self.image_depth = saved_depth;
                 self.image_alt = alt;
-                self.image_src = src;
-                self.image_title = title;
                 return;
             }
             // http(s) URL that the CLI pre-scan pass already downloaded
@@ -1939,8 +1935,6 @@ impl<'a> AnsiRenderer<'a> {
                         self.emit_kitty_image_file(local_path);
                         self.image_depth = saved_depth;
                         self.image_alt = alt;
-                        self.image_src = src;
-                        self.image_title = title;
                         return;
                     }
                 }
@@ -1949,8 +1943,6 @@ impl<'a> AnsiRenderer<'a> {
                 self.emit_kitty_image_file(&abs_path);
                 self.image_depth = saved_depth;
                 self.image_alt = alt;
-                self.image_src = src;
-                self.image_title = title;
                 return;
             }
         }
@@ -2008,8 +2000,6 @@ impl<'a> AnsiRenderer<'a> {
 
         self.image_depth = saved_depth;
         self.image_alt = alt;
-        self.image_src = src;
-        self.image_title = title;
     }
 
     /// Emit a Kitty Graphics Protocol transmit-and-display sequence for

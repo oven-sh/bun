@@ -319,7 +319,7 @@ pub(crate) mod random {
         use super::*;
         use crate::node::util::validators;
         use bun_core::String as BunString;
-        use bun_jsc::{JSType, StringJsc as _, UUID, UUID7};
+        use bun_jsc::{StringJsc as _, UUID, UUID7};
 
         #[bun_jsc::host_fn]
         fn random_int(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
@@ -615,7 +615,7 @@ pub(crate) mod random {
                 let _ = validators::validate_function(global, "callback", callback)?;
             }
 
-            let (result, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, size)?;
+            let (result, bytes) = ArrayBuffer::alloc(global, size)?;
 
             if callback.is_undefined() {
                 // sync
@@ -801,7 +801,7 @@ pub(crate) struct Argon2 {
 mod _impl {
     use super::*;
     use crate::node::util::validators;
-    use bun_jsc::{ErrorCode, JSFunction, JSType};
+    use bun_jsc::{ErrorCode, JSFunction};
 
     use crate::crypto::pbkdf2::{self, PBKDF2};
 
@@ -1299,7 +1299,7 @@ mod _impl {
         if params.keylen as usize > jsc::virtual_machine::synthetic_allocation_limit() {
             return Err(global.throw_out_of_memory());
         }
-        let (buf, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, params.keylen)?;
+        let (buf, bytes) = ArrayBuffer::alloc(global, params.keylen)?;
         let cx = global.js_thread_of_caller(call_frame);
         Job::<ScryptJob>::schedule(
             &cx,
@@ -1321,7 +1321,7 @@ mod _impl {
     fn scrypt_sync(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         // `password`/`salt` release on drop; nothing was protected on this path.
         let (ctx, _) = Scrypt::from_js::<false>(global, call_frame)?;
-        let (buf, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, ctx.keylen)?;
+        let (buf, bytes) = ArrayBuffer::alloc(global, ctx.keylen)?;
         if ctx.run_task_impl(bytes).is_some() {
             return Err(global
                 .err(

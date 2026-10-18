@@ -78,11 +78,6 @@ unsafe extern "C" {
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle;
     // `&mut *mut u8` is ABI-identical to a non-null `void**` out-param the
     // callee fills on success.
-    safe fn Bun__allocUint8ArrayForCopy(
-        global: &JSGlobalObject,
-        len: usize,
-        out: &mut *mut u8,
-    ) -> JSValue;
     safe fn Bun__allocArrayBufferForCopy(
         global: &JSGlobalObject,
         len: usize,
@@ -341,21 +336,12 @@ impl ArrayBuffer {
         })
     }
 
-    pub fn alloc<'a, const KIND: JSType>(
-        global: &JSGlobalObject,
-        len: u32,
-    ) -> JsResult<(JSValue, &'a mut [u8])> {
+    pub fn alloc<'a>(global: &JSGlobalObject, len: u32) -> JsResult<(JSValue, &'a mut [u8])> {
         let mut ptr_out: *mut u8 = ptr::null_mut();
-        let buf = match KIND {
-            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || {
-                Bun__allocUint8ArrayForCopy(global, len as usize, &mut ptr_out)
-            })?,
-            JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || {
-                Bun__allocArrayBufferForCopy(global, len as usize, &mut ptr_out)
-            })?,
-            _ => panic!("ArrayBuffer::alloc: KIND not implemented"),
-        };
-        // SAFETY: Bun__alloc*ForCopy writes a valid `len`-byte buffer pointer into ptr_out on success.
+        let buf = crate::host_fn::from_js_host_call(global, || {
+            Bun__allocArrayBufferForCopy(global, len as usize, &mut ptr_out)
+        })?;
+        // SAFETY: Bun__allocArrayBufferForCopy writes a valid `len`-byte buffer pointer into ptr_out on success.
         let slice = unsafe { bun_core::ffi::slice_mut(ptr_out, len as usize) };
         Ok((buf, slice))
     }

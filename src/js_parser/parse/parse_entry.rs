@@ -111,7 +111,6 @@ pub struct Parser<'a> {
 pub struct Options<'a> {
     pub jsx: options::JSX::Pragma,
     pub ts: bool,
-    pub keep_names: bool,
     pub ignore_dce_annotations: bool,
     /// Keeps every directive in the AST, in its original position and with its original text.
     /// Otherwise `"use strict"` is only recorded on its scope, and `minify_syntax` drops the rest.
@@ -136,8 +135,6 @@ pub struct Options<'a> {
     /// The source is one of JavaScriptCore's builtins: `@name` is a name.
     pub jsc_builtin_syntax: bool,
     pub output_format: options::Format,
-
-    pub transform_only: bool,
 
     /// Used for inlining the state of import.meta.main during visiting
     pub import_meta_main_value: Option<bool>,
@@ -171,7 +168,6 @@ impl<'a> Default for Options<'a> {
         Options {
             jsx: options::JSX::Pragma::default(),
             ts: false,
-            keep_names: true,
             ignore_dce_annotations: false,
             keep_directives: false,
             preserve_unused_imports_ts: false,
@@ -188,7 +184,6 @@ impl<'a> Default for Options<'a> {
             module_type: options::ModuleType::Unknown,
             jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
-            transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
             framework: None,
@@ -223,7 +218,6 @@ impl<'a> Options<'a> {
         Options {
             jsx: self.jsx.clone(),
             ts: self.ts,
-            keep_names: self.keep_names,
             ignore_dce_annotations: self.ignore_dce_annotations,
             keep_directives: self.keep_directives,
             preserve_unused_imports_ts: self.preserve_unused_imports_ts,
@@ -276,7 +270,6 @@ impl<'a> Options<'a> {
             module_type: self.module_type,
             jsc_builtin_syntax: self.jsc_builtin_syntax,
             output_format: self.output_format,
-            transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
             framework: self.framework,
@@ -331,7 +324,6 @@ impl<'a> Options<'a> {
         let mut opts = Options {
             ts: loader.is_typescript(),
             jsx,
-            keep_names: true,
             ignore_dce_annotations: false,
             keep_directives: false,
             preserve_unused_imports_ts: false,
@@ -351,7 +343,6 @@ impl<'a> Options<'a> {
             module_type: options::ModuleType::Unknown,
             jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
-            transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
             framework: None,

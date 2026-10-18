@@ -720,7 +720,6 @@ impl WebWorker {
             *vm_ref.proxy_env_storage.lock() = proxy_env_slots;
 
             vm_ref.is_main_thread = false;
-            VirtualMachine::set_is_main_thread_vm(false);
             vm_ref.on_unhandled_rejection = on_unhandled_rejection;
         }
 

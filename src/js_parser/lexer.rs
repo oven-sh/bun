@@ -1957,10 +1957,8 @@ impl<'a> Lexer<'a> {
                 // text = lexer.removeMultilineCommentIndent(lexer.source.contents[0..lexer.start], text);
             }
 
-            self.comments_to_preserve_before.push(js_ast::G::Comment {
-                text: text.into(),
-                loc: self.loc(),
-            });
+            self.comments_to_preserve_before
+                .push(js_ast::G::Comment { text: text.into() });
         }
 
         if !for_pragma {

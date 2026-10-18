@@ -327,7 +327,6 @@ fn parse_js<'a>(
     // Accept the same syntax as the runtime.
     opts.features.top_level_await = true;
     opts.features.standard_decorators = !loader.is_typescript();
-    opts.transform_only = true;
     opts.suppress_warnings_about_weird_code = true;
     let define: &'a bun_js_parser::Define = arena.alloc(bun_js_parser::Define::default());
     let mut log = bun_ast::Log::init();

@@ -1240,7 +1240,6 @@ pub struct BundleOptions<'a> {
 
     pub(crate) write: bool,
     pub(crate) preserve_symlinks: bool,
-    pub(crate) preserve_extensions: bool,
     pub production: bool,
 
     // only used by bundle_v2
@@ -1358,7 +1357,6 @@ pub struct BundleOptions<'a> {
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
     pub compile_target_builtins: CompileTargetBuiltins,
 
-    pub code_coverage: bool,
     pub debugger: bool,
 
     pub compile_mode: CompileMode,
@@ -1495,7 +1493,6 @@ impl<'a> BundleOptions<'a> {
             root_dir: self.root_dir.clone(),
             write: self.write,
             preserve_symlinks: self.preserve_symlinks,
-            preserve_extensions: self.preserve_extensions,
             production: self.production,
             output_format: self.output_format,
             tsconfig_override: self.tsconfig_override.clone(),
@@ -1562,7 +1559,6 @@ impl<'a> BundleOptions<'a> {
             optimize_bytecode: self.optimize_bytecode,
             bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
-            code_coverage: self.code_coverage,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
             compile_entry_point_name: self.compile_entry_point_name.clone(),
@@ -1760,7 +1756,6 @@ impl<'a> BundleOptions<'a> {
             output_dir_handle: None,
             root_dir: Box::default(),
             preserve_symlinks: false,
-            preserve_extensions: false,
             production: false,
             output_format: Format::Esm,
             tsconfig_override: None,
@@ -1814,7 +1809,6 @@ impl<'a> BundleOptions<'a> {
             optimize_bytecode: true,
             bytecode_order: Vec::new(),
             compile_target_builtins: CompileTargetBuiltins::Host,
-            code_coverage: false,
             debugger: false,
             compile_mode: CompileMode::None,
             compile_entry_point_name: Box::default(),

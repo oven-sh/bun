@@ -500,10 +500,6 @@ struct Runner;
 
 type VisitMap = HashMap<JSValue, Expr>;
 
-thread_local! {
-    static EXCEPTION_HOLDER: Cell<bool> = const { Cell::new(false) };
-}
-
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum MacroError {
     #[error("MacroFailed")]
@@ -919,10 +915,6 @@ impl Runner {
                 bstr::BStr::new(function_name)
             );
         }
-
-        // The exception holder is never read in this body (legacy from an earlier
-        // exception-reporting path); a thread-local sentinel suffices.
-        EXCEPTION_HOLDER.with(|h| h.set(true));
 
         // An RAII guard *owns* the
         // `Vec<JSValue>` + processed count. All mutation goes through the

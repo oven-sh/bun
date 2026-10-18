@@ -1966,7 +1966,6 @@ impl TestCommand {
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
-        VirtualMachine::set_is_main_thread_vm(true);
 
         if ctx.test_options.isolate {
             vm.test_isolation_enabled = true;
@@ -1974,7 +1973,6 @@ impl TestCommand {
         }
 
         if ctx.test_options.coverage.enabled {
-            vm.transpiler.options.code_coverage = true;
             vm.transpiler.options.minify_syntax = false;
             vm.transpiler.options.minify_identifiers = false;
             vm.transpiler.options.minify_whitespace = false;

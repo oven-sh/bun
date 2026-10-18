@@ -1,11 +1,13 @@
 // Runs unchanged on Node. Each row prints what a 'message' listener received that was added after the messages arrived.
 import { fork } from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { createServer } from "node:net";
 
 const throws = "a listener that throws";
 const throwsBeforeAnother = "a listener that throws, added before another";
 const throwsThenOtherEvent = "a listener that throws, then a listener for another event";
+const returns1AsTheyArrive = "nobody listens and listenerCount() returns 1 as they arrive";
+const returns1InTheTick = "nobody listens and listenerCount() returns 1 in the tick";
 const variants = [
   "a late listener",
   "a handle",
@@ -16,6 +18,9 @@ const variants = [
   "added and removed in one tick",
   "disconnect() in the tick that adds it",
   "removeAllListeners('newListener')",
+  returns1AsTheyArrive,
+  returns1InTheTick,
+  "the listenerCount() of node:events",
 ];
 process.on("uncaughtException", error => {
   if (error.message !== throws) throw error;
@@ -49,6 +54,7 @@ function receive(target, variant, whenWritten) {
     listen();
     target.send("more");
   };
+  if (variant === returns1AsTheyArrive) target.listenerCount = () => 1;
   // In a child this is also what opens the channel, so that it is read with no 'message' listener.
   target.send("ready");
   const throwAtFirst = message => {
@@ -79,7 +85,17 @@ function receive(target, variant, whenWritten) {
       } else if (variant === "disconnect() in the tick that adds it") {
         listen();
         target.disconnect();
+      } else if (variant === returns1InTheTick) {
+        target.listenerCount = () => 1;
+        target.on("another event", () => {});
+        setImmediate(() => {
+          delete target.listenerCount;
+          listenAndAskForTheEnd();
+        });
       } else {
+        if (variant === returns1AsTheyArrive) delete target.listenerCount;
+        if (variant === "the listenerCount() of node:events")
+          target.listenerCount = EventEmitter.prototype.listenerCount;
         if (variant === "removeAllListeners('newListener')") target.removeAllListeners("newListener");
         listenAndAskForTheEnd();
       }

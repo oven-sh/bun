@@ -27,6 +27,9 @@ test.concurrent("a message that arrives before there is a 'message' listener is 
     child, added and removed in one tick: ["first","second","end"]
     child, disconnect() in the tick that adds it: []
     child, removeAllListeners('newListener'): ["end"]
+    child, nobody listens and listenerCount() returns 1 as they arrive: ["end"]
+    child, nobody listens and listenerCount() returns 1 in the tick: ["end"]
+    child, the listenerCount() of node:events: ["first","second","end"]
     parent, a late listener: ["first","second","end"]
     parent, a handle: [["first","Server"],"second","end"]
     parent, a listener that throws: ["first","first","end"]
@@ -36,6 +39,9 @@ test.concurrent("a message that arrives before there is a 'message' listener is 
     parent, added and removed in one tick: ["first","second","end"]
     parent, disconnect() in the tick that adds it: []
     parent, removeAllListeners('newListener'): ["end"]
+    parent, nobody listens and listenerCount() returns 1 as they arrive: ["end"]
+    parent, nobody listens and listenerCount() returns 1 in the tick: ["end"]
+    parent, the listenerCount() of node:events: ["first","second","end"]
     "
   `);
 });

@@ -671,7 +671,7 @@ describe("the macro VM's env loader is its own", () => {
 
   // `bun build` without `--env` does not read `.env`. The macro VM reads it for its own
   // `process.env`, and that read must not change what the build's resolver sees.
-  test("a macro's .env load does not reach the build's resolver", async () => {
+  test.concurrent("a macro's .env load does not reach the build's resolver", async () => {
     using dir = tempDir("macro-env-loader-isolated", {
       "vendor/dep/index.ts": `export const dep = "from NODE_PATH";\n`,
       "macro.ts": `export function value(name: string) {\n  return name;\n}\n`,
@@ -699,7 +699,7 @@ describe("the macro VM's env loader is its own", () => {
     expect(withMacro).toEqual(withoutMacro);
   });
 
-  test("a macro reads .env through its own loader", async () => {
+  test.concurrent("a macro reads .env through its own loader", async () => {
     using dir = tempDir("macro-env-loader-reads-dotenv", {
       ".env": "FROM_DOTENV=hello\n",
       "macro.ts": `export function fromDotenv() {\n  return process.env.FROM_DOTENV ?? "unset";\n}\n`,
@@ -721,7 +721,7 @@ describe("the macro VM's env loader is its own", () => {
 
   // The copy carries the record of what the program's loader already read. `Bun.build()` in a
   // program that loaded `.env` at start does not read it again.
-  test("Bun.build() gives the macro VM a copy of the program's env", async () => {
+  test.concurrent("Bun.build() gives the macro VM a copy of the program's env", async () => {
     using dir = tempDir("macro-env-loader-build-api", {
       ".env": "FROM_DOTENV=hello\n",
       "macro.ts": `export function vars() {\n  return [process.env.FROM_DOTENV ?? "unset", process.env.ADDED_AFTER_START ?? "unset"].join(",");\n}\n`,

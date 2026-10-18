@@ -8535,6 +8535,18 @@ describe("css tests", () => {
       `,
       defaults,
     );
+    // Each rule gets its own copies, as in autoprefixer and esbuild: the second rule does not write the prefixed name.
+    prefix_test(
+      ".a { -webkit-user-select: none } .a { user-select: text }",
+      indoc`
+      .a {
+        -webkit-user-select: none;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      `,
+      defaults,
+    );
     prefix_test(
       ".a { user-select: none } .a { user-select: text }",
       indoc`

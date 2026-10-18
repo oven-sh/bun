@@ -20,6 +20,7 @@ const variants = [
   "disconnect() in the tick that adds it",
   "removeAllListeners('newListener')",
   "emit() replaced",
+  "listenerCount() replaced",
   throwsFromTheStart,
   ...channelMethods.map(method => `opened by channel.${method}()`),
 ];
@@ -96,6 +97,15 @@ function receive(target, variant, whenWritten) {
           return emit.apply(this, arguments);
         };
         listenAndAskForTheEnd();
+      } else if (variant === "listenerCount() replaced") {
+        target.listenerCount = () => 0;
+        listen();
+        setImmediate(() => {
+          got.push("restored");
+          delete target.listenerCount;
+          target.on("another event", () => {});
+          setImmediate(() => target.send("more"));
+        });
       } else if (variant === "once") {
         target.once("message", message => got.push(message));
         setImmediate(listenAndAskForTheEnd);

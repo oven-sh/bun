@@ -1579,25 +1579,26 @@ extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
 extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
 extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
 
-// Node's `target.emit(...)`: the `emit` that JavaScript sees, which throws what a listener throws.
-static void emitIPCMessage(Zig::GlobalObject* global, const Identifier& eventName, JSValue message, JSValue handle)
+// Node's lib/internal/child_process.js calls `target.emit()` and `target.listenerCount()`, which JavaScript can replace.
+static JSValue callProcessMethod(Zig::GlobalObject* global, ASCIILiteral name, const Identifier& eventName, JSValue message = {}, JSValue handle = {})
 {
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* process = global->processObject();
-    JSValue emit = process->get(global, Identifier::fromString(vm, "emit"_s));
-    RETURN_IF_EXCEPTION(scope, );
-    auto callData = JSC::getCallData(emit);
+    JSValue method = process->get(global, Identifier::fromString(vm, name));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto callData = JSC::getCallData(method);
     if (callData.type == CallData::Type::None) {
-        throwTypeError(global, scope, "process.emit is not a function"_s);
-        return;
+        throwTypeError(global, scope, makeString("process."_s, name, " is not a function"_s));
+        return {};
     }
     JSC::MarkedArgumentBuffer args;
     args.append(jsString(vm, eventName.string()));
-    args.append(message);
-    args.append(handle);
-    scope.release();
-    JSC::profiledCall(global, ProfilingReason::API, emit, callData, process, args);
+    if (message) {
+        args.append(message);
+        args.append(handle);
+    }
+    RELEASE_AND_RETURN(scope, JSC::profiledCall(global, ProfilingReason::API, method, callData, process, args));
 }
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L726-L742
@@ -1608,7 +1609,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitPendingMessages, (JSGlobalObject * 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* process = global->processObject();
     auto* pending = process->m_pendingMessages.get();
-    if (!pending || !Bun__GlobalObject__connectedIPC(global) || !process->wrapped().hasEventListeners(vm.propertyNames->message))
+    if (!pending || !Bun__GlobalObject__connectedIPC(global))
+        return JSValue::encode(jsUndefined());
+    JSValue listenerCount = callProcessMethod(global, "listenerCount"_s, vm.propertyNames->message);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!listenerCount.toBoolean(global))
         return JSValue::encode(jsUndefined());
 
     for (unsigned i = 0, length = pending->length(); i < length; i += 2) {
@@ -1616,7 +1621,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitPendingMessages, (JSGlobalObject * 
         RETURN_IF_EXCEPTION(scope, {});
         JSValue handle = pending->getIndex(global, i + 1);
         RETURN_IF_EXCEPTION(scope, {});
-        emitIPCMessage(global, vm.propertyNames->message, message, handle);
+        callProcessMethod(global, "emit"_s, vm.propertyNames->message, message, handle);
         // As in Node the list is kept, and the next listener gets all of them again.
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -5002,9 +5007,33 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitHelper, (JSGlobalObject * globalObj
 
 static constexpr auto kInternalIpcPrefix = "NODE_"_s;
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L954-L964
+static void emitOrHoldIPCMessage(Zig::GlobalObject* global, const Identifier& eventName, JSValue message, JSValue handle)
+{
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (eventName == vm.propertyNames->message) {
+        JSValue listenerCount = callProcessMethod(global, "listenerCount"_s, eventName);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!listenerCount.toBoolean(global)) {
+            auto* process = global->processObject();
+            auto* pending = process->m_pendingMessages.get();
+            if (!pending) {
+                pending = JSC::constructEmptyArray(global, nullptr);
+                RETURN_IF_EXCEPTION(scope, );
+                process->m_pendingMessages.set(vm, process, pending);
+            }
+            pending->push(global, message);
+            RETURN_IF_EXCEPTION(scope, );
+            RELEASE_AND_RETURN(scope, pending->push(global, handle));
+        }
+    }
+    scope.release();
+    callProcessMethod(global, "emit"_s, eventName, message, handle);
+}
+
 extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value, EncodedJSValue handle)
 {
-    auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
@@ -5021,20 +5050,7 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
         }
     }
 
-    if (process->wrapped().hasEventListeners(ident)) {
-        emitIPCMessage(global, ident, message, JSValue::decode(handle));
-    } else if (ident == vm.propertyNames->message) {
-        auto* pending = process->m_pendingMessages.get();
-        if (!pending) {
-            pending = JSC::constructEmptyArray(global, nullptr);
-            if (!scope.exception())
-                process->m_pendingMessages.set(vm, process, pending);
-        }
-        if (!scope.exception())
-            pending->push(global, message);
-        if (!scope.exception())
-            pending->push(global, JSValue::decode(handle));
-    }
+    emitOrHoldIPCMessage(global, ident, message, JSValue::decode(handle));
     if (auto* exception = scope.exception()) {
         CLEAR_IF_EXCEPTION(scope);
         Bun__reportUnhandledError(global, JSValue::encode(exception));

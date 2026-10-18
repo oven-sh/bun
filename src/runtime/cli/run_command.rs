@@ -2792,8 +2792,7 @@ impl RunCommand {
                 ctx.debug.no_clear_screen = true;
             }
             let hot_reload = ctx.debug.hot_reload;
-            // `bun --check --watch bake` is how `--check` restarts; a `--watch` of its own is not.
-            if hot_reload == cli::command::HotReload::Watch && !ctx.runtime_options.check {
+            if ctx.debug.watch_flag {
                 pretty_errorln!(
                     "<r><red>error<r>: \"bun bake\" reloads app/server.ts on its own. Remove --watch."
                 );

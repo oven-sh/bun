@@ -306,7 +306,6 @@ function collectOutput(proc: Subprocess<"ignore", "pipe", "pipe">) {
 test.concurrent.each([
   { name: "bun bake --check", args: ["bake", "--check"] },
   { name: "bun --check bake", args: ["--check", "bake"] },
-  { name: "bun --check --watch bake", args: ["--check", "--watch", "bake"] },
 ])("$name starts the server once the type errors are fixed", async ({ args }) => {
   using dir = tempDir("bake-command-check-watch", {
     "tsconfig.json": checkedTsconfig,
@@ -580,10 +579,13 @@ test.concurrent("bun bake runs a plugin function from bake.config.ts, with the p
   expect(await getPageCss(url, "/")).toContain(".project-root");
 });
 
-test.concurrent("bun --watch bake fails, as bun bake reloads on its own", async () => {
+test.concurrent.each([
+  { name: "bun --watch bake", args: ["--watch", "bake"] },
+  { name: "bun --check --watch bake", args: ["--check", "--watch", "bake"] },
+])("$name fails, as bun bake reloads on its own", async ({ args }) => {
   using dir = tempDir("bake-command-watch", { "app/pages/index.html": page });
 
-  await using proc = spawnBake(String(dir), ["--watch", "bake", "--port=0"]);
+  await using proc = spawnBake(String(dir), [...args, "--port=0"]);
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain(`"bun bake" reloads app/server.ts on its own. Remove --watch.`);

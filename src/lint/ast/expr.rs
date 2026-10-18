@@ -194,8 +194,8 @@ impl<'a> Expr<'a> {
                 target: e(target),
                 value: e(value),
             },
-            hir::ExprKind::Cond { test, yes_and_no } => {
-                let (yes, no) = file.hir.pair(yes_and_no);
+            hir::ExprKind::Cond { test, branches } => {
+                let hir::Branches { yes, no } = file.hir.branches(branches);
                 ExprKind::Cond {
                     test: e(test),
                     yes: e(yes),
@@ -629,8 +629,8 @@ impl<'a> Expr<'a> {
     #[inline]
     pub fn as_cond(self) -> Option<(Expr<'a>, Expr<'a>, Expr<'a>)> {
         match self.try_raw()?.kind {
-            hir::ExprKind::Cond { test, yes_and_no } => {
-                let (yes, no) = self.file.hir.pair(yes_and_no);
+            hir::ExprKind::Cond { test, branches } => {
+                let hir::Branches { yes, no } = self.file.hir.branches(branches);
                 Some((
                     Expr::new(self.file, test),
                     Expr::new(self.file, yes),

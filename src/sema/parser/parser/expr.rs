@@ -461,7 +461,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             };
             let kind = ExprKind::Cond {
                 test: expression,
-                yes_and_no: self.f.id_pair(yes, no),
+                branches: self.f.place_of_branches(Branches { yes, no }),
             };
             return self.finish_expr(kind, start);
         }

@@ -611,8 +611,8 @@ impl Checker<'_, '_> {
                     self.check_literals_expected_by_pattern(file, item);
                 }
             }
-            ExprKind::Cond { yes_and_no, .. } => {
-                let (yes, no) = hir.pair(yes_and_no);
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.check_literals_expected_by_pattern(file, yes);
                 self.check_literals_expected_by_pattern(file, no);
             }
@@ -1208,8 +1208,8 @@ impl Checker<'_, '_> {
             self.check_type_assignable_to(TypeId::UNDEFINED, expected, Some(node), None);
             return;
         }
-        if let ExprKind::Cond { yes_and_no, .. } = hir[e].kind {
-            let (yes, no) = hir.pair(yes_and_no);
+        if let ExprKind::Cond { branches, .. } = hir[e].kind {
+            let Branches { yes, no } = hir.branches(branches);
             for arm in [yes, no] {
                 self.check_return_expression(
                     file,

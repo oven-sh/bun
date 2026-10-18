@@ -4089,7 +4089,7 @@ fn check_named_files(
         }
     };
     let files = Files::load(
-        &session,
+        session,
         run,
         host,
         project.options,
@@ -4111,7 +4111,7 @@ fn check_named_files(
     }
     if refuses {
         let problems = files.program_problems();
-        let problems = ConfigError::of_problems(host, &session, &config_path, problems.iter());
+        let problems = ConfigError::of_problems(host, session, &config_path, problems.iter());
         about_options.extend(problems.iter().map(of_configuration));
         if !about_options.is_empty() {
             report.refused.push(refused(about_options));
@@ -4121,7 +4121,7 @@ fn check_named_files(
     // In an arena, so that no destructor runs for them: the session frees what they refer to all
     // at once. `Program::release` frees the little that is on the regular heap.
     let files = session.arena().alloc(files);
-    let root = session.arena().alloc(Program::new(&session, files));
+    let root = session.arena().alloc(Program::new(session, files));
     root.set_jitter(request.plan_options.jitter);
     let program: &Program = root;
     report.files_loaded = program.files.modules.len();
@@ -4165,7 +4165,7 @@ fn check_named_files(
     let trace = program.files.resolution_trace.iter();
     report.resolution_trace = trace.map(|it| global(it.code, &it.args).text).collect();
     let problems = program.files.program_problems();
-    let problems = ConfigError::of_problems(host, &session, &config_path, problems.iter());
+    let problems = ConfigError::of_problems(host, session, &config_path, problems.iter());
     about_options.extend(problems.iter().map(of_configuration));
 
     let checking = Instant::now();

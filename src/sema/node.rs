@@ -867,8 +867,8 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
                     || self.one(file.jsdoc_type(JsDocTypeOwner::Assign(e)))
                     || self.one(value)
             }
-            ExprKind::Cond { test, yes_and_no } => {
-                let (yes, no) = self.file.pair(yes_and_no);
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = self.file.branches(branches);
                 self.one(test) || self.one(yes) || self.one(no)
             }
             ExprKind::Spread(e) | ExprKind::Await(e) | ExprKind::NonNull(e) => self.one(e),

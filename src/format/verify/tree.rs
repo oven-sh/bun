@@ -1664,17 +1664,16 @@ impl Walk<'_, '_> {
                 self.nested(value, value2)
             }
             (
-                Cond { test, yes_and_no },
+                Cond { test, branches },
                 Cond {
                     test: test2,
-                    yes_and_no: yes_and_no2,
+                    branches: branches2,
                 },
             ) => {
-                let ((yes, no), (yes2, no2)) =
-                    (yes_and_no.of(self.a.ids), yes_and_no2.of(self.b.ids));
+                let (x, y) = (branches.of(self.a.ids), branches2.of(self.b.ids));
                 self.expr(test, test2)?;
-                self.expr(yes, yes2)?;
-                self.nested(no, no2)
+                self.expr(x.yes, y.yes)?;
+                self.nested(x.no, y.no)
             }
             (Spread(x), Spread(y)) | (Await(x), Await(y)) | (AsConst(x), AsConst(y)) => {
                 self.nested(x, y)

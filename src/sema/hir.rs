@@ -159,10 +159,15 @@ macro_rules! impl_run {
 impl_run!(IdList);
 impl_run!(Span);
 
-/// Two ids that are next to each other in [`File::ids`]: [`FileIn::pair`].
-pub struct IdPair<T> {
-    start: u32,
-    _of: PhantomData<T>,
+/// Where the two branches of a `Cond` are in [`File::ids`], next to each other: [`FileIn::branches`].
+#[derive(Copy, Clone, Debug)]
+pub struct BranchesAt(u32);
+
+/// The `yes` and the `no` of `test ? yes : no`.
+#[derive(Copy, Clone, Debug)]
+pub struct Branches {
+    pub yes: ExprId,
+    pub no: ExprId,
 }
 
 /// An `IdList` whose start and length are in [`File::ids`]: [`FileIn::list_at`].
@@ -187,15 +192,17 @@ macro_rules! impl_place {
         }
     };
 }
-impl_place!(IdPair);
 impl_place!(ListAt);
 
-impl<T: From<u32>> IdPair<T> {
+impl BranchesAt {
     /// `ids`: [`File::ids`].
     #[inline]
-    pub fn of(self, ids: &[u32]) -> (T, T) {
-        let start = self.start as usize;
-        (T::from(ids[start]), T::from(ids[start + 1]))
+    pub fn of(self, ids: &[u32]) -> Branches {
+        let at = self.0 as usize;
+        Branches {
+            yes: ExprId(ids[at]),
+            no: ExprId(ids[at + 1]),
+        }
     }
 }
 
@@ -637,7 +644,7 @@ pub enum ExprKind {
     /// `test ? yes : no`
     Cond {
         test: ExprId,
-        yes_and_no: IdPair<ExprId>,
+        branches: BranchesAt,
     },
     Spread(ExprId),
     Await(ExprId),
@@ -2606,8 +2613,8 @@ impl<S: Storage> FileIn<S> {
     }
 
     #[inline]
-    pub fn pair<T: From<u32>>(&self, pair: IdPair<T>) -> (T, T) {
-        pair.of(&self.ids)
+    pub fn branches(&self, at: BranchesAt) -> Branches {
+        at.of(&self.ids)
     }
 
     #[inline]
@@ -2670,13 +2677,10 @@ impl FileBuilder {
         self.ids.extend(items.iter().map(|&i| i.into()));
         IdList::new(start, items.len() as u32)
     }
-    pub fn id_pair<T: Into<u32>>(&mut self, first: T, second: T) -> IdPair<T> {
-        let start = self.ids.len() as u32;
-        self.ids.extend([first.into(), second.into()]);
-        IdPair {
-            start,
-            _of: PhantomData,
-        }
+    pub fn place_of_branches(&mut self, branches: Branches) -> BranchesAt {
+        let at = self.ids.len() as u32;
+        self.ids.extend([branches.yes.0, branches.no.0]);
+        BranchesAt(at)
     }
     pub fn place_of_list<T>(&mut self, list: IdList<T>) -> ListAt<T> {
         let at = self.ids.len() as u32;

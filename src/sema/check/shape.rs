@@ -1867,8 +1867,8 @@ impl<'p, 's> Checker<'p, 's> {
         if mapping.iter().all(|p| p.0 == p.1) {
             return mapper;
         }
-        self.types()
-            .mapper(mapping.iter().map(|p| (p.0, p.0)).collect())
+        let pairs: SmallVec<[(TypeId, TypeId); 8]> = mapping.iter().map(|p| (p.0, p.0)).collect();
+        self.types().mapper_of(&pairs)
     }
 
     // ───────────────────────────── building ─────────────────────────────

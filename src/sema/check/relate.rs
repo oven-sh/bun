@@ -540,6 +540,13 @@ fn is_normalized_kind(data: &TypeData) -> bool {
     }
 }
 
+/// See `Checker::derived_sig`. Never 0.
+#[derive(Copy, Clone)]
+pub(super) enum DerivedSig {
+    Erased = 1,
+    Base = 2,
+}
+
 impl<'p, 's> Checker<'p, 's> {
     pub fn is_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
         self.related(source, target, Relation::Assignable)
@@ -2022,14 +2029,15 @@ impl<'p, 's> Checker<'p, 's> {
             let priority = PRIORITY_NO_CONSTRAINTS | PRIORITY_ALWAYS_STRICT;
             self.infer(&mut context, check, extends, priority);
         }
-        let mut pairs = self.types().mapping(mapper).to_vec();
+        let mut pairs: SmallVec<[(TypeId, TypeId); 8]> =
+            SmallVec::from_slice(self.types().mapping(mapper));
         for (i, &param) in params.iter().enumerate() {
             // `combineTypeMappers(context.mapper, mapper)`: an inferred type is instantiated
             // with `mapper`.
             let inferred = self.get_inferred_type(&context, i, false);
             pairs.push((param, self.instantiate(inferred, mapper)));
         }
-        let combined = self.types().mapper(pairs);
+        let combined = self.types().mapper_of(&pairs);
         let declared = self.type_from_node(file, nodes[2]);
         self.instantiate(declared, combined)
     }
@@ -7086,12 +7094,32 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// With every type parameter of its own replaced by `any`. `getErasedSignature`
     pub fn erased_sig(&mut self, sig: SigId) -> SigId {
-        let params = self.sig_type_params(sig);
-        if params.is_empty() {
-            return sig;
+        self.derived_sig(sig, DerivedSig::Erased, |c| {
+            let params = c.sig_type_params(sig);
+            if params.is_empty() {
+                return sig;
+            }
+            let anys: SmallVec<[TypeId; 8]> = SmallVec::from_elem(TypeId::ANY, params.len());
+            c.with_own_type_params(sig, &params, &anys)
+        })
+    }
+
+    /// `erasedSignatureCache`, `baseSignatureCache`: what `derive` makes of `sig`.
+    pub(super) fn derived_sig(
+        &mut self,
+        sig: SigId,
+        which: DerivedSig,
+        derive: impl FnOnce(&mut Self) -> SigId,
+    ) -> SigId {
+        if let Some(kept) = self.recent_derived_sigs.get(sig.0, which as u32) {
+            return SigId(kept);
         }
-        let anys: SmallVec<[TypeId; 8]> = SmallVec::from_elem(TypeId::ANY, params.len());
-        self.with_own_type_params(sig, &params, &anys)
+        let mark = self.non_cacheable_mark();
+        let derived = derive(self);
+        if derived != sig && self.non_cacheable_mark() == mark {
+            (self.recent_derived_sigs).put(sig.0, which as u32, derived.0);
+        }
+        derived
     }
 
     /// `sig` with its own type parameters `params` replaced by `values`, and nothing else: the type
@@ -7104,7 +7132,8 @@ impl<'p, 's> Checker<'p, 's> {
         values: &[TypeId],
     ) -> SigId {
         let extended = |c: &mut Self, own: MapperId| {
-            let mut pairs = c.types().mapping(own).to_vec();
+            let mut pairs: SmallVec<[(TypeId, TypeId); 8]> =
+                SmallVec::from_slice(c.types().mapping(own));
             for (&param, &value) in params.iter().zip(values) {
                 // In an instantiation it is a clone, represented by the declared one
                 // (`cloneTypeParameter`). A mapper has one pair for a parameter, so the order of
@@ -7121,7 +7150,7 @@ impl<'p, 's> Checker<'p, 's> {
                     None => pairs.push((param, value)),
                 }
             }
-            c.types().mapper(pairs)
+            c.types().mapper_of(&pairs)
         };
         let data = match *self.types().sig(sig) {
             SigData::Decl { file, func, mapper } => SigData::Decl {

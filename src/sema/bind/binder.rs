@@ -4856,8 +4856,8 @@ impl<'f, 's> Binder<'f, 's> {
                 }
             }
             // `bindConditionalExpressionFlow`
-            ExprKind::Cond { test, yes_and_no } => {
-                let (yes, no) = self.f.pair(yes_and_no);
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = self.f.branches(branches);
                 let (on_true, on_false, post) = (
                     self.branch_label(),
                     self.branch_label(),

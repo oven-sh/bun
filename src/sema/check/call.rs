@@ -180,8 +180,8 @@ impl<'p, 's> Checker<'p, 's> {
                     && self.is_context_sensitive(file, hir[p].value)
             }),
             ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(file, i)),
-            ExprKind::Cond { yes_and_no, .. } => {
-                let (yes, no) = hir.pair(yes_and_no);
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.is_context_sensitive(file, yes) || self.is_context_sensitive(file, no)
             }
             ExprKind::Binary {

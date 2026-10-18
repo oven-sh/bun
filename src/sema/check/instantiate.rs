@@ -253,7 +253,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => (1, 0, 0),
         };
         let stored = self.types().mapping(mapper);
-        if stored.is_sorted_by(|x, y| declaration(x.0) < declaration(y.0)) {
+        if stored.len() <= 1 || stored.is_sorted_by(|x, y| declaration(x.0) < declaration(y.0)) {
             return stored.into();
         }
         let mut pairs = stored.to_vec();
@@ -408,7 +408,11 @@ impl<'p, 's> Checker<'p, 's> {
         self.instantiation_count = (self.instantiation_count).saturating_add(calls + variadic + 1);
     }
 
-    pub fn instantiate_all(&mut self, types: &[TypeId], mapper: MapperId) -> Vec<TypeId> {
+    pub fn instantiate_all(
+        &mut self,
+        types: &[TypeId],
+        mapper: MapperId,
+    ) -> SmallVec<[TypeId; 8]> {
         types.iter().map(|&t| self.instantiate(t, mapper)).collect()
     }
 

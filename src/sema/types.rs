@@ -2028,8 +2028,7 @@ impl Bits {
 struct Own<'s, V> {
     /// They never move.
     records: Mine<'s, V>,
-    /// Lookup index for the task-local records, and for the published records the task has looked
-    /// up before.
+    /// Lookup index for the task-local records.
     found: Found,
     /// A bit for each record: whether it is bound. It references a node or a symbol of a file that
     /// nothing imports, or a record that does. Never published, so the HIR of such a file can be
@@ -2335,26 +2334,23 @@ fn intern_record<'s, V: Record, K>(
     } else {
         find_published()
     };
-    let id = match known {
-        Some(id) => id,
-        None => {
-            let index = mine.records.len();
-            match make(key, index | LOCAL) {
-                (record, Home::Own { is_bound }) => {
-                    own.log(kind, index);
-                    mine.push(record, is_bound);
-                    index | LOCAL
-                }
-                (record, Home::Published(id)) => {
-                    let id = published.place(spread, id, record);
-                    own.wait_at(Place::RecordPublished);
-                    id
-                }
-            }
+    if let Some(id) = known {
+        return id;
+    }
+    let index = mine.records.len();
+    match make(key, index | LOCAL) {
+        (record, Home::Own { is_bound }) => {
+            own.log(kind, index);
+            mine.push(record, is_bound);
+            mine.found.fill(vacancy, spread, index | LOCAL);
+            index | LOCAL
         }
-    };
-    mine.found.fill(vacancy, spread, id);
-    id
+        (record, Home::Published(id)) => {
+            let id = published.place(spread, id, record);
+            own.wait_at(Place::RecordPublished);
+            id
+        }
+    }
 }
 
 /// `false`: a type or a signature that the task does not have is looked up among the published

@@ -815,6 +815,26 @@ impl<'p, 's> Checker<'p, 's> {
         if depth >= 5 || !self.has_type_variables(ty) {
             return false;
         }
+        // The constraint of a conditional type is often a union of conditional types, five levels deep.
+        let is_kept = matches!(
+            self.data(ty),
+            TypeData::Union(_) | TypeData::Intersection(_) | TypeData::Cond { .. }
+        );
+        if !is_kept {
+            return self.is_const_type_variable_worker(ty, depth);
+        }
+        if let Some(known) = self.recent_const_type_variables.get(ty.0, depth + 1) {
+            return known != 0;
+        }
+        let mark = self.non_cacheable_mark();
+        let is_const = self.is_const_type_variable_worker(ty, depth);
+        if self.non_cacheable_mark() == mark {
+            (self.recent_const_type_variables).put(ty.0, depth + 1, u32::from(is_const));
+        }
+        is_const
+    }
+
+    fn is_const_type_variable_worker(&mut self, ty: TypeId, depth: u32) -> bool {
         match self.data(ty) {
             // `core.Some(t.symbol.Declarations, ..)`: the type parameters of one name in the
             // declarations of a class or an interface are one symbol.
@@ -1826,8 +1846,8 @@ impl<'p, 's> Checker<'p, 's> {
                 Some(op) => self.type_of_binary(file, e, op, target, value),
             },
             // `checkConditionalExpression`
-            ExprKind::Cond { test, yes_and_no } => {
-                let (yes, no) = hir.pair(yes_and_no);
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = hir.branches(branches);
                 let tested = self.type_of_expr(file, test);
                 self.check_truthiness_of_type(file, test, tested);
                 self.look_at_with(|c| {

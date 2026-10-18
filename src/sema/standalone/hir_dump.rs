@@ -640,8 +640,8 @@ impl Dump<'_, '_> {
                 self.expr(d, "target", target);
                 self.expr(d, "value", value);
             }
-            ExprKind::Cond { test, yes_and_no } => {
-                let (yes, no) = self.file.pair(yes_and_no);
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = self.file.branches(branches);
                 self.line(depth, label, &head);
                 self.expr(d, "test", test);
                 self.expr(d, "yes", yes);

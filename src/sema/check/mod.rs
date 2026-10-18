@@ -746,6 +746,8 @@ impl<'s> Program<'s> {
             instantiations_computed: 0,
             recent_instantiations: Default::default(),
             recent_composed: Default::default(),
+            recent_const_type_variables: Default::default(),
+            recent_derived_sigs: Default::default(),
             known_mapped_prop_types: Default::default(),
             props_without_write_types: Default::default(),
             unresolved_members: Vec::new(),
@@ -1415,6 +1417,10 @@ pub struct Checker<'p, 's> {
     recent_instantiations: instantiate::Recent,
     /// The entries most recently read from or written to `Program::composed`.
     recent_composed: instantiate::Recent,
+    /// `is_const_type_variable`, by the type and 1 + the depth.
+    recent_const_type_variables: instantiate::Recent,
+    /// By a signature and a `relate::DerivedSig`.
+    recent_derived_sigs: instantiate::Recent,
     /// The types that `type_of_mapped_prop` has found in `Program::mapped_prop_types`, by what decides which entry it
     /// reads: the mapped type in the source of the property, the mapper of the property and its name. Not a `Recent`: the
     /// properties of a union of a hundred `Omit<..>` are read in turn, over and over, and are more than that has places for.

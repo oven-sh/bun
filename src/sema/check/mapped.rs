@@ -1671,15 +1671,14 @@ impl<'p, 's> Checker<'p, 's> {
                     // instantiated.
                     let target = self.instantiate(extends_declared, mapper);
                     let inferred = self.infer_from_types(&params, check_ty, target, mapper);
-                    let mapping = self.types().mapping(mapper);
-                    let mut pairs = Vec::with_capacity(mapping.len() + params.len());
-                    pairs.extend_from_slice(mapping);
+                    let mut pairs: SmallVec<[(TypeId, TypeId); 8]> =
+                        SmallVec::from_slice(self.types().mapping(mapper));
                     // `combineTypeMappers(context.mapper, mapper)`: an inferred type is
                     // instantiated with `mapper`.
                     for (&param, inferred) in params.iter().zip(inferred) {
                         pairs.push((param, self.instantiate(inferred, mapper)));
                     }
-                    combined = self.types().mapper(pairs);
+                    combined = self.types().mapper_of(&pairs);
                 } else if params
                     .iter()
                     .any(|param| (self.p.type_param_constraints.get(&self.task, param)).is_none())

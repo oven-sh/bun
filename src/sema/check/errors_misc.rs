@@ -251,8 +251,8 @@ impl Checker<'_, '_> {
                     ALWAYS
                 }
             }
-            ExprKind::Cond { yes_and_no, .. } => {
-                let (yes, no) = hir.pair(yes_and_no);
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.syntactic_truthiness(file, yes) | self.syntactic_truthiness(file, no)
             }
             ExprKind::Ident(_) if self.is_undefined_itself(file, e) => NEVER,
@@ -296,8 +296,8 @@ impl Checker<'_, '_> {
                 value,
                 ..
             } => self.syntactic_nullishness(file, value),
-            ExprKind::Cond { yes_and_no, .. } => {
-                let (yes, no) = hir.pair(yes_and_no);
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.syntactic_nullishness(file, yes) | self.syntactic_nullishness(file, no)
             }
             ExprKind::Null => ALWAYS,

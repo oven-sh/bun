@@ -169,8 +169,8 @@ impl Hir<'_> {
     }
 
     #[inline]
-    pub(crate) fn pair<T: From<u32>>(&self, pair: hir::IdPair<T>) -> (T, T) {
-        pair.of(self.ids)
+    pub(crate) fn branches(&self, at: hir::BranchesAt) -> hir::Branches {
+        at.of(self.ids)
     }
 
     #[inline]

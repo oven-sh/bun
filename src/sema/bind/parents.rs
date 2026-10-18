@@ -334,8 +334,8 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             }
             ExprKind::Binary { left, right, .. } => operands!(left, right),
             ExprKind::Assign { target, value, .. } => operands!(target, value),
-            ExprKind::Cond { test, yes_and_no } => {
-                let (yes, no) = f.pair(yes_and_no);
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = f.branches(branches);
                 operands!(test, yes, no);
             }
             ExprKind::Unary { operand, .. }

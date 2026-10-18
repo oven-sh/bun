@@ -2139,8 +2139,8 @@ impl<'s> Checker<'_, 's> {
                 self.check_plain_assignment_operator(file, e, None);
                 self.current_source_element = saved;
             }
-            ExprKind::Cond { test, yes_and_no } => {
-                let (yes, no) = hir.pair(yes_and_no);
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.check_expression(file, test);
                 let body = Parent::Expr(yes);
                 self.check_testing_known_truthy_callable_or_awaitable_or_enum_member_type(

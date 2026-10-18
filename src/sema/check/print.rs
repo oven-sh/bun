@@ -5242,8 +5242,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 let (target, value) = (emit(target, P::Conditional)?, emit(value, P::Yield)?);
                 cat!(target, b" ", operator, b" ", value)
             }
-            ExprKind::Cond { test, yes_and_no } => {
-                let (yes, no) = hir.pair(yes_and_no);
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = hir.branches(branches);
                 let (test, yes, no) = (
                     emit(test, P::LogicalOr)?,
                     emit(yes, P::Yield)?,

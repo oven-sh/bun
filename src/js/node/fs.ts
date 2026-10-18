@@ -308,7 +308,11 @@ var access = function access(path, mode, callback?) {
           offset: offsetOrOptions = 0,
           length = buffer.byteLength - offsetOrOptions,
           position = null,
-        } = offsetOrOptions ?? {});
+        } = offsetOrOptions ?? kEmptyObject);
+      }
+      if (typeof offsetOrOptions === "function") {
+        // fs.write(fd, buffer, callback)
+        offsetOrOptions = 0;
       }
 
       fs.writeCb(onWritten, fd, buffer, offsetOrOptions, length, position);
@@ -511,8 +515,9 @@ var access = function access(path, mode, callback?) {
     try {
       if (types.isArrayBufferView(buffer)) {
         let offset = offsetOrOptions;
-        if (typeof offset === "object" && offset !== null) {
-          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions);
+        // `null` is an empty options object, as in Node.
+        if (typeof offset === "object") {
+          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? kEmptyObject);
           return fs.writeSync(fd, buffer, offset, length, position);
         }
         return arguments.length <= 2 ? fs.writeSync(fd, buffer) : fs.writeSync(fd, buffer, offset, length, position);

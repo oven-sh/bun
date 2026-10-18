@@ -658,6 +658,14 @@ public:
         return std::move(*this);
     }
 
+    /* While on, a route is registered with its pattern as a literal path. See HttpRouter::setLiteral. */
+    TemplatedApp &&literalRoutes(bool on) {
+        if (httpContext) {
+            httpContext->getSocketContextData()->router.setLiteral(on);
+        }
+        return std::move(*this);
+    }
+
     TemplatedApp &&get(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("GET", pattern, std::move(handler));

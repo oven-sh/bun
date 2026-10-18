@@ -50,6 +50,8 @@ struct H2App {
     bool drain() { return http2Context->drain(); }
 
     void clearRoutes() { http2Context->clearRoutes(); }
+    /* While on, a route is registered with its pattern as a literal path. See HttpRouter::setLiteral. */
+    void literalRoutes(bool on) { http2Context->router.setLiteral(on); }
     /* GOAWAY + close every connection. */
     void close() { http2Context->closeAll(); }
     void *getNativeHandle() { return http2Context; }

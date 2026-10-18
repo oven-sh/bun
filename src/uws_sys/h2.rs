@@ -384,6 +384,12 @@ impl App {
     pub fn clear_routes(&mut self) {
         c::uws_h2_app_clear_routes(self)
     }
+    /// See [`crate::app::App::literal_routes`].
+    pub fn literal_routes(&mut self, register: impl FnOnce(&mut Self)) {
+        c::uws_h2_app_literal_routes(self, true);
+        register(self);
+        c::uws_h2_app_literal_routes(self, false);
+    }
 
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
     where
@@ -522,6 +528,7 @@ mod c {
         );
         pub(super) safe fn uws_h2_app_drain(app: &mut App) -> bool;
         pub(super) safe fn uws_h2_app_clear_routes(app: &mut App);
+        pub(super) safe fn uws_h2_app_literal_routes(app: &mut App, on: bool);
         pub(super) safe fn uws_h2_res_write_continue(res: &mut Response);
         pub(super) fn uws_h2_app_get(
             app: *mut App,

@@ -44,6 +44,9 @@ private:
     /* Handler ids are 32-bit */
     static constexpr uint32_t HANDLER_MASK = 0x0fffffff;
 
+    /* Name of the child of a method node that holds the literal keys. No segment of a pattern has a '/', so none is equal to it. */
+    static constexpr std::string_view LITERAL_TOKEN = "*/";
+
     /* List of handlers */
     std::vector<MoveOnlyFunction<bool(HttpRouter *)>> handlers;
 
@@ -51,6 +54,9 @@ private:
     std::string_view currentUrl = {};
     std::string_view urlSegmentVector[MAX_URL_SEGMENTS] = {};
     int urlSegmentTop = -1;
+
+    /* See setLiteral() */
+    bool literalKeys = false;
 
     /* The matching tree */
     struct Node {
@@ -71,7 +77,8 @@ private:
             return 1;
         }
         if (name[0] == '*') {
-            return 0;
+            /* The literal container goes after every other high priority child (the WebSocket upgrades) */
+            return name == LITERAL_TOKEN ? -1 : 0;
         }
         return 2;
     }
@@ -204,12 +211,78 @@ private:
         return false;
     }
 
+    /* Whether the tree cannot hold this literal key byte for byte: as a pattern, one of its segments
+     * is a parameter or a wildcard, or it has all the segments that are read of a URL, and a longer
+     * URL would match it. This splits the key as getUrlSegment does, but it does not call it: one
+     * more caller stops the inlining of getUrlSegment into executeHandlers. */
+    bool needsLiteralNode(std::string_view key) {
+        unsigned int segments = 0;
+        for (; !key.empty() && segments < MAX_URL_SEGMENTS; segments++) {
+            key.remove_prefix(1);
+            std::string_view segment = key.substr(0, key.find('/'));
+            if (lexicalOrder(segment) < 2) {
+                return true;
+            }
+            key.remove_prefix(segment.length());
+        }
+        return segments == MAX_URL_SEGMENTS;
+    }
+
+    /* The node of a literal key: a child, named by the whole key, of the literal container of the method node.
+     * executeHandlers runs the container as a wildcard, ahead of every route but the WebSocket upgrades.
+     * Its one handler runs the handlers of the child that is equal to the whole URL. */
+    Node *literalNode(Node *methodNode, std::string_view key, bool create) {
+        Node *container = nullptr;
+        for (const std::unique_ptr<Node> &node : methodNode->children) {
+            if (node->name == LITERAL_TOKEN) {
+                container = node.get();
+                break;
+            }
+        }
+        if (!container) {
+            if (!create) {
+                return nullptr;
+            }
+            container = getNode(methodNode, LITERAL_TOKEN, true);
+            container->handlers.push_back(HIGH_PRIORITY | uint32_t(handlers.size()));
+            handlers.emplace_back([container](HttpRouter *router) {
+                /* Segment 0 is parsed: the URL starts one byte before it and ends where currentUrl ends */
+                const char *begin = router->urlSegmentVector[0].data() - 1;
+                std::string_view url(begin, size_t(router->currentUrl.data() + router->currentUrl.length() - begin));
+                for (const std::unique_ptr<Node> &node : container->children) {
+                    if (node->name == url) {
+                        for (uint32_t handler : node->handlers) {
+                            if (router->handlers[handler & HANDLER_MASK](router)) {
+                                return true;
+                            }
+                        }
+                        break;
+                    }
+                }
+                return false;
+            });
+        }
+        if (create) {
+            return getNode(container, key, false);
+        }
+        for (const std::unique_ptr<Node> &node : container->children) {
+            if (node->name == key) {
+                return node.get();
+            }
+        }
+        return nullptr;
+    }
+
     /* Scans for one matching handler, returning the handler and its priority or UINT32_MAX for not found */
-    uint32_t findHandler(std::string_view method, std::string_view pattern, uint32_t priority) {
+    uint32_t findHandler(std::string_view method, std::string_view pattern, uint32_t priority, bool literal) {
         for (const std::unique_ptr<Node> &node : root.children) {
             if (method == node->name) {
-                setUrl(pattern);
-                Node *n = node.get();
+                /* A literal key is one node and has no segments to walk */
+                setUrl(literal ? std::string_view() : pattern);
+                Node *n = literal ? literalNode(node.get(), pattern, false) : node.get();
+                if (!n) {
+                    return UINT32_MAX;
+                }
                 for (int i = 0; !getUrlSegment(i).second; i++) {
                     /* Go to next segment or quit */
                     std::string segment(getUrlSegment(i).first);
@@ -251,6 +324,12 @@ public:
         return userData;
     }
 
+    /* While on, add() and remove() take their pattern as a literal path. It matches a URL byte for byte:
+     * a segment that starts with ':' or '*' is not a parameter or a wildcard. */
+    void setLiteral(bool on) {
+        literalKeys = on;
+    }
+
     /* Fast path */
     bool route(std::string_view method, std::string_view url) {
         /* Reset url parsing cache */
@@ -278,14 +357,27 @@ public:
 
     /* Adds the corresponding entires in matching tree and handler list */
     void add(std::span<const std::string_view> methods, std::string_view pattern, MoveOnlyFunction<bool(HttpRouter *)> &&handler, uint32_t priority = MEDIUM_PRIORITY) {
+        /* Most literal keys are byte-exact as a pattern already */
+        const bool literal = literalKeys && needsLiteralNode(pattern);
+
         /* First remove existing handler */
         remove(methods[0], pattern, priority);
+
+        if (literal) {
+            /* A new container adds a handler of its own. Add them first: the id below has to be the same for every method. */
+            for (const std::string_view method : methods) {
+                literalNode(getNode(&root, method, false), pattern, true);
+            }
+        }
 
         for (const std::string_view method : methods) {
             /* Lookup method */
             Node *node = getNode(&root, method, false);
+            if (literal) {
+                node = literalNode(node, pattern, true);
+            }
             /* Iterate over all segments */
-            setUrl(pattern);
+            setUrl(literal ? std::string_view() : pattern);
             for (int i = 0; !getUrlSegment(i).second; i++) {
                 std::string strippedSegment(getUrlSegment(i).first);
                 if (strippedSegment.length() > 1 && strippedSegment[0] == ':') {
@@ -359,7 +451,7 @@ public:
      * Removing a wildcard is done by removing ONE OF the methods the wildcard would match with.
      * Example: If wildcard includes POST, GET, PUT, you can remove ALL THREE by removing GET. */
     bool remove(std::string_view method, std::string_view pattern, uint32_t priority) {
-        uint32_t handler = findHandler(method, pattern, priority);
+        uint32_t handler = findHandler(method, pattern, priority, literalKeys && needsLiteralNode(pattern));
         if (handler == UINT32_MAX) {
             /* Not found or already removed, do nothing */
             return false;

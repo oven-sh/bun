@@ -208,9 +208,36 @@ impl Default for RouteDeclaration {
     }
 }
 
+/// The path of a static route, and how the router reads it.
+pub(crate) enum RouteKey {
+    /// A key of `routes`. A segment that starts with `:` is a parameter, and
+    /// one that starts with `*` is a wildcard.
+    Pattern(Box<[u8]>),
+    /// The URL path of a file the bundler wrote. The route answers at exactly
+    /// these bytes.
+    Literal(Box<[u8]>),
+}
+
+impl RouteKey {
+    /// Whether this is the pattern `pattern`. A file of that name is not.
+    pub(crate) fn is_pattern(&self, pattern: &[u8]) -> bool {
+        matches!(self, RouteKey::Pattern(bytes) if **bytes == *pattern)
+    }
+}
+
+impl core::ops::Deref for RouteKey {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            RouteKey::Pattern(bytes) | RouteKey::Literal(bytes) => bytes,
+        }
+    }
+}
+
 // TODO: rename to StaticRoute.Entry
 pub(crate) struct StaticRouteEntry {
-    pub path: Box<[u8]>,
+    pub path: RouteKey,
     pub(crate) route: AnyRoute,
     pub method: MethodOptional,
 }
@@ -218,6 +245,20 @@ pub(crate) struct StaticRouteEntry {
 impl StaticRouteEntry {
     fn memory_cost(&self) -> usize {
         self.path.len() + self.route.memory_cost()
+    }
+
+    /// Adds the route of a file the bundler wrote. It answers at `path`, byte for byte.
+    pub(crate) fn push_bundled_file(
+        routes: &mut Vec<StaticRouteEntry>,
+        path: &[u8],
+        route: AnyRoute,
+        method: MethodOptional,
+    ) {
+        routes.push(StaticRouteEntry {
+            path: RouteKey::Literal(Box::from(path)),
+            route,
+            method,
+        });
     }
 }
 
@@ -233,6 +274,11 @@ impl ServerConfig {
                     }
                 }
             }
+            // A file named like a pattern is not that pattern.
+            hasher.update(match &route.path {
+                RouteKey::Pattern(_) => b"pattern",
+                RouteKey::Literal(_) => b"literal",
+            });
             hasher.update(&route.path);
             hasher.final_()
         }
@@ -313,49 +359,6 @@ impl ServerConfig {
 
         Ok(that)
     }
-
-    pub(crate) fn append_static_route(
-        &mut self,
-        path: &[u8],
-        route: AnyRoute,
-        method: MethodOptional,
-    ) -> Result<(), crate::Error> {
-        self.static_routes.push(StaticRouteEntry {
-            path: Box::<[u8]>::from(path),
-            route,
-            method,
-        });
-        Ok(())
-    }
-}
-
-pub(crate) fn apply_static_route<const SSL: bool, T: StaticRouteLike>(
-    server: AnyServer,
-    app: &mut uws::NewApp<SSL>,
-    entry: ThisPtr<T>,
-    path: &[u8],
-    method: http_method::Optional,
-    path_has_user_head_route: bool,
-) {
-    entry.set_server(server);
-
-    // Only answer HEAD from an entry that serves GET (HEAD must mirror GET,
-    // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
-    // handler route: uWS keeps the last registration for the same method and path.
-    if !path_has_user_head_route && serves_head(&method) {
-        app.method_this(Method::HEAD, path, T::on_head_request, entry);
-    }
-    match method {
-        http_method::Optional::Any => {
-            app.any_this(path, T::on_request, entry);
-        }
-        http_method::Optional::Method(m) => {
-            let mut iter = m.iter();
-            while let Some(method_) = iter.next() {
-                app.method_this(method_, path, T::on_request, entry);
-            }
-        }
-    }
 }
 
 /// Whether a static route registered for `method` should also answer HEAD.
@@ -368,20 +371,21 @@ fn serves_head(method: &http_method::Optional) -> bool {
     }
 }
 
-/// The route-registration surface shared by `uws::h2::App` and
-/// `uws::h3::App`; both hand the handler type-erased `AnyRequest`/`AnyResponse`.
-pub(crate) trait MuxApp {
+/// The route-registration surface shared by `uws::NewApp`, `uws::h2::App` and
+/// `uws::h3::App`; each hands the handler type-erased `AnyRequest`/`AnyResponse`.
+pub(crate) trait RouteApp {
     fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
     where
         H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
     fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
     where
         H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+    fn literal_routes(&mut self, register: impl FnOnce(&mut Self));
 }
 
-macro_rules! impl_mux_app {
-    ($app:ty) => {
-        impl MuxApp for $app {
+macro_rules! impl_route_app {
+    ($app:ty $(, $($generics:tt)*)?) => {
+        impl$(<$($generics)*>)? RouteApp for $app {
             #[inline]
             fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
             where
@@ -396,37 +400,51 @@ macro_rules! impl_mux_app {
             {
                 <$app>::any_this(self, p, h, this)
             }
+            #[inline]
+            fn literal_routes(&mut self, register: impl FnOnce(&mut Self)) {
+                <$app>::literal_routes(self, register)
+            }
         }
     };
 }
-impl_mux_app!(uws::h2::App);
-impl_mux_app!(uws::h3::App);
+impl_route_app!(uws::NewApp<SSL>, const SSL: bool);
+impl_route_app!(uws::h2::App);
+impl_route_app!(uws::h3::App);
 
-pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
+pub(crate) fn apply_static_route<T: StaticRouteLike, A: RouteApp>(
     server: AnyServer,
     app: &mut A,
     entry: ThisPtr<T>,
-    path: &[u8],
+    path: &RouteKey,
     method: http_method::Optional,
     path_has_user_head_route: bool,
 ) {
     entry.set_server(server);
 
-    if !path_has_user_head_route && serves_head(&method) {
-        app.method_this(Method::HEAD, path, T::on_head_request, entry);
-    }
-    match method {
-        http_method::Optional::Any => app.any_this(path, T::on_request, entry),
-        http_method::Optional::Method(m) => {
-            let mut iter = m.iter();
-            while let Some(method_) = iter.next() {
-                app.method_this(method_, path, T::on_request, entry);
+    let register = |app: &mut A| {
+        // Only answer HEAD from an entry that serves GET (HEAD must mirror GET,
+        // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
+        // handler route: uWS keeps the last registration for the same method and path.
+        if !path_has_user_head_route && serves_head(&method) {
+            app.method_this(Method::HEAD, path, T::on_head_request, entry);
+        }
+        match method {
+            http_method::Optional::Any => app.any_this(path, T::on_request, entry),
+            http_method::Optional::Method(m) => {
+                let mut iter = m.iter();
+                while let Some(method_) = iter.next() {
+                    app.method_this(method_, path, T::on_request, entry);
+                }
             }
         }
+    };
+    match path {
+        RouteKey::Pattern(_) => register(app),
+        RouteKey::Literal(_) => app.literal_routes(register),
     }
 }
 
-/// Per-route trait that `apply_static_route{,_mux}` monomorphizes over
+/// Per-route trait that `apply_static_route` monomorphizes over
 /// (`StaticRoute`/`FileRoute`/`DirectoryRoute`/`HTMLBundle.Route`). The route
 /// is the uWS route userdata; the route table holds a ref on it for as long as
 /// it is registered.
@@ -821,7 +839,7 @@ impl ServerConfig {
                                 method_set.insert(method);
 
                                 init_ctx.user_routes.push(StaticRouteEntry {
-                                    path: Box::<[u8]>::from(&*path),
+                                    path: RouteKey::Pattern(Box::<[u8]>::from(&*path)),
                                     route: html_route,
                                     method: http_method::Optional::Method(method_set),
                                 });
@@ -877,7 +895,7 @@ impl ServerConfig {
                     )));
                 };
                 init_ctx.user_routes.push(StaticRouteEntry {
-                    path,
+                    path: RouteKey::Pattern(path),
                     route,
                     method: http_method::Optional::Any,
                 });

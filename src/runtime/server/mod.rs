@@ -112,12 +112,12 @@ pub(crate) mod any_request_context;
 pub(crate) use any_request_context::AnyRequestContext;
 
 /// Run `$body` once for each attached multiplexed app (`h3_app`, then
-/// `h2_app`) with `$mux: &mut impl server_config::MuxApp`. A macro rather than
+/// `h2_app`) with `$mux: &mut impl server_config::RouteApp`. A macro rather than
 /// a closure because the two apps are different types.
 macro_rules! for_each_mux_app {
     ($self:expr, |$mux:ident| $body:block) => {{
         #[allow(unused_imports)]
-        use server_config::MuxApp as _;
+        use server_config::RouteApp as _;
         if Self::HAS_H3 {
             if let Some(app) = $self.h3_app {
                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
@@ -2466,7 +2466,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mut has_static_route_for_star_path = false;
 
         for entry in &self.config.static_routes {
-            if &*entry.path == b"/*" {
+            if entry.path.is_pattern(b"/*") {
                 has_static_route_for_star_path = true;
                 match &entry.method {
                     server_config::MethodOptional::Any => {
@@ -2502,7 +2502,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // `app`/`h2_app`/`h3_app` are the live uWS app handles owned by `self`.
             match &entry.route {
                 AnyRoute::Static(r) => {
-                    server_config::apply_static_route::<SSL, StaticRoute>(
+                    server_config::apply_static_route::<StaticRoute, _>(
                         any_server,
                         app,
                         r.this_ptr(),
@@ -2511,7 +2511,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         path_has_user_head_route,
                     );
                     for_each_mux_app!(self, |mux| {
-                        server_config::apply_static_route_mux::<StaticRoute, _>(
+                        server_config::apply_static_route::<StaticRoute, _>(
                             any_server,
                             mux,
                             r.this_ptr(),
@@ -2522,7 +2522,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     });
                 }
                 AnyRoute::File(r) => {
-                    server_config::apply_static_route::<SSL, FileRoute>(
+                    server_config::apply_static_route::<FileRoute, _>(
                         any_server,
                         app,
                         r.this_ptr(),
@@ -2531,7 +2531,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         path_has_user_head_route,
                     );
                     for_each_mux_app!(self, |mux| {
-                        server_config::apply_static_route_mux::<FileRoute, _>(
+                        server_config::apply_static_route::<FileRoute, _>(
                             any_server,
                             mux,
                             r.this_ptr(),
@@ -2542,7 +2542,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     });
                 }
                 AnyRoute::Directory(r) => {
-                    server_config::apply_static_route::<SSL, DirectoryRoute>(
+                    server_config::apply_static_route::<DirectoryRoute, _>(
                         any_server,
                         app,
                         r.this_ptr(),
@@ -2551,7 +2551,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         path_has_user_head_route,
                     );
                     for_each_mux_app!(self, |mux| {
-                        server_config::apply_static_route_mux::<DirectoryRoute, _>(
+                        server_config::apply_static_route::<DirectoryRoute, _>(
                             any_server,
                             mux,
                             r.this_ptr(),
@@ -2562,7 +2562,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     });
                 }
                 AnyRoute::Html(r) => {
-                    server_config::apply_static_route::<SSL, html_bundle::Route>(
+                    server_config::apply_static_route::<html_bundle::Route, _>(
                         any_server,
                         app,
                         r.this_ptr(),
@@ -2571,7 +2571,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         path_has_user_head_route,
                     );
                     for_each_mux_app!(self, |mux| {
-                        server_config::apply_static_route_mux::<html_bundle::Route, _>(
+                        server_config::apply_static_route::<html_bundle::Route, _>(
                             any_server,
                             mux,
                             r.this_ptr(),
@@ -4202,13 +4202,20 @@ impl AnyServer {
         any_server_dispatch_mut!(self, |s| s.get_or_load_plugins(callback))
     }
 
-    pub(crate) fn append_static_route(
+    pub(crate) fn append_bundled_file_route(
         &self,
         path: &[u8],
         route: AnyRoute,
         method: server_config::MethodOptional,
-    ) -> Result<(), crate::Error> {
-        any_server_dispatch_mut!(self, |s| s.config.append_static_route(path, route, method))
+    ) {
+        any_server_dispatch_mut!(self, |s| {
+            server_config::StaticRouteEntry::push_bundled_file(
+                &mut s.config.static_routes,
+                path,
+                route,
+                method,
+            )
+        })
     }
 
     pub(crate) fn reload_static_routes(&self) -> Result<bool, crate::Error> {

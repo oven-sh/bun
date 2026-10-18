@@ -881,13 +881,13 @@ impl ServerConfig {
             }
 
             // `bun bake` sets this for its own `Bun.serve()`, when `app/pages/` has `.tsx` pages.
-            let bake_pages = core::mem::take(&mut global.bun_vm().as_mut().bake_pages);
+            let mut bake_pages = global.bun_vm().as_mut().bake_pages.take();
 
             // When HTML bundles are provided, ensure DevServer options are ready
             // The presence of these options causes Bun.serve to initialize things.
             if !init_ctx.dedupe_html_bundle_map.is_empty()
                 || !init_ctx.framework_router_list.is_empty()
-                || bake_pages
+                || bake_pages.is_some()
             {
                 if args.development.is_hmr_enabled() {
                     use bun_options_types::schema::api::DotEnvBehavior;
@@ -895,8 +895,8 @@ impl ServerConfig {
                     // SAFETY: `bun_vm()` returns the live VM for this global;
                     // we need `&mut Resolver` for `Framework::auto`.
                     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-                    let framework = if bake_pages {
-                        crate::bake::Framework::bake_pages(resolver)
+                    let framework = if let Some(pages) = bake_pages.take() {
+                        crate::bake::Framework::bake_pages(resolver, pages.renderer)
                     } else {
                         crate::bake::Framework::auto(
                             resolver,

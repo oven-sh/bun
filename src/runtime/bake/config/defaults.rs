@@ -99,35 +99,58 @@ impl Framework {
 
     /// `bun bake`: the router of the `.tsx` and `.jsx` pages in `app/pages/`, with the default React
     /// renderer: server rendering and hydration, no server components.
-    pub(crate) fn bake_pages(resolver: &mut bun_resolver::Resolver) -> Framework {
+    /// `bun bake`: the router of the `.tsx` and `.jsx` pages in `app/pages/`, with the modules of a
+    /// renderer plugin (absolute paths), or the default React renderer: server rendering and
+    /// hydration, no server components.
+    pub(crate) fn bake_pages(
+        resolver: &mut bun_resolver::Resolver,
+        renderer: Option<(Box<[u8]>, Option<Box<[u8]>>)>,
+    ) -> Framework {
         let mut fw = Self::auto(resolver, Vec::new());
-        bun_core::handle_oom(fw.built_in_modules.put(
-            b"bun-bake-react/client.tsx",
-            // Browser-side source: compressed in release builds.
-            BuiltInModule::Code(Cow::Borrowed(bun_zstd::embed_compressed!(
-                src "runtime/bake/react-renderer/client.tsx"
-            ))),
-        ));
-        bun_core::handle_oom(
-            fw.built_in_modules.put(
-                b"bun-bake-react/server.tsx",
-                BuiltInModule::Code(Cow::Borrowed(
-                    bun_core::runtime_embed_file!(Src, "runtime/bake/react-renderer/server.tsx")
-                        .as_bytes(),
-                )),
+        let (entry_server, entry_client) = match renderer {
+            Some((server, client)) => (
+                Utf8Bytes::Owned(server.into_vec()),
+                client.map(|client| Utf8Bytes::Owned(client.into_vec())),
             ),
-        );
+            None => {
+                bun_core::handle_oom(fw.built_in_modules.put(
+                    b"bun-bake-react/client.tsx",
+                    // Browser-side source: compressed in release builds.
+                    BuiltInModule::Code(Cow::Borrowed(bun_zstd::embed_compressed!(
+                        src "runtime/bake/react-renderer/client.tsx"
+                    ))),
+                ));
+                bun_core::handle_oom(
+                    fw.built_in_modules.put(
+                        b"bun-bake-react/server.tsx",
+                        BuiltInModule::Code(Cow::Borrowed(
+                            bun_core::runtime_embed_file!(
+                                Src,
+                                "runtime/bake/react-renderer/server.tsx"
+                            )
+                            .as_bytes(),
+                        )),
+                    ),
+                );
+                (
+                    Utf8Bytes::Borrowed(b"bun-bake-react/server.tsx"),
+                    Some(Utf8Bytes::Borrowed(b"bun-bake-react/client.tsx")),
+                )
+            }
+        };
+        // With a client module, the pages also run in the browser, for it to hydrate them.
+        let client_pages = entry_client.is_some();
         fw.file_system_router_types.push(FileSystemRouterType {
             root: Utf8Bytes::Borrowed(b"app/pages"),
             prefix: Utf8Bytes::Borrowed(b"/"),
-            entry_client: Some(Utf8Bytes::Borrowed(b"bun-bake-react/client.tsx")),
-            entry_server: Utf8Bytes::Borrowed(b"bun-bake-react/server.tsx"),
+            entry_client,
+            entry_server,
             ignore_underscores: true,
             ignore_dirs: literals(&[b"node_modules", b".git"]),
             extensions: literals(&[b".tsx", b".jsx"]),
             style: router::Style::NextjsPages,
             allow_layouts: true,
-            client_pages: true,
+            client_pages,
         });
         fw
     }

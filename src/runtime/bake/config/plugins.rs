@@ -71,8 +71,21 @@ pub(crate) fn is_restarting(_global: &JSGlobalObject, _frame: &CallFrame) -> JsR
     ))
 }
 
-/// `setPages()`: the next `Bun.serve()` routes the `.tsx` and `.jsx` pages of `app/pages/`.
-pub(crate) fn set_pages(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    global.bun_vm().as_mut().bake_pages = true;
+/// `setPages(server?, client?)`: the next `Bun.serve()` routes the `.tsx` and `.jsx` pages of
+/// `app/pages/`, with the renderer modules at these absolute paths, or with the default React
+/// renderer when `server` is undefined.
+pub(crate) fn set_pages(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [server, client] = frame.arguments_as_array::<2>();
+    let path = |value: JSValue| -> JsResult<Option<Box<[u8]>>> {
+        if value.is_undefined_or_null() {
+            return Ok(None);
+        }
+        Ok(Some(Box::from(&*value.to_utf8(global)?)))
+    };
+    let renderer = match path(server)? {
+        Some(server) => Some((server, path(client)?)),
+        None => None,
+    };
+    global.bun_vm().as_mut().bake_pages = Some(bun_jsc::virtual_machine::BakePages { renderer });
     Ok(JSValue::UNDEFINED)
 }

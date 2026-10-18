@@ -152,6 +152,12 @@ pub enum BuiltinEntryPoint {
     Bake = 1,
 }
 
+/// The renderer of `bun bake` for the pages in `app/pages/`: absolute paths of the modules of a
+/// renderer plugin, or `None` for the default React renderer.
+pub struct BakePages {
+    pub renderer: Option<(Box<[u8]>, Option<Box<[u8]>>)>,
+}
+
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator dropped per §Allocators (global mimalloc)
@@ -187,8 +193,8 @@ pub struct VirtualMachine {
     /// The names of `bake_config_plugins`.
     pub bake_config_plugin_names: Box<[Box<[u8]>]>,
     /// `bun bake`: the next `Bun.serve()` (its own) adds the router of the `.tsx` and `.jsx` pages
-    /// in `app/pages/`, with the default React renderer. That call clears it.
-    pub bake_pages: bool,
+    /// in `app/pages/`. That call takes it.
+    pub bake_pages: Option<BakePages>,
     pub(crate) entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
     // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
@@ -3249,6 +3255,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).main_entry_point).write(MainEntryPoint::File);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
             addr_of_mut!((*vm).bake_config_plugin_names).write(Box::default());
+            addr_of_mut!((*vm).bake_pages).write(None);
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
             // Left at the
@@ -5665,6 +5672,7 @@ impl VirtualMachine {
         self.overridden_main.deinit();
         self.bake_config_plugins.deinit();
         drop(core::mem::take(&mut self.bake_config_plugin_names));
+        drop(self.bake_pages.take());
         self.pending_internal_promise.deinit();
 
         // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so

@@ -172,8 +172,8 @@ describe.concurrent("console %d, %i and %f", () => {
     return { stdout, stderr, exitCode };
   }
 
-  // A value, then what console.log("%d", value), console.log("%i", value) and console.log("%f", value) print.
-  // The %i and %f columns are what node v26.3.0 prints. %d prints the integer part of Number(value).
+  // A value, then what node v26.3.0 prints for console.log("%d", value), console.log("%i", value) and
+  // console.log("%f", value).
   const rows: [value: string, d: string, i: string, f: string][] = [
     // int32
     ["0", "0", "0", "0"],
@@ -194,30 +194,30 @@ describe.concurrent("console %d, %i and %f", () => {
     ["2 ** 63", "9223372036854776000", "9223372036854776000", "9223372036854776000"],
     ["2 ** 64", "18446744073709552000", "18446744073709552000", "18446744073709552000"],
     ["123456789012345680000", "123456789012345680000", "123456789012345680000", "123456789012345680000"],
-    ["1e21", "1", "1", "1e+21"],
-    ["-1e21", "-1", "-1", "-1e+21"],
-    ["1.5e300", "1", "1", "1.5e+300"],
-    ["Number.MAX_VALUE", "1", "1", "1.7976931348623157e+308"],
+    ["1e21", "1e+21", "1", "1e+21"],
+    ["-1e21", "-1e+21", "-1", "-1e+21"],
+    ["1.5e300", "1.5e+300", "1", "1.5e+300"],
+    ["Number.MAX_VALUE", "1.7976931348623157e+308", "1", "1.7976931348623157e+308"],
     // Numbers with a fraction, and the Numbers that are not finite
-    ["3.9", "3", "3", "3.9"],
-    ["-3.9", "-3", "-3", "-3.9"],
-    ["0.5", "0", "0", "0.5"],
-    ["-0.5", "0", "-0", "-0.5"],
-    ["-0", "0", "0", "0"],
-    ["0.1 + 0.2", "0", "0", "0.30000000000000004"],
-    ["2147483648.7", "2147483648", "2147483648", "2147483648.7"],
-    ["-2147483649.7", "-2147483649", "-2147483649", "-2147483649.7"],
-    ["-0.9999999", "0", "-0", "-0.9999999"],
-    ["0.000001", "0", "0", "0.000001"],
-    ["0.00000099", "9", "9", "9.9e-7"],
-    ["999999999999998.25", "999999999999998", "999999999999998", "999999999999998.2"],
-    ["-1000000000000000.25", "-1000000000000000", "-1000000000000000", "-1000000000000000.2"],
-    ["5e-7", "5", "5", "5e-7"],
-    ["-8.5e-12", "-8", "-8", "-8.5e-12"],
-    ["Number.MIN_VALUE", "5", "5", "5e-324"],
-    ["Number.MIN_VALUE * 1.5", "1", "1", "1e-323"],
-    ["Infinity", "NaN", "NaN", "Infinity"],
-    ["-Infinity", "NaN", "NaN", "-Infinity"],
+    ["3.9", "3.9", "3", "3.9"],
+    ["-3.9", "-3.9", "-3", "-3.9"],
+    ["0.5", "0.5", "0", "0.5"],
+    ["-0.5", "-0.5", "-0", "-0.5"],
+    ["-0", "-0", "0", "0"],
+    ["0.1 + 0.2", "0.30000000000000004", "0", "0.30000000000000004"],
+    ["2147483648.7", "2147483648.7", "2147483648", "2147483648.7"],
+    ["-2147483649.7", "-2147483649.7", "-2147483649", "-2147483649.7"],
+    ["-0.9999999", "-0.9999999", "-0", "-0.9999999"],
+    ["0.000001", "0.000001", "0", "0.000001"],
+    ["0.00000099", "9.9e-7", "9", "9.9e-7"],
+    ["999999999999998.25", "999999999999998.2", "999999999999998", "999999999999998.2"],
+    ["-1000000000000000.25", "-1000000000000000.2", "-1000000000000000", "-1000000000000000.2"],
+    ["5e-7", "5e-7", "5", "5e-7"],
+    ["-8.5e-12", "-8.5e-12", "-8", "-8.5e-12"],
+    ["Number.MIN_VALUE", "5e-324", "5", "5e-324"],
+    ["Number.MIN_VALUE * 1.5", "1e-323", "1", "1e-323"],
+    ["Infinity", "Infinity", "NaN", "Infinity"],
+    ["-Infinity", "-Infinity", "NaN", "-Infinity"],
     ["NaN", "NaN", "NaN", "NaN"],
     // Strings
     ["'42'", "42", "42", "42"],
@@ -231,15 +231,15 @@ describe.concurrent("console %d, %i and %f", () => {
     ["'  12  '", "12", "12", "12"],
     ["'\\t\\n 7'", "7", "7", "7"],
     ["'1e3'", "1000", "1", "1000"],
-    ["'-0'", "0", "-0", "-0"],
-    ["'-0.0'", "0", "-0", "-0"],
+    ["'-0'", "-0", "-0", "-0"],
+    ["'-0.0'", "-0", "-0", "-0"],
     ["'+5'", "5", "5", "5"],
-    ["'-.5'", "0", "NaN", "-0.5"],
-    ["'.5'", "0", "NaN", "0.5"],
+    ["'-.5'", "-0.5", "NaN", "-0.5"],
+    ["'.5'", "0.5", "NaN", "0.5"],
     ["'5.'", "5", "5", "5"],
-    ["'Infinity'", "NaN", "NaN", "Infinity"],
-    ["'-Infinity'", "NaN", "NaN", "-Infinity"],
-    ["'+Infinity'", "NaN", "NaN", "Infinity"],
+    ["'Infinity'", "Infinity", "NaN", "Infinity"],
+    ["'-Infinity'", "-Infinity", "NaN", "-Infinity"],
+    ["'+Infinity'", "Infinity", "NaN", "Infinity"],
     ["'Infinityx'", "NaN", "NaN", "Infinity"],
     ["'infinity'", "NaN", "NaN", "NaN"],
     ["'NaN'", "NaN", "NaN", "NaN"],
@@ -248,13 +248,13 @@ describe.concurrent("console %d, %i and %f", () => {
     ["'0o17'", "15", "0", "0"],
     ["'12345678901234567890'", "12345678901234567000", "12345678901234567000", "12345678901234567000"],
     ["'9007199254740993'", "9007199254740992", "9007199254740992", "9007199254740992"],
-    ["'1e400'", "NaN", "1", "Infinity"],
-    ["'-1e400'", "NaN", "-1", "-Infinity"],
+    ["'1e400'", "Infinity", "1", "Infinity"],
+    ["'-1e400'", "-Infinity", "-1", "-Infinity"],
     // Strings that are not ASCII, in 8 bits and in 16 bits
-    ["'\\u00a042.5'", "42", "42", "42.5"],
+    ["'\\u00a042.5'", "42.5", "42", "42.5"],
     ["'\\u00e942'", "NaN", "NaN", "NaN"],
     ["'42\\u00e9'", "NaN", "42", "42"],
-    ["'\\ufeff42.5'", "42", "42", "42.5"],
+    ["'\\ufeff42.5'", "42.5", "42", "42.5"],
     ["'\\u300042.5px'", "NaN", "42", "42.5"],
     ["'\\u202842'", "42", "42", "42"],
     ["'\\u180e42'", "NaN", "NaN", "NaN"],
@@ -281,16 +281,16 @@ describe.concurrent("console %d, %i and %f", () => {
     ["[]", "0", "NaN", "NaN"],
     ["[5]", "5", "5", "5"],
     ["[1, 2, 3, 4, 5]", "NaN", "1", "1"],
-    ["[3.9]", "3", "3", "3.9"],
+    ["[3.9]", "3.9", "3", "3.9"],
     ["['0x10']", "16", "16", "0"],
     ["[[7]]", "7", "7", "7"],
     ["({})", "NaN", "NaN", "NaN"],
     ["({ valueOf() { return 7; } })", "7", "NaN", "NaN"],
-    ["({ toString() { return '8.5'; } })", "8", "8", "8.5"],
+    ["({ toString() { return '8.5'; } })", "8.5", "8", "8.5"],
     ["({ [Symbol.toPrimitive](hint) { return hint === 'string' ? '9' : 5; } })", "5", "9", "9"],
     ["new Date(0)", "0", "NaN", "NaN"],
-    ["new Number(4.5)", "4", "4", "4.5"],
-    ["new String('6.5')", "6", "6", "6.5"],
+    ["new Number(4.5)", "4.5", "4", "4.5"],
+    ["new String('6.5')", "6.5", "6", "6.5"],
     ["new Boolean(true)", "1", "NaN", "NaN"],
     ["(function () {})", "NaN", "NaN", "NaN"],
     ["/7/", "NaN", "NaN", "NaN"],
@@ -300,7 +300,7 @@ describe.concurrent("console %d, %i and %f", () => {
   it.each([
     ["NO_COLOR", bunEnv],
     ["FORCE_COLOR", { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" }],
-  ])("print the rows of the table (%s)", async (_, env) => {
+  ])("print what node prints (%s)", async (_, env) => {
     const { stdout, exitCode } = await run(
       `
       const values = ${JSON.stringify(rows.map(row => row[0]))}.map(source => new Function("return " + source)());
@@ -324,7 +324,7 @@ describe.concurrent("console %d, %i and %f", () => {
     }).toEqual({ printed: rows, lines: rows.length * 3 + 1, exitCode: 0 });
   });
 
-  it("print what util.format returns for %i and %f, and the integer part for %d, of generated values", async () => {
+  it("print what util.format returns for generated values", async () => {
     const { stdout, exitCode } = await run(`
       import util from "node:util";
       let seed = 0x2f6e2b1;
@@ -369,9 +369,7 @@ describe.concurrent("console %d, %i and %f", () => {
       // console.log() runs first: util.format() would flatten the rope.
       const specifiers = ["%d", "%i", "%f"];
       for (const value of values) for (const specifier of specifiers) console.log(specifier, value);
-      // %d: the integer part of Number(value). Its zero has no sign.
-      const integerPart = value => String(parseInt(Number(value)) + 0);
-      console.log(JSON.stringify(values.map(value => [integerPart(value), util.format("%i", value), util.format("%f", value)])));
+      console.log(JSON.stringify(values.map(value => specifiers.map(specifier => util.format(specifier, value)))));
     `);
     const lines = stdout.split("\n");
     const expected: string[][] = JSON.parse(lines[lines.length - 2]);
@@ -446,7 +444,7 @@ describe.concurrent("console %d, %i and %f", () => {
     expect({ stdout, exitCode }).toEqual({
       stdout:
         [
-          "7 3 7.5 {",
+          "7 3.5 7.5 {",
           "  toString: [Function: toString],",
           "  valueOf: [Function: valueOf],",
           "}",

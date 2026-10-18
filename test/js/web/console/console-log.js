@@ -271,7 +271,7 @@ console.log("Hello %%i %i", 5, 6);
 // doesn't go out of bounds when printing
 console.log("%%d", 1);
 
-// %d is the integer part of Number(value), %i is parseInt(value) and %f is parseFloat(value)
+// %d is Number(value), %i is parseInt(value) and %f is parseFloat(value)
 console.log("%i %i", [1, 2, 3, 4, 5]);
 console.log("| %d | %i | %f |", "42abc", "42abc", "42abc");
 console.log("| %d | %i | %f |", "\u00a04.5px", "\u00a04.5px", "\u00a04.5px");
@@ -293,3 +293,7 @@ console.log("| %d | %i | %f |", 12n, 12n, 12n);
 console.log("| %d | %i | %f |", -12345678901234567890n, -12345678901234567890n, -12345678901234567890n);
 console.log("| %d | %i | %f |", Object(5n), Object(5n), Object(5n));
 console.log("| %d | %i | %f |", Symbol("d"), Symbol("i"), Symbol("f"));
+
+// a number that does not print as only digits adds its width to the line
+console.log(Buffer.alloc(60, "x").toString() + " %d", Number.MAX_VALUE, [1, 2, 3]);
+console.log(Buffer.alloc(60, "x").toString() + " %f", Number.MAX_VALUE, [1, 2, 3]);

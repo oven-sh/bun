@@ -3559,8 +3559,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   const flags = handle.flags;
   if (!!(flags & (NodeHTTPResponseFlags.closed_or_completed | NodeHTTPResponseFlags.upgraded))) {
     // Socket already gone: like Node, 'prefinish' fires but 'finish' never does, and the close of the socket aborts the request.
-    // A WebSocket that adopted the connection ends the response the same way. Node's end() also returns there, and writes the
-    // response into the WebSocket stream. Here the socket belongs to the WebSocket, so nothing of the response reaches it.
+    // The same after a WebSocket adopted the connection. Node's end() returns there too, but writes into the WebSocket stream.
     this._header = " ";
     this.finished = true;
     process.nextTick(markResponseEndedNT, this);

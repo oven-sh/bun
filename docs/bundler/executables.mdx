@@ -738,7 +738,7 @@ const wasm = readFileSync(new URL("./module.wasm", import.meta.url));
 const font = await Bun.file(new URL("font.ttf", import.meta.url)).arrayBuffer();
 ```
 
-With `--compile`, Bun embeds the file named by `new URL("<relative path>", import.meta.url)` when that file exists at build time, and points the URL at the embedded copy. The build summary lists each embedded file on an `embed` line. A URL that names a JavaScript or TypeScript file, a file that does not exist, or a URL passed to `new Worker()` is left as written.
+With `--compile`, Bun embeds the file named by `new URL("<relative path>", import.meta.url)` when that file exists at build time, and points the URL at the embedded copy. The build summary lists each embedded file on an `embed` line. A URL that names a JavaScript or TypeScript file (such as a worker entrypoint), a dotfile such as `.env`, or a file that does not exist is left as written.
 
 ### Reading embedded files with Bun.file()
 

@@ -2007,11 +2007,15 @@ describe("compile/NewUrlSiblingAsset", () => {
     );
   }
 
-  test("a missing file and a worker URL are left as written", async () => {
+  // Also with --minify: a constant folded into the first argument is not the source form and is not embedded.
+  test("a missing file, a dotfile, a variable, and a worker URL are left as written", async () => {
     using dir = tempDir("compile-new-url-untouched", {
       "index.ts": /* ts */ `
         import { existsSync } from "node:fs";
         const missing = new URL("./missing.txt", import.meta.url);
+        const dotfile = new URL("./.secret", import.meta.url);
+        const name = "./named.txt";
+        const named = new URL(name, import.meta.url);
         const worker = new Worker(new URL("./worker.ts", import.meta.url));
         const message = await new Promise(resolve => {
           worker.onmessage = event => resolve(event.data);
@@ -2020,14 +2024,18 @@ describe("compile/NewUrlSiblingAsset", () => {
         console.log(JSON.stringify({
           missingIsSibling: missing.href === new URL("missing.txt", import.meta.url).href,
           missingExists: existsSync(missing),
+          dotfileExists: existsSync(dotfile),
+          namedExists: existsSync(named),
           message,
           embedded: Bun.embeddedFiles.length,
         }));
       `,
       "worker.ts": /* ts */ `postMessage("from worker");`,
+      ".secret": "SECRET=1",
+      "named.txt": "named",
     });
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "./index.ts", "./worker.ts", "--outfile", "app"],
+      cmd: [bunExe(), "build", "--compile", "--minify", "./index.ts", "./worker.ts", "--outfile", "app"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -2053,6 +2061,8 @@ describe("compile/NewUrlSiblingAsset", () => {
     expect(JSON.parse(stdout)).toEqual({
       missingIsSibling: true,
       missingExists: false,
+      dotfileExists: false,
+      namedExists: false,
       message: "from worker",
       embedded: 0,
     });

@@ -304,8 +304,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) bundler_feature_flag_ref: Ref,
     /// Set to true when visiting an if/ternary condition. feature() calls are only valid in this context.
     pub(crate) in_branch_condition: bool,
-    /// Set while visiting the URL argument of `new Worker(...)` / `new SharedWorker(...)`.
-    pub(crate) in_worker_url_arg: bool,
     /// Bindings of `import { URL } from "url"` / `"node:url"`, when `embed_new_url_assets` is set.
     pub(crate) url_import_refs: Vec<Ref>,
 
@@ -9870,7 +9868,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             bun_app_namespace_ref: Ref::NONE,
             bundler_feature_flag_ref: Ref::NONE,
             in_branch_condition: false,
-            in_worker_url_arg: false,
             url_import_refs: Vec::new(),
             has_classic_runtime_warned: false,
             macro_call_count: 0,

@@ -2466,28 +2466,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
         p.visit_expr(&mut e_.target);
 
-        // Matched before the visit: CommonJS output inlines `import.meta.url` during it.
+        // Matched on the source form, before the visit inlines `import.meta.url` or constants.
         let is_url_of_import_meta = p.options.features.embed_new_url_assets
             && e_.args.len_u32() == 2
             && p.is_url_constructor(&e_.target)
+            && matches!(e_.args.slice()[0].data, Data::EString(..))
             && matches!(
                 &e_.args.slice()[1].data,
                 Data::EDot(dot) if matches!(dot.target.data, Data::EImportMeta(..)) && dot.name.slice() == b"url"
             );
-        let is_worker = p.options.features.embed_new_url_assets
-            && matches!(
-                p.unbound_global_name(&e_.target),
-                Some(b"Worker" | b"SharedWorker")
-            );
 
-        for (i, arg) in e_.args.slice_mut().iter_mut().enumerate() {
-            let saved = p.in_worker_url_arg;
-            p.in_worker_url_arg = saved || (is_worker && i == 0);
+        for arg in e_.args.slice_mut() {
             p.visit_expr(arg);
-            p.in_worker_url_arg = saved;
         }
 
-        if is_url_of_import_meta && !p.in_worker_url_arg && !p.is_control_flow_dead {
+        if is_url_of_import_meta && !p.is_control_flow_dead {
             p.embed_new_url_asset(&mut e_);
         }
 
@@ -2541,31 +2534,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             return;
         }
-        // A JS/TS source is a worker or import() target, not an asset.
+        // A JS/TS source is a worker or import() target, not an asset. A dotfile (`.env`) is
+        // deploy-time configuration, not a file to ship.
         let ext = bun_paths::extension(specifier);
         if [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx"]
             .iter()
             .any(|e| ext.eq_ignore_ascii_case(e.as_bytes()))
+            || bun_paths::basename(specifier).starts_with(b".")
         {
             return;
         }
 
         let mut joined = bun_paths::path_buffer_pool::get();
-        let Some(joined_len) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+        let Some(z) = bun_paths::resolve_path::join_abs_string_buf_z_checked::<
             bun_paths::resolve_path::platform::Auto,
-        >(dir, &mut joined.0[..], &[specifier])
-        .map(|j| j.len()) else {
+        >(dir, &mut joined.0[..], &[specifier]) else {
             return;
         };
-        if joined_len >= joined.0.len() {
-            return;
-        }
-        joined.0[joined_len] = 0;
-        let z = bun_core::ZStr::from_buf(&joined.0[..], joined_len);
-        if !matches!(
-            bun_sys::exists_at_type(bun_sys::Fd::cwd(), z),
-            Ok(bun_sys::ExistsAtType::File)
-        ) {
+        if !is_regular_file(z) {
             return;
         }
 
@@ -2934,6 +2920,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             e_.class_name = None;
         }
+    }
+}
+
+/// A socket or FIFO beside the module must not be read by the bundler.
+fn is_regular_file(path: &bun_core::ZStr) -> bool {
+    #[cfg(unix)]
+    {
+        bun_sys::fstatat(bun_sys::Fd::cwd(), path)
+            .is_ok_and(|st| bun_core::S::ISREG(st.st_mode as _))
+    }
+    #[cfg(windows)]
+    {
+        matches!(
+            bun_sys::exists_at_type(bun_sys::Fd::cwd(), path),
+            Ok(bun_sys::ExistsAtType::File)
+        )
     }
 }
 

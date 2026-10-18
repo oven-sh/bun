@@ -1,6 +1,5 @@
-use core::cell::{Cell, RefCell};
+use core::cell::{Cell, OnceCell, RefCell};
 use core::ops::Range;
-use std::borrow::Cow;
 use std::io::Write as _;
 use std::sync::Arc;
 
@@ -908,14 +907,55 @@ struct TreeFolder {
     expected: Range<u32>,
 }
 
+const _: () = assert!(core::mem::size_of::<TreeFolder>() == 16);
+
+/// A `node_modules` directory of the install tree, named by the first tree that is that directory.
+/// A workspace is installed as a link, so each of its trees is the `node_modules` in the
+/// workspace's own folder, whichever folder has the link. See `directory_keys`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct FolderId(tree::Id);
+
+/// Where the search for a name starts.
+#[derive(Clone, Copy)]
+enum LookFrom<'a> {
+    /// In the folder, then above it.
+    At(FolderId),
+    Above(FolderId),
+    /// Above the `node_modules` of the workspace in this folder. Without a tree, that
+    /// `node_modules` has no `FolderId`.
+    AboveMember(&'a [u8]),
+}
+
+type Found<'f> = &'f mut dyn FnMut(Option<(FolderId, usize)>) -> bool;
+
 struct HoistedTree<'a> {
     lockfile: &'a Lockfile,
     trees: &'a [tree::Tree],
+    /// Indexed by `FolderId`.
     folders: Vec<TreeFolder>,
+    /// The folder of each tree. Empty if every tree has a folder of its own.
+    folder_of: Vec<FolderId>,
+    /// The workspaces inside the project as `(folder, package)`, sorted. After a workspace gets
+    /// another name, bun.lock can list its folder under two packages.
+    workspaces: OnceCell<Vec<(&'a [u8], PackageID)>>,
+    /// `(workspace folder, its node_modules)` for each workspace that has a tree, sorted.
+    members: OnceCell<Vec<(&'a [u8], FolderId)>>,
+    /// `(folder, name, folder inside the package that the folder has under that name)`, sorted.
+    nested: OnceCell<Vec<(FolderId, &'a [u8], FolderId)>>,
+    /// `(workspace folder, folder with a row that links the workspace)`, sorted.
+    links: OnceCell<Vec<(&'a [u8], FolderId)>>,
+    /// The packages that `--filter` selects, sorted. Such a run only installs for them.
+    selected: Option<Vec<PackageID>>,
     paths: Vec<u8>,
     expected: Vec<(&'a [u8], PackageID)>,
+    /// Sorted indexes into `expected`. Two trees of one package place different packages there.
+    contested: Vec<u32>,
     quiet: bool,
     kept_mismatched: Cell<bool>,
+    kept_contested: Cell<bool>,
+    /// The symlinked `node_modules` folders that a lookup needed and `open_workspace_folder`
+    /// refused to open.
+    linked: RefCell<Vec<Box<[u8]>>>,
     checked: RefCell<DynamicBitSet>,
     matched: RefCell<DynamicBitSet>,
     missing: RefCell<DynamicBitSet>,
@@ -926,11 +966,20 @@ enum Installed {
     Matches,
     Missing,
     Mismatch,
+    /// See `HoistedTree::contested`.
+    Contested,
+    /// See `HoistedTree::linked`.
+    Linked,
 }
 
 impl<'a> HoistedTree<'a> {
-    /// With `quiet`, `removable` prints no warning when it keeps an entry.
-    fn init(lockfile: &'a Lockfile, quiet: bool) -> HoistedTree<'a> {
+    /// With `quiet`, `removable` prints no warning when it keeps an entry. `selected` is the
+    /// packages that `--filter` selects, if the run has one.
+    fn init(
+        lockfile: &'a Lockfile,
+        quiet: bool,
+        mut selected: Option<Vec<PackageID>>,
+    ) -> HoistedTree<'a> {
         let trees = lockfile.buffers.trees.as_slice();
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -972,6 +1021,81 @@ impl<'a> HoistedTree<'a> {
             };
         }
 
+        let mut folder_of: Vec<FolderId> = Vec::new();
+        let mut contested: Vec<u32> = Vec::new();
+        // Two trees are one directory only if both belong to a workspace, or are below two such
+        // trees. With one workspace tree, there is nothing to merge.
+        let mut of_members = (trees.iter()).filter(|tree| tree_workspace(lockfile, tree).is_some());
+        let keys = if of_members.nth(1).is_some() {
+            directory_keys(lockfile)
+        } else {
+            Vec::new()
+        };
+        let mut by_key: Vec<tree::Id> = (0..keys.len() as tree::Id).collect();
+        index_sort::sort_slice_unstable_by_key(&mut by_key, |&id| (keys[id as usize], id));
+        let same_folder = |a: &tree::Id, b: &tree::Id| keys[*a as usize] == keys[*b as usize];
+        if by_key.chunk_by(same_folder).any(|group| group.len() > 1) {
+            folder_of.extend((0..trees.len() as tree::Id).map(FolderId));
+            let mut rows: Vec<(&'a [u8], PackageID, PackageID)> = Vec::new();
+            for group in by_key.chunk_by(same_folder) {
+                let folder = group[0] as usize;
+                for &id in group {
+                    folder_of[id as usize] = FolderId(group[0]);
+                }
+                let mut with_rows = (group.iter().map(|&id| id as usize))
+                    .filter(|&id| !folders[id].path.is_empty());
+                let Some(first) = with_rows.next() else {
+                    continue;
+                };
+                let path = folders[first].path.clone();
+                if with_rows.next().is_none() {
+                    folders[folder] = TreeFolder {
+                        path,
+                        expected: folders[first].expected.clone(),
+                    };
+                    continue;
+                }
+                // Every tree of a workspace's folder has the same owner, whatever package
+                // bun.lock lists the workspace under.
+                let of_member = tree_workspace(lockfile, &trees[folder]).is_some();
+                rows.clear();
+                for &id in group {
+                    let owner = if of_member {
+                        0
+                    } else {
+                        tree_owner(lockfile, id as usize)
+                    };
+                    let range = folders[id as usize].expected.clone();
+                    let own = &expected[range.start as usize..range.end as usize];
+                    rows.extend(own.iter().map(|&(alias, pkg_id)| (alias, pkg_id, owner)));
+                    folders[id as usize] = TreeFolder {
+                        path: 0..0,
+                        expected: 0..0,
+                    };
+                }
+                index_sort::sort_vec_unstable_by(&mut rows, |a, b| a.cmp(b));
+                let start = expected.len();
+                for named in rows.chunk_by(|a, b| a.0 == b.0) {
+                    // Two packages that can each own the folder do not count: one of them is
+                    // installed, and these are its rows.
+                    let disagree = |a: &(&[u8], PackageID, PackageID)| {
+                        named.iter().any(|b| a.2 == b.2 && a.1 != b.1)
+                    };
+                    if named.iter().any(disagree) {
+                        contested.push(expected.len() as u32);
+                    }
+                    expected.push((named[0].0, named[0].1));
+                }
+                folders[folder] = TreeFolder {
+                    path,
+                    expected: start as u32..expected.len() as u32,
+                };
+            }
+        }
+
+        if let Some(selected) = &mut selected {
+            index_sort::sort_slice_unstable(selected);
+        }
         let checked = handle_oom(DynamicBitSet::init_empty(expected.len()));
         let matched = handle_oom(DynamicBitSet::init_empty(expected.len()));
         let missing = handle_oom(DynamicBitSet::init_empty(expected.len()));
@@ -979,28 +1103,186 @@ impl<'a> HoistedTree<'a> {
             lockfile,
             trees,
             folders,
+            folder_of,
+            workspaces: OnceCell::new(),
+            members: OnceCell::new(),
+            nested: OnceCell::new(),
+            links: OnceCell::new(),
+            selected,
             paths,
             expected,
+            contested,
             quiet,
             kept_mismatched: Cell::new(false),
+            kept_contested: Cell::new(false),
+            linked: RefCell::new(Vec::new()),
             checked: RefCell::new(checked),
             matched: RefCell::new(matched),
             missing: RefCell::new(missing),
         }
     }
 
-    fn path(&self, tree_id: usize) -> &[u8] {
-        let range = &self.folders[tree_id].path;
+    fn folder(&self, tree_id: tree::Id) -> FolderId {
+        (self.folder_of.get(tree_id as usize).copied()).unwrap_or(FolderId(tree_id))
+    }
+
+    /// The root's folder, if the root has a tree.
+    fn root(&self) -> Option<FolderId> {
+        (!self.trees.is_empty()).then_some(FolderId(0))
+    }
+
+    /// Every folder that has rows, in tree order. A folder comes after the folder it is in.
+    fn folders_with_rows(&self) -> impl Iterator<Item = FolderId> + '_ {
+        (0..self.folders.len() as tree::Id)
+            .map(FolderId)
+            .filter(|&folder| self.folder(folder.0) == folder && !self.path(folder).is_empty())
+    }
+
+    /// The folder of the workspace whose own `node_modules` `folder` is.
+    fn member_of(&self, folder: FolderId) -> Option<&'a [u8]> {
+        tree_member_folder(self.lockfile, self.trees.get(folder.0 as usize)?)
+    }
+
+    fn workspaces(&self) -> &[(&'a [u8], PackageID)] {
+        self.workspaces.get_or_init(|| {
+            let lockfile = self.lockfile;
+            let mut workspaces: Vec<(&'a [u8], PackageID)> = (0..lockfile.packages.len())
+                .filter_map(|id| Some((member_folder(lockfile, id as PackageID)?, id as PackageID)))
+                .collect();
+            index_sort::sort_vec_unstable_by(&mut workspaces, |a, b| a.cmp(b));
+            workspaces
+        })
+    }
+
+    /// The packages that bun.lock lists the workspace in the folder `member` under.
+    fn ids_at(&self, member: &[u8]) -> &[(&'a [u8], PackageID)] {
+        let workspaces = self.workspaces();
+        let start = workspaces.partition_point(|&(folder, _)| folder < member);
+        let rest = &workspaces[start..];
+        &rest[..rest.partition_point(|&(folder, _)| folder == member)]
+    }
+
+    /// Returns false if the run has a `--filter` that does not select `pkg_id`, under any of the
+    /// packages that bun.lock lists its folder under.
+    fn selects(&self, pkg_id: PackageID) -> bool {
+        let Some(selected) = &self.selected else {
+            return true;
+        };
+        let is_selected = |id: PackageID| selected.binary_search(&id).is_ok();
+        is_selected(pkg_id)
+            || member_folder(self.lockfile, pkg_id)
+                .is_some_and(|member| self.ids_at(member).iter().any(|&(_, id)| is_selected(id)))
+    }
+
+    /// Returns false if the run has a `--filter` and does not install `folder`. The run installs
+    /// the root's links to the workspaces it selects, and what is below a selected workspace.
+    fn installs(&self, mut folder: FolderId) -> bool {
+        if self.selected.is_none() {
+            return true;
+        }
+        while folder.0 != 0 {
+            let tree = &self.trees[folder.0 as usize];
+            if let Some(owner) = tree_workspace(self.lockfile, tree) {
+                return self.selects(owner);
+            }
+            // Inside a package of the root, which the run installs if it selects the root.
+            if tree.parent == 0 {
+                return self.selects(0);
+            }
+            folder = self.folder(tree.parent);
+        }
+        true
+    }
+
+    fn members(&self) -> &[(&'a [u8], FolderId)] {
+        self.members.get_or_init(|| {
+            let mut members: Vec<(&'a [u8], FolderId)> = (self.trees.iter().enumerate())
+                .filter_map(|(id, tree)| {
+                    let member = tree_member_folder(self.lockfile, tree)?;
+                    Some((member, self.folder(id as tree::Id)))
+                })
+                .collect();
+            index_sort::sort_vec_unstable_by(&mut members, |a, b| a.cmp(b));
+            members.dedup();
+            members
+        })
+    }
+
+    /// The `node_modules` of the workspace in the folder `member`, if the workspace has a tree.
+    fn member_folder(&self, member: &[u8]) -> Option<FolderId> {
+        let members = self.members();
+        let at = members.binary_search_by(|&(folder, _)| folder.cmp(member));
+        at.ok().map(|i| members[i].1)
+    }
+
+    fn nested(&self) -> &[(FolderId, &'a [u8], FolderId)] {
+        self.nested.get_or_init(|| {
+            let lockfile = self.lockfile;
+            let deps = lockfile.buffers.dependencies.as_slice();
+            let buf = lockfile.buffers.string_bytes.as_slice();
+            // Skips trees with no rows left. Also skips the tree of a workspace, because its
+            // folder is inside the workspace and not inside a package.
+            let mut nested: Vec<(FolderId, &'a [u8], FolderId)> = (self.trees.iter().enumerate())
+                .skip(1)
+                .filter(|(_, tree)| {
+                    tree.dependencies.len > 0 && tree_workspace(lockfile, tree).is_none()
+                })
+                .map(|(id, tree)| {
+                    let name = tree.folder_name(deps, buf);
+                    (self.folder(tree.parent), name, self.folder(id as tree::Id))
+                })
+                .collect();
+            index_sort::sort_vec_unstable_by(&mut nested, |a, b| a.cmp(b));
+            nested.dedup();
+            nested
+        })
+    }
+
+    /// The folder inside the package that `folder` has under `name`, if that package has one.
+    fn child(&self, folder: FolderId, name: &[u8]) -> Option<FolderId> {
+        let nested = self.nested();
+        let at = nested.partition_point(|&(parent, child, _)| (parent, child) < (folder, name));
+        (nested.get(at))
+            .filter(|&&(parent, child, _)| parent == folder && child == name)
+            .map(|&(_, _, id)| id)
+    }
+
+    /// The folders that link the workspace in the folder `member`.
+    fn links_to<'s>(&'s self, member: &'s [u8]) -> impl Iterator<Item = FolderId> + 's {
+        let links = self.links.get_or_init(|| {
+            let lockfile = self.lockfile;
+            let rows = lockfile.buffers.hoisted_dependencies.as_slice();
+            let resolutions = lockfile.buffers.resolutions.as_slice();
+            let mut links: Vec<(&'a [u8], FolderId)> = Vec::new();
+            for (id, tree) in self.trees.iter().enumerate() {
+                for &row in tree.dependencies.get(rows) {
+                    if let Some(linked) = member_folder(lockfile, resolutions[row as usize]) {
+                        links.push((linked, self.folder(id as tree::Id)));
+                    }
+                }
+            }
+            index_sort::sort_vec_unstable_by(&mut links, |a, b| a.cmp(b));
+            links.dedup();
+            links
+        });
+        let start = links.partition_point(|&(linked, _)| linked < member);
+        (links[start..].iter())
+            .take_while(move |&&(linked, _)| linked == member)
+            .map(|&(_, folder)| folder)
+    }
+
+    fn path(&self, folder: FolderId) -> &[u8] {
+        let range = &self.folders[folder.0 as usize].path;
         &self.paths[range.start as usize..range.end as usize]
     }
 
-    fn expected(&self, tree_id: usize) -> &[(&'a [u8], PackageID)] {
-        let range = &self.folders[tree_id].expected;
+    fn expected(&self, folder: FolderId) -> &[(&'a [u8], PackageID)] {
+        let range = &self.folders[folder.0 as usize].expected;
         &self.expected[range.start as usize..range.end as usize]
     }
 
-    fn expected_in(&self, tree_id: tree::Id, alias: &[u8]) -> Option<usize> {
-        let range = self.folders.get(tree_id as usize)?.expected.clone();
+    fn expected_in(&self, folder: FolderId, alias: &[u8]) -> Option<usize> {
+        let range = self.folders.get(folder.0 as usize)?.expected.clone();
         let expected = &self.expected[range.start as usize..range.end as usize];
         expected
             .binary_search_by(|(name, _)| (*name).cmp(alias))
@@ -1008,102 +1290,229 @@ impl<'a> HoistedTree<'a> {
             .map(|i| range.start as usize + i)
     }
 
-    fn expected_from(&self, from: tree::Id, alias: &[u8]) -> Option<(tree::Id, usize)> {
-        let mut id = from;
-        while (id as usize) < self.trees.len() {
-            if let Some(idx) = self.expected_in(id, alias) {
-                return Some((id, idx));
-            }
-            id = self.trees[id as usize].parent;
-        }
-        None
+    fn is_contested(&self, row: usize) -> bool {
+        self.contested.binary_search(&(row as u32)).is_ok()
     }
 
-    fn removable(&self, from: tree::Id, alias: &[u8], entry_folder: &[u8]) -> bool {
-        let Some((id, idx)) = self.expected_from(from, alias) else {
-            return true;
-        };
-        let (alias, pkg_id) = self.expected[idx];
-        let installed = self.verified_installed(id, idx, alias, pkg_id);
-        if installed == Installed::Matches {
+    /// An install does not settle which of the two packages the name gets, so no copy of it is
+    /// removed: not the one in `folder`, and not `kept_below`, which would load from there.
+    fn warn_contested(&self, folder: FolderId, alias: &[u8], kept_below: Option<&[u8]>) {
+        self.kept_contested.set(true);
+        if self.quiet {
+            return;
+        }
+        use bun_core::fmt::escape_control_chars;
+        let place = join(self.path(folder), alias);
+        match kept_below {
+            Some(kept) => bun_core::warn!(
+                "the lockfile places two packages at {}; keeping {}",
+                escape_control_chars(&place),
+                escape_control_chars(kept)
+            ),
+            None => bun_core::warn!(
+                "the lockfile places two packages at {}; keeping it",
+                escape_control_chars(&place)
+            ),
+        }
+    }
+
+    /// Says what to do about the entries that `removable` kept with a warning.
+    fn print_notes(&self) {
+        if self.quiet {
+            return;
+        }
+        if self.kept_mismatched.get() {
+            bun_core::note!("run 'bun install' first");
+        }
+        if self.kept_contested.get() {
+            bun_core::note!(
+                "a package.json has that name in two dependency groups with different versions"
+            );
+        }
+    }
+
+    fn open(&self, folder: FolderId, linked_folders: &mut Vec<Box<[u8]>>) -> Option<Dir> {
+        open_tree_folder(self.lockfile, folder.0, linked_folders)
+    }
+
+    /// Calls `found` with the nearest row for `alias` on each way up from `from`, and with `None`
+    /// for a way that has no row. Returns false as soon as `found` does.
+    ///
+    /// The hoister places the packages of a workspace once for each folder that links it, and
+    /// each time it looks for a name in that folder and above it. So the folder of a workspace has
+    /// a way up to the root and one through each folder that links it. A run with `--filter` does
+    /// not install every such folder: see `installs`.
+    fn each_way_up(&self, from: LookFrom<'_>, alias: &[u8], found: Found<'_>) -> bool {
+        // Workspaces can link each other, so the ways above a workspace are followed once.
+        let mut passed: Vec<&[u8]> = Vec::new();
+        match from {
+            LookFrom::At(folder) => self.way_up(folder, alias, found, &mut passed),
+            LookFrom::Above(folder) => self.way_above(folder, alias, found, &mut passed),
+            LookFrom::AboveMember(member) => {
+                self.ways_above_member(member, alias, found, &mut passed)
+            }
+        }
+    }
+
+    fn way_up<'s>(
+        &'s self,
+        folder: FolderId,
+        alias: &[u8],
+        found: Found<'_>,
+        passed: &mut Vec<&'s [u8]>,
+    ) -> bool {
+        match self.expected_in(folder, alias) {
+            Some(row) => found(Some((folder, row))),
+            None => self.way_above(folder, alias, found, passed),
+        }
+    }
+
+    fn way_above<'s>(
+        &'s self,
+        folder: FolderId,
+        alias: &[u8],
+        found: Found<'_>,
+        passed: &mut Vec<&'s [u8]>,
+    ) -> bool {
+        if folder.0 == 0 {
+            return found(None);
+        }
+        if let Some(member) = self.member_of(folder) {
+            return self.ways_above_member(member, alias, found, passed);
+        }
+        let parent = self.folder(self.trees[folder.0 as usize].parent);
+        self.way_up(parent, alias, found, passed)
+    }
+
+    fn ways_above_member<'s>(
+        &'s self,
+        member: &'s [u8],
+        alias: &[u8],
+        found: Found<'_>,
+        passed: &mut Vec<&'s [u8]>,
+    ) -> bool {
+        if passed.contains(&member) {
             return true;
         }
-        self.kept_mismatched.set(true);
-        if !self.quiet {
-            let why = match installed {
-                Installed::Missing => "is missing",
-                _ => "is not the version bun.lock expects",
+        passed.push(member);
+        self.way_up(FolderId(0), alias, found, passed)
+            && (self.links_to(member))
+                .all(|folder| !self.installs(folder) || self.way_up(folder, alias, found, passed))
+    }
+
+    /// Returns true if `bun.lock` gives the name `alias` to no folder on a way up from `from`, or
+    /// each nearest folder that it gives the name to has that package installed.
+    fn removable(&self, from: LookFrom<'_>, alias: &[u8], entry_folder: &[u8]) -> bool {
+        self.each_way_up(from, alias, &mut |nearest| {
+            let Some((folder, row)) = nearest else {
+                return true;
             };
-            bun_core::warn!(
-                "{} {}; keeping {}",
-                bun_core::fmt::escape_control_chars(&join(self.path(id as usize), alias)),
-                why,
-                bun_core::fmt::escape_control_chars(&join(entry_folder, alias))
-            );
+            let why = match self.verified_installed(folder, row) {
+                Installed::Matches => return true,
+                Installed::Contested => {
+                    self.warn_contested(folder, alias, Some(&join(entry_folder, alias)));
+                    return false;
+                }
+                // The caller refuses for `linked`.
+                Installed::Linked => return false,
+                Installed::Missing => "is missing",
+                Installed::Mismatch => "is not the version bun.lock expects",
+            };
+            self.kept_mismatched.set(true);
+            if !self.quiet {
+                bun_core::warn!(
+                    "{} {}; keeping {}",
+                    bun_core::fmt::escape_control_chars(&join(self.path(folder), alias)),
+                    why,
+                    bun_core::fmt::escape_control_chars(&join(entry_folder, alias))
+                );
+            }
+            false
+        })
+    }
+
+    // Unlike `removable`, an alias that a way up does not install is left alone.
+    fn collapsed_into_ancestor(&self, from: LookFrom<'_>, alias: &[u8]) -> bool {
+        self.each_way_up(from, alias, &mut |nearest| {
+            nearest.is_some_and(|(folder, row)| {
+                self.verified_installed(folder, row) == Installed::Matches
+            })
+        })
+    }
+
+    /// Returns true if a tree places `alias` in `folder`. A run with `--filter` does not install
+    /// the trees that a workspace has below a folder the run leaves out. After such a run, what
+    /// is in the workspace's folder also has to be the package that is placed.
+    fn still_places(&self, folder: FolderId, alias: &[u8]) -> bool {
+        let Some(row) = self.expected_in(folder, alias) else {
+            return false;
+        };
+        !self.has_way_through_left_out_folder(folder)
+            || self.verified_installed(folder, row) != Installed::Mismatch
+    }
+
+    fn has_way_through_left_out_folder(&self, mut folder: FolderId) -> bool {
+        if self.selected.is_none() {
+            return false;
+        }
+        while folder.0 != 0 {
+            if let Some(member) = self.member_of(folder) {
+                return self.links_to(member).any(|linking| !self.installs(linking));
+            }
+            folder = self.folder(self.trees[folder.0 as usize].parent);
         }
         false
     }
 
-    // Unlike `removable`, an alias no ancestor installs is left alone.
-    fn collapsed_into_ancestor(&self, from: tree::Id, alias: &[u8]) -> bool {
-        self.expected_from(from, alias).is_some_and(|(id, idx)| {
-            let (alias, pkg_id) = self.expected[idx];
-            self.verified_installed(id, idx, alias, pkg_id) == Installed::Matches
-        })
+    fn is_installed(&self, folder: FolderId, alias: &[u8]) -> bool {
+        (self.expected_in(folder, alias))
+            .is_some_and(|row| self.verified_installed(folder, row) == Installed::Matches)
     }
 
-    fn is_installed(&self, tree_id: tree::Id, alias: &[u8]) -> bool {
-        self.expected_in(tree_id, alias).is_some_and(|idx| {
-            let pkg_id = self.expected[idx].1;
-            self.verified_installed(tree_id, idx, alias, pkg_id) == Installed::Matches
-        })
-    }
-
-    /// Returns false if one of the packages that contain `tree_id`'s folder isn't the version the
-    /// tree expects there. Its contents were then installed for a different version.
-    fn owners_installed(&self, mut tree_id: tree::Id) -> bool {
+    /// Returns false if one of the packages that contain `folder` isn't the version bun.lock
+    /// expects there. Its contents were then installed for a different version.
+    fn owners_installed(&self, mut folder: FolderId) -> bool {
         let lockfile = self.lockfile;
         let deps = lockfile.buffers.dependencies.as_slice();
         let buf = lockfile.buffers.string_bytes.as_slice();
-        while tree_id != 0
-            && workspace_node_modules(lockfile, tree_owner(lockfile, tree_id as usize)).is_none()
-        {
-            let tree = &self.trees[tree_id as usize];
-            if !self.is_installed(tree.parent, tree.folder_name(deps, buf)) {
+        while folder.0 != 0 && self.member_of(folder).is_none() {
+            let tree = &self.trees[folder.0 as usize];
+            let parent = self.folder(tree.parent);
+            if !self.is_installed(parent, tree.folder_name(deps, buf)) {
                 return false;
             }
-            tree_id = tree.parent;
+            folder = parent;
         }
         true
     }
 
-    fn verified_installed(
-        &self,
-        tree_id: tree::Id,
-        idx: usize,
-        alias: &[u8],
-        pkg_id: PackageID,
-    ) -> Installed {
-        if self.checked.borrow().is_set(idx) {
-            return if self.matched.borrow().is_set(idx) {
+    fn verified_installed(&self, folder: FolderId, row: usize) -> Installed {
+        if self.is_contested(row) {
+            return Installed::Contested;
+        }
+        if self.checked.borrow().is_set(row) {
+            return if self.matched.borrow().is_set(row) {
                 Installed::Matches
-            } else if self.missing.borrow().is_set(idx) {
+            } else if self.missing.borrow().is_set(row) {
                 Installed::Missing
             } else {
                 Installed::Mismatch
             };
         }
-        let installed = self.installed(tree_id, alias, pkg_id);
-        self.checked.borrow_mut().set(idx);
+        let (alias, pkg_id) = self.expected[row];
+        let installed = self.installed(folder, alias, pkg_id);
         match installed {
-            Installed::Matches => self.matched.borrow_mut().set(idx),
-            Installed::Missing => self.missing.borrow_mut().set(idx),
-            Installed::Mismatch => {}
+            Installed::Matches => self.matched.borrow_mut().set(row),
+            Installed::Missing => self.missing.borrow_mut().set(row),
+            Installed::Mismatch | Installed::Contested => {}
+            // Not kept: each lookup that needs the folder is refused for it.
+            Installed::Linked => return installed,
         }
+        self.checked.borrow_mut().set(row);
         installed
     }
 
-    fn installed(&self, tree_id: tree::Id, alias: &[u8], pkg_id: PackageID) -> Installed {
+    fn installed(&self, folder: FolderId, alias: &[u8], pkg_id: PackageID) -> Installed {
         let buf = self.lockfile.buffers.string_bytes.as_slice();
         let Some(res) = self
             .lockfile
@@ -1113,8 +1522,13 @@ impl<'a> HoistedTree<'a> {
         else {
             return Installed::Mismatch;
         };
-        let Some(folder) = open_tree_folder(self.lockfile, tree_id, &mut Vec::new()) else {
-            return Installed::Missing;
+        let mut linked: Vec<Box<[u8]>> = Vec::new();
+        let Some(folder) = self.open(folder, &mut linked) else {
+            if linked.is_empty() {
+                return Installed::Missing;
+            }
+            self.linked.borrow_mut().append(&mut linked);
+            return Installed::Linked;
         };
         let kind = entry_kind_of(&folder, alias);
         if kind == EntryKind::Unknown {
@@ -1167,6 +1581,71 @@ impl<'a> HoistedTree<'a> {
     }
 }
 
+/// The folder of the workspace `pkg_id`, relative to the project root, if the workspace is inside
+/// the project. Returns `None` for the root, whose path is empty, for a workspace outside the
+/// project, because nothing is ever deleted from its `node_modules`, and for every other package.
+fn member_folder(lockfile: &Lockfile, pkg_id: PackageID) -> Option<&[u8]> {
+    let res = lockfile.packages.items_resolution().get(pkg_id as usize)?;
+    if res.tag != ResolutionTag::Workspace {
+        return None;
+    }
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let path = strings::without_trailing_slash(res.workspace().slice(buf));
+    (!path.is_empty() && !lockfile.is_member_outside(pkg_id)).then_some(path)
+}
+
+/// The workspace that owns `tree`, if a workspace does. Its `node_modules` is in the workspace's
+/// own folder, whichever folder has the link to the workspace.
+fn tree_workspace(lockfile: &Lockfile, tree: &tree::Tree) -> Option<PackageID> {
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let owner = *resolutions.get(tree.dependency_id as usize)?;
+    let res = lockfile.packages.items_resolution().get(owner as usize)?;
+    (res.tag == ResolutionTag::Workspace).then_some(owner)
+}
+
+/// The folder of the workspace that owns `tree`, if that workspace is inside the project.
+fn tree_member_folder<'a>(lockfile: &'a Lockfile, tree: &tree::Tree) -> Option<&'a [u8]> {
+    member_folder(lockfile, tree_workspace(lockfile, tree)?)
+}
+
+/// Returns a key for each tree's `node_modules` directory. Two trees have the same key if they are
+/// one directory on disk.
+///
+/// A tree is inside the package that its parent's directory has under the tree's name. A
+/// workspace's tree is not: it is in the workspace's folder, and the key is the key of that path.
+/// bun.lock can list that path under two packages.
+fn directory_keys(lockfile: &Lockfile) -> Vec<u64> {
+    // A `place_key` in the folder `u64::MAX`, which no tree is. The root's package of some name
+    // has a `place_key` in the folder 0, and a workspace's path can be that name.
+    const WORKSPACE_PATHS: u64 = u64::MAX;
+
+    let trees = lockfile.buffers.trees.as_slice();
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let pkg_res = lockfile.packages.items_resolution();
+    let mut keys: Vec<u64> = Vec::with_capacity(trees.len());
+    for tree in trees {
+        let key = match tree_workspace(lockfile, tree) {
+            Some(owner) => {
+                let path = pkg_res[owner as usize].workspace().slice(buf);
+                let path = strings::without_trailing_slash(path);
+                let hash = bun_semver::semver_string::Builder::string_hash(path);
+                tree::place_key(WORKSPACE_PATHS, hash)
+            }
+            // A tree always comes after its parent, so the parent's key is already in `keys`.
+            None => match (
+                keys.get(tree.parent as usize),
+                deps.get(tree.dependency_id as usize),
+            ) {
+                (Some(&parent), Some(named)) => tree::place_key(parent, named.name_hash),
+                _ => 0,
+            },
+        };
+        keys.push(key);
+    }
+    keys
+}
+
 fn installed_package_json(package: &Dir) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
     let bytes = sys::File::read_from(package.fd(), b"package.json").ok()?;
     crate::initialize_store();
@@ -1213,22 +1692,17 @@ fn plan_hoisted(
 
     let quiet = manager.options.log_level == LogLevel::Silent;
     let lockfile: &Lockfile = &manager.lockfile;
-    let hoisted = HoistedTree::init(lockfile, quiet);
+    let pkg_res = lockfile.packages.items_resolution();
+    let selected: Option<Vec<PackageID>> = selection.map(|sel| {
+        (0..pkg_res.len())
+            .filter(|&id| sel.selected.is_set(id))
+            .map(|id| id as PackageID)
+            .collect()
+    });
+    let hoisted = HoistedTree::init(lockfile, quiet, selected);
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let trees = lockfile.buffers.trees.as_slice();
-    let pkg_res = lockfile.packages.items_resolution();
-
-    // Skips trees with no rows left. Also skips the tree of an unlinked workspace, because its
-    // folder is inside the workspace and not under `node_modules/<name>`.
-    let rows = lockfile.buffers.hoisted_dependencies.as_slice();
-    let mut nested_trees: Vec<(tree::Id, &[u8])> = trees
-        .iter()
-        .skip(1)
-        .filter(|t| t.dependencies.len > 0 && !t.is_unlinked_member(trees, rows, deps))
-        .map(|t| (t.parent, t.folder_name(deps, buf)))
-        .collect();
-    index_sort::sort_vec_unstable_by(&mut nested_trees, |a, b| a.cmp(b));
 
     let tree_importer: Vec<PackageID> = match selection {
         Some(_) => tree_importers(lockfile),
@@ -1240,36 +1714,35 @@ fn plan_hoisted(
         crate::initialize_store();
         crate::git_runner::bundles_dependencies(package)
     };
-    // Packages that bundle dependencies and also have their own tree, as (parent tree, folder
-    // name). Trees are ordered parent first.
-    let mut bundling_packages: Vec<(tree::Id, &[u8])> = Vec::new();
-    // Those packages' trees, and every tree nested under them.
-    let mut skipped_trees: Vec<tree::Id> = Vec::new();
+    // Packages that bundle dependencies and also have their own folder, as (folder they are in,
+    // name).
+    let mut bundling_packages: Vec<(FolderId, &[u8])> = Vec::new();
+    // Those packages' folders, and every folder nested under them.
+    let mut skipped_folders: Vec<FolderId> = Vec::new();
 
-    let mut visited = handle_oom(DynamicBitSet::init_empty(pkg_res.len()));
-    for tree_idx in 0..hoisted.folders.len() {
-        let folder_path = hoisted.path(tree_idx);
-        if folder_path.is_empty() {
-            continue;
-        }
-        if tree_idx != 0 {
+    let mut root_visited = false;
+    for folder in hoisted.folders_with_rows() {
+        let tree_idx = folder.0 as usize;
+        let folder_path = hoisted.path(folder);
+        // A workspace's folder isn't inside a package, whatever package has the workspace's name.
+        if tree_idx != 0 && hoisted.member_of(folder).is_none() {
             let tree = &trees[tree_idx];
-            if skipped_trees.contains(&tree.parent)
-                || bundling_packages.contains(&(tree.parent, tree.folder_name(deps, buf)))
+            let parent = hoisted.folder(tree.parent);
+            if skipped_folders.contains(&parent)
+                || bundling_packages.contains(&(parent, tree.folder_name(deps, buf)))
             {
-                skipped_trees.push(tree_idx as tree::Id);
+                skipped_folders.push(folder);
                 continue;
             }
         }
         let importer = tree_importer.get(tree_idx).copied().unwrap_or(0);
-        if selection.is_some_and(|sel| importer != 0 && !sel.selected.is_set(importer as usize)) {
+        if importer != 0 && !hoisted.selects(importer) {
             continue;
         }
         let protected: &[Box<[u8]>] = if importer == 0 { root_protected } else { &[] };
-        let tree_id = tree_idx as tree::Id;
         let owner = tree_owner(lockfile, tree_idx);
         if owner != invalid_package_id && (owner as usize) < pkg_res.len() {
-            visited.set(owner as usize);
+            root_visited |= owner == 0;
             let tag = pkg_res[owner as usize].tag;
             if tag != ResolutionTag::Root
                 && tag != ResolutionTag::Workspace
@@ -1279,9 +1752,9 @@ fn plan_hoisted(
             }
         }
 
-        let expected = hoisted.expected(tree_idx);
+        let expected = hoisted.expected(folder);
 
-        let Some(dir) = open_tree_folder(lockfile, tree_id, &mut plan.linked_folders) else {
+        let Some(dir) = hoisted.open(folder, &mut plan.linked_folders) else {
             continue;
         };
 
@@ -1295,9 +1768,9 @@ fn plan_hoisted(
             let Some(package) = descend(&dir, alias) else {
                 continue;
             };
-            if nested_trees.binary_search(&(tree_id, alias)).is_ok() {
+            if hoisted.child(folder, alias).is_some() {
                 if declares_bundled_deps(&package) {
-                    bundling_packages.push((tree_id, alias));
+                    bundling_packages.push((folder, alias));
                 }
                 continue;
             }
@@ -1314,63 +1787,65 @@ fn plan_hoisted(
                 false,
                 &|entry: &Entry| {
                     contains(protected, entry.alias)
-                        || !hoisted.is_installed(tree_id, alias)
-                        || !hoisted.owners_installed(tree_id)
-                        || !hoisted.removable(tree_id, entry.alias, &nested_path)
+                        || !hoisted.is_installed(folder, alias)
+                        || !hoisted.owners_installed(folder)
+                        || !hoisted.removable(LookFrom::At(folder), entry.alias, &nested_path)
                 },
                 plan,
             );
         }
 
-        let parent = trees[tree_idx].parent;
         scan_folder(
             dir,
             folder_path,
             false,
             &|entry| {
-                expected
-                    .binary_search_by(|(name, _)| (*name).cmp(entry.alias))
-                    .is_ok()
-                    // A workspace's name is only kept in the root `node_modules`. In a nested one,
-                    // a package from the registry can have the same name.
-                    || (tree_idx == 0 && contains(workspace_names, entry.alias))
+                if let Some(row) = hoisted.expected_in(folder, entry.alias) {
+                    if hoisted.is_contested(row) {
+                        hoisted.warn_contested(folder, entry.alias, None);
+                    }
+                    return true;
+                }
+                // A workspace's name is only kept in the root `node_modules`. In a nested one,
+                // a package from the registry can have the same name.
+                (tree_idx == 0 && contains(workspace_names, entry.alias))
                     || contains(protected, entry.alias)
-                    || !hoisted.owners_installed(tree_id)
-                    || !hoisted.removable(parent, entry.alias, folder_path)
+                    || !hoisted.owners_installed(folder)
+                    || !hoisted.removable(LookFrom::Above(folder), entry.alias, folder_path)
             },
             plan,
         );
     }
 
-    if !visited.is_set(0) {
+    if !root_visited {
         if let Ok(dir) = Dir::open(b"node_modules") {
             scan_folder(dir, b"node_modules", false, &keep_workspaces, plan);
         }
     }
-    for pkg_id in 0..pkg_res.len() {
-        let Some(folder_path) = workspace_node_modules(lockfile, pkg_id as PackageID) else {
-            continue;
-        };
-        if visited.is_set(pkg_id)
-            || selection.is_some_and(|sel| !sel.selected.is_set(pkg_id))
-            || is_pruned_workspace(&*manager, pkg_id)
+    for ids in hoisted.workspaces().chunk_by(|a, b| a.0 == b.0) {
+        let member = ids[0].0;
+        // The loop above is done with a workspace that has a tree with rows.
+        if (hoisted.member_folder(member)).is_some_and(|folder| !hoisted.path(folder).is_empty())
+            || !ids.iter().any(|&(_, id)| hoisted.selects(id))
+            || (ids.iter()).any(|&(_, id)| is_pruned_workspace(&*manager, id as usize))
         {
             continue;
         }
+        let folder_path = join(member, ROOT_DIR);
         if let Some(dir) = open_workspace_folder(&folder_path, &mut plan.linked_folders) {
+            let above = LookFrom::AboveMember(member);
             scan_folder(
                 dir,
                 &folder_path,
                 false,
-                &|entry: &Entry| !hoisted.removable(0, entry.alias, &folder_path),
+                &|entry: &Entry| !hoisted.removable(above, entry.alias, &folder_path),
                 plan,
             );
         }
     }
 
-    if hoisted.kept_mismatched.get() && !quiet {
-        bun_core::note!("run 'bun install' first");
-    }
+    plan.linked_folders.append(&mut hoisted.linked.borrow_mut());
+    hoisted.print_notes();
 }
 
 fn tree_owner(lockfile: &Lockfile, tree_idx: usize) -> PackageID {
@@ -1428,6 +1903,60 @@ pub(crate) fn remove_collapsed_copies(manager: &mut PackageManager, before: &Loc
     restore_tree(&mut manager.lockfile, saved);
 }
 
+/// Pairs the workspaces of `old` that have a tree and whose folder no workspace of `new` has. Such
+/// a workspace can have another folder now. Then it is the free workspace of `new` with its name,
+/// or, if it has another name too, the one whose `node_modules` the old path still leads to.
+/// Returns `(folder in old, folder in new)`.
+fn pair_moved_members<'o, 'n>(
+    old: &HoistedTree<'o>,
+    new: &HoistedTree<'n>,
+) -> Vec<(&'o [u8], &'n [u8])> {
+    let old_names = old.lockfile.packages.items_name_hash();
+    let new_names = new.lockfile.packages.items_name_hash();
+    let stat = |folder: &[u8]| {
+        let path = zname(&join(folder, ROOT_DIR));
+        sys::stat(ZStr::from_slice_with_nul(&path)).ok()
+    };
+    let mut stats: Option<Vec<(&'n [u8], sys::Stat)>> = None;
+    let mut moved: Vec<(&'o [u8], &'n [u8])> = Vec::new();
+    for &(folder, _) in old.members() {
+        if !new.ids_at(folder).is_empty() {
+            continue;
+        }
+        // Not free: a workspace of `old` with the same folder, or one that moved there.
+        let is_free = |now: &[u8]| {
+            old.member_folder(now).is_none() && !moved.iter().any(|pair| pair.1 == now)
+        };
+        let names = old.ids_at(folder);
+        let mut now = (new.workspaces().iter())
+            .find(|&&(now, id)| {
+                let name = new_names[id as usize];
+                names
+                    .iter()
+                    .any(|&(_, was)| old_names[was as usize] == name)
+                    && is_free(now)
+            })
+            .map(|&(now, _)| now);
+        if now.is_none() {
+            if let Some(here) = stat(folder) {
+                let stats = stats.get_or_insert_with(|| {
+                    (new.workspaces().iter())
+                        .filter_map(|&(now, _)| Some((now, stat(now)?)))
+                        .collect()
+                });
+                // Free or not: what is behind the old path is that workspace's folder now.
+                now = (stats.iter())
+                    .find(|(_, there)| there.st_dev == here.st_dev && there.st_ino == here.st_ino)
+                    .map(|&(now, _)| now);
+            }
+        }
+        if let Some(now) = now {
+            moved.push((folder, now));
+        }
+    }
+    moved
+}
+
 fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile) {
     let after: &Lockfile = &manager.lockfile;
     let workspace_names = collect_workspace_names(manager);
@@ -1435,59 +1964,57 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         return;
     }
     let quiet = manager.options.log_level == LogLevel::Silent;
-    let old = HoistedTree::init(before, true);
-    let new = HoistedTree::init(after, quiet);
     let targets = manager.filtered_link_targets.as_ref();
     let selected: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(before));
     let importers = selected.as_ref().map(|_| tree_importers(before));
-    let old_paths = tree_paths(&old);
-    let new_paths = tree_paths(&new);
-    let new_tree_at = |path: &[u8]| tree_at(&new_paths, path);
+    let old = HoistedTree::init(before, true, None);
+    let selected_after = targets.map(|targets| targets.package_ids(after));
+    let new = HoistedTree::init(after, quiet, selected_after);
 
     let old_deps = before.buffers.dependencies.as_slice();
     let old_buf = before.buffers.string_bytes.as_slice();
-    // Match workspaces by folder, because a workspace can be renamed.
-    let old_member_folders: Vec<(Box<[u8]>, usize)> = (0..old.folders.len())
-        .filter(|&old_idx| old.trees[old_idx].parent == 0 && is_member_tree(before, old_idx))
-        .filter_map(|old_idx| {
-            let folder = workspace_node_modules(before, tree_owner(before, old_idx))?;
-            Some((folder, old_idx))
+    // A workspace can get another name, and bun.lock can spell its path another way. So the folder
+    // says which workspace of `after` a workspace of `before` is, and then the name.
+    let moved = pair_moved_members(&old, &new);
+    let member_now = |was: &[u8]| match new.ids_at(was).first() {
+        Some(&(now, _)) => Some(now),
+        None => (moved.iter().find(|pair| pair.0 == was)).map(|pair| pair.1),
+    };
+    // `before` can list a workspace twice, as it was and as it is. The one with the trees counts.
+    let folder_before = |now: &[u8]| {
+        old.member_folder(now).or_else(|| {
+            let was = moved.iter().find(|pair| pair.1 == now)?.0;
+            old.member_folder(was)
         })
-        .collect();
-    let member_folders: Vec<Box<[u8]>> = (0..after.packages.len())
-        .filter_map(|id| workspace_node_modules(after, id as PackageID))
-        .collect();
-    let new_member_folders: Vec<(Box<[u8]>, usize)> = (0..new.folders.len())
-        .filter(|&new_idx| new.trees[new_idx].parent == 0 && is_member_tree(after, new_idx))
-        .filter_map(|new_idx| {
-            let folder = workspace_node_modules(after, tree_owner(after, new_idx))?;
-            Some((folder, new_idx))
-        })
-        .collect();
+    };
+    // For each folder of `old`, the folder of `new` that is the same directory, if a tree places
+    // a package there.
+    let mut now: Vec<Option<FolderId>> = Vec::with_capacity(old.trees.len());
+    for (id, tree) in old.trees.iter().enumerate() {
+        let folder = old.folder(id as tree::Id);
+        now.push(if folder.0 as usize != id {
+            now[folder.0 as usize]
+        } else if id == 0 {
+            new.root()
+        } else if let Some(member) = old.member_of(folder) {
+            member_now(member).and_then(|member| new.member_folder(member))
+        } else {
+            let parent = now[old.folder(tree.parent).0 as usize];
+            parent.and_then(|parent| new.child(parent, tree.folder_name(old_deps, old_buf)))
+        });
+    }
+
     let mut plan = Plan::default();
-    for old_idx in 0..old.folders.len() {
-        let old_path = old.path(old_idx);
-        if old_path.is_empty() {
-            continue;
-        }
+    for old_folder in old.folders_with_rows() {
+        let old_idx = old_folder.0 as usize;
+        let old_path = old.path(old_folder);
         let old_tree = &old.trees[old_idx];
-        // The loop below handles each workspace's own `node_modules`.
-        if old_tree.parent == 0
-            && (contains(&workspace_names, old_tree.folder_name(old_deps, old_buf))
-                || (old_member_folders.iter())
-                    .any(|(folder, tree)| *tree == old_idx && member_folders.contains(folder)))
-        {
-            continue;
-        }
-        // Skip the trees of a workspace that lost its link in the root `node_modules`. Their old
-        // paths now belong to the package that took the workspace's name.
-        let mut top = old_idx;
-        while top != 0 && old.trees[top].parent != 0 {
-            top = old.trees[top].parent as usize;
-        }
-        if is_member_tree(before, top)
-            && new_tree_at(old.path(top)).is_some_and(|id| !is_member_tree(after, id as usize))
-        {
+        // The loop below handles each workspace's own `node_modules`. Nothing is deleted from a
+        // workspace outside the project.
+        if match old.member_of(old_folder) {
+            Some(member) => member_now(member).is_some(),
+            None => is_member_tree(before, old_idx),
+        } {
             continue;
         }
         if let (Some(selected), Some(importers)) = (&selected, &importers) {
@@ -1495,54 +2022,33 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
                 continue;
             }
         }
-        // A tree path under a workspace starts with the workspace's name, e.g.
-        // `node_modules/two/node_modules/y/node_modules`. If it was renamed, swap in the new name.
-        let renamed_top: Option<&[u8]> = match old_member_folders.iter().find(|it| it.1 == top) {
-            Some((folder, _)) if member_folders.contains(folder) => {
-                match new_member_folders.iter().find(|it| it.0 == *folder) {
-                    Some(&(_, new_top)) => {
-                        Some(new.path(new_top)).filter(|now| *now != old.path(top))
-                    }
-                    // The workspace has no nested packages anymore. The loop below removes the
-                    // old ones.
-                    None => continue,
-                }
-            }
-            _ => None,
-        };
-        let current_path = |old_idx: usize| match renamed_top {
-            Some(renamed_top) => {
-                Cow::Owned([renamed_top, &old.path(old_idx)[old.path(top).len()..]].concat())
-            }
-            None => Cow::Borrowed(old.path(old_idx)),
-        };
-        let old_expected = old.expected(old_idx);
-        let surviving = new_tree_at(&current_path(old_idx));
+        let old_expected = old.expected(old_folder);
+        let surviving = now[old_idx];
         // A workspace's name is only kept in the root `node_modules`. In a nested one, a package
         // from the registry can have the same name.
         let still_placed = |alias: &[u8]| {
-            surviving.is_some_and(|id| new.expected_in(id, alias).is_some())
+            surviving.is_some_and(|folder| new.still_places(folder, alias))
                 || (old_idx == 0 && contains(&workspace_names, alias))
         };
         if old_expected.iter().all(|&(alias, _)| still_placed(alias)) {
             continue;
         }
-        let resolve_from: tree::Id = match surviving {
-            Some(id) => new.trees[id as usize].parent,
+        let resolve_from = match surviving {
+            Some(folder) => LookFrom::Above(folder),
             // The root has no dependencies left, so `new` has no tree for it.
-            None if old_idx == 0 => tree::INVALID_ID,
-            None => match new_tree_at(&current_path(old.trees[old_idx].parent as usize)) {
-                Some(parent_id) => parent_id,
+            None if old_idx == 0 => LookFrom::Above(FolderId(0)),
+            None => match now[old.folder(old_tree.parent).0 as usize] {
+                Some(parent) => LookFrom::At(parent),
                 None => continue,
             },
         };
-        let owner: Option<PackageID> = match surviving {
-            Some(id) => Some(tree_owner(after, id as usize)),
-            None if old_idx == 0 => Some(0),
+        let owner: Option<PackageID> = match (surviving, resolve_from) {
+            (Some(folder), _) => Some(tree_owner(after, folder.0 as usize)),
             // `new` leaves out bundled dependencies, so a folder with nothing else has no tree.
-            None => new
-                .expected_in(resolve_from, old_tree.folder_name(old_deps, old_buf))
+            (None, LookFrom::At(parent)) => new
+                .expected_in(parent, old_tree.folder_name(old_deps, old_buf))
                 .map(|row| new.expected[row].1),
+            (None, _) => Some(0),
         };
         // If the owning package changed, the install replaced its folder, including what `before`
         // placed inside it. Whatever is in there now came with the new tarball.
@@ -1564,8 +2070,13 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         }
         // A tarball ships folders at any depth below the package that bundles.
         let mut ships = owner.is_some_and(|owner| has_bundled_deps(after, owner));
+        let new_ancestor = match resolve_from {
+            LookFrom::At(folder) => folder.0,
+            LookFrom::Above(folder) => (new.trees.get(folder.0 as usize)).map_or(0, |t| t.parent),
+            LookFrom::AboveMember(_) => 0,
+        };
         let chains = [
-            (after, new.trees, resolve_from as usize),
+            (after, new.trees, new_ancestor as usize),
             (before, old.trees, old_idx),
         ];
         for (lockfile, trees, mut ancestor) in chains {
@@ -1578,8 +2089,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
             continue;
         }
         let links = plan.linked_folders.len();
-        let Some(dir) = open_tree_folder(before, old_idx as tree::Id, &mut plan.linked_folders)
-        else {
+        let Some(dir) = old.open(old_folder, &mut plan.linked_folders) else {
             plan.left_linked_folder |= plan.linked_folders.len() > links;
             continue;
         };
@@ -1624,58 +2134,37 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         manager.subcommand,
         crate::Subcommand::Dedupe | crate::Subcommand::Audit | crate::Subcommand::Update
     );
-    let selected_after: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(after));
-    let buf = after.buffers.string_bytes.as_slice();
-    let pkg_names = after.packages.items_name();
     let self_contained = after.self_contained_workspace_ids();
-    for pkg_id in 0..after.packages.len() {
-        let Some(folder_path) = workspace_node_modules(after, pkg_id as PackageID) else {
-            continue;
-        };
-        if is_pruned_workspace(manager, pkg_id)
-            || selected_after
-                .as_ref()
-                .is_some_and(|sel| sel.binary_search(&(pkg_id as PackageID)).is_err())
-            || has_bundled_deps(after, pkg_id as PackageID)
+    for ids in new.workspaces().chunk_by(|a, b| a.0 == b.0) {
+        let member = ids[0].0;
+        if (ids.iter()).any(|&(_, id)| is_pruned_workspace(manager, id as usize))
+            || !ids.iter().any(|&(_, id)| new.selects(id))
+            || ids.iter().any(|&(_, id)| has_bundled_deps(after, id))
         {
             continue;
         }
-        let tree_path = join(
-            &join(b"node_modules", pkg_names[pkg_id].slice(buf)),
-            b"node_modules",
-        );
-        // The tree of an unlinked workspace is at `folder_path`, and `tree_path` then belongs to
-        // the package that took the workspace's name.
-        let tree_of_member = |hoisted: &HoistedTree<'_>, paths: &[(&[u8], tree::Id)]| {
-            tree_at(paths, &folder_path).or_else(|| {
-                tree_at(paths, &tree_path)
-                    .filter(|&id| is_member_tree(hoisted.lockfile, id as usize))
-            })
-        };
-        let old_tree = (old_member_folders.iter())
-            .find(|(folder, _)| *folder == folder_path)
-            .map(|&(_, old_idx)| old_idx)
-            .or_else(|| tree_of_member(&old, &old_paths).map(|id| id as usize));
-        let old_rows: &[(&[u8], PackageID)] = match old_tree {
-            Some(old_idx) => old.expected(old_idx),
+        let folder_path = join(member, ROOT_DIR);
+        // Every tree of the workspace is this folder, whichever folder has the link to it.
+        let old_rows: &[(&[u8], PackageID)] = match folder_before(member) {
+            Some(folder) => old.expected(folder),
             None => &[],
         };
-        let surviving = tree_of_member(&new, &new_paths);
+        let surviving = new.member_folder(member);
         let still_placed =
-            |alias: &[u8]| surviving.is_some_and(|id| new.expected_in(id, alias).is_some());
+            |alias: &[u8]| surviving.is_some_and(|folder| new.still_places(folder, alias));
         let all_stay = old_rows.iter().all(|&(alias, _)| still_placed(alias));
         // The tree saved in bun.lock has no hoisting barriers. So `old` has most dependencies of a
         // self-contained workspace at the root, but they were installed in its own `node_modules`.
-        let reached: Option<DynamicBitSet> = (self_contained.contains(&(pkg_id as PackageID)))
-            .then(|| {
-                let name_hash = after.packages.items_name_hash()[pkg_id];
+        let reached: Option<DynamicBitSet> = (ids.iter())
+            .find(|&&(_, id)| self_contained.contains(&id))
+            .and_then(|&(_, id)| {
+                let name_hash = after.packages.items_name_hash()[id as usize];
                 (before.packages.items_name_hash().iter())
                     .zip(before.packages.items_resolution())
                     .position(|(&hash, res)| {
                         hash == name_hash && res.tag == ResolutionTag::Workspace
                     })
             })
-            .flatten()
             .map(|id| {
                 // `before` already has the dependencies of the workspace's new package.json, so the
                 // ones that were dropped from it are added here.
@@ -1697,6 +2186,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
             plan.left_linked_folder |= !all_stay && plan.linked_folders.len() > links;
             continue;
         };
+        let above = LookFrom::AboveMember(member);
         scan_folder(
             dir,
             &folder_path,
@@ -1709,25 +2199,31 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
                     .binary_search_by(|(name, _)| (*name).cmp(entry.alias))
                     .is_ok()
                     || reached.as_ref().is_some_and(|reached| {
-                        old.expected_in(0, entry.alias).is_some_and(|row| {
-                            let id = old.expected[row].1 as usize;
-                            reached.is_set_allow_out_of_bound(id, false)
-                        })
+                        old.expected_in(FolderId(0), entry.alias)
+                            .is_some_and(|row| {
+                                let id = old.expected[row].1 as usize;
+                                reached.is_set_allow_out_of_bound(id, false)
+                            })
                     });
                 if was_row {
-                    !new.removable(0, entry.alias, &folder_path)
+                    !new.removable(above, entry.alias, &folder_path)
                 } else {
                     // Other package managers link sibling workspaces into this folder, so an entry
                     // with the name of a workspace is kept.
                     !removes_other_entries
                         || contains(&workspace_names, entry.alias)
-                        || !new.collapsed_into_ancestor(0, entry.alias)
+                        || !new.collapsed_into_ancestor(above, entry.alias)
                 }
             },
             &mut plan,
         );
     }
 
+    // A lookup needed a folder that is behind a symlinked `node_modules`, and kept an entry.
+    let mut linked = new.linked.borrow_mut();
+    plan.left_linked_folder |= !linked.is_empty();
+    plan.linked_folders.append(&mut linked);
+    drop(linked);
     remove_planned(plan, Layout::Hoisted, manager);
 }
 
@@ -1796,23 +2292,48 @@ fn tarball_may_contain(
     sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&folder)).unwrap_or(true)
 }
 
+/// Where an install writes the tree: the folder of the workspace whose `node_modules` it is in, or
+/// `None` for the root's, and from that `node_modules` the packages down to the tree's own.
+/// Returns `None` for a tree in a workspace outside the project.
+///
+/// `tree::Iterator` gives the path through the links in `node_modules`, and `bun link` may point
+/// such a link anywhere. This path has no link in it.
+fn tree_location(
+    lockfile: &Lockfile,
+    mut tree_id: tree::Id,
+) -> Option<(Option<&[u8]>, Vec<&[u8]>)> {
+    let trees = lockfile.buffers.trees.as_slice();
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let mut below: Vec<&[u8]> = Vec::new();
+    let mut member = None;
+    while tree_id != 0 && (tree_id as usize) < trees.len() {
+        let tree = &trees[tree_id as usize];
+        if let Some(owner) = tree_workspace(lockfile, tree) {
+            member = Some(member_folder(lockfile, owner)?);
+            break;
+        }
+        below.push(tree.folder_name(deps, buf));
+        tree_id = tree.parent;
+    }
+    below.reverse();
+    Some((member, below))
+}
+
 /// The path of a tree's `node_modules`, relative to the project root.
-fn tree_path(lockfile: &Lockfile, tree_id: usize) -> Box<[u8]> {
-    if tree_id == 0 {
-        return ROOT_DIR.into();
+fn tree_path(lockfile: &Lockfile, tree_id: tree::Id) -> Option<Box<[u8]>> {
+    let (member, below) = tree_location(lockfile, tree_id)?;
+    let mut path = match member {
+        Some(folder) => join(folder, ROOT_DIR).into_vec(),
+        None => ROOT_DIR.to_vec(),
+    };
+    for name in below {
+        path.push(SEP);
+        path.extend_from_slice(name);
+        path.push(SEP);
+        path.extend_from_slice(ROOT_DIR);
     }
-    if let Some(folder) = workspace_node_modules(lockfile, tree_owner(lockfile, tree_id)) {
-        return folder;
-    }
-    let tree = &lockfile.buffers.trees.as_slice()[tree_id];
-    let name = tree.folder_name(
-        lockfile.buffers.dependencies.as_slice(),
-        lockfile.buffers.string_bytes.as_slice(),
-    );
-    join(
-        &join(&tree_path(lockfile, tree.parent as usize), name),
-        ROOT_DIR,
-    )
+    Some(path.into_boxed_slice())
 }
 
 /// `manager.lockfile` must hold the tree of the older layout. `places` is the
@@ -1851,7 +2372,9 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
         if above != 0 {
             continue;
         }
-        let path = tree_path(lockfile, id);
+        let Some(path) = tree_path(lockfile, older.id) else {
+            continue;
+        };
         let Some(dir) = open_tree_folder(lockfile, older.id, &mut plan.linked_folders) else {
             continue;
         };
@@ -2048,60 +2571,33 @@ pub(crate) fn unlink_dropped_dependencies(manager: &mut PackageManager, before: 
     remove_planned(plan, Layout::Isolated, manager);
 }
 
-fn tree_paths<'a>(hoisted: &'a HoistedTree<'_>) -> Vec<(&'a [u8], tree::Id)> {
-    let mut paths: Vec<(&[u8], tree::Id)> = (0..hoisted.folders.len())
-        .filter(|&i| !hoisted.path(i).is_empty())
-        .map(|i| (hoisted.path(i), i as tree::Id))
-        .collect();
-    index_sort::sort_vec_unstable_by(&mut paths, |a, b| a.0.cmp(b.0));
-    paths
-}
-
-fn tree_at(paths: &[(&[u8], tree::Id)], path: &[u8]) -> Option<tree::Id> {
-    paths
-        .binary_search_by(|(p, _)| (*p).cmp(path))
-        .ok()
-        .map(|i| paths[i].1)
-}
-
 fn open_tree_folder(
     lockfile: &Lockfile,
     tree_id: tree::Id,
     linked_folders: &mut Vec<Box<[u8]>>,
 ) -> Option<Dir> {
-    let trees = lockfile.buffers.trees.as_slice();
-    let deps = lockfile.buffers.dependencies.as_slice();
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    let mut chain: Vec<tree::Id> = Vec::new();
-    let mut id = tree_id;
-    while id != 0 && (id as usize) < trees.len() {
-        chain.push(id);
-        id = trees[id as usize].parent;
-    }
-    let mut dir = open_workspace_folder(ROOT_DIR, linked_folders)?;
-    while let Some(id) = chain.pop() {
-        // `node_modules/<workspace>` is a link `bun link` may point anywhere; the tree lives in the workspace folder.
-        if let Some(folder) = workspace_node_modules(lockfile, tree_owner(lockfile, id as usize)) {
-            dir = open_workspace_folder(&folder, linked_folders)?;
-            continue;
+    let (member, below) = tree_location(lockfile, tree_id)?;
+    let mut dir = match member {
+        None => open_workspace_folder(ROOT_DIR, linked_folders)?,
+        Some(folder) => {
+            // The way to a workspace's folder does not pass the root's `node_modules`. A link
+            // there still stops it.
+            if LinkedNodeModules::is_at(bun_paths::path_literal!("node_modules")) == Some(true) {
+                linked_folders.push(ROOT_DIR.into());
+                return None;
+            }
+            open_workspace_folder(&join(folder, ROOT_DIR), linked_folders)?
         }
-        let package = descend(&dir, trees[id as usize].folder_name(deps, buf))?;
+    };
+    for name in below {
+        let package = descend(&dir, name)?;
         dir = open_real_subdir(&package, b"node_modules")?;
     }
     Some(dir)
 }
 
 fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<[u8]>> {
-    let res = lockfile.packages.items_resolution().get(pkg_id as usize)?;
-    if res.tag != ResolutionTag::Workspace {
-        return None;
-    }
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    let path = strings::without_trailing_slash(res.workspace().slice(buf));
-    if path.is_empty() || lockfile.is_member_outside(pkg_id) {
-        return None;
-    }
-    Some(join(path, b"node_modules"))
+    Some(join(member_folder(lockfile, pkg_id)?, ROOT_DIR))
 }
 
 /// Anything that removes entries from the store or from a `node_modules` must open the folder with
@@ -3061,14 +3557,13 @@ fn hand_over_names(plan: &Plan, lost_bins: &[usize], layout: Layout, manager: &P
         if lost_bins.is_empty() {
             return;
         }
-        let hoisted = HoistedTree::init(lockfile, true);
+        let hoisted = HoistedTree::init(lockfile, true, None);
         let direct = handle_oom(LinkOrder::direct_packages(lockfile));
-        for tree_id in 0..hoisted.folders.len() {
-            let path = hoisted.path(tree_id);
-            if !lost_a_bin(path) {
+        for folder in hoisted.folders_with_rows() {
+            if !lost_a_bin(hoisted.path(folder)) {
                 continue;
             }
-            let placed = (hoisted.expected(tree_id).iter())
+            let placed = (hoisted.expected(folder).iter())
                 .filter(|(_, pkg_id)| (*pkg_id as usize) < pkg_res.len())
                 .map(|&(alias, pkg_id)| {
                     let tag = pkg_res[pkg_id as usize].tag;
@@ -3078,7 +3573,9 @@ fn hand_over_names(plan: &Plan, lost_bins: &[usize], layout: Layout, manager: &P
                     )
                 })
                 .collect();
-            link_bins(path, placed);
+            if let Some(path) = tree_path(lockfile, folder.0) {
+                link_bins(&path, placed);
+            }
         }
         return;
     }

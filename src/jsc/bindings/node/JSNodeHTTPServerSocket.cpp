@@ -359,6 +359,9 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket, bool destroySo
     if (destroySoon) {
         /* And closes it there, even if the response never ends. */
         httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN;
+    } else {
+        /* The FIN follows them there, even if the response never ends, and no close follows the FIN. */
+        httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
     }
     return true;
 }
@@ -1089,6 +1092,34 @@ extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, us_socket_t* socket)
     }
     if (auto* res = serverSocket->currentResponse(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_onReadParsed(res->m_ctx);
+    }
+}
+
+template<bool SSL>
+static void halfCloseAfterDrain(us_socket_t* socket)
+{
+    auto* serverSocket = getNodeHTTPServerSocket<SSL>(socket);
+    if (!serverSocket) {
+        return;
+    }
+    auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    /* Flood prevention waits for unsent bytes to leave or for the queue of responses to advance. Behind this FIN neither happens, and a paused read never sees the peer's FIN. */
+    if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
+        endFloodPreventionPause<SSL>(socket, httpResponseData);
+    }
+    serverSocket->halfClose(serverSocket->globalObject());
+}
+
+// The bytes that a socket.end() waited for have left (HTTP_NODE_SHUTDOWN_AFTER_DRAIN): the FIN that end() sends at once when nothing is queued.
+extern "C" void Bun__NodeHTTP__halfCloseAfterDrain(int ssl, us_socket_t* socket)
+{
+    if (us_socket_is_closed(socket)) {
+        return;
+    }
+    if (ssl) {
+        halfCloseAfterDrain<true>(socket);
+    } else {
+        halfCloseAfterDrain<false>(socket);
     }
 }
 

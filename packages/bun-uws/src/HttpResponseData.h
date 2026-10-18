@@ -169,6 +169,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
          * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 22,
+        /* node:http socket.end() with outgoing bytes still queued: send the FIN when they have flushed, whether or not
+         * the response in flight has ended. No close follows that FIN, as when socket.end() finds nothing queued. */
+        HTTP_NODE_SHUTDOWN_AFTER_DRAIN = 1 << 25,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -179,7 +182,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
             | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
-            | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED,
+            | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED
+            | HTTP_NODE_SHUTDOWN_AFTER_DRAIN,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
@@ -251,7 +255,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. */
     bool shouldCloseConnection() const {
-        return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN))
+        return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_SHUTDOWN_AFTER_DRAIN))
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
@@ -263,6 +267,14 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * peer would read whatever we send as more body. */
     bool isDrainingBeforeClose() const {
         return (state & (HTTP_CONNECTION_CLOSE | HTTP_RESPONSE_PENDING)) == HTTP_CONNECTION_CLOSE;
+    }
+
+    /* The FIN of a node:http socket.end() that waited for queued bytes gets no close behind it: the peer can still
+     * send, as behind a socket.end() that found nothing queued. It gets one when the peer has ended (nothing is left
+     * to wait for), for destroySoon(), and for a server that closes its idle connections. */
+    bool halfClosesAtDrain() const {
+        return (state & (HTTP_NODE_SHUTDOWN_AFTER_DRAIN | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_CLOSE_WHEN_IDLE | HTTP_NODE_RECEIVED_FIN | HTTP_NODE_PEER_ENDED))
+            == HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
     }
 };
 

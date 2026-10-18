@@ -38,6 +38,7 @@
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
 extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s);
+extern "C" void Bun__NodeHTTP__halfCloseAfterDrain(int ssl, struct us_socket_t *s);
 
 namespace uWS {
 
@@ -830,16 +831,7 @@ private:
             }
 
             /* We need to check if we should close this socket here now */
-            if (httpResponseData->shouldCloseConnection()) {
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                    if (((AsyncSocket<SSL> *) s)->hasFullyDrained()) {
-                        ((AsyncSocket<SSL> *) s)->shutdown();
-                        /* We need to force close after sending FIN since we want to hinder
-                         * clients from keeping to send their huge data */
-                        ((AsyncSocket<SSL> *) s)->close();
-                    }
-                }
-            }
+            ((HttpResponse<SSL> *) s)->closeIfDoneAndMarked(httpResponseData);
             return (us_socket_t *) returnedData;
         }
 
@@ -993,12 +985,16 @@ private:
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN) {
                     responseDone = true;
                 }
+                /* socket.end() issued while bytes were queued: Node sends the FIN
+                 * once they are out, whether or not the response in flight
+                 * ever ends. A re-armed onWritable means a pinned write that
+                 * bufferedAmount does not count. */
+                if (httpResponseData->halfClosesAtDrain() && httpResponseData->onWritable == nullptr) {
+                    responseDone = true;
+                }
             }
             if (responseDone && asyncSocket->hasFullyDrained()) {
-                asyncSocket->shutdown();
-                /* We need to force close after sending FIN since we want to hinder
-                 * clients from keeping to send their huge data */
-                asyncSocket->close();
+                reinterpret_cast<HttpResponse<SSL> *>(s)->finishMarkedConnection(httpResponseData);
             }
         }
 

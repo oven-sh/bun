@@ -1288,7 +1288,7 @@ extern "C" bool Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
     args.append(jsString(JSC::getVM(globalObject), signalNameIdentifier.string()));
     args.append(jsNumber(signalNumber));
 
-    return process->wrapped().emitForBindings(signalNameIdentifier, args);
+    return process->wrapped().scriptExecutionContext() && process->wrapped().emit(signalNameIdentifier, args);
 }
 
 #if OS(WINDOWS)
@@ -1579,6 +1579,27 @@ extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
 extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
 extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
 
+// Node's `target.emit(...)`: the `emit` that JavaScript sees, which throws what a listener throws.
+static void emitIPCMessage(Zig::GlobalObject* global, const Identifier& eventName, JSValue message, JSValue handle)
+{
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* process = global->processObject();
+    JSValue emit = process->get(global, Identifier::fromString(vm, "emit"_s));
+    RETURN_IF_EXCEPTION(scope, );
+    auto callData = JSC::getCallData(emit);
+    if (callData.type == CallData::Type::None) {
+        throwTypeError(global, scope, "process.emit is not a function"_s);
+        return;
+    }
+    JSC::MarkedArgumentBuffer args;
+    args.append(jsString(vm, eventName.string()));
+    args.append(message);
+    args.append(handle);
+    scope.release();
+    JSC::profiledCall(global, ProfilingReason::API, emit, callData, process, args);
+}
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L726-L742
 JSC_DEFINE_HOST_FUNCTION(Process_functionEmitPendingMessages, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
 {
@@ -1591,16 +1612,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitPendingMessages, (JSGlobalObject * 
         return JSValue::encode(jsUndefined());
 
     for (unsigned i = 0, length = pending->length(); i < length; i += 2) {
-        JSC::MarkedArgumentBuffer args;
-        args.append(pending->getIndex(global, i));
+        JSValue message = pending->getIndex(global, i);
         RETURN_IF_EXCEPTION(scope, {});
-        args.append(pending->getIndex(global, i + 1));
+        JSValue handle = pending->getIndex(global, i + 1);
         RETURN_IF_EXCEPTION(scope, {});
-        bool listenerThrew = false;
-        process->wrapped().emit(vm.propertyNames->message, args, &listenerThrew);
-        // In Node the exception leaves the loop, and the next listener gets all of them again.
-        if (listenerThrew)
-            return JSValue::encode(jsUndefined());
+        emitIPCMessage(global, vm.propertyNames->message, message, handle);
+        // As in Node the list is kept, and the next listener gets all of them again.
+        RETURN_IF_EXCEPTION(scope, {});
     }
     process->m_pendingMessages.clear();
     return JSValue::encode(jsUndefined());
@@ -5004,10 +5022,7 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
     }
 
     if (process->wrapped().hasEventListeners(ident)) {
-        JSC::MarkedArgumentBuffer args;
-        args.append(message);
-        args.append(JSValue::decode(handle));
-        process->wrapped().emit(ident, args);
+        emitIPCMessage(global, ident, message, JSValue::decode(handle));
     } else if (ident == vm.propertyNames->message) {
         auto* pending = process->m_pendingMessages.get();
         if (!pending) {
@@ -5019,10 +5034,10 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
             pending->push(global, message);
         if (!scope.exception())
             pending->push(global, JSValue::decode(handle));
-        if (auto* exception = scope.exception()) {
-            CLEAR_IF_EXCEPTION(scope);
-            Bun__reportUnhandledError(global, JSValue::encode(exception));
-        }
+    }
+    if (auto* exception = scope.exception()) {
+        CLEAR_IF_EXCEPTION(scope);
+        Bun__reportUnhandledError(global, JSValue::encode(exception));
     }
 }
 

@@ -73,7 +73,7 @@ const FILES: &[Param] = &[
         "--stdin-filepath <path>         Format standard input as this file and print the result"
     ),
     clap::param!(
-        "--ignore-path <path>...         Read ignore patterns from these files <d>(default: .gitignore and .prettierignore)<r>"
+        "--ignore-path <path>...         Read ignore patterns from these files <d>(default: .gitignore, .prettierignore, .git/info/exclude)<r>"
     ),
     clap::param!("--ignore-pattern <pattern>...   Skip files that match this pattern"),
     clap::param!("--with-node-modules             Format files in <b>node_modules<r> too"),
@@ -112,6 +112,9 @@ const OTHER: &[Param] = &[
     ),
     clap::param!(
         "--debug-check                   Do not write. Fail if formatting a file would change what it means"
+    ),
+    clap::param!(
+        "--no-script                     Run the formatter even if the project has a <b>fmt<r> script"
     ),
     clap::param!("-v, --version                   Print the version of Bun"),
     clap::param!(
@@ -178,6 +181,7 @@ const OPPOSITES: &[Param] = &[
     clap::param!("--bracket-spacing"),
     clap::param!("--error-on-unmatched-pattern"),
     clap::param!("--insert-final-newline"),
+    clap::param!("--script"),
 ];
 
 pub const HELP: Help = Help {
@@ -218,6 +222,7 @@ pub const HELP: Help = Help {
         b"single-quote",
         b"init",
         b"doctor",
+        b"no-script",
     ],
 };
 

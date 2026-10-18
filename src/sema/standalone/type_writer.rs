@@ -246,8 +246,7 @@ impl Checker<'_, '_> {
     /// Whether `flowAnalysisDisabled` is still set after `file` has been checked. `checkBlock` resets it at the end of a function
     /// or module block, so it only stays set for a reference outside any such block.
     fn is_flow_analysis_left_disabled(&mut self, file: FileId) -> bool {
-        // A walk nests at most once per flow node.
-        if self.bound(file).flow_places <= super::flow::MAX_FLOW_DEPTH {
+        if !self.bound(file).can_reach_flow_depth_limit() {
             return false;
         }
         (0..self.hir(file).exprs.len() as u32).map(ExprId).any(|e| {

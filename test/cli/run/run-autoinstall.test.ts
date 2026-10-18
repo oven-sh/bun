@@ -651,7 +651,10 @@ describe.concurrent("auto-install reads the project's package.json as `bun insta
 
     const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
     expect(stdout).toBe("1.0.1\n");
-    expect(registry.tarballs()).toEqual(["/one-range-dep/-/one-range-dep-1.0.0.tgz", "/no-deps/-/no-deps-1.0.1.tgz"]);
+    expect(registry.tarballs().sort()).toEqual([
+      "/no-deps/-/no-deps-1.0.1.tgz",
+      "/one-range-dep/-/one-range-dep-1.0.0.tgz",
+    ]);
     expect(exitCode).toBe(0);
   });
 

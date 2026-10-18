@@ -194,7 +194,7 @@ fn check_call<'a>(node: Expr<'a>, cx: &Context<'a>) {
     let ExprKind::Call(call) = node.kind() else {
         return;
     };
-    let callee = call.callee();
+    let callee = call.callee().with_jsdoc_cast();
     let (object, property) = match callee.kind() {
         ExprKind::Ident(name) => return check_built_in_call(node, call, name, cx),
         ExprKind::Dot { obj, name, .. } if name.bytes() == b"toString" => (obj, name.span()),

@@ -23,6 +23,7 @@ fn is_global_candidate(object: Expr) -> bool {
 }
 
 fn get_callee_name(node: Expr<'_>, is_oxlint: bool) -> Option<Name<'_>> {
+    let node = node.with_jsdoc_cast();
     match node.kind() {
         ExprKind::Ident(name) => Some(name),
         // A `ChainExpression` for ESLint.
@@ -61,6 +62,7 @@ fn is_bind(node: Expr, is_oxlint: bool) -> bool {
 }
 
 fn is_function(node: Expr, is_oxlint: bool) -> bool {
+    let node = node.with_jsdoc_cast();
     match node.kind() {
         ExprKind::Fn(_) => true,
         ExprKind::String(_)

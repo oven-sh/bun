@@ -31,7 +31,11 @@ describe.concurrent("bun lint", () => {
     "%s",
     async (_, it) => {
       const [configName, config] = configOf(it);
-      using dir = tempDir("bun-lint-robustness", { [configName]: config, [it.file]: it.text() });
+      using dir = tempDir("bun-lint-robustness", {
+        [configName]: config,
+        [it.file]: it.text(),
+        ...(it.compilerOptions && { "tsconfig.json": JSON.stringify({ compilerOptions: it.compilerOptions }) }),
+      });
       const args = ["lint", "-c", configName, "--threads", "2", ...(it.args ?? ["-f", "unix"]), it.file];
       await using proc = spawn({
         cmd: isWindows ? [bunExe(), ...args] : ["sh", "-c", `ulimit -c 0; ${limit}exec "$0" "$@"`, bunExe(), ...args],
@@ -49,7 +53,12 @@ describe.concurrent("bun lint", () => {
       else if (it.length !== undefined) expect(Buffer.byteLength(text)).toBe(it.length);
       // Not the whole output in a failure message: it has megabytes.
       if (it.lacks) expect(stdout.match(it.lacks)?.[0]).toBeUndefined();
-      if (it.reports) expect(countByRule(stdout)).toEqual(it.reports);
+      if (it.reports && !it.orWarns?.test(stdout + stderr)) {
+        const found = countByRule(stdout);
+        const isAsExpected = Bun.deepEquals(found, it.reports);
+        // With what it said in place of the warning.
+        expect(it.orWarns && !isAsExpected ? [found, (stdout + stderr).slice(-500)] : found).toEqual(it.reports);
+      }
       if (it.matches) expect(it.matches.test(stdout)).toBe(true);
       const allowed = [it.exitCode].flat();
       const isAllowed = allowed.includes(exitCode);

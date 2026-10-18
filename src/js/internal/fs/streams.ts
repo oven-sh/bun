@@ -457,9 +457,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     this.pos = start;
   }
 
-  // A writer cannot be opened for every fd a caller may hand us: its dup fails at the fd limit, and the event
-  // loop cannot poll every descriptor (macOS /dev/tty). Write synchronously there, like node's SyncWriteStream.
-  // A bad fd then fails at write time the way node does, rather than throwing from the constructor.
+  // No writer for this fd (fd limit, macOS /dev/tty): write synchronously, so a bad fd fails at write time as in node.
   let fastWriter;
   if (fastPath && fd != null) {
     try {
@@ -468,9 +466,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
       fastPath = false;
       this._write = underscoreWriteSync;
     }
-    // Already-open fd (stdio): skip the async _construct round-trip so the
-    // stream is born constructed, like node's stdio streams (net.Socket /
-    // tty.WriteStream), which never allocate construct TickObjects.
+    // Already-open fd (stdio): born constructed, like node's stdio streams, which allocate no construct TickObjects.
     this._construct = undefined;
   }
 

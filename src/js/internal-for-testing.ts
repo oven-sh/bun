@@ -639,7 +639,7 @@ export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "js
 export const quantizeRoute = $newRustFunction("runtime/image/quantize_testing.rs", "quantizeRoute", 2) as (
   rgba: Uint8Array,
   colors: number,
-) => "exact" | "table" | "pixels";
+) => "exact" | "table" | "both" | "pixels";
 
 const setNativeSocketOptions: (socket: unknown, option: 1 | 2, size: number) => void = $newRustFunction(
   "runtime/socket/socket.rs",

@@ -1514,8 +1514,10 @@ pub struct Checker<'p, 's> {
     /// published: see `relate::Key`.
     pub(super) generic_relation_entries_not_published: u64,
     variances_cut_short: FxHashMap<Sym, (u64, &'s [u8])>,
+    #[expect(clippy::vec_box, reason = "whoever takes one moves a pointer, not 280 bytes")]
     free_relaters: Vec<Box<relate::Relater>>,
     /// Each is as `Inference::for_params(&[], None)` makes it: to put in the place of one that is taken out.
+    #[expect(clippy::vec_box, reason = "whoever takes one moves a pointer, not 592 bytes")]
     spare_inferences: Vec<Box<infer::Inference>>,
     /// What the comparisons in progress found about the reliability of the variance being computed.
     reliability: u8,

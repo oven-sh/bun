@@ -623,9 +623,8 @@ fn spawn(
         });
         let argv_has_user_data_dir = extra_argv.iter().any(|a| {
             // SAFETY: caller contract, each entry is a valid NUL-terminated string.
-            unsafe { CStr::from_ptr(*a) }
-                .to_bytes()
-                .starts_with(b"--user-data-dir")
+            let a = unsafe { CStr::from_ptr(*a) }.to_bytes();
+            a == b"--user-data-dir" || a.starts_with(USER_DATA_DIR_FLAG)
         });
         // Held here until `attach` takes it: a spawn that fails after the mkdir drops it and deletes the directory.
         let temp_profile = if user_flag.is_none() && !argv_has_user_data_dir {

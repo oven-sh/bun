@@ -526,7 +526,25 @@ async function rustfmt(path) {
   await Bun.$`rustfmt --edition 2024 ${path}`;
 }
 
-// Usage: bun src/css/build-prefixes.js [targets] [prefixes] [compat]. No argument writes all three. compat.rs from new data drops `MozAvailableSize`, which size.rs uses.
+// A variant that Rust code names must stay in the enum, or the crate does not compile.
+function checkVariants(path, variants) {
+  const current = /pub enum Feature \{([^}]*)\}/.exec(fs.readFileSync(path, "utf8"))[1];
+  const dropped = current
+    .split(",")
+    .map(v => v.trim())
+    .filter(v => v && !variants.includes(v));
+  for (const file of new Bun.Glob("**/*.rs").scanSync("src/css")) {
+    const source = fs.readFileSync(`src/css/${file}`, "utf8");
+    const used = dropped.filter(v => new RegExp(`\\b(?:\\w*Feature|F)::${v}\\b`).test(source));
+    if (used.length > 0) {
+      throw new Error(
+        `build-prefixes.js: the new ${path} has no ${used.join(", ")}, which src/css/${file} uses. Change that code first.`,
+      );
+    }
+  }
+}
+
+// Usage: bun src/css/build-prefixes.js [targets] [prefixes] [compat]. No argument writes all three.
 const outputs = ["targets", "prefixes", "compat"];
 const selected = process.argv.slice(2);
 for (const name of selected) {
@@ -572,6 +590,7 @@ if (wants("targets")) {
 // ─── prefixes.rs ──────────────────────────────────────────────────────────
 if (wants("prefixes")) {
   const variants = [...new Set([...p.keys()].flat().map(enumify))].sort();
+  checkVariants("src/css/prefixes.rs", variants);
   const arms = [];
   for (const [features, versions] of p) {
     const pats = features.map(enumify).join("\n            | ");
@@ -657,6 +676,7 @@ ${grad}
 // ─── compat.rs ────────────────────────────────────────────────────────────
 if (wants("compat")) {
   const variants = [...new Set([...compat.keys()].flat().map(enumify))].sort();
+  checkVariants("src/css/compat.rs", variants);
   // One row of per-browser minimum versions per variant: 0 = any version,
   // UNSUPPORTED = never shipped. A feature with no data at all is a row of
   // all-UNSUPPORTED, which `is_compatible` special-cases to `false`.

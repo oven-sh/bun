@@ -900,6 +900,18 @@ impl Connection {
         true
     }
 
+    /// node's Http2Session::OnInvalidFrame, `count++ > max`. True when the session is terminated.
+    fn count_invalid_frame(&mut self, sink: &impl Sink) -> bool {
+        let count = self.invalid_frame_count;
+        self.invalid_frame_count = count.saturating_add(1);
+        if count > self.max_invalid_frames {
+            self.terminated = true;
+            sink.on_too_many_invalid_frames();
+            return true;
+        }
+        false
+    }
+
     fn handle_ping(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         if wire::flags::has(hdr.flags, wire::flags::ACK) {
             sink.on_ping(payload, true);
@@ -1399,14 +1411,7 @@ impl Connection {
             }
         }
         if malformed && !rejected {
-            // node (Http2Session::OnInvalidFrame): every locally-rejected invalid frame counts
-            // against maxSessionInvalidFrames; exceeding it tears the session down with
-            // ERR_HTTP2_TOO_MANY_INVALID_FRAMES (same post-increment comparison as node).
-            let count = self.invalid_frame_count;
-            self.invalid_frame_count = count.saturating_add(1);
-            if count > self.max_invalid_frames {
-                self.terminated = true;
-                sink.on_too_many_invalid_frames();
+            if self.count_invalid_frame(sink) {
                 return true;
             }
             // RFC 9113 §8.2: a malformed header block gets a stream error of type PROTOCOL_ERROR and
@@ -1601,16 +1606,12 @@ impl Connection {
         }
 
         // An empty DATA frame that does not end the stream carries no information and is only
-        // useful for flooding: count it against the session's invalid-frame allowance (node's
-        // maxSessionInvalidFrames; same post-increment comparison as node).
-        if payload.is_empty() && !wire::flags::has(hdr.flags, wire::flags::END_STREAM) {
-            let count = self.invalid_frame_count;
-            self.invalid_frame_count = count.saturating_add(1);
-            if count > self.max_invalid_frames {
-                self.terminated = true;
-                sink.on_too_many_invalid_frames();
-                return true;
-            }
+        // useful for flooding: count it against the session's invalid-frame allowance.
+        if payload.is_empty()
+            && !wire::flags::has(hdr.flags, wire::flags::END_STREAM)
+            && self.count_invalid_frame(sink)
+        {
+            return true;
         }
 
         // Per-stream flow control + state check, decided under a scoped borrow so the self.* calls

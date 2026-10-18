@@ -2191,6 +2191,12 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
+    /// `request()` gives the stream up before it writes any HEADERS. Nothing goes on the wire.
+    fn close_unsent(&self, stream: &mut Stream, code: ErrorCode) {
+        stream.state = StreamState::CLOSED;
+        stream.rst_code = code.0;
+    }
+
     pub(crate) fn send_go_away(
         &self,
         triggering_stream_id: u32,
@@ -6895,8 +6901,7 @@ impl H2FrameParser {
         if callframe.arguments_count() > 4 && !options_arg.is_empty_or_undefined_or_null() {
             let options = options_arg;
             if !options.is_object() {
-                stream.state = StreamState::CLOSED;
-                stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
+                this.close_unsent(&mut stream, ErrorCode::INTERNAL_ERROR);
                 this.dispatch_with_extra(
                     JSH2FrameParser::Gc::onStreamError,
                     stream.get_identifier(),
@@ -6972,8 +6977,7 @@ impl H2FrameParser {
                     has_priority = true;
                     parent = parent_js.to_int32();
                     if parent <= 0 || parent as u32 > MAX_STREAM_ID {
-                        stream.state = StreamState::CLOSED;
-                        stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
+                        this.close_unsent(&mut stream, ErrorCode::INTERNAL_ERROR);
                         this.dispatch_with_extra(
                             JSH2FrameParser::Gc::onStreamError,
                             stream.get_identifier(),
@@ -6995,8 +6999,7 @@ impl H2FrameParser {
                     has_priority = true;
                     weight = weight_js.to_int32();
                     if weight < 1 || weight > u8::MAX as i32 {
-                        stream.state = StreamState::CLOSED;
-                        stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
+                        this.close_unsent(&mut stream, ErrorCode::INTERNAL_ERROR);
                         this.dispatch_with_extra(
                             JSH2FrameParser::Gc::onStreamError,
                             stream.get_identifier(),
@@ -7014,8 +7017,7 @@ impl H2FrameParser {
                 }
 
                 if weight < 1 || weight > u8::MAX as i32 {
-                    stream.state = StreamState::CLOSED;
-                    stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
+                    this.close_unsent(&mut stream, ErrorCode::INTERNAL_ERROR);
                     this.dispatch_with_extra(
                         JSH2FrameParser::Gc::onStreamError,
                         stream.get_identifier(),
@@ -7051,8 +7053,7 @@ impl H2FrameParser {
 
         // too much memory being use
         if this.is_over_session_memory_limit() {
-            stream.state = StreamState::CLOSED;
-            stream.rst_code = ErrorCode::ENHANCE_YOUR_CALM.0;
+            this.close_unsent(&mut stream, ErrorCode::ENHANCE_YOUR_CALM);
             this.rejected_streams.set(this.rejected_streams.get() + 1);
             this.dispatch_with_extra(
                 JSH2FrameParser::Gc::onStreamError,
@@ -7087,8 +7088,7 @@ impl H2FrameParser {
         if this.max_send_header_block_length.get() != 0
             && encoded_size > this.max_send_header_block_length.get() as usize
         {
-            stream.state = StreamState::CLOSED;
-            stream.rst_code = ErrorCode::REFUSED_STREAM.0;
+            this.close_unsent(&mut stream, ErrorCode::REFUSED_STREAM);
 
             this.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onFrameError,

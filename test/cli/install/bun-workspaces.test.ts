@@ -5296,6 +5296,8 @@ describe("two trees of bun.lock that are one node_modules", () => {
   };
   const removeNodeModules = (cwd: string, ...of: string[]) =>
     Promise.all(of.map(folder => rm(join(cwd, folder, "node_modules"), { recursive: true, force: true })));
+  const writeFiles = (cwd: string, files: Record<string, string>) =>
+    Promise.all(Object.entries(files).map(([path, json]) => write(join(cwd, path), json)));
 
   // x's own tree puts dragon-test-7-b@1.0.0 into packages/x/node_modules and nests its
   // dragon-test-7-c@1.0.0 below it, because the root has 2.0.0 of both. z's tree puts
@@ -5345,6 +5347,18 @@ describe("two trees of bun.lock that are one node_modules", () => {
       await removeNodeModules(cwd, "");
       await install(cwd, env, "--force");
     },
+    // With few files to open, no package is left to the thread pool.
+    ...(isWindows
+      ? {}
+      : {
+          "--force, few open files": async (cwd: string, env: Record<string, string>) => {
+            const cmd = ["sh", "-c", 'ulimit -n 200 && exec "$0" "$@"', bunExe(), "install", "--force"];
+            await using proc = spawn({ cmd, cwd, env, stdout: "ignore", stderr: "pipe" });
+            const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+            expect(stderr).not.toContain("error:");
+            expect(exitCode).toBe(0);
+          },
+        }),
     "the project's node_modules removed": async (cwd, env) => {
       await removeNodeModules(cwd, "");
       await install(cwd, env);
@@ -5371,7 +5385,7 @@ describe("two trees of bun.lock that are one node_modules", () => {
   test.concurrent.each(Object.keys(reinstalls))("each tree keeps what the other has put there: %s", async name => {
     using ctx = await setupTest();
     const { packageDir: cwd, env } = ctx;
-    await Promise.all(Object.entries(siblings).map(([path, json]) => write(join(cwd, path), json)));
+    await writeFiles(cwd, siblings);
     await install(cwd, env);
     expect(installedIn(cwd)).toEqual(everyVersion);
 
@@ -5382,7 +5396,7 @@ describe("two trees of bun.lock that are one node_modules", () => {
   test.concurrent("--force still replaces what an older install has left there", async () => {
     using ctx = await setupTest();
     const { packageDir: cwd, env } = ctx;
-    await Promise.all(Object.entries(siblings).map(([path, json]) => write(join(cwd, path), json)));
+    await writeFiles(cwd, siblings);
     await install(cwd, env);
     const installed = join(cwd, "packages", "x", "node_modules", "dragon-test-7-b");
     await write(join(installed, "left-by-an-older-install.js"), "");
@@ -5392,57 +5406,126 @@ describe("two trees of bun.lock that are one node_modules", () => {
     expect(installedIn(cwd)).toEqual(everyVersion);
   });
 
-  // Only x's own tree puts dragon-test-7-b@1.0.0 into packages/x/node_modules, and only z's tree
-  // puts no-deps@1.0.0 there. With the project's node_modules gone, the install links every
-  // package again, and takes every folder that it finds for one of an older install.
-  test.concurrent("each tree replaces its package in the older node_modules of a workspace", async () => {
-    using ctx = await setupTest();
-    const { packageDir: cwd, env } = ctx;
-    await Promise.all([
-      write(
-        join(cwd, "package.json"),
-        JSON.stringify({
-          name: "root",
-          private: true,
-          workspaces: { packages: ["packages/*"], selfContained: ["packages/z"] },
-          dependencies: { "no-deps": "1.0.0", "dragon-test-7-b": "2.0.0" },
-        }),
-      ),
-      write(
-        join(cwd, "packages", "a", "package.json"),
-        JSON.stringify({ name: "@p/a", version: "1.0.0", dependencies: { "no-deps": "2.0.0" } }),
-      ),
-      write(
-        join(cwd, "packages", "x", "package.json"),
-        JSON.stringify({
-          name: "@p/x",
-          version: "1.0.0",
-          dependencies: { "no-deps": "1.0.0", "dragon-test-7-b": "1.0.0" },
-        }),
-      ),
-      write(join(cwd, "packages", "z", "package.json"), siblings["packages/z/package.json"]),
-    ]);
+  // Here each tree has a package of its own in packages/x/node_modules: x's own tree has
+  // dragon-test-7-b@1.0.0 there, because the root has 2.0.0, and z's tree has no-deps@1.0.0 there,
+  // because z's node_modules has the 2.0.0 of `a`.
+  const disjoint = {
+    "package.json": JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: { packages: ["packages/*"], selfContained: ["packages/z"] },
+      dependencies: { "no-deps": "1.0.0", "dragon-test-7-b": "2.0.0" },
+    }),
+    "packages/a/package.json": JSON.stringify({
+      name: "@p/a",
+      version: "1.0.0",
+      dependencies: { "no-deps": "2.0.0" },
+    }),
+    "packages/x/package.json": JSON.stringify({
+      name: "@p/x",
+      version: "1.0.0",
+      dependencies: { "no-deps": "1.0.0", "dragon-test-7-b": "1.0.0" },
+    }),
+    "packages/z/package.json": siblings["packages/z/package.json"],
+  };
+  const installedInX = async (cwd: string) => {
     const inX = join(cwd, "packages", "x", "node_modules");
-    const installedInX = async () => ({
+    return {
       "node_modules": await readdirSorted(inX),
       "dragon-test-7-b": [version(inX, "dragon-test-7-b"), ...(await readdirSorted(join(inX, "dragon-test-7-b")))],
       "no-deps": [version(inX, "no-deps"), ...(await readdirSorted(join(inX, "no-deps")))],
-    });
-    const asPublished = {
-      "node_modules": ["dragon-test-7-b", "no-deps"],
-      "dragon-test-7-b": ["1.0.0", "index.js", "package.json"],
-      "no-deps": ["1.0.0", "index.js", "package.json"],
     };
-
+  };
+  const asPublished = {
+    "node_modules": ["dragon-test-7-b", "no-deps"],
+    "dragon-test-7-b": ["1.0.0", "index.js", "package.json"],
+    "no-deps": ["1.0.0", "index.js", "package.json"],
+  };
+  // With the project's node_modules gone, the install links every package again, and takes every
+  // folder that it finds for one of an older install.
+  test.concurrent("each tree replaces its package in the older node_modules of a workspace", async () => {
+    using ctx = await setupTest();
+    const { packageDir: cwd, env } = ctx;
+    await writeFiles(cwd, disjoint);
     await install(cwd, env);
-    expect(await installedInX()).toEqual(asPublished);
+    expect(await installedInX(cwd)).toEqual(asPublished);
 
+    const inX = join(cwd, "packages", "x", "node_modules");
     await Promise.all(
       ["dragon-test-7-b", "no-deps"].map(name => write(join(inX, name, "left-by-an-older-install.js"), "")),
     );
     await removeNodeModules(cwd, "");
     await install(cwd, env);
-    expect(await installedInX()).toEqual(asPublished);
+    expect(await installedInX(cwd)).toEqual(asPublished);
+  });
+
+  // `bun prune`, and the pass of other commands that removes what bun.lock no longer places, ask
+  // every tree of a directory before they remove something from it.
+  test.concurrent("bun prune keeps what a child of the other tree has nested", async () => {
+    using ctx = await setupTest();
+    const { packageDir: cwd, env } = ctx;
+    await writeFiles(cwd, siblings);
+    await install(cwd, env);
+
+    for (const args of [["--dry-run"], []]) {
+      const { stdout, stderr, exitCode } = await bun(cwd, env, "prune", ...args);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("(nothing to prune)");
+      expect(exitCode).toBe(0);
+    }
+    expect(installedIn(cwd)).toEqual(everyVersion);
+  });
+
+  test.concurrent.each(["prune", "update"])("bun %s keeps the package of each tree", async command => {
+    using ctx = await setupTest();
+    const { packageDir: cwd, env } = ctx;
+    await writeFiles(cwd, disjoint);
+    await install(cwd, env);
+
+    const { stderr, exitCode } = await bun(cwd, env, command);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(await installedInX(cwd)).toEqual(asPublished);
+  });
+
+  // `inner` has no-deps@1.0.0 in its node_modules under both of its names, because the root has
+  // 2.0.0.
+  const twoNames = {
+    "package.json": JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      dependencies: { "no-deps": "2.0.0" },
+    }),
+    "packages/inner/package.json": JSON.stringify({
+      name: "inner",
+      version: "1.0.0",
+      dependencies: { "no-deps": "1.0.0" },
+    }),
+    "packages/other/package.json": JSON.stringify({
+      name: "other",
+      version: "1.0.0",
+      dependencies: { "inner-again": "workspace:inner@*" },
+    }),
+  };
+
+  test.concurrent.each([
+    ["the second name of a workspace", "other", "inner-again", "1.0.0"],
+    ["a dependency of a workspace with two names", "inner", "no-deps", "not installed"],
+  ])("bun remove of %s", async (_, from, name, innerHas) => {
+    using ctx = await setupTest();
+    const { packageDir: cwd, env } = ctx;
+    await writeFiles(cwd, twoNames);
+    await install(cwd, env);
+    expect(version(cwd, "packages", "inner", "node_modules", "no-deps")).toBe("1.0.0");
+
+    const { stderr, exitCode } = await bun(join(cwd, "packages", from), env, "remove", name);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect({
+      "inner": version(cwd, "packages", "inner", "node_modules", "no-deps"),
+      "root": version(cwd, "node_modules", "no-deps"),
+    }).toEqual({ "inner": innerHas, "root": "2.0.0" });
   });
 
   // The second tree of `inner` is no tree of a package from the registry: `file:` is a folder of

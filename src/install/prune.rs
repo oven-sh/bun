@@ -910,6 +910,8 @@ struct HoistedTree<'a> {
     lockfile: &'a Lockfile,
     trees: &'a [tree::Tree],
     folders: Vec<TreeFolder>,
+    /// The trees that are one `node_modules` on disk. What one of them places there is placed.
+    on_disk: tree::Folders,
     paths: Vec<u8>,
     expected: Vec<(&'a [u8], PackageID)>,
     quiet: bool,
@@ -977,6 +979,7 @@ impl<'a> HoistedTree<'a> {
             lockfile,
             trees,
             folders,
+            on_disk: tree::Folders::init(lockfile),
             paths,
             expected,
             quiet,
@@ -1004,6 +1007,42 @@ impl<'a> HoistedTree<'a> {
             .binary_search_by(|(name, _)| (*name).cmp(alias))
             .ok()
             .map(|i| range.start as usize + i)
+    }
+
+    /// The trees with rows that are the `node_modules` of `tree_id`, which is one of them.
+    fn trees_of_folder(&self, tree_id: tree::Id) -> impl Iterator<Item = tree::Id> + '_ {
+        let first = self.on_disk.first(tree_id);
+        let trees = if self.on_disk.is_shared(tree_id) {
+            0..self.folders.len() as tree::Id
+        } else {
+            tree_id..tree_id + 1
+        };
+        trees.filter(move |&id| {
+            self.on_disk.first(id) == first && !self.path(id as usize).is_empty()
+        })
+    }
+
+    /// Whether any tree that is the `node_modules` of `tree_id` places `alias` there.
+    fn placed_in_folder(&self, tree_id: tree::Id, alias: &[u8]) -> bool {
+        self.trees_of_folder(tree_id)
+            .any(|id| self.expected_in(id, alias).is_some())
+    }
+
+    /// A tree with rows that is `<the node_modules of tree_id>/<name>/node_modules`.
+    fn nested_in_folder(&self, tree_id: tree::Id, name: &[u8]) -> Option<tree::Id> {
+        let lockfile = self.lockfile;
+        let deps = lockfile.buffers.dependencies.as_slice();
+        let rows = lockfile.buffers.hoisted_dependencies.as_slice();
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let first = self.on_disk.first(tree_id);
+        (self.trees.iter().skip(1))
+            .find(|nested| {
+                self.on_disk.first(nested.parent) == first
+                    && !self.path(nested.id as usize).is_empty()
+                    && nested.folder_name(deps, buf) == name
+                    && !nested.is_unlinked_member(self.trees, rows, deps)
+            })
+            .map(|nested| nested.id)
     }
 
     fn expected_from(&self, from: tree::Id, alias: &[u8]) -> Option<(tree::Id, usize)> {
@@ -1218,13 +1257,14 @@ fn plan_hoisted(
     let pkg_res = lockfile.packages.items_resolution();
 
     // Leaves out a tree with no rows left, and the tree of an unlinked workspace, whose folder is
-    // in the workspace and not under `node_modules/<name>`.
+    // in the workspace and not under `node_modules/<name>`. The parent is the directory's key: a
+    // tree nested below one tree of a directory is there for the other trees of it too.
     let rows = lockfile.buffers.hoisted_dependencies.as_slice();
     let mut nested_trees: Vec<(tree::Id, &[u8])> = trees
         .iter()
         .skip(1)
         .filter(|t| t.dependencies.len > 0 && !t.is_unlinked_member(trees, rows, deps))
-        .map(|t| (t.parent, t.folder_name(deps, buf)))
+        .map(|t| (hoisted.on_disk.first(t.parent), t.folder_name(deps, buf)))
         .collect();
     index_sort::sort_vec_unstable_by(&mut nested_trees, |a, b| a.cmp(b));
 
@@ -1238,13 +1278,15 @@ fn plan_hoisted(
         crate::initialize_store();
         crate::git_runner::bundles_dependencies(package)
     };
-    // Packages that bundle dependencies and also have their own tree, as (parent tree, folder
-    // name). Trees are ordered parent first.
+    // Packages that bundle dependencies and also have their own tree, as (the directory of the
+    // parent tree, folder name). Trees are ordered parent first.
     let mut bundling_packages: Vec<(tree::Id, &[u8])> = Vec::new();
     // Those packages' trees, and every tree nested under them.
     let mut skipped_trees: Vec<tree::Id> = Vec::new();
 
     let mut visited = handle_oom(DynamicBitSet::init_empty(pkg_res.len()));
+    // The directories of several trees that are planned.
+    let mut planned_shared: Vec<tree::Id> = Vec::new();
     for tree_idx in 0..hoisted.folders.len() {
         let folder_path = hoisted.path(tree_idx);
         if folder_path.is_empty() {
@@ -1253,7 +1295,10 @@ fn plan_hoisted(
         if tree_idx != 0 {
             let tree = &trees[tree_idx];
             if skipped_trees.contains(&tree.parent)
-                || bundling_packages.contains(&(tree.parent, tree.folder_name(deps, buf)))
+                || bundling_packages.contains(&(
+                    hoisted.on_disk.first(tree.parent),
+                    tree.folder_name(deps, buf),
+                ))
             {
                 skipped_trees.push(tree_idx as tree::Id);
                 continue;
@@ -1277,64 +1322,87 @@ fn plan_hoisted(
             }
         }
 
-        let expected = hoisted.expected(tree_idx);
+        // A directory that several trees are is planned once, for all of them: an entry stays if
+        // one of them places it, and goes only if none of them keeps it.
+        let folder = hoisted.on_disk.first(tree_id);
+        let is_shared = hoisted.on_disk.is_shared(tree_id);
+        if is_shared && planned_shared.contains(&folder) {
+            continue;
+        }
 
         let Some(dir) = open_tree_folder(lockfile, tree_id, &mut plan.linked_folders) else {
             continue;
         };
+        let trees_of_folder: Vec<tree::Id>;
+        let twins: &[tree::Id] = if is_shared {
+            planned_shared.push(folder);
+            trees_of_folder = hoisted.trees_of_folder(tree_id).collect();
+            &trees_of_folder
+        } else {
+            core::slice::from_ref(&tree_id)
+        };
 
-        for &(alias, pkg_id) in expected {
-            if (pkg_id as usize) >= pkg_res.len()
-                || !extracted(pkg_res[pkg_id as usize].tag)
-                || has_bundled_deps(lockfile, pkg_id)
-            {
-                continue;
-            }
-            let Some(package) = descend(&dir, alias) else {
-                continue;
-            };
-            if nested_trees.binary_search(&(tree_id, alias)).is_ok() {
-                if declares_bundled_deps(&package) {
-                    bundling_packages.push((tree_id, alias));
+        for (nth, &twin) in twins.iter().enumerate() {
+            for &(alias, pkg_id) in hoisted.expected(twin as usize) {
+                if (pkg_id as usize) >= pkg_res.len()
+                    || !extracted(pkg_res[pkg_id as usize].tag)
+                    || has_bundled_deps(lockfile, pkg_id)
+                    || (twins[..nth].iter()).any(|&seen| hoisted.expected_in(seen, alias).is_some())
+                {
+                    continue;
                 }
-                continue;
+                let Some(package) = descend(&dir, alias) else {
+                    continue;
+                };
+                if nested_trees.binary_search(&(folder, alias)).is_ok() {
+                    if declares_bundled_deps(&package) {
+                        bundling_packages.push((folder, alias));
+                    }
+                    continue;
+                }
+                let Some(nested) = open_real_subdir(&package, b"node_modules") else {
+                    continue;
+                };
+                if declares_bundled_deps(&package) {
+                    continue;
+                }
+                let nested_path = join(&join(folder_path, alias), b"node_modules");
+                scan_folder(
+                    nested,
+                    &nested_path,
+                    false,
+                    &|entry: &Entry| {
+                        contains(protected, entry.alias)
+                            || twins.iter().any(|&twin| {
+                                hoisted.expected_in(twin, alias).is_some()
+                                    && (!hoisted.is_installed(twin, alias)
+                                        || !hoisted.owners_installed(twin)
+                                        || !hoisted.removable(twin, entry.alias, &nested_path))
+                            })
+                    },
+                    plan,
+                );
             }
-            let Some(nested) = open_real_subdir(&package, b"node_modules") else {
-                continue;
-            };
-            if declares_bundled_deps(&package) {
-                continue;
-            }
-            let nested_path = join(&join(folder_path, alias), b"node_modules");
-            scan_folder(
-                nested,
-                &nested_path,
-                false,
-                &|entry: &Entry| {
-                    contains(protected, entry.alias)
-                        || !hoisted.is_installed(tree_id, alias)
-                        || !hoisted.owners_installed(tree_id)
-                        || !hoisted.removable(tree_id, entry.alias, &nested_path)
-                },
-                plan,
-            );
         }
 
-        let parent = trees[tree_idx].parent;
         scan_folder(
             dir,
             folder_path,
             false,
             &|entry| {
-                expected
-                    .binary_search_by(|(name, _)| (*name).cmp(entry.alias))
-                    .is_ok()
+                twins.iter().any(|&twin| hoisted.expected_in(twin, entry.alias).is_some())
                     // A workspace's name is only kept in the root `node_modules`. In a nested one,
                     // a package from the registry can have the same name.
-                    || (tree_idx == 0 && contains(workspace_names, entry.alias))
+                    || (folder == 0 && contains(workspace_names, entry.alias))
                     || contains(protected, entry.alias)
-                    || !hoisted.owners_installed(tree_id)
-                    || !hoisted.removable(parent, entry.alias, folder_path)
+                    || twins.iter().any(|&twin| {
+                        !hoisted.owners_installed(twin)
+                            || !hoisted.removable(
+                                trees[twin as usize].parent,
+                                entry.alias,
+                                folder_path,
+                            )
+                    })
             },
             plan,
         );
@@ -1437,7 +1505,6 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
     let targets = manager.filtered_link_targets.as_ref();
     let selected: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(before));
     let importers = selected.as_ref().map(|_| tree_importers(before));
-    let old_paths = tree_paths(&old);
     let new_paths = tree_paths(&new);
     let new_tree_at = |path: &[u8]| tree_at(&new_paths, path);
 
@@ -1468,11 +1535,12 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
             continue;
         }
         let old_tree = &old.trees[old_idx];
-        // The loop below handles each workspace's own `node_modules`.
-        if old_tree.parent == 0
-            && (contains(&workspace_names, old_tree.folder_name(old_deps, old_buf))
-                || (old_member_folders.iter())
-                    .any(|(folder, tree)| *tree == old_idx && member_folders.contains(folder)))
+        // The loop below handles each workspace's own `node_modules`, which a tree under another
+        // name of the workspace, or under the link that another workspace has to it, is as well.
+        if (old_tree.parent == 0
+            && contains(&workspace_names, old_tree.folder_name(old_deps, old_buf)))
+            || workspace_node_modules(before, tree_owner(before, old_idx))
+                .is_some_and(|folder| member_folders.contains(&folder))
         {
             continue;
         }
@@ -1515,10 +1583,20 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         };
         let old_expected = old.expected(old_idx);
         let surviving = new_tree_at(&current_path(old_idx));
+        // Another tree of `new` can be this directory: one below the other name of a workspace.
+        let on_disk = surviving.or_else(|| {
+            if old_idx == 0 {
+                return None;
+            }
+            let parent = new_tree_at(&current_path(old_tree.parent as usize))?;
+            (new.on_disk.is_shared(parent))
+                .then(|| new.nested_in_folder(parent, old_tree.folder_name(old_deps, old_buf)))
+                .flatten()
+        });
         // A workspace's name is only kept in the root `node_modules`. In a nested one, a package
         // from the registry can have the same name.
         let still_placed = |alias: &[u8]| {
-            surviving.is_some_and(|id| new.expected_in(id, alias).is_some())
+            on_disk.is_some_and(|id| new.placed_in_folder(id, alias))
                 || (old_idx == 0 && contains(&workspace_names, alias))
         };
         if old_expected.iter().all(|&(alias, _)| still_placed(alias)) {
@@ -1622,9 +1700,26 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         crate::Subcommand::Dedupe | crate::Subcommand::Audit | crate::Subcommand::Update
     );
     let selected_after: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(after));
-    let buf = after.buffers.string_bytes.as_slice();
-    let pkg_names = after.packages.items_name();
     let self_contained = after.self_contained_workspace_ids();
+    // The trees with rows whose folder is the `node_modules` of a workspace, each with the
+    // workspace. A workspace has one for every name that leads to it.
+    let member_trees = |hoisted: &HoistedTree<'_>| -> Vec<(PackageID, tree::Id)> {
+        (1..hoisted.folders.len())
+            .filter(|&id| !hoisted.path(id).is_empty() && is_member_tree(hoisted.lockfile, id))
+            .map(|id| (tree_owner(hoisted.lockfile, id), id as tree::Id))
+            .collect()
+    };
+    let old_member_trees = member_trees(&old);
+    let new_member_trees = member_trees(&new);
+    // A workspace is the same one if it is in the same folder.
+    let old_members: Vec<(Box<[u8]>, PackageID)> = (0..before.packages.len())
+        .filter_map(|id| {
+            Some((
+                workspace_node_modules(before, id as PackageID)?,
+                id as PackageID,
+            ))
+        })
+        .collect();
     for pkg_id in 0..after.packages.len() {
         let Some(folder_path) = workspace_node_modules(after, pkg_id as PackageID) else {
             continue;
@@ -1637,30 +1732,23 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         {
             continue;
         }
-        let tree_path = join(
-            &join(b"node_modules", pkg_names[pkg_id].slice(buf)),
-            b"node_modules",
-        );
-        // The tree of an unlinked workspace is at `folder_path`, and `tree_path` then belongs to
-        // the package that took the workspace's name.
-        let tree_of_member = |hoisted: &HoistedTree<'_>, paths: &[(&[u8], tree::Id)]| {
-            tree_at(paths, &folder_path).or_else(|| {
-                tree_at(paths, &tree_path)
-                    .filter(|&id| is_member_tree(hoisted.lockfile, id as usize))
+        let old_member = (old_members.iter())
+            .find(|(folder, _)| *folder == folder_path)
+            .map(|&(_, id)| id);
+        let old_trees = || {
+            (old_member_trees.iter())
+                .filter(move |&&(member, _)| Some(member) == old_member)
+                .map(|&(_, id)| id)
+        };
+        let still_placed = |alias: &[u8]| {
+            new_member_trees.iter().any(|&(member, id)| {
+                member == pkg_id as PackageID && new.expected_in(id, alias).is_some()
             })
         };
-        let old_tree = (old_member_folders.iter())
-            .find(|(folder, _)| *folder == folder_path)
-            .map(|&(_, old_idx)| old_idx)
-            .or_else(|| tree_of_member(&old, &old_paths).map(|id| id as usize));
-        let old_rows: &[(&[u8], PackageID)] = match old_tree {
-            Some(old_idx) => old.expected(old_idx),
-            None => &[],
-        };
-        let surviving = tree_of_member(&new, &new_paths);
-        let still_placed =
-            |alias: &[u8]| surviving.is_some_and(|id| new.expected_in(id, alias).is_some());
-        let all_stay = old_rows.iter().all(|&(alias, _)| still_placed(alias));
+        let all_stay = old_trees().all(|id| {
+            let mut old_rows = old.expected(id as usize).iter();
+            old_rows.all(|&(alias, _)| still_placed(alias))
+        });
         // The tree saved in bun.lock has no hoisting barriers. So `old` has most dependencies of a
         // self-contained workspace at the root, but they were installed in its own `node_modules`.
         let reached: Option<DynamicBitSet> = (self_contained.contains(&(pkg_id as PackageID)))
@@ -1702,9 +1790,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
                 if still_placed(entry.alias) {
                     return true;
                 }
-                let was_row = old_rows
-                    .binary_search_by(|(name, _)| (*name).cmp(entry.alias))
-                    .is_ok()
+                let was_row = old_trees().any(|id| old.expected_in(id, entry.alias).is_some())
                     || reached.as_ref().is_some_and(|reached| {
                         old.expected_in(0, entry.alias).is_some_and(|row| {
                             let id = old.expected[row].1 as usize;
@@ -3057,7 +3143,9 @@ fn hand_over_names(plan: &Plan, lost_bins: &[usize], layout: Layout, manager: &P
             if !lost_a_bin(path) {
                 continue;
             }
-            let placed = (hoisted.expected(tree_id).iter())
+            let placed = hoisted
+                .trees_of_folder(tree_id as tree::Id)
+                .flat_map(|id| hoisted.expected(id as usize))
                 .filter(|(_, pkg_id)| (*pkg_id as usize) < pkg_res.len())
                 .map(|&(alias, pkg_id)| {
                     let tag = pkg_res[pkg_id as usize].tag;

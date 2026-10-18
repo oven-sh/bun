@@ -444,13 +444,13 @@ for (const [server, image] of [
     });
 
     test("FLOAT is exact in a prepared query and the server's 6 digits in a simple one", async () => {
-      await using sql = await tableOf("FLOAT", ["1.5", "0.1", "-3.14159", "3.4e38"]);
+      await using sql = await tableOf("FLOAT", ["1.5", "0.1", "-3.14159", "3.4e38", "16777216"]);
       expect({
         prepared: (await sql`SELECT v FROM t ORDER BY id`).map(row => row.v),
         simple: (await sql`SELECT v FROM t ORDER BY id`.simple()).map(row => row.v),
       }).toEqual({
-        prepared: [1.5, 0.1, -3.14159, 3.4e38].map(Math.fround),
-        simple: [1.5, 0.1, -3.14159, 3.4e38],
+        prepared: [1.5, 0.1, -3.14159, 3.4e38, 16777216].map(Math.fround),
+        simple: [1.5, 0.1, -3.14159, 3.4e38, 16777200],
       });
     });
 

@@ -1969,7 +1969,7 @@ Bun converts MySQL types to JavaScript types:
 | INT, TINYINT, SMALLINT, MEDIUMINT       | number                   | Within safe integer range                                                                        |
 | BIGINT                                  | string, number or BigInt | number if the value fits in i32/u32, otherwise string or BigInt depending on the `bigint` option |
 | DECIMAL, NUMERIC                        | string                   | To preserve precision                                                                            |
-| FLOAT, DOUBLE                           | number                   |                                                                                                  |
+| FLOAT, DOUBLE                           | number                   | A `FLOAT` depends on the format of the result (see note below)                                   |
 | DATE                                    | Date                     | JavaScript Date object                                                                           |
 | DATETIME, TIMESTAMP                     | Date                     | Decoded as UTC (see note below); `0000-00-00` becomes an Invalid Date                            |
 | TIME                                    | string                   | Formatted as `HH:MM:SS` (`HHH:MM:SS` above 99 hours), with the column's fractional digits        |
@@ -1984,6 +1984,8 @@ Bun converts MySQL types to JavaScript types:
 `DATETIME` and `TIMESTAMP` values have no time zone on the wire, so Bun reads them back as **UTC**. See [Dates and time zones](#dates-and-time-zones).
 
 Bun also sets `time_zone = '+00:00'` on every MySQL connection it opens. The server converts `TIMESTAMP` columns through the session time zone, so this keeps the stored instant equal to the `Date` you bound, and it makes server-side time functions such as `NOW()` and `CURRENT_TIMESTAMP` evaluate in UTC. There is no option to pick a different session time zone yet: a manual `SET time_zone = ...` reaches only the one pooled connection that runs it ([#40254](https://github.com/oven-sh/bun/issues/40254) tracks a per-connection option).
+
+How Bun reads a `FLOAT` column depends on the format in which MySQL sends the result. A result arrives as text with `.simple()`, and with `sql.unsafe()` or `sql.file()` without values. Every other result arrives in binary. In binary, Bun reads the 32-bit float exactly, so a column that holds `0.1` reads `0.10000000149011612`. In text, Bun reads the number as MySQL prints it, with at most 6 significant digits: `0.1`, and `16777200` for `16777216`. A `DOUBLE` column reads the same number in both formats.
 
 #### Differences from PostgreSQL
 

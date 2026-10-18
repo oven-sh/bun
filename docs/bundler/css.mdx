@@ -506,11 +506,6 @@ For browsers that don't support `:is()`, Bun's CSS bundler provides fallbacks us
   margin-top: 1.5em;
 }
 
-/* Fallback using -moz-any */
-.article :-moz-any(h1, h2, h3) {
-  margin-top: 1.5em;
-}
-
 /* Original preserved for modern browsers */
 .article :is(h1, h2, h3) {
   margin-top: 1.5em;
@@ -518,10 +513,6 @@ For browsers that don't support `:is()`, Bun's CSS bundler provides fallbacks us
 
 /* Complex example with fallbacks */
 :-webkit-any(header, main, footer) :-webkit-any(h1, h2, .title) {
-  font-family: "Heading Font", sans-serif;
-}
-
-:-moz-any(header, main, footer) :-moz-any(h1, h2, .title) {
   font-family: "Heading Font", sans-serif;
 }
 
@@ -571,11 +562,6 @@ And if `:is()` isn't supported, Bun can generate further fallbacks:
 ```css title="styles.css" icon="file-code"
 /* Even more fallbacks for maximum compatibility */
 button:not(:-webkit-any(.primary, .secondary)) {
-  background-color: #f5f5f5;
-  border: 1px solid #ddd;
-}
-
-button:not(:-moz-any(.primary, .secondary)) {
   background-color: #f5f5f5;
   border: 1px solid #ddd;
 }

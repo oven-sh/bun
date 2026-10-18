@@ -5539,6 +5539,21 @@ describe("css tests", () => {
       },
     );
 
+    // Firefox has `:is()` from 78. Chrome 80 does not have it, so the rule is still lowered for Chrome.
+    for (const [name, targets, fallbacks] of [
+      ["firefox-77", { firefox: 77 << 16 }, ["-moz-any"]],
+      ["chrome-80-firefox-77", { chrome: 80 << 16, firefox: 77 << 16 }, ["-webkit-any", "-moz-any"]],
+      ["chrome-80-firefox-78", { chrome: 80 << 16, firefox: 78 << 16 }, ["-webkit-any"]],
+      [
+        "default-targets",
+        { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 },
+        ["-webkit-any"],
+      ],
+    ] as const) {
+      const rule = (pseudo: string) => `.${name}:${pseudo}(.b, .c) { color: red; }`;
+      prefix_test(rule("is"), [...fallbacks, "is"].map(rule).join(" "), targets);
+    }
+
     prefix_test(
       "a:is(.foo > .bar) {color:red}",
       `

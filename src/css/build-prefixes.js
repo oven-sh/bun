@@ -65,21 +65,26 @@ prefixes["clip-path"].browsers = prefixes["clip-path"].browsers.filter(b => {
   );
 });
 
-prefixes["any-pseudo"] = {
-  browsers: Object.entries(mdn.css.selectors.is.__compat.support).flatMap(([key, value]) => {
-    if (Array.isArray(value)) {
-      key = MDN_BROWSER_MAPPING[key] || key;
-      let any = value.find(v => v.alternative_name?.includes("-any"))?.version_added;
-      let supported = value.find(x => x.version_added && !x.alternative_name)?.version_added;
-      if (any && supported) {
-        let parts = supported.split(".");
-        parts[0]--;
-        supported = parts.join(".");
-        return [`${key} ${any}}`, `${key} ${supported}`];
-      }
-    }
+// The first version with `:-webkit-any()` or `:-moz-any()` and the last version without `:is()`, from one MDN record.
+function anyPseudoVersions(value) {
+  if (!Array.isArray(value)) return null;
+  let any = value.find(v => v.alternative_name?.includes("-any"))?.version_added;
+  let supported = value.find(x => x.version_added && !x.alternative_name)?.version_added;
+  if (!any || !supported) return null;
+  let parts = supported.split(".");
+  parts[0]--;
+  return [any, parts.join(".")];
+}
 
-    return [];
+const isSupport = mdn.css.selectors.is.__compat.support;
+prefixes["any-pseudo"] = {
+  browsers: Object.entries(isSupport).flatMap(([key, value]) => {
+    let versions = anyPseudoVersions(value);
+    if (versions == null) return [];
+    let name = MDN_BROWSER_MAPPING[key] || key;
+    // Firefox for Android has no release from 69 to 78: its first version with `:is()` (79) must not end the range of Firefox (78).
+    let desktopEnds = name !== key && anyPseudoVersions(isSupport[name]) != null;
+    return desktopEnds ? [`${name} ${versions[0]}`] : versions.map(version => `${name} ${version}`);
   }),
 };
 

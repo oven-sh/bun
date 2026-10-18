@@ -181,15 +181,15 @@ impl Pipe {
         let global = self.global();
         self.this_value.with_mut(|v| v.upgrade(global));
 
+        // Nothing is delivered inside this call: the poll reports what the
+        // pipe holds on the next loop turn. node never runs `onread` from
+        // `readStart()`, and the stream layer counts on it: an EOF pushed
+        // from inside `_read()` does not emit the last 'readable'.
         if self.has(Flags::READER_STARTED) {
-            self.reader.with_mut(|r| r.unpause());
-            // What arrived while the handle was stopped is in the kernel
-            // buffer. The read delivers it, and then arms the poll again.
-            if !self.reader.get().has_pending_read() {
-                // SAFETY: the cell lives as long as `self`. `read` takes a raw
-                // pointer because it runs `onread`, which can re-enter here.
-                unsafe { IOReader::read(self.reader.as_ptr()) };
-            }
+            self.reader.with_mut(|r| {
+                r.unpause();
+                r.watch();
+            });
             return Ok(JSValue::js_number_from_int32(0));
         }
 
@@ -219,9 +219,6 @@ impl Pipe {
                 r.update_ref(false);
             }
         });
-        // `start()` only arms the poll. Deliver what the pipe holds already.
-        // SAFETY: as above.
-        unsafe { IOReader::read(self.reader.as_ptr()) };
         Ok(JSValue::js_number_from_int32(0))
     }
 

@@ -149,6 +149,7 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // Routes its argument onto the uncaught-exception path. Used, via $newCppFunction, by the
 // node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionHasUnhandledError);
 
 // process.cwd() as a JSString, cached on the process object until it changes.
 JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);

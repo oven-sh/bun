@@ -139,3 +139,19 @@ test.concurrent("a message that arrives before there is a 'message' listener is 
     "
   `);
 });
+
+test.concurrent("kept messages where a process ends, or is at the stack limit", async () => {
+  const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc-pending-messages-ending-fixture.cjs`
+    .env(bunEnv)
+    .text();
+  // node (v26.7.0) has identical output
+  expect(output).toMatchInlineSnapshot(`
+    "child, a listener and then an exception that nobody handles: ["exit listener 1","child exit code 1"], exit code 0
+    child, a listener and then an exception at the top level of an ES module: ["exit listener 1","child exit code 1"], exit code 0
+    child, a listener that throws and two more on() in one turn: ["late first","exit listener 1","child exit code 1"], exit code 0
+    parent, a listener and then an exception that nobody handles: ["exit listener 1"], exit code 1
+    parent, a listener added in 'exit': ["exit","close"], exit code 0
+    child, on() down to the stack limit before the first tick: ["RangeError function","tick","exit listener 0","child exit code 0"], exit code 0
+    "
+  `);
+});

@@ -882,7 +882,7 @@ impl WebWorker {
 
         // Fire (and clear) the entryEvaluated hook on EVERY post-evaluation path
         // so buffered postMessageToThread deliveries drain and the sender's
-        // Atomics.waitAsync settles. WebWorker__entrySettled re-calls it as a no-op.
+        // Atomics.waitAsync settles (not once the worker has stopped). WebWorker__entrySettled re-calls it as a no-op.
         WebWorker__entrySettled(vm.global());
 
         // The entry's evaluation outcome is checked once now and then after every

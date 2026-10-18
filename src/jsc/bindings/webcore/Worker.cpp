@@ -151,7 +151,7 @@ extern "C" WorkerMessagingProxy* WebWorker__getMessagingProxy(void* bunVM);
 // hub's deferred cross-thread deliveries: node's bootstrap runs the synchronous CJS main before any
 // port delivery, so a routed message must not observe "no listeners" while the entry that registers
 // them is still loading. Runs on every post-evaluation path so a buffered postMessageToThread never
-// leaves its sender's Atomics.waitAsync unresolved.
+// leaves its sender's Atomics.waitAsync unresolved, unless the worker has stopped: then it stays pending, as in Node.
 extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
 {
     // parentPort starts delivering now (whatever the parent posted meanwhile is buffered in the pipe).

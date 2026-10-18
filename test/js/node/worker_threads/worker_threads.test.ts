@@ -3587,21 +3587,32 @@ describe("a worker stopped by the handler of its uncaught error", () => {
 
   // The start sequence hands the worker what postMessageToThread() buffered while the entry point loaded.
   // An entry point that stopped the worker first (the static import makes it end the load as a stop) gets
-  // none of it: its 'workerMessage' listener does not run.
-  test.concurrent("'workerMessage' listener does not run after the entry point called process.exit()", async () => {
+  // none of it: its 'workerMessage' listener does not run. Nothing answers the sender then, as in Node: its
+  // promise is still pending when the worker has exited.
+  test.concurrent.each([
+    [
+      "its 'workerMessage' listener does not run",
+      `process.on("workerMessage", () => parentPort.postMessage("'workerMessage' listener ran"));`,
+    ],
+    ["with no 'workerMessage' listener", ""],
+  ])("postMessageToThread() to a worker whose entry point called process.exit(): %s", async (_name, listener) => {
     using dir = tempDir("worker-message-after-exit", {
       "entry.mjs": `import { parentPort } from "node:worker_threads";
         import "./dependency.mjs";
-        process.on("workerMessage", () => parentPort.postMessage("'workerMessage' listener ran"));
+        ${listener}
         process.exit(3);`,
       "dependency.mjs": `export {};`,
       "main.mjs": `import { Worker, postMessageToThread } from "node:worker_threads";
         const worker = new Worker(new URL("./entry.mjs", import.meta.url));
         const messages = [];
         worker.on("message", message => messages.push(message));
-        postMessageToThread(worker.threadId, "hello").catch(() => {});
+        let sender = "pending";
+        postMessageToThread(worker.threadId, "hello").then(
+          () => (sender = "resolved"),
+          error => (sender = "rejected " + error.code),
+        );
         worker.on("exit", code => {
-          console.log(JSON.stringify({ messages, code }));
+          console.log(JSON.stringify({ messages, code, sender }));
           process.exit(0);
         });`,
     });
@@ -3614,7 +3625,7 @@ describe("a worker stopped by the handler of its uncaught error", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ messages: [], code: 3 }),
+      stdout: JSON.stringify({ messages: [], code: 3, sender: "pending" }),
       stderr: "",
       exitCode: 0,
     });

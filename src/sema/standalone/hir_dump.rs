@@ -148,6 +148,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         bases: _,
         lazy: _,
         keyword_identifier_positions: _,
+        far_names: _,
     } = file;
     let mut d = Dump {
         file,
@@ -610,9 +611,10 @@ impl Dump<'_, '_> {
             ExprKind::Dot {
                 obj,
                 name,
-                name_pos,
                 chain,
+                ..
             } => {
+                let name_pos = self.file.name_pos(id);
                 put!(
                     self,
                     depth,
@@ -641,7 +643,8 @@ impl Dump<'_, '_> {
                 self.expr(d, "target", target);
                 self.expr(d, "value", value);
             }
-            ExprKind::Cond { test, yes, no } => {
+            ExprKind::Cond { test, yes_and_no } => {
+                let (yes, no) = self.file.pair(yes_and_no);
                 self.line(depth, label, &head);
                 self.expr(d, "test", test);
                 self.expr(d, "yes", yes);
@@ -661,6 +664,7 @@ impl Dump<'_, '_> {
                 self.list(d, "args", args, Self::expr);
             }
             ExprKind::Instantiation { expr, type_args } => {
+                let type_args = self.file.list_at(type_args);
                 self.line(depth, label, &head);
                 self.expr(d, "expr", expr);
                 self.list(d, "type_args", type_args, Self::ty);

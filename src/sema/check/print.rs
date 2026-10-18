@@ -95,8 +95,8 @@ impl Checker<'_, '_> {
             }
             // `GetElementOrPropertyAccessName`, or else the whole left-hand side.
             ExprKind::Assign { target, .. } => match hir[target].kind {
-                ExprKind::Dot { name_pos, .. } if !is_private_name_at(hir, name_pos) => {
-                    return Some(self.place_of_token(file, name_pos));
+                ExprKind::Dot { .. } if !is_private_name_at(hir, hir.name_pos(target)) => {
+                    return Some(self.place_of_token(file, hir.name_pos(target)));
                 }
                 ExprKind::Index { index, .. }
                     if is_string_or_numeric_literal_like_in_parentheses(hir, index) =>
@@ -5242,7 +5242,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 let (target, value) = (emit(target, P::Conditional)?, emit(value, P::Yield)?);
                 cat!(target, b" ", operator, b" ", value)
             }
-            ExprKind::Cond { test, yes, no } => {
+            ExprKind::Cond { test, yes_and_no } => {
+                let (yes, no) = hir.pair(yes_and_no);
                 let (test, yes, no) = (
                     emit(test, P::LogicalOr)?,
                     emit(yes, P::Yield)?,

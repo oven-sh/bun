@@ -2063,6 +2063,7 @@ impl<'s> Checker<'_, 's> {
             }
             // `checkExpressionWithTypeArguments`
             ExprKind::Instantiation { expr, type_args } => {
+                let type_args = hir.list_at(type_args);
                 self.check_type_nodes(file, type_args);
                 self.check_expression(file, expr);
             }
@@ -2138,7 +2139,8 @@ impl<'s> Checker<'_, 's> {
                 self.check_plain_assignment_operator(file, e, None);
                 self.current_source_element = saved;
             }
-            ExprKind::Cond { test, yes, no } => {
+            ExprKind::Cond { test, yes_and_no } => {
+                let (yes, no) = hir.pair(yes_and_no);
                 self.check_expression(file, test);
                 let body = Parent::Expr(yes);
                 self.check_testing_known_truthy_callable_or_awaitable_or_enum_member_type(

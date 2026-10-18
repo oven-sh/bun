@@ -180,7 +180,8 @@ impl<'p, 's> Checker<'p, 's> {
                     && self.is_context_sensitive(file, hir[p].value)
             }),
             ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(file, i)),
-            ExprKind::Cond { yes, no, .. } => {
+            ExprKind::Cond { yes_and_no, .. } => {
+                let (yes, no) = hir.pair(yes_and_no);
                 self.is_context_sensitive(file, yes) || self.is_context_sensitive(file, no)
             }
             ExprKind::Binary {
@@ -2148,7 +2149,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_argument_nodes(&self, node: InstantiationExpression) -> (FileId, IdList<TypeNodeId>) {
         match node {
             InstantiationExpression::Expr(file, e) => match self.hir(file)[e].kind {
-                ExprKind::Instantiation { type_args, .. } => (file, type_args),
+                ExprKind::Instantiation { type_args, .. } => (file, self.hir(file).list_at(type_args)),
                 _ => (file, IdList::default()),
             },
             InstantiationExpression::TypeNode(file, node) => match self.hir(file)[node].kind {

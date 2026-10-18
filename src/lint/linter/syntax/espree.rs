@@ -365,7 +365,8 @@ impl Candidates {
                 // `keywords_as_names`
                 Kind::Ident(name) => name.is_keyword_identifier(),
                 // `private_names`: `a.#b`
-                Kind::Dot { name_pos, .. } => {
+                Kind::Dot { .. } => {
+                    let name_pos = file.hir.name_pos(hir::ExprId(i as u32));
                     has_private_names && text.get(name_pos as usize) == Some(&b'#')
                 }
                 // `operators`: `??` beside `&&` or `||`

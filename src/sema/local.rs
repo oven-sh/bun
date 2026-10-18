@@ -770,6 +770,13 @@ impl<'s> Buffer<'s> {
         kept
     }
 
+    /// `put_published_id_if_empty` for an entry that no commit stores.
+    #[inline]
+    pub(crate) fn put_unlogged_if_empty(&mut self, slot: u32, number: u32, raw: u32) -> u32 {
+        let word = u64::from(number);
+        *(self.half_mut(slot).sparse).insert(spread_word(word), word, raw)
+    }
+
     #[inline]
     pub(crate) fn store_published_id(&mut self, slot: u32, number: u32, raw: u32) {
         let word = u64::from(number);

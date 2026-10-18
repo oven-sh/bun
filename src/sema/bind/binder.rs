@@ -1614,9 +1614,8 @@ impl<'f, 's> Binder<'f, 's> {
                 ExprKind::Dot {
                     obj,
                     name,
-                    name_pos,
                     ..
-                } if !is_private_name_at(self.f, name_pos) => (obj, name),
+                } if !is_private_name_at(self.f, self.f.name_pos(e)) => (obj, name),
                 ExprKind::Index { obj, index, .. }
                     if self.f.is_js && is_string_or_numeric_literal_like(self.f, index) =>
                 {
@@ -1777,9 +1776,8 @@ impl<'f, 's> Binder<'f, 's> {
                         ExprKind::Dot {
                             obj,
                             name,
-                            name_pos,
                             ..
-                        } if !is_private_name_at(self.f, name_pos) => (obj, name, ExprId::NONE),
+                        } if !is_private_name_at(self.f, self.f.name_pos(target)) => (obj, name, ExprId::NONE),
                         ExprKind::Index { obj, index, .. } => {
                             (obj, self.literal_name(index), index)
                         }
@@ -4556,11 +4554,11 @@ impl<'f, 's> Binder<'f, 's> {
         match self.f[id].kind {
             // The source text of a declaration file is not available: there the names declared by
             // the enclosing classes decide.
-            ExprKind::Dot { name, name_pos, .. }
+            ExprKind::Dot { name, .. }
                 if self
                     .f
                     .text
-                    .get(name_pos as usize)
+                    .get(self.f.name_pos(id) as usize)
                     .is_none_or(|&c| c == b'#') =>
             {
                 self.private_name(id, name)
@@ -4858,7 +4856,8 @@ impl<'f, 's> Binder<'f, 's> {
                 }
             }
             // `bindConditionalExpressionFlow`
-            ExprKind::Cond { test, yes, no } => {
+            ExprKind::Cond { test, yes_and_no } => {
+                let (yes, no) = self.f.pair(yes_and_no);
                 let (on_true, on_false, post) = (
                     self.branch_label(),
                     self.branch_label(),
@@ -4919,6 +4918,7 @@ impl<'f, 's> Binder<'f, 's> {
             }
             // Neither a reference nor an assignment target: nothing looks through it.
             ExprKind::Instantiation { expr, type_args } => {
+                let type_args = self.f.list_at(type_args);
                 self.expr(expr, me);
                 self.tys(type_args);
             }
@@ -5000,7 +5000,7 @@ impl<'f, 's> Binder<'f, 's> {
         if self.this_member.is_none() && self.this_property.is_none()
             || assignment_declaration_kind(self.f, e) != JsDeclarationKind::ThisProperty
             || matches!(self.f[e].kind, ExprKind::Assign { target, .. }
-                if matches!(self.f[target].kind, ExprKind::Dot { name_pos, .. } if is_private_name_at(self.f, name_pos)))
+                if matches!(self.f[target].kind, ExprKind::Dot { .. } if is_private_name_at(self.f, self.f.name_pos(target))))
         {
             return;
         }

@@ -119,6 +119,7 @@ slices! {
         names: hir::Name,
         parens: (hir::ExprId, u32, u32),
         non_null_ends: (hir::ExprId, u32),
+        far_names: (hir::ExprId, u32),
         jsx_expressions: (hir::ExprId, u32, u32),
         body_starts: (hir::FnId, u32),
         modifiers_of_params: hir::Span<hir::ModifierId>,
@@ -157,6 +158,24 @@ slices! {
         expr_kinds: u8,
         expr_kind_counts: u32,
         kind_counts: u32,
+    }
+}
+
+impl Hir<'_> {
+    /// Where the name of the `Dot` `e` starts.
+    #[inline]
+    pub(crate) fn name_pos(&self, e: hir::ExprId) -> u32 {
+        hir::name_pos_in(self.exprs, self.far_names, e)
+    }
+
+    #[inline]
+    pub(crate) fn pair<T: From<u32>>(&self, pair: hir::IdPair<T>) -> (T, T) {
+        pair.of(self.ids)
+    }
+
+    #[inline]
+    pub(crate) fn list_at<T>(&self, list: hir::ListAt<T>) -> hir::IdList<T> {
+        list.of(self.ids)
     }
 }
 

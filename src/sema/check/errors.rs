@@ -2916,7 +2916,6 @@ impl Checker<'_, '_> {
         let ExprKind::Dot {
             obj,
             name,
-            name_pos,
             ..
         } = hir[left].kind
         else {
@@ -2924,7 +2923,7 @@ impl Checker<'_, '_> {
         };
         if !self.p.files.options.exact_optional_property_types
             || is_parenthesized(hir, left)
-            || is_private_name_at(hir, name_pos)
+            || is_private_name_at(hir, hir.name_pos(left))
         {
             return None;
         }
@@ -2973,9 +2972,9 @@ impl Checker<'_, '_> {
             {
                 expected = written;
                 // `checkPropertyAccessExpression` ends with `getFlowTypeOfAccessExpression`.
-                if let ExprKind::Dot { name_pos, .. } = hir[left].kind {
+                if let ExprKind::Dot { .. } = hir[left].kind {
                     let prop = self.get_property_of_type(object, name).map(|found| found.0);
-                    let right = (file, name_pos, hir[left].end);
+                    let right = (file, hir.name_pos(left), hir[left].end);
                     let target = self.target_kind(file, left);
                     expected = self.get_flow_type_of_access_expression(
                         file, left, prop, written, right, target,

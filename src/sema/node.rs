@@ -867,7 +867,10 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
                     || self.one(file.jsdoc_type(JsDocTypeOwner::Assign(e)))
                     || self.one(value)
             }
-            ExprKind::Cond { test, yes, no } => self.one(test) || self.one(yes) || self.one(no),
+            ExprKind::Cond { test, yes_and_no } => {
+                let (yes, no) = self.file.pair(yes_and_no);
+                self.one(test) || self.one(yes) || self.one(no)
+            }
             ExprKind::Spread(e) | ExprKind::Await(e) | ExprKind::NonNull(e) => self.one(e),
             // `<const>e` has its type first.
             ExprKind::AsConst(operand) if file.is_type_assertion(e, operand) => {
@@ -885,7 +888,9 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
                 self.one(expr) || self.one(ty)
             }
-            ExprKind::Instantiation { expr, type_args } => self.one(expr) || self.list(type_args),
+            ExprKind::Instantiation { expr, type_args } => {
+                self.one(expr) || self.list(self.file.list_at(type_args))
+            }
             ExprKind::Jsx(j) if file.is_self_closing(j) => {
                 self.one(file[j].tag)
                     || self.list(file[j].type_args)
@@ -2017,7 +2022,7 @@ impl<'s> File<'s> {
     fn kind_of_name(&self, part: Part, row: Node) -> Kind {
         match self.data(row) {
             NodeData::Expr(e) => match self[e].kind {
-                ExprKind::Dot { name_pos, .. } if is_private_name_at(self, name_pos) => {
+                ExprKind::Dot { .. } if is_private_name_at(self, self.name_pos(e)) => {
                     Kind::PrivateIdentifier
                 }
                 _ => Kind::Identifier,
@@ -2401,7 +2406,7 @@ impl<'s> File<'s> {
                 if rest.starts_with(b"const") { start } else { 0 }
             }
             (Part::Name, NodeData::Expr(e)) => match self[e].kind {
-                ExprKind::Dot { name_pos, .. } => name_pos,
+                ExprKind::Dot { .. } => self.name_pos(e),
                 ExprKind::ImportMeta | ExprKind::ImportCall { .. } => {
                     self.token_after_dot(self[e].pos + b"import".len() as u32)
                 }

@@ -1330,7 +1330,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             && self.f.parens.last().is_none_or(|last| last.0 != expr)
         {
             self.pop_expr();
-            (expr, args) = (instantiated, type_args);
+            (expr, args) = (instantiated, self.f.list_at(type_args));
         } else if self.token() == T::LessThan {
             args = self.type_arguments_checked_if(is_checked);
         }
@@ -1505,18 +1505,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let mut expr = ExprId::NONE;
         for index in base..self.s.names.len() {
             let (name, pos) = self.s.names[index];
+            // The name ends where its text ends: no name here has an escape.
+            let end = pos + self.lx.text_of(name).len() as u32;
             let kind = match expr.is_none() {
                 true if name == known::this => ExprKind::This,
                 true => ExprKind::Ident(name),
-                false => ExprKind::Dot {
-                    obj: expr,
-                    name,
-                    name_pos: pos,
-                    chain: Chain::No,
-                },
+                false => self.f.dot((expr, Chain::No), (name, pos), end),
             };
-            // The name ends where its text ends: no name here has an escape.
-            let end = pos + self.lx.text_of(name).len() as u32;
             expr = self.add_expr(kind, first.1, end);
         }
         for index in base..self.s.names.len() {

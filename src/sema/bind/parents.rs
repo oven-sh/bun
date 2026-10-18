@@ -334,7 +334,10 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             }
             ExprKind::Binary { left, right, .. } => operands!(left, right),
             ExprKind::Assign { target, value, .. } => operands!(target, value),
-            ExprKind::Cond { test, yes, no } => operands!(test, yes, no),
+            ExprKind::Cond { test, yes_and_no } => {
+                let (yes, no) = f.pair(yes_and_no);
+                operands!(test, yes, no);
+            }
             ExprKind::Unary { operand, .. }
             | ExprKind::Spread(operand)
             | ExprKind::Await(operand)
@@ -347,7 +350,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             }
             ExprKind::Instantiation { expr, type_args } => {
                 operands!(expr);
-                tys!(type_args);
+                tys!(f.list_at(type_args));
             }
             ExprKind::Jsx(jsx) => {
                 if let Some(jsx) = f.jsx.get(jsx.idx()) {

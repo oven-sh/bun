@@ -248,7 +248,8 @@ impl Checker<'_, '_> {
             } => true,
             // An element, not a fragment.
             ExprKind::Jsx(j) => hir[j].tag.is_some(),
-            ExprKind::Cond { yes, no, .. } => {
+            ExprKind::Cond { yes_and_no, .. } => {
+                let (yes, no) = hir.pair(yes_and_no);
                 self.is_side_effect_free(file, yes) && self.is_side_effect_free(file, no)
             }
             // Iterates over the left spine, so that a long chain does not recurse. Each `,` of a chain asks about all that

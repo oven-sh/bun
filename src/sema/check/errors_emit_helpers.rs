@@ -1049,7 +1049,7 @@ impl Checker<'_, '_> {
         self.follow_check(file, true, &mut |c, of, e, current| {
             let hir = c.hir(of);
             let is_requesting = match hir[e].kind {
-                ExprKind::Dot { name_pos, .. } => is_private_name_at(hir, name_pos),
+                ExprKind::Dot { .. } => is_private_name_at(hir, hir.name_pos(e)),
                 ExprKind::PrivateIdentifier(_)
                 | ExprKind::Yield { .. }
                 | ExprKind::Object(_)
@@ -1269,10 +1269,10 @@ impl Checker<'_, '_> {
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         for &e in index.of(ExprTag::Dot) {
-            let ExprKind::Dot { name_pos, .. } = hir[e].kind else {
+            let ExprKind::Dot { .. } = hir[e].kind else {
                 continue;
             };
-            if !is_private_name_at(hir, name_pos) {
+            if !is_private_name_at(hir, hir.name_pos(e)) {
                 continue;
             }
             let Some(deferred) = self.emit_helpers_span(file, bound.parent_of_expr(e)) else {

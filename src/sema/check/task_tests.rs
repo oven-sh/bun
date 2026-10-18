@@ -2084,6 +2084,47 @@ fn nothing_that_is_bound_is_written_at_once() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn what_a_task_finds_out_about_a_record_of_a_file_that_it_visits_stays_in_the_task() {
+    let session = Session::new();
+    let (mut tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    tables.types = TypeStore::ordered_by_content_in(&session, tables.atoms);
+    tables.types.share_records();
+    let begin_publishing = |index: u32| {
+        let mut task = begin_writing_at_once(&session, &tables, &commits, index);
+        task.own.set_sharing(crate::types::Sharing::Publishes);
+        task
+    };
+    let (mut task, other) = (begin_publishing(0), begin_publishing(1));
+    task.begin_file(A, true);
+    let of_file = tables.this_of(&task, A);
+    let made_of_it = tables.keyof(&task, of_file);
+    assert!(!of_file.is_local() && !made_of_it.is_local());
+    let outer = from_now(&task);
+    tables.by_id.insert(&task, of_file, NUMBER, from_now(&task));
+    (tables.by_key).insert(&task, (made_of_it, NUMBER), NUMBER, from_now(&task));
+    let (shape, _) = (tables.shapes).insert_ref(&task, made_of_it, Box::new([NUMBER]), outer);
+    assert!(shape.local_number().is_some());
+    assert_eq!(tables.by_id.get(&task, &of_file), Some(NUMBER));
+    assert_eq!(tables.by_key.get(&task, &(made_of_it, NUMBER)), Some(NUMBER));
+    assert_eq!(tables.shapes.handle(&task, &made_of_it), Some(shape));
+    assert_eq!(tables.by_id.get(&other, &of_file), None);
+    assert_eq!(tables.by_key.get(&other, &(made_of_it, NUMBER)), None);
+    assert_eq!(tables.shapes.handle(&other, &made_of_it), None);
+    // No commit stores them, and nothing waits for them.
+    assert_eq!(task.buffer().logged(), 0);
+    assert!(!task.has_held_back_since(outer));
+    // What mentions no file of the task is for all.
+    let of_no_file = tables.keyof(&task, STRING);
+    tables.by_id.insert(&task, of_no_file, NUMBER, from_now(&task));
+    assert_eq!(tables.by_id.get(&other, &of_no_file), Some(NUMBER));
+    // A task that does not visit the file shares what it finds out.
+    assert_eq!(tables.this_of(&other, A), of_file);
+    tables.by_id.insert(&other, of_file, NUMBER, from_now(&other));
+    assert_eq!(tables.by_id.get(&begin_publishing(2), &of_file), Some(NUMBER));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn an_entry_that_loses_at_a_commit_is_compared_on_request() {
     let session = Session::new();
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));

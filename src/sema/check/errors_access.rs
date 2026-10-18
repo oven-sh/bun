@@ -212,7 +212,7 @@ impl<'p> Checker<'p, '_> {
             .chain(index.of(ExprTag::Dot))
             .map(|&e| {
                 let pos = match hir[e].kind {
-                    ExprKind::Dot { name_pos, .. } => name_pos,
+                    ExprKind::Dot { .. } => hir.name_pos(e),
                     _ => hir[e].pos,
                 };
                 (pos, !matches!(bound.parent_of_expr(e), Parent::None))

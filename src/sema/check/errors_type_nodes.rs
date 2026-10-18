@@ -540,7 +540,7 @@ impl Checker<'_, '_> {
             }
             let (name, name_pos) = match hir[right].kind {
                 ExprKind::Ident(name) => (name, hir[right].pos),
-                ExprKind::Dot { name, name_pos, .. } => (name, name_pos),
+                ExprKind::Dot { name, .. } => (name, hir.name_pos(right)),
                 _ => continue,
             };
             let after = skip_trivia(text, name_pos as usize + self.atoms().bytes(name).len());

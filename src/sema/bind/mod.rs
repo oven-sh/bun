@@ -268,9 +268,8 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
         ExprKind::Dot {
             obj,
             name,
-            name_pos,
             ..
-        } => (obj, (!is_private_name_at(hir, name_pos)).then_some(name)),
+        } => (obj, (!is_private_name_at(hir, hir.name_pos(target))).then_some(name)),
         ExprKind::Index { obj, index, .. } => match hir[index].kind {
             ExprKind::Number(_) => (obj, Some(Atom::NONE)),
             _ => (
@@ -297,8 +296,8 @@ fn is_bindable_static_name(hir: &File, e: ExprId) -> bool {
     !is_parenthesized(hir, e)
         && match hir[e].kind {
             ExprKind::Ident(_) => true,
-            ExprKind::Dot { obj, name_pos, .. } => {
-                !is_private_name_at(hir, name_pos) && is_bindable_static_name(hir, obj)
+            ExprKind::Dot { obj, .. } => {
+                !is_private_name_at(hir, hir.name_pos(e)) && is_bindable_static_name(hir, obj)
             }
             ExprKind::Index { obj, index, .. } => {
                 is_string_or_numeric_literal_like(hir, index) && is_bindable_static_name(hir, obj)
@@ -1914,7 +1913,7 @@ impl Bound<'_> {
                 }
                 match hir[left].kind {
                     ExprKind::Ident(_) => Some(hir[left].pos),
-                    ExprKind::Dot { name_pos, .. } => Some(name_pos),
+                    ExprKind::Dot { .. } => Some(hir.name_pos(left)),
                     // `IsStringOrNumericLiteralLike(SkipParentheses(argument))`
                     ExprKind::Index { index, .. } => match hir[index].kind {
                         ExprKind::String(_) | ExprKind::Number(_) => Some(hir[index].pos),

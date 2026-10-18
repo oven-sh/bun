@@ -1664,13 +1664,13 @@ impl Walk<'_, '_> {
                 self.nested(value, value2)
             }
             (
-                Cond { test, yes, no },
+                Cond { test, yes_and_no },
                 Cond {
                     test: test2,
-                    yes: yes2,
-                    no: no2,
+                    yes_and_no: yes_and_no2,
                 },
             ) => {
+                let ((yes, no), (yes2, no2)) = (yes_and_no.of(self.a.ids), yes_and_no2.of(self.b.ids));
                 self.expr(test, test2)?;
                 self.expr(yes, yes2)?;
                 self.nested(no, no2)
@@ -1725,7 +1725,7 @@ impl Walk<'_, '_> {
                 },
             ) => {
                 self.nested(expr, expr2)?;
-                self.type_list(type_args, type_args2)
+                self.type_list(type_args.of(self.a.ids), type_args2.of(self.b.ids))
             }
             (Jsx(x), Jsx(y)) => {
                 self.has_stack_left()?;

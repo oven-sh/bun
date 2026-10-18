@@ -159,6 +159,55 @@ macro_rules! impl_run {
 impl_run!(IdList);
 impl_run!(Span);
 
+/// Two ids that are next to each other in [`File::ids`]: [`FileIn::pair`].
+pub struct IdPair<T> {
+    start: u32,
+    _of: PhantomData<T>,
+}
+
+/// An `IdList` whose start and length are in [`File::ids`]: [`FileIn::list_at`].
+pub struct ListAt<T> {
+    at: u32,
+    _of: PhantomData<T>,
+}
+
+macro_rules! impl_place {
+    ($name:ident) => {
+        impl<T> Copy for $name<T> {}
+        impl<T> Clone for $name<T> {
+            #[inline]
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+        impl<T> std::fmt::Debug for $name<T> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(stringify!($name))
+            }
+        }
+    };
+}
+impl_place!(IdPair);
+impl_place!(ListAt);
+
+impl<T: From<u32>> IdPair<T> {
+    /// `ids`: [`File::ids`].
+    #[inline]
+    pub fn of(self, ids: &[u32]) -> (T, T) {
+        let start = self.start as usize;
+        (T::from(ids[start]), T::from(ids[start + 1]))
+    }
+}
+
+impl<T> ListAt<T> {
+    /// `ids`: [`File::ids`].
+    #[inline]
+    pub fn of(self, ids: &[u32]) -> IdList<T> {
+        let at = self.at as usize;
+        IdList::new(ids[at], ids[at + 1])
+    }
+}
+
 impl<T: From<u32>> Span<T> {
     #[inline]
     pub fn iter(self) -> impl DoubleEndedIterator<Item = T> + ExactSizeIterator + Clone {
@@ -559,8 +608,9 @@ pub enum ExprKind {
     Dot {
         obj: ExprId,
         name: Atom,
-        name_pos: u32,
         chain: Chain,
+        /// How far before the end of the expression the name starts, or [`FAR`]: [`FileIn::name_pos`].
+        name_before_end: u16,
     },
     Index {
         obj: ExprId,
@@ -584,10 +634,10 @@ pub enum ExprKind {
         target: ExprId,
         value: ExprId,
     },
+    /// `test ? yes : no`
     Cond {
         test: ExprId,
-        yes: ExprId,
-        no: ExprId,
+        yes_and_no: IdPair<ExprId>,
     },
     Spread(ExprId),
     Await(ExprId),
@@ -608,7 +658,7 @@ pub enum ExprKind {
     /// `f<T>` that is not called.
     Instantiation {
         expr: ExprId,
-        type_args: IdList<TypeNodeId>,
+        type_args: ListAt<TypeNodeId>,
     },
     Jsx(JsxId),
     /// `import(specifier, ..)`. `args` is never empty: the first is the specifier, a missing expression if there is none.
@@ -619,6 +669,30 @@ pub enum ExprKind {
     ImportMeta,
     /// `new.target`, and the name in the source: any word forms a meta property.
     NewTarget(Atom),
+}
+
+/// `name_before_end` of a `Dot` whose name is in [`FileIn::far_names`].
+pub const FAR: u16 = u16::MAX;
+
+/// [`FileIn::name_pos`], given the lists of the file.
+#[inline]
+pub fn name_pos_in(exprs: &[Expr], far_names: &[(ExprId, u32)], e: ExprId) -> u32 {
+    match exprs.get(e.idx()) {
+        Some(&Expr {
+            kind: ExprKind::Dot {
+                name_before_end, ..
+            },
+            end,
+            ..
+        }) if name_before_end != FAR => end - u32::from(name_before_end),
+        _ => far_name_pos(far_names, e),
+    }
+}
+
+#[cold]
+fn far_name_pos(far_names: &[(ExprId, u32)], e: ExprId) -> u32 {
+    let found = far_names.binary_search_by_key(&e, |it| it.0);
+    found.map_or(0, |at| far_names[at].1)
 }
 
 /// The kind of an expression, without its payload.
@@ -2180,6 +2254,8 @@ pub struct FileIn<S: Storage> {
     /// `NonNullExpression`s of the run: the `NonNull`, and where each ends. Ordered by expression, the
     /// innermost first.
     pub non_null_ends: S::Few<(ExprId, u32)>,
+    /// The `Dot`s whose name does not start within 65,534 bytes before their end, and where it starts. Ordered by expression.
+    pub far_names: S::Few<(ExprId, u32)>,
     /// `JsxExpression`: the inner expression, the start and the end of the braces. Ordered by
     /// expression.
     pub jsx_expressions: S::Nodes<(ExprId, u32, u32)>,
@@ -2530,6 +2606,22 @@ impl<S: Storage> FileIn<S> {
     }
 
     #[inline]
+    pub fn pair<T: From<u32>>(&self, pair: IdPair<T>) -> (T, T) {
+        pair.of(&self.ids)
+    }
+
+    #[inline]
+    pub fn list_at<T>(&self, list: ListAt<T>) -> IdList<T> {
+        list.of(&self.ids)
+    }
+
+    /// Where the name of the `Dot` `e` starts.
+    #[inline]
+    pub fn name_pos(&self, e: ExprId) -> u32 {
+        name_pos_in(&self.exprs, &self.far_names, e)
+    }
+
+    #[inline]
     pub fn id_at<T: From<u32>>(&self, list: IdList<T>, i: usize) -> T {
         debug_assert!(i < list.len());
         T::from(self.ids[list.start as usize + i])
@@ -2577,6 +2669,44 @@ impl FileBuilder {
         let start = self.ids.len() as u32;
         self.ids.extend(items.iter().map(|&i| i.into()));
         IdList::new(start, items.len() as u32)
+    }
+    pub fn id_pair<T: Into<u32>>(&mut self, first: T, second: T) -> IdPair<T> {
+        let start = self.ids.len() as u32;
+        self.ids.extend([first.into(), second.into()]);
+        IdPair {
+            start,
+            _of: PhantomData,
+        }
+    }
+    pub fn place_of_list<T>(&mut self, list: IdList<T>) -> ListAt<T> {
+        let at = self.ids.len() as u32;
+        self.ids.extend([list.start, list.len]);
+        ListAt {
+            at,
+            _of: PhantomData,
+        }
+    }
+    /// The kind of `obj.name`, for the next expression that is added, which ends at `end`.
+    #[inline]
+    pub fn dot(
+        &mut self,
+        (obj, chain): (ExprId, Chain),
+        (name, name_pos): (Atom, u32),
+        end: u32,
+    ) -> ExprKind {
+        let before_end = end.checked_sub(name_pos);
+        let near = before_end.and_then(|it| u16::try_from(it).ok());
+        let name_before_end = near.filter(|&it| it != FAR).unwrap_or_else(|| {
+            let next = ExprId(self.exprs.len() as u32);
+            self.far_names.push((next, name_pos));
+            FAR
+        });
+        ExprKind::Dot {
+            obj,
+            name,
+            chain,
+            name_before_end,
+        }
     }
     /// `A.B.C`: each name with its position.
     pub fn entity_name(&mut self, names: impl Iterator<Item = (Atom, u32)>) -> Span<NameId> {
@@ -2670,6 +2800,7 @@ macro_rules! file_in_arena {
             exports_from_expressions: $few!($this.exports_from_expressions),
             parens: $long!($this.parens),
             non_null_ends: $few!($this.non_null_ends),
+            far_names: $few!($this.far_names),
             jsx_expressions: $long!($this.jsx_expressions),
             jsx_pragmas: $this.jsx_pragmas,
             jsdoc_comments: $few!($this.jsdoc_comments),
@@ -2945,8 +3076,8 @@ pub fn is_entity_name_expression(hir: &File, e: ExprId) -> bool {
 
 /// `IsPropertyAccessEntityNameExpression` for `e` itself, ignoring enclosing parentheses.
 pub fn is_property_access_entity_name_expression(hir: &File, e: ExprId) -> bool {
-    matches!(hir[e].kind, ExprKind::Dot { obj, name_pos, .. }
-        if !is_private_name_at(hir, name_pos) && is_entity_name_expression(hir, obj))
+    matches!(hir[e].kind, ExprKind::Dot { obj, .. }
+        if !is_private_name_at(hir, hir.name_pos(e)) && is_entity_name_expression(hir, obj))
 }
 
 /// `ExpressionIsAlias`
@@ -3098,5 +3229,5 @@ pub fn is_nested_namespace(hir: &File, s: StmtId) -> bool {
     matches!(hir[s].kind, StmtKind::Module(m) if hir[s].start == hir[m].name_pos)
 }
 
-const _: () = assert!(std::mem::size_of::<Expr>() <= 24);
+const _: () = assert!(std::mem::size_of::<Expr>() <= 20);
 const _: () = assert!(std::mem::size_of::<TypeNode>() <= 32);

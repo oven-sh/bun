@@ -466,7 +466,6 @@ impl Checker<'_, '_> {
         let ExprKind::Dot {
             obj,
             name,
-            name_pos,
             ..
         } = hir[e].kind
         else {
@@ -526,7 +525,7 @@ impl Checker<'_, '_> {
         } else {
             return;
         };
-        self.report_use_before_declaration(file, (name_pos, 0), code, name_pos, declaration);
+        self.report_use_before_declaration(file, (hir.name_pos(e), 0), code, hir.name_pos(e), declaration);
     }
 
     /// `isPropertyDeclaredInAncestorClass` for the property `name` that `declaration` declares.

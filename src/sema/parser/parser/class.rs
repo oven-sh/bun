@@ -254,7 +254,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                         && p.f.parens.last().is_none_or(|last| last.0 != extended)
                     {
                         p.pop_expr();
-                        (heritage.extends, heritage.extends_args) = (expr, type_args);
+                        (heritage.extends, heritage.extends_args) = (expr, p.f.list_at(type_args));
                     } else if p.is_at_type_arguments_of_heritage_element() {
                         (heritage.extends_args, element_error) = p.type_arguments_unchecked();
                     }

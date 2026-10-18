@@ -195,7 +195,7 @@ impl Checker<'_, '_> {
                 // access.
                 let is_bare = !is_parenthesized(hir, data.callee);
                 let start = match hir[data.callee].kind {
-                    ExprKind::Dot { name_pos, .. } if is_bare => name_pos,
+                    ExprKind::Dot { .. } if is_bare => hir.name_pos(data.callee),
                     _ => self.start_of(file, data.callee),
                 };
                 let code = if data.args.is_empty()
@@ -207,8 +207,8 @@ impl Checker<'_, '_> {
                     2349
                 };
                 let end = match hir[data.callee].kind {
-                    ExprKind::Dot { name_pos, .. } if is_bare => {
-                        self.end_of_name_at(file, name_pos)
+                    ExprKind::Dot { .. } if is_bare => {
+                        self.end_of_name_at(file, hir.name_pos(data.callee))
                     }
                     _ => self.error_end_of(file, data.callee),
                 };
@@ -1140,8 +1140,8 @@ impl Checker<'_, '_> {
             (CallLike::Call(c), ExprKind::Call(_)) => {
                 let callee = hir[c].callee;
                 match hir[callee].kind {
-                    ExprKind::Dot { name_pos, .. } if !is_parenthesized(hir, callee) => {
-                        (name_pos, self.end_of_name_at(file, name_pos))
+                    ExprKind::Dot { .. } if !is_parenthesized(hir, callee) => {
+                        (hir.name_pos(callee), self.end_of_name_at(file, hir.name_pos(callee)))
                     }
                     _ => (
                         self.error_start_of(file, callee),

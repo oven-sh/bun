@@ -19,7 +19,7 @@ use bun_alloc::{ArenaBox, vec_from_iter_in};
 use bun_threading::Guarded;
 use smallvec::SmallVec;
 use std::alloc::Allocator;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering};
 
@@ -2137,6 +2137,11 @@ pub struct OwnStore<'s> {
     ids: [Cell<Placeholders<'s>>; ID_POOLS],
     /// .. and how many it has used.
     published: [Cell<u32>; 5],
+    /// The files that the task has visited, indexed by `FileId`.
+    visited_files: Bits,
+    /// By kind: the published records of the task that reference a node or a symbol of one of `visited_files`, or a record
+    /// that does. Indexed by id.
+    of_visited_files: [RefCell<Bits>; 5],
     jitter: Jitter,
     /// How many times the task has come by a `Place`.
     times_at_a_place: Cell<u64>,
@@ -2167,6 +2172,8 @@ impl<'s> OwnStore<'s> {
             sharing: Sharing::Off,
             ids: Default::default(),
             published: Default::default(),
+            visited_files: Bits(Vec::new()),
+            of_visited_files: std::array::from_fn(|_| RefCell::new(Bits(Vec::new()))),
             jitter: Jitter::default(),
             times_at_a_place: Cell::new(0),
         }
@@ -2232,7 +2239,16 @@ impl<'s> OwnStore<'s> {
         self.sharing = Sharing::Off;
         self.ids = Default::default();
         self.published = Default::default();
+        self.visited_files.0.clear();
+        for records in &mut self.of_visited_files {
+            records.get_mut().0.clear();
+        }
         self.times_at_a_place.set(0);
+    }
+
+    /// The task is about to visit `file`.
+    pub fn add_visited_file(&mut self, file: FileId) {
+        self.visited_files.set(file.0 as usize);
     }
 
     /// The task is about to visit `file`, which nothing imports. From now on every record that
@@ -3001,20 +3017,27 @@ impl<'p, 's> Types<'p, 's> {
         self.add_facts(id, fact::KNOWS_HAS_GENERIC_ARGUMENTS | value);
     }
 
-    /// Where a record of the kind `kind` goes that the task is about to create. `class`: as for `TypeStore::next_id`.
+    /// Where `record` goes, a record of the kind `kind` that the task is about to create. `class`: as for
+    /// `TypeStore::next_id`.
     #[inline]
-    fn home_of(&self, kind: Kind, class: usize, is_bound: bool) -> Home<'s> {
-        match is_bound || self.own.sharing != Sharing::Publishes {
-            true => Home::Own { is_bound },
-            false => Home::Published(self.published.next_id(kind, class, self.own)),
+    fn home_of(&self, kind: Kind, class: usize, record: &impl Follow) -> Home<'s> {
+        let is_bound = record.is_bound(self.own);
+        if is_bound || self.own.sharing != Sharing::Publishes {
+            return Home::Own { is_bound };
         }
+        let id = self.published.next_id(kind, class, self.own);
+        if record.is_of_visited_file(self.own) {
+            let mut records = self.own.of_visited_files[kind as usize].borrow_mut();
+            records.set(id.index() as usize);
+        }
+        Home::Published(id)
     }
 
     /// `new_record` for a type that `intern_record` creates, and where it goes. `own_id`: its id if that is to the task's
     /// own. Its summary is stored here: whoever finds the type may ask for that at once.
     fn new_record_of_task(&self, created: Made<'s>, own_id: u32) -> (TypeRecord<'s>, Home<'s>) {
         let class = class_of_type(&created.0);
-        let home = self.home_of(Kind::Type, class, created.is_bound(self.own));
+        let home = self.home_of(Kind::Type, class, &created);
         let record = self.new_record(created, home.id(own_id));
         let summary = record.summary(|member| self.member_flags_and_more(member));
         let is_unresolved_name = matches!(record.created.0, TypeData::UnresolvedName { .. });
@@ -3869,7 +3892,7 @@ impl<'p, 's> Types<'p, 's> {
             |data| SKIPS_LOOKUPS_OF_OWN_KEYS && data.mentions_own(),
             |record, data| record == data,
             |data, _| {
-                let home = self.home_of(Kind::Sig, 0, data.is_bound(self.own));
+                let home = self.home_of(Kind::Sig, 0, &data);
                 (data, home)
             },
         ))
@@ -3893,7 +3916,7 @@ impl<'p, 's> Types<'p, 's> {
             |record, list| **record == **list,
             |list, _| {
                 let list = self.list(list);
-                let home = self.home_of(Kind::Components, 0, list.is_bound(self.own));
+                let home = self.home_of(Kind::Components, 0, &list);
                 (list, home)
             },
         ))
@@ -3937,7 +3960,7 @@ impl<'p, 's> Types<'p, 's> {
                 let flags =
                     (pairs.iter()).fold(ObjectFlags::empty(), |f, p| f | self.object_flags(p.1));
                 let pairs = Mapping::copy_from_slice_in(pairs, self.own.arena);
-                let home = self.home_of(Kind::Mapper, 0, pairs.is_bound(self.own));
+                let home = self.home_of(Kind::Mapper, 0, &pairs);
                 ((pairs, flags), home)
             },
         ))
@@ -4021,6 +4044,17 @@ pub trait Follow {
     /// Replaces every task-local id (`LOCAL`) with the published id that the merge step assigned to
     /// its record. Runs at the barrier, on any thread.
     fn follow(&mut self, link: &Link);
+
+    /// Whether it references a node or a symbol of a file that the task has visited, or a published record of the task that
+    /// does.
+    fn is_of_visited_file(&self, own: &OwnStore) -> bool {
+        let mut visitor = IsOfVisitedFile {
+            own,
+            is_of_visited_file: false,
+        };
+        self.visit(&mut visitor);
+        visitor.is_of_visited_file
+    }
 
     /// Whether it references a node or a symbol of a file that nothing imports, or a task-local
     /// record that does. Such a value is never published.
@@ -4744,6 +4778,49 @@ clone_in_enum!(UnionOrigin {
     Intersection(a),
     Keyof(a)
 });
+
+/// See `Follow::is_of_visited_file`.
+struct IsOfVisitedFile<'a, 's> {
+    own: &'a OwnStore<'s>,
+    is_of_visited_file: bool,
+}
+
+impl IsOfVisitedFile<'_, '_> {
+    #[inline]
+    fn id(&mut self, kind: Kind, id: u32) {
+        if id & LOCAL == 0 {
+            let records = self.own.of_visited_files[kind as usize].borrow();
+            self.is_of_visited_file |= records.has(id as usize);
+        }
+    }
+}
+
+impl Visitor for IsOfVisitedFile<'_, '_> {
+    #[inline]
+    fn atom(&mut self, _: Atom) {}
+    #[inline]
+    fn components(&mut self, id: ComponentsId) {
+        self.id(Kind::Components, id.0);
+    }
+    #[inline]
+    fn mapper(&mut self, id: MapperId) {
+        self.id(Kind::Mapper, id.0);
+    }
+    #[inline]
+    fn sig(&mut self, id: SigId) {
+        self.id(Kind::Sig, id.0);
+    }
+    #[inline]
+    fn ty(&mut self, id: TypeId) {
+        self.id(Kind::Type, id.0);
+    }
+    #[inline]
+    fn file(&mut self, file: FileId) {
+        self.is_of_visited_file |= self.own.visited_files.has(file.0 as usize);
+    }
+    #[inline]
+    fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
+}
 
 /// See `Follow::is_bound`.
 struct IsBound<'a, 's> {

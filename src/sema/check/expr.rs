@@ -1022,12 +1022,13 @@ impl<'p, 's> Checker<'p, 's> {
         let ExprKind::Dot {
             obj,
             name,
-            name_pos,
             chain,
+            ..
         } = hir[e].kind
         else {
             return (TypeId::UNRESOLVED, false);
         };
+        let name_pos = hir.name_pos(e);
         let (access, stops) = self.left_type_of_property_access(file, e, obj, chain);
         let (left, receiver) = (access.left, access.widened);
         let target = self.target_kind(file, e);
@@ -1828,7 +1829,8 @@ impl<'p, 's> Checker<'p, 's> {
                 Some(op) => self.type_of_binary(file, e, op, target, value),
             },
             // `checkConditionalExpression`
-            ExprKind::Cond { test, yes, no } => {
+            ExprKind::Cond { test, yes_and_no } => {
+                let (yes, no) = hir.pair(yes_and_no);
                 let tested = self.type_of_expr(file, test);
                 self.check_truthiness_of_type(file, test, tested);
                 self.look_at_with(|c| {
@@ -1887,6 +1889,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `checkExpressionWithTypeArguments`
             ExprKind::Instantiation { expr, type_args } => {
+                let type_args = hir.list_at(type_args);
                 self.look_at_type_nodes(file, type_args);
                 let ty = self.type_of_expr(file, expr);
                 let args = self.types_from_nodes(file, type_args);

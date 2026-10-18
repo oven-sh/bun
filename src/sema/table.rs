@@ -802,6 +802,20 @@ impl<I: Id, V: Packed, A: Alloc> ById<I, V, Frozen, A> {
 //   `Task::may_write_at_once` allows it. `get` is the same: the shared part, then the task-local part, which has what
 //   waits for a commit and what is bound.
 
+/// Whether an entry under `key` that may be written at once stays in the task all the same, and is freed with it.
+///
+/// Nine entries in ten are never read by another task, and they are most of what a check holds at its end. What is made of
+/// the syntax of a file is asked about by the task that visits the file, and seldom by another. So that task keeps what
+/// it finds out about such a record. Another task that needs it works it out again, and shares it, because the file
+/// is not one of its own.
+///
+/// What may be written at once is a function of its key, and nothing that it rests on waits. So nobody misses it, and it
+/// is no `Task::hold_back`.
+#[inline]
+fn stays_in_task(task: &Task, key: &impl Follow) -> bool {
+    key.is_of_visited_file(&task.own)
+}
+
 /// Whether an entry with a published key and `value` could be written at once, if its table and its `Stored` allow it: the task
 /// does that at all, and the value is not bound. If it then goes to the task-local part, that is a `Task::hold_back`.
 #[inline]
@@ -937,6 +951,15 @@ impl<I: Id, V: Packed<Cell = AtomicU32>, A: Alloc> ById<I, V, Buffered, A> {
         })
     }
 
+    /// `insert_in_task` for an entry under a published id that `stays_in_task`.
+    #[inline]
+    fn insert_for_this_task(&self, task: &Task, key: I, value: V) -> V {
+        V::unpack(match self.seen(task, key.number()) {
+            0 => (task.buffer()).put_unlogged_if_empty(self.slot, key.number(), value.pack()),
+            raw => raw,
+        })
+    }
+
     /// Stores `raw` in the shared cell of the published id `number` unless there is an entry, there or in the task-local
     /// part. Returns what the key has afterwards.
     #[inline]
@@ -957,6 +980,9 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, A: Alloc> ById<I, V, 
     pub fn insert(&self, task: &Task, key: I, value: V, stored: Stored) -> V {
         if key.local_number().is_none() && is_for_all_tasks(task, &value) {
             if task.may_write_at_once(self.slot, stored) {
+                if stays_in_task(task, &key) {
+                    return self.insert_for_this_task(task, key, value);
+                }
                 return self.put_value_at_once(task, key, value);
             }
             task.hold_back();
@@ -993,7 +1019,10 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, A: Alloc> ById<I, V, 
                 if task.may_write_at_once(self.slot, stored)
                     && task.buffer().published_id(self.slot, number) == 0
                 {
-                    self.put_value_at_once(task, key, value);
+                    match stays_in_task(task, &key) {
+                        true => self.insert_for_this_task(task, key, value),
+                        false => self.put_value_at_once(task, key, value),
+                    };
                     return value;
                 }
                 task.hold_back();
@@ -1125,6 +1154,11 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, A: Alloc> ByIdIndirect<I, T, Buf
         let is_for_all = key.local_number().is_none()
             && task.shares_what_it_stores()
             && !value.is_bound(&task.own);
+        let is_at_once = task.may_write_at_once(self.handles.slot, stored);
+        if is_for_all && is_at_once && stays_in_task(task, &key) {
+            let kept = store_in_task(&self.in_task, task, u64::from(key.number()), value);
+            return self.handles.insert_for_this_task(task, key, kept);
+        }
         // A handle with `LOCAL` means nothing to another task.
         let holds_own = (self.holding.holds)
             .is_some_and(|(_, field)| field(&mut value).local_number().is_some());
@@ -1135,7 +1169,6 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, A: Alloc> ByIdIndirect<I, T, Buf
             let kept = store_in_task(&self.in_task, task, u64::from(key.number()), value);
             return self.handles.insert_in_task(task, key, kept);
         }
-        let is_at_once = task.may_write_at_once(self.handles.slot, stored);
         // A value that loses stays, and nothing refers to it.
         let kept = Handle(self.kept.push(value));
         let held = self.handles.insert(task, key, kept, stored);
@@ -1183,35 +1216,38 @@ where
     K: std::hash::Hash + Eq + Clone + MaybeLocal + Follow + Send + 's,
     V: Copy + Follow + Send + 's,
 {
-    /// `Some`: the entry went to the shared part, or another task was first: what the key has there now. `None`: the
-    /// caller stores the entry in the task-local part. `spread`: the hash of `key`.
+    /// `Ok`: the entry went to the shared part, or another task was first: what the key has there now. `Err`: the
+    /// caller stores the entry in the task-local part, and whether a commit is to store it. `spread`: the hash of `key`.
     #[inline]
     fn put_at_once(
         &self,
         task: &Task<'s>,
         (spread, key, value): (u64, &K, V),
         stored: Stored,
-    ) -> Option<V> {
+    ) -> Result<V, bool> {
         if !task.writes_at_once() || key.is_bound(&task.own) || value.is_bound(&task.own) {
-            return None;
+            return Err(true);
         }
         // What the task holds back under the key stays what it goes by.
         let own = || task.buffer().typed(&self.slot)?.get(spread, key).copied();
         if !task.may_write_at_once(self.slot.number(), stored) || own().is_some() {
             task.hold_back();
-            return None;
+            return Err(true);
+        }
+        if stays_in_task(task, key) {
+            return Err(false);
         }
         task.own.wait_at(crate::jitter::Place::BeforeEntry);
         let is_first = self.published.add_if_absent(spread, key, value);
         task.own.wait_at(crate::jitter::Place::AfterEntry);
         if is_first {
-            return Some(value);
+            return Ok(value);
         }
         let first = self.published.get_by_now(spread, key).copied();
         if let Some(first) = first.filter(|first| !is_same_value(first, &value)) {
             note_differing(task, self.slot.number(), Mentions::of(key), &first, &value);
         }
-        first
+        first.ok_or(true)
     }
 
     /// `spread`: the hash of `key`.
@@ -1236,10 +1272,11 @@ where
         stored: Stored,
         replaces: bool,
     ) -> V {
-        if let Some(held) = self.put_at_once(task, (spread, &key, value), stored) {
-            return held;
-        }
-        let is_shared = !key.is_local();
+        let is_committed = match self.put_at_once(task, (spread, &key, value), stored) {
+            Ok(held) => return held,
+            Err(is_committed) => is_committed,
+        };
+        let is_shared = is_committed && !key.is_local();
         let own = task.buffer().typed_or_new(&self.slot);
         let place = own.len();
         let kept = match replaces {

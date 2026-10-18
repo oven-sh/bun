@@ -4162,7 +4162,6 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Dot {
                 obj,
                 name,
-                name_pos,
                 ..
             } if self.matches(reference, obj) => {
                 // `links.effectsSignature`: only the first evaluation takes the type of this walk.
@@ -4179,7 +4178,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 let prop = self
                                     .get_property_of_type(receiver, name)
                                     .map(|found| found.0);
-                                let right = (file, name_pos, hir[data.callee].end);
+                                let right = (file, hir.name_pos(data.callee), hir[data.callee].end);
                                 let target = self.target_kind(file, data.callee);
                                 let mut callee = self.get_flow_type_of_access_expression(
                                     file,
@@ -7718,11 +7717,10 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Dot {
                 obj,
                 name,
-                name_pos,
                 ..
             } => {
                 let obj = self.explicit_type(file, obj, diagnostic.as_deref_mut())?;
-                let name = if is_private_name_at(hir, name_pos) {
+                let name = if is_private_name_at(hir, hir.name_pos(e)) {
                     self.private_name_in_symbol_of_type(obj, name)?
                 } else {
                     name

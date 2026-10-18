@@ -341,6 +341,7 @@ impl<'s> Task<'s> {
     /// none can, anything that mentions `file` is bound and is never published.
     pub fn begin_file(&mut self, file: FileId, is_imported: bool) {
         self.file = Some(file);
+        self.own.add_visited_file(file);
         if !is_imported {
             self.own.add_unimported_file(file);
         }

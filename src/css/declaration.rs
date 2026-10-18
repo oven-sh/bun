@@ -13,7 +13,7 @@ use crate::css_properties::font::FontHandler;
 use crate::css_properties::margin_padding::{
     InsetHandler, MarginHandler, PaddingHandler, ScrollMarginHandler,
 };
-use crate::css_properties::prefix_handler::FallbackHandler;
+use crate::css_properties::prefix_handler::{FallbackHandler, PrefixHandler};
 use crate::css_properties::size::SizeHandler;
 use crate::css_properties::text::Direction;
 use crate::css_properties::transform::TransformHandler;
@@ -403,6 +403,7 @@ pub struct DeclarationHandler<'bump> {
     pub(crate) box_shadow: BoxShadowHandler,
     pub(crate) color_scheme: ColorSchemeHandler,
     pub fallback: FallbackHandler,
+    pub(crate) prefix: PrefixHandler,
     pub(crate) direction: Option<Direction>,
     pub(crate) decls: DeclarationList<'bump>,
 }
@@ -428,6 +429,7 @@ impl<'bump> DeclarationHandler<'bump> {
         self.box_shadow.finalize(&mut self.decls, context);
         self.color_scheme.finalize(&mut self.decls, context);
         self.fallback.finalize(&mut self.decls, context);
+        self.prefix.finalize(&mut self.decls, context);
     }
 
     pub(crate) fn handle_property(
@@ -480,6 +482,9 @@ impl<'bump> DeclarationHandler<'bump> {
             || self
                 .fallback
                 .handle_property(property, &mut self.decls, context)
+            || self
+                .prefix
+                .handle_property(property, &mut self.decls, context)
     }
 
     pub(crate) fn new(bump: &'bump Bump) -> Self {
@@ -499,6 +504,7 @@ impl<'bump> DeclarationHandler<'bump> {
             box_shadow: Default::default(),
             color_scheme: Default::default(),
             fallback: Default::default(),
+            prefix: Default::default(),
             direction: None,
             decls: DeclarationList::new_in(bump),
         }

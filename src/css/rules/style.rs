@@ -477,7 +477,7 @@ impl<R> StyleRule<R> {
                     .zip(&other.declarations.declarations[..len])
                 {
                     // `PropertyId`'s `PartialEq` is a tag+prefix compare.
-                    if a.property_id() != b.property_id() {
+                    if !same_property(a, b) {
                         break 'brk false;
                     }
                 }
@@ -490,13 +490,19 @@ impl<R> StyleRule<R> {
                     .iter()
                     .zip(&other.declarations.important_declarations[..len])
                 {
-                    if a.property_id() != b.property_id() {
+                    if !same_property(a, b) {
                         break 'brk false;
                     }
                 }
                 true
             }
     }
+}
+
+/// Two unknown names have one `PropertyId` tag, so the names have to be equal too.
+fn same_property(a: &css::css_properties::Property, b: &css::css_properties::Property) -> bool {
+    let (a, b) = (a.property_id(), b.property_id());
+    a == b && a.name() == b.name()
 }
 
 // ─── deep_clone ───────────────────────────────────────────────────────────

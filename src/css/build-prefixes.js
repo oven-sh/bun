@@ -90,6 +90,11 @@ for (let prop in prefixes) {
       prefix = "webkit";
     }
 
+    // https://github.com/postcss/autoprefixer/blob/main/lib/hacks/print-color-adjust.js#L14
+    if (prefix === "moz" && prop === "print-color-adjust") {
+      continue;
+    }
+
     let origName = name;
     let isCurrentVersion = version === latestBrowserVersions[name];
     name = BROWSER_MAPPING[name] || name;

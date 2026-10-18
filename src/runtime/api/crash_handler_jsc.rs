@@ -207,8 +207,7 @@ pub(crate) mod js_bindings {
         bun_core::out_of_memory();
     }
 
-    /// `mi_new` is the C++ `operator new` where mimalloc overrides it. A size it cannot grant must not come back.
-    /// With a truthy argument: `new (std::nothrow)`, whose caller handles the refusal. Returns whether it got null.
+    /// `mi_new` and `mi_new_nothrow` are the C++ `operator new` where mimalloc overrides it. Only the second may return null.
     #[bun_jsc::host_fn]
     fn js_operator_new(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         unsafe extern "C" {

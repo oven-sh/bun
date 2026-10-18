@@ -384,6 +384,17 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
     });
   });
 
+  // A growth asks for twice the buffer. When that is refused, it asks for the exact size before
+  // the connection fails: 2.5 MiB then 1 MiB is a refused 5 MiB, and a granted 3.5 MiB.
+  test("a message that fits only at its exact size is delivered", async () => {
+    using client = await connect("ws");
+    client.binary(Buffer.alloc(2.5 * MiB), { fin: false });
+    client.send(OP.continuation, Buffer.alloc(MiB));
+    client.close(1000);
+    expect(await client.remainingFrames()).toEqual([`text "got ${3.5 * MiB}"`, "close 1000"]);
+    expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
+  });
+
   // A Close frame would have to wait behind the 3 MiB, in a buffer that has to grow for it.
   test.skipIf(!fault.available())("with unsent data, the connection closes without a Close frame", async () => {
     using client = await connect("ws");

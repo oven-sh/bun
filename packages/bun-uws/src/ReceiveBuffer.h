@@ -42,10 +42,7 @@ struct ReceiveBuffer {
     }
 
     [[nodiscard]] bool tryAppend(const char *src, size_t n) {
-        if (n > cap - len) {
-            /* Doubles, so a message is copied a constant number of times. If cap * 2 wraps, len + n wins the max(). */
-            if (n > SIZE_MAX - len || !tryReserve(std::max(len + n, cap * 2))) return false;
-        }
+        if (n > cap - len && !tryGrow(n)) return false;
         if (n) std::memcpy(buf + len, src, n);
         len += n;
         return true;
@@ -65,6 +62,16 @@ struct ReceiveBuffer {
     }
 
 private:
+    /* Makes room for n more bytes. Doubles, so a message is copied a constant number of times. A refused
+     * double is asked again at the exact size, so a refusal means that the bytes do not fit. */
+    __attribute__((noinline)) bool tryGrow(size_t n) {
+        if (n > SIZE_MAX - len) return false;
+        size_t exact = len + n;
+        /* If cap * 2 wraps, exact wins the max(). */
+        size_t doubled = std::max(exact, cap * 2);
+        return tryReserve(doubled) || (doubled != exact && tryReserve(exact));
+    }
+
     char *buf = nullptr;
     size_t len = 0;
     size_t cap = 0;

@@ -1767,8 +1767,8 @@ export interface GetterField {
   getter: Type;
   /** Also generate a setter, which takes `&mut self` (or the wrapper, with `capability: "js"`). */
   setter?: true;
-  /** Returns the internal field of its name, and computes it while that is `undefined`. */
-  cache?: true;
+  /** Returns an internal field, and computes it while that is `undefined`. `true` declares one of the getter's name. */
+  cache?: true | string;
   capability?: Capability;
   throws?: boolean;
   /** As a function's. */
@@ -1832,7 +1832,8 @@ export class Getter {
   readonly capability: Capability;
   readonly throws: boolean;
   readonly hasSetter: boolean;
-  readonly cached: boolean;
+  readonly internalField: string | undefined;
+  readonly declaresInternalField: boolean;
   readonly isStatic: boolean;
   readonly rustName: string;
   constructor(name: string, options: GetterField, isStatic = false) {
@@ -1849,7 +1850,8 @@ export class Getter {
       !this.type.holdsJSValue || this.capability !== "none",
       `${name}: returning a JS value takes capability: "heap" or "js"`,
     );
-    this.cached = options.cache ?? false;
+    this.internalField = options.cache === true ? name : options.cache;
+    this.declaresInternalField = options.cache === true;
   }
 }
 
@@ -1943,8 +1945,13 @@ export class ClassType extends NamedType {
     assert(this.construct || this.staticMembers.length === 0, "static members need a constructor object");
     this.internalFields = [
       ...(options.internalFields ?? []),
-      ...getters.filter(getter => getter.cached).map(getter => getter.name),
+      ...getters.filter(getter => getter.declaresInternalField).map(getter => getter.name),
     ];
+    for (const { name, internalField } of getters)
+      assert(
+        internalField === undefined || this.internalFields.includes(internalField),
+        `${name}: there is no internal field ${internalField}`,
+      );
     for (const field of this.internalFields)
       assert(/^[a-z][A-Za-z0-9]*$/.test(field), `${field}: an internal field is named in camelCase`);
     assertDistinct(

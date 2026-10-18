@@ -70,6 +70,7 @@ const {
 } = $rust("node_crypto_binding.rs", "createNodeCryptoBindingZig");
 
 const normalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
+const timingSafeEqual = $bindgen("Crypto.bind.ts", "timingSafeEqual");
 
 const {
   validateFunction,
@@ -156,7 +157,7 @@ crypto_exports.hkdfSync = hkdfSync;
 
 crypto_exports.getCurves = getCurves;
 crypto_exports.getCipherInfo = getCipherInfo;
-crypto_exports.timingSafeEqual = $bindgen("Crypto.bind.ts", "timingSafeEqual");
+crypto_exports.timingSafeEqual = timingSafeEqual;
 crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
 crypto_exports.X509Certificate = X509Certificate;

@@ -59,7 +59,7 @@ void convertDictionaryInto(JSC::JSGlobalObject&, JSC::JSValue, T& result);
 template<typename T, IDLConversionContext Ctx>
 void convertDictionaryInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, T& result, Ctx& ctx)
 {
-    // The dictionary names itself. Node names the argument.
+    // The dictionary names itself. `expected` names the argument.
     if constexpr (std::is_same_v<Ctx, NodeArgumentContext> || std::is_same_v<Ctx, ArgumentMessageContext>) {
         if (!value.isObject()) [[unlikely]] {
             auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));

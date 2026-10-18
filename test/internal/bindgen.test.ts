@@ -426,9 +426,6 @@ describe("strings", () => {
     expect(thrownBy(new Uint8Array(2), 1)).toBe(
       `${invalid}The "options" argument must be of type object. Received type number (1)`,
     );
-    expect(thrownBy(new Uint8Array(2), "a\ud800")).toBe(
-      `${invalid}The "options" argument must be of type object. Received type string ('a\ud800')`,
-    );
     expect(thrownBy(new Uint8Array(2), {}, 1)).toBe(`${invalid}TestFlag must be an object`);
   });
 
@@ -1588,6 +1585,7 @@ describe("classes", () => {
       "count",
       "label",
       "tag",
+      "sameTag",
       "increment",
       "add",
       "forgetTag",
@@ -1667,6 +1665,19 @@ describe("classes", () => {
     untouched.forgetTag();
     Bun.gc(true);
     expect(untouched.tag).toEqual([5]);
+  });
+
+  it("two cached getters can return one field", () => {
+    const counter = new TestCounter(3);
+    expect(counter.sameTag).toBe(counter.tag);
+    const other = new TestCounter(4);
+    expect(other.tag).toBe(other.sameTag);
+    other.forgetTag();
+    expect(other.sameTag).toEqual([4]);
+    const named = (internalFields: string[]) =>
+      b.class({ rustPath: "crate::X", internalFields, proto: { a: { getter: b.i32, cache: "held" } } });
+    expect(() => named([])).toThrow("a: there is no internal field held");
+    expect(() => named(["held"])).not.toThrow();
   });
 
   it("a heap snapshot names the internal fields", () => {

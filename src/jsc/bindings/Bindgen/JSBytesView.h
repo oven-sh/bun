@@ -33,7 +33,7 @@ public:
         m_isBlobOrBuffer = true;
     }
 
-    // Converting a later argument can run JavaScript, so these two come after all of them.
+    // Converting a later argument can run JavaScript, so these three come after all of them.
     ALWAYS_INLINE void read(JSC::JSValue argument)
     {
         if (m_isBlobOrBuffer)
@@ -43,6 +43,7 @@ public:
     // The bytes of a shared buffer become those of `copy`. Allocating it can throw.
     // Optional: ~MallocSpan calls free, of null too.
     void copyIfShared(JSC::JSGlobalObject&, JSC::JSValue argument, std::optional<WTF::MallocSpan<uint8_t>>& copy);
+    // `read` and `copyIfShared` in one look at the buffer.
     void readCopyingShared(JSC::JSGlobalObject&, JSC::JSValue argument, std::optional<WTF::MallocSpan<uint8_t>>& copy);
 
     // Null data for a Blob or a buffer that was neither read nor copied: Rust reads it, each time it borrows the bytes.

@@ -2,11 +2,11 @@ use crate::generated_bindgen::text_decoder::{
     TextDecodeOptions, TextDecoderClass, TextDecoderOptions,
 };
 use crate::webcore::EncodingLabel;
-use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSValue, JsError};
+use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSValue};
 use bun_core::AllocError;
 use bun_core::strings;
 use bun_jsc::HostReturn as _;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 
 use bun_core::EncodedSlice;
 use jsc::EncodedSliceJsc as _;
@@ -212,29 +212,43 @@ impl TextDecoder {
         Ok(decoded)
     }
 
-    fn decode_chunk(
+    /// Not thrown here: to throw can run a debugger's JavaScript, which can reach the decoder.
+    #[cold]
+    fn invalid_data<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Error<'a> {
+        heap.error_with_code(
+            jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
+            format_args!(
+                "The encoded data was not valid for encoding {}",
+                bstr::BStr::new(self.encoding.get_label())
+            ),
+        )
+    }
+
+    fn decode_chunk<'a>(
         &mut self,
-        global_this: &JSGlobalObject,
+        heap: &JsHeap<'a>,
         chunk: &[u8],
         stream: bool,
-    ) -> Result<JSValue, DecodeError> {
+    ) -> bindgen::Result<'a, JSValue> {
         // https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2: what follows a flush is a new stream.
         if !core::mem::replace(&mut self.do_not_flush, stream) {
             self.bom_seen = false;
             self.codec = None;
         }
         if stream {
-            self.decode_slice::<false>(global_this, chunk)
+            self.decode_slice::<false>(heap, chunk)
         } else {
-            self.decode_slice::<true>(global_this, chunk)
+            self.decode_slice::<true>(heap, chunk)
         }
     }
 
-    fn decode_slice<const FLUSH: bool>(
+    fn decode_slice<'a, const FLUSH: bool>(
         &mut self,
-        global_this: &JSGlobalObject,
+        heap: &JsHeap<'a>,
         buffer_slice: &[u8],
-    ) -> Result<JSValue, DecodeError> {
+    ) -> bindgen::Result<'a, JSValue> {
+        // SAFETY: makes a string. What throws is one that cannot be made, and then nothing reads `self` or the bytes.
+        let global_this = unsafe { heap.global() };
         match self.encoding {
             EncodingLabel::LATIN1 => {
                 if strings::is_all_ascii(buffer_slice) {
@@ -299,7 +313,7 @@ impl TextDecoder {
                     Ok(v) => v,
                     Err(err) => {
                         if self.fatal && matches!(err, strings::ToUTF16Error::InvalidByteSequence) {
-                            return Err(DecodeError::InvalidData);
+                            return Err(self.invalid_data(heap));
                         }
 
                         debug_assert!(matches!(err, strings::ToUTF16Error::OutOfMemory));
@@ -362,7 +376,7 @@ impl TextDecoder {
                 };
 
                 if saw_error && self.fatal {
-                    return Err(DecodeError::InvalidData);
+                    return Err(self.invalid_data(heap));
                 }
 
                 // https://encoding.spec.whatwg.org/#concept-td-serialize: only the
@@ -397,9 +411,9 @@ impl TextDecoder {
                     {
                         Ok(decoded) => decoded,
                         Err(strings::ToUTF16Error::InvalidByteSequence) => {
-                            // With what it had pending, so a later `{stream: true}` chunk does not go on from the bad byte.
+                            // Drops what it had pending, so a later `{stream: true}` chunk does not go on from the bad byte.
                             self.codec = None;
-                            return Err(DecodeError::InvalidData);
+                            return Err(self.invalid_data(heap));
                         }
                         Err(strings::ToUTF16Error::OutOfMemory) => {
                             return Err(global_this.throw_memory_allocation_failed().into());
@@ -410,36 +424,6 @@ impl TextDecoder {
             }
         }
     }
-}
-
-enum DecodeError {
-    /// The decoder is `fatal`. Not thrown: to throw can run a debugger's JavaScript, which can reach the decoder.
-    InvalidData,
-    Thrown(JsError),
-}
-
-impl From<JsError> for DecodeError {
-    fn from(error: JsError) -> Self {
-        Self::Thrown(error)
-    }
-}
-
-impl From<AllocError> for DecodeError {
-    fn from(error: AllocError) -> Self {
-        Self::Thrown(error.into())
-    }
-}
-
-/// What [`DecodeError::InvalidData`] throws.
-#[cold]
-fn invalid_data(global: &JSGlobalObject, encoding: EncodingLabel) -> JSValue {
-    jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA.fmt(
-        global,
-        format_args!(
-            "The encoded data was not valid for encoding {}",
-            bstr::BStr::new(encoding.get_label())
-        ),
-    )
 }
 
 impl TextDecoderClass for TextDecoder {
@@ -477,16 +461,8 @@ impl TextDecoderClass for TextDecoder {
         input: Option<&'a [u8]>,
         options: &TextDecodeOptions,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
-        // SAFETY: decoding makes a string. Only a failed allocation throws, and then nothing reads `self` or `input`.
-        let global = unsafe { heap.global() };
-        match self.decode_chunk(global, input.unwrap_or_default(), options.stream) {
-            Ok(decoded) => Ok(JsLocal::new(heap, decoded)),
-            Err(DecodeError::InvalidData) => {
-                let error = invalid_data(global, self.encoding);
-                Err(bindgen::Error::from_value(JsLocal::new(heap, error)))
-            }
-            Err(DecodeError::Thrown(error)) => Err(error.into()),
-        }
+        let decoded = self.decode_chunk(heap, input.unwrap_or_default(), options.stream)?;
+        Ok(JsLocal::new(heap, decoded))
     }
 
     fn encoding<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
@@ -603,17 +579,13 @@ pub(crate) extern "C" fn TextDecoder__decodeForStream(
         // escape this call.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
-    // SAFETY: `this` is the live decoder owned by the calling JS cell. Only a failed allocation throws inside.
-    let (decoded, encoding) = unsafe {
-        (
-            (*this).decode_chunk(global, slice, stream),
-            (*this).encoding,
-        )
-    };
-    decoded
-        .map_err(|error| match error {
-            DecodeError::InvalidData => global.throw_value(invalid_data(global, encoding)),
-            DecodeError::Thrown(error) => error,
+    // SAFETY: a host function of the stream called this, and `this` is the live decoder of its cell.
+    unsafe {
+        JsScope::with(global.as_mut_ptr(), |cx| {
+            (*this)
+                .decode_chunk(&cx.heap, slice, stream)
+                .map_err(|error| error.into_js_error(global))
         })
-        .or_pending_exception()
+    }
+    .or_pending_exception()
 }

@@ -143,9 +143,9 @@ let global = unsafe { heap.global() };
 `throws: true` makes the return type a `Result`. The error is a
 `bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
 `heap.range_error(..)`, `heap.error_with_code(ErrorCode::OUT_OF_RANGE, ..)`, `heap.invalid_arguments(..)`,
-`heap.illegal_constructor()` or `bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any type that
-implements `bindgen::IntoError` (`bun_sys::Error`, `SystemError`, `JsError` and a `Box` of
-one do), which lets a `capability: "none"` function fail too.
+`heap.illegal_constructor()` or `bindgen::Error::from_value(value)` (`?` makes one of a `JsError`
+or an `AllocError`), or any type that implements `bindgen::IntoError` (`bun_sys::Error`,
+`SystemError`, `JsError` and a `Box` of one do), which lets a `capability: "none"` function fail too.
 
 `cx.global()` is the `&JSGlobalObject`, for code that takes one. It borrows all of
 `cx`. Such a function can return `JsResult<T>`, and a plain `JSValue` under
@@ -582,6 +582,7 @@ Every field starts as `undefined`. A heap snapshot shows what it holds as a prop
 A getter with `cache: true` declares a field of its own name, with the same two functions, and
 returns it. While the field is `undefined` the getter calls Rust and stores the result, so
 `this.set_tag_field(heap, JsLocal::UNDEFINED)` makes the next read of `tag` compute it again.
+`cache: "tag"` on another getter declares nothing, and returns that same field.
 
 ### Staying alive
 

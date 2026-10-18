@@ -9180,6 +9180,7 @@ declare module "bun" {
     [Symbol.dispose](): void;
   }
 
+  /** Options for the {@link FileSystemRouter} constructor. */
   interface FileSystemRouterOptions {
     /**
      * The root directory containing the files to route

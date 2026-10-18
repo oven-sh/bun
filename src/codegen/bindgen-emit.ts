@@ -699,9 +699,9 @@ ${cppPrologue}
     auto* thisObject = uncheckedDowncast<${type.cpp}>(JSC::JSValue::decode(thisValue));
     JSC::EnsureStillAliveScope ensureThisStillAlive { thisObject };
 ${
-  !getter.cached
+  getter.internalField === undefined
     ? `    RELEASE_AND_RETURN(scope, ${getSymbol}(globalObject, thisObject));`
-    : `    auto& cachedValue = thisObject->internalField(${type.internalFields.indexOf(getter.name)});
+    : `    auto& cachedValue = thisObject->internalField(${type.internalFields.indexOf(getter.internalField)});
     if (JSC::JSValue cached = cachedValue.get(); !cached.isUndefined())
         return JSC::JSValue::encode(cached);
     JSC::JSValue result = JSC::JSValue::decode(${getSymbol}(globalObject, thisObject));

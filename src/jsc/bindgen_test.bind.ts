@@ -185,6 +185,7 @@ export const TestCounter = b.class({
     count: { getter: b.i32 },
     label: { getter: b.string.utf8, setter: true },
     tag: { getter: b.any, capability: "heap", cache: true, throws: true },
+    sameTag: { getter: b.any, capability: "heap", cache: "tag", throws: true },
     increment: { args: { by: b.i32.default(1) }, returns: b.i32, mutates: true },
     /** By a number, or by the length of a string, as many times. */
     add: [

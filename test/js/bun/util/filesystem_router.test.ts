@@ -541,10 +541,13 @@ it("origin should be validated", async () => {
 
 function routesWithExtension(extension: String) {
   using dir = tempDir("fsr-string-object", { "posts.tsx": "", "about.mdx": "" });
-  //@ts-ignore
-  return Object.keys(
-    new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs", fileExtensions: [extension] }).routes,
-  );
+  const router = new Bun.FileSystemRouter({
+    dir: String(dir),
+    style: "nextjs",
+    // @ts-expect-error
+    fileExtensions: [extension],
+  });
+  return Object.keys(router.routes);
 }
 
 it("reads an extension that is a String object with its toString()", () => {
@@ -600,6 +603,9 @@ it("assetPrefix and origin are what the router was given, or null", () => {
   const bare = new Bun.FileSystemRouter({ dir, style: "nextjs" });
   expect(bare.assetPrefix).toBeNull();
   expect(bare.origin).toBeNull();
+  const empty = new Bun.FileSystemRouter({ dir, style: "nextjs", assetPrefix: "", origin: "" });
+  expect(empty.assetPrefix).toBeNull();
+  expect(empty.origin).toBeNull();
 });
 
 // POSIX allows arbitrary bytes (except '/' and NUL) in filenames, including 0xFF.

@@ -59,9 +59,9 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
 }
 
 /// A ref on a string of the VM's interning cache.
-struct Interned(BackRef<RefString>);
+struct RefCountedString(BackRef<RefString>);
 
-impl Interned {
+impl RefCountedString {
     fn new(vm: &mut VirtualMachine, bytes: &[u8]) -> Self {
         let string = vm.ref_counted_string::<true>(bytes, None);
         let string = BackRef::from(core::ptr::NonNull::new(string).expect("ref_counted_string"));
@@ -75,14 +75,14 @@ impl Interned {
     }
 }
 
-impl Clone for Interned {
+impl Clone for RefCountedString {
     fn clone(&self) -> Self {
         self.0.ref_();
         Self(self.0)
     }
 }
 
-impl Drop for Interned {
+impl Drop for RefCountedString {
     fn drop(&mut self) {
         // `get()`: a bare `deref()` is `<BackRef as Deref>::deref`.
         self.0.get().deref();
@@ -90,10 +90,10 @@ impl Drop for Interned {
 }
 
 pub(crate) struct FileSystemRouter {
-    origin: Option<Interned>,
-    base_dir: Interned,
+    origin: Option<RefCountedString>,
+    base_dir: RefCountedString,
     router: Router::Router,
-    asset_prefix: Option<Interned>,
+    asset_prefix: Option<RefCountedString>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -271,7 +271,10 @@ impl FileSystemRouterClass for FileSystemRouter {
             root_dir_path = joined;
         }
 
-        let mut extensions: Vec<Box<[u8]>> = (options.file_extensions.iter().flatten())
+        let mut extensions: Vec<Box<[u8]>> = options
+            .file_extensions
+            .iter()
+            .flatten()
             .filter(|extension| !extension.is_empty())
             .map(|extension| Box::from(&extension[1..]))
             .collect();
@@ -298,22 +301,22 @@ impl FileSystemRouterClass for FileSystemRouter {
         };
 
         let vm = global.bun_vm().as_mut();
-        let base_dir = Interned::new(vm, base_dir_str);
+        let base_dir = RefCountedString::new(vm, base_dir_str);
         router.config.dir = Box::from(base_dir.bytes());
-        let mut interned = |bytes: Option<&[u8]>| {
+        let mut ref_counted = |bytes: Option<&[u8]>| {
             let bytes = bytes.filter(|bytes| !bytes.is_empty())?;
-            Some(Interned::new(vm, bytes))
+            Some(RefCountedString::new(vm, bytes))
         };
         Ok(FileSystemRouter {
-            origin: interned(options.origin),
+            origin: ref_counted(options.origin),
             base_dir,
-            asset_prefix: interned(options.asset_prefix),
+            asset_prefix: ref_counted(options.asset_prefix),
             router,
         })
     }
 
     fn asset_prefix(&self) -> Option<impl AsRef<[u8]>> {
-        self.asset_prefix.as_ref().map(Interned::bytes)
+        self.asset_prefix.as_ref().map(RefCountedString::bytes)
     }
 
     fn r#match<'a>(
@@ -361,8 +364,10 @@ impl FileSystemRouterClass for FileSystemRouter {
             }
         };
         let mut params_list = route_param::List::default();
-        let Some(route) =
-            (self.router.routes).match_page_with_allocator(b"", &url_path, &mut params_list)
+        let Some(route) = self
+            .router
+            .routes
+            .match_page_with_allocator(&url_path, &mut params_list)
         else {
             return Ok(None);
         };
@@ -394,7 +399,7 @@ impl FileSystemRouterClass for FileSystemRouter {
     }
 
     fn origin(&self) -> Option<impl AsRef<[u8]>> {
-        self.origin.as_ref().map(Interned::bytes)
+        self.origin.as_ref().map(RefCountedString::bytes)
     }
 
     fn reload<'a>(
@@ -436,7 +441,7 @@ impl FileSystemRouterClass for FileSystemRouter {
 }
 
 pub(crate) struct MatchedRoute {
-    /// Of the route. The resolver's DirnameStore holds them for the life of the process.
+    /// The route's. The resolver's DirnameStore holds it for the life of the process, as it does `file_path`.
     name: &'static [u8],
     file_path: &'static [u8],
     /// Decoded, with the query string.
@@ -445,11 +450,11 @@ pub(crate) struct MatchedRoute {
     query_start: usize,
     /// Its values borrow `pathname`.
     params_list: route_param::List<'static>,
-    /// Made by the first of `params` and `query` to need it. It borrows `pathname`.
+    /// Made by the first of `params` and `query` to need it.
     param_map: JsCell<Option<QueryStringMap>>,
-    origin: Option<Interned>,
-    asset_prefix: Option<Interned>,
-    base_dir: Interned,
+    origin: Option<RefCountedString>,
+    asset_prefix: Option<RefCountedString>,
+    base_dir: RefCountedString,
 }
 
 impl MatchedRoute {
@@ -577,7 +582,9 @@ impl MatchedRouteClass for MatchedRoute {
             self.file_path,
             self.base_dir.bytes(),
             &origin_url.unwrap_or_default(),
-            self.asset_prefix.as_ref().map_or(b"", Interned::bytes),
+            self.asset_prefix
+                .as_ref()
+                .map_or(b"", RefCountedString::bytes),
             &mut src,
             path::Platform::Posix,
         );

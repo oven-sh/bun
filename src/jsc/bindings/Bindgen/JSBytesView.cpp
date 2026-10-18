@@ -24,7 +24,7 @@ bool checkInMemoryBlob(JSGlobalObject& globalObject, JSValue value)
     return true;
 }
 
-static std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value, bool& isShared)
+static ALWAYS_INLINE std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value, bool& isShared)
 {
     std::span<const uint8_t> bytes;
     if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
@@ -51,15 +51,20 @@ std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value)
     return bytesOfBlobOrBuffer(value, isShared);
 }
 
+static bool isSharedBuffer(JSValue value)
+{
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(value))
+        return view->isShared();
+    if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value))
+        return buffer->isShared();
+    return false;
+}
+
 void JSBytesView::copyIfShared(JSGlobalObject& globalObject, JSValue argument, std::optional<MallocSpan<uint8_t>>& copy)
 {
-    if (!m_isBlobOrBuffer)
+    if (!m_isBlobOrBuffer || !isSharedBuffer(argument))
         return;
-    bool isShared = false;
-    auto bytes = bytesOfBlobOrBuffer(argument, isShared);
-    if (!isShared)
-        return;
-    m_bytes = bytes;
+    m_bytes = bytesOfBlobOrBuffer(argument);
     copyBytes(globalObject, copy);
 }
 

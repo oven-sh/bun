@@ -217,7 +217,6 @@ impl Default for Routes {
 impl Routes {
     pub fn match_page_with_allocator<'p>(
         &self,
-        _: &[u8],
         url_path: &URLPath,
         params: &mut route_param::List<'p>,
     ) -> Option<Match<'p>> {

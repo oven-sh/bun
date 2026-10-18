@@ -21,14 +21,14 @@ export const MatchedRoute = b.class({
   configurable: false,
   proto: {
     filePath: text,
-    kind: { getter: RouteKind },
+    kind: { getter: RouteKind, cache: true },
     name: text,
     params: record,
     pathname: text,
     query: record,
     /** `src`, for old versions of bun-framework-next. */
     scriptSrc: text,
-    src: text,
+    src: { ...text, cache: "scriptSrc" },
   },
 });
 
@@ -51,7 +51,7 @@ export const FileSystemRouter = b.class({
     length: 0,
   },
   proto: {
-    assetPrefix: { getter: b.string.utf8.nullable },
+    assetPrefix: { getter: b.string.utf8.nullable, cache: true },
     match: {
       args: { input: Routable },
       expected: { input: "Expected string, Request or Response" },
@@ -62,6 +62,6 @@ export const FileSystemRouter = b.class({
     origin: { getter: b.string.utf8.nullable, cache: true },
     reload: { returns: b.self, capability: "js", throws: true },
     routes: record,
-    style: { getter: RouterStyle },
+    style: { getter: RouterStyle, cache: true },
   },
 });

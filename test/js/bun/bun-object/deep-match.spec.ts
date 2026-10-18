@@ -242,7 +242,8 @@ describe("Bun.deepMatch", () => {
       const sub = Object.create(base);
       sub.constructor = { prototype: sub };
       expect(Bun.deepMatch(base, sub)).toBe(true);
-      expect(Bun.deepMatch(base, { kind: "other", constructor: sub.constructor })).toBe(false);
+      // the pattern cycle reaches sub while base is paired with the outer object
+      expect(Bun.deepMatch(base, { kind: "base", constructor: sub.constructor })).toBe(false);
     });
 
     it("a cyclic subset matches a copy whose cycle starts one level down", () => {

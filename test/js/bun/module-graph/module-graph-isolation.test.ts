@@ -971,16 +971,23 @@ const dir = String(
       });
     `,
     "dials-after-it-was-disposed.mjs": `
-      let arrived = 0;
-      const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open() { arrived++; }, data() {} } });
+      // The port each dial that arrives comes from, and whether the host's fetch is among them.
+      const arrived = [];
+      let theHostsFetchArrived = false;
+      const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open(socket) { arrived.push(socket.remotePort); }, data(socket, bytes) { theHostsFetchArrived ||= bytes.toString().startsWith("GET /the-hosts "); } } });
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/dials-the-host.mjs");
       graph.run(() => app.dialLater(server.port));
       graph.dispose();
-      // A dial of the host's own, made afterwards, has arrived: the graph's would have too.
-      await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open(socket) { socket.end(); }, data() {} } });
-      for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
-      console.log(JSON.stringify({ arrivedFromTheGraph: arrived - 1 }));
+      // The microtask it left runs before the next turn.
+      await new Promise(resolve => setImmediate(resolve));
+      // Dials of the host's own, made afterwards on each of the two threads that dial, have arrived: the
+      // graph's would have too. (Arrived is the listener's to say. A connect() is done one packet before
+      // the listener has the connection, and on macOS that packet can take many turns.)
+      fetch("http://127.0.0.1:" + server.port + "/the-hosts").catch(() => {});
+      const theHosts = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+      while (!(arrived.includes(theHosts.localPort) && theHostsFetchArrived)) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ arrivedFromTheGraph: arrived.length - 2 }));
       process.exit(0);
     `,
     "configures-the-global-agent-tenant.mjs": `

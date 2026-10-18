@@ -197,13 +197,17 @@ const MANY_ENTRIES: usize = 64;
 const PIXELS_PER_FREE_COLOR_MANY_ENTRIES: usize = 96;
 /// An image of at most this many pixels is not counted: its boxes of pixels cost less than a table.
 const UNCOUNTED_PIXELS: usize = 4096;
+/// Slots of the table at the start, 1 KB: a count that stops at once costs a small image little.
+const FIRST_SLOTS: usize = 128;
 
 /// The slot of `key` or the empty one for it, and the slots the probe passed. `slots.len()` is 2^n.
 #[inline]
 fn probe(slots: &[Slot], key: u32) -> (usize, usize) {
     let mask = slots.len() - 1;
-    // The same hash as the first pass, with as many top bits as the table has slots.
-    let mut i = (key.wrapping_mul(0x9E37_79B1) >> (32 - slots.len().trailing_zeros())) as usize;
+    // Folded before the multiply: a multiply alone is linear, and near colours share runs of slots.
+    let hash = (key ^ (key >> 16)).wrapping_mul(0x9E37_79B1);
+    // As many top bits as the table has slots.
+    let mut i = (hash >> (32 - slots.len().trailing_zeros())) as usize;
     let mut passed: usize = 0;
     // A table is never full, so the walk ends.
     while slots[i].val != 0 && slots[i].key != key {
@@ -344,8 +348,7 @@ fn count_colors(pixels: &[[u8; 4]], want: usize) -> Result<Counts, AllocError> {
     if pixels.len() <= UNCOUNTED_PIXELS {
         return Ok(table);
     }
-    // 1 KB to start with: a count that stops at once costs the smallest image little.
-    table.slots = try_filled(128)?;
+    table.slots = try_filled(FIRST_SLOTS)?;
     for run in pixels.chunk_by(|a, b| a == b) {
         let count = u32::try_from(run.len()).expect("int cast");
         if !table.add(u32::from_le_bytes(shown(run[0])), count)? {

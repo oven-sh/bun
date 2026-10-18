@@ -635,11 +635,14 @@ export const linearFifoOrderedRemoveProbe = $newRustFunction(
 ) as (scenario: number) => number[];
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
-/** The route the palette quantizer of `Bun.Image` takes for RGBA8 pixels and a palette size (`route` in quantize.rs). */
+/**
+ * How the palette quantizer of `Bun.Image` counts the colours of RGBA8 pixels for a palette size (`route` in
+ * quantize.rs): "exact" when the image fits the palette, else the number of pixels that the colour table counted.
+ */
 export const quantizeRoute = $newRustFunction("runtime/image/quantize_testing.rs", "quantizeRoute", 2) as (
   rgba: Uint8Array,
   colors: number,
-) => "exact" | "table" | "both" | "pixels";
+) => "exact" | number;
 
 const setNativeSocketOptions: (socket: unknown, option: 1 | 2, size: number) => void = $newRustFunction(
   "runtime/socket/socket.rs",

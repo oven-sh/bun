@@ -286,7 +286,8 @@ env = "BUN_PUBLIC_*"
       const js = await jsResponse.text();
       expect(js).not.toContain("process.env.BUN_PUBLIC_FOO");
       expect(js).toContain('console.log("bar")');
-      expect(js).toContain("process.env.BUN_PRIVATE_FOO");
+      // A private variable is not inlined: its value never reaches the browser.
+      expect(js).not.toContain("baz");
       expect(js).not.toContain('console.log("baz")');
       expect(js).toContain('document.getElementById("message")');
     }

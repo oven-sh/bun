@@ -1,5 +1,6 @@
 import assert from "assert";
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test("node async_hooks.AsyncLocalStorage enable disable", async done => {
   const asyncLocalStorage = new AsyncLocalStorage<Map<string, any>>();
@@ -86,4 +87,50 @@ test("AsyncResource.bind", () => {
     fn = AsyncResource.bind(() => localStorage.getStore());
   });
   expect(fn()).toBe(true);
+});
+
+// The warning of an API that is not implemented looks for known callers in its own stack.
+// BUN_FEATURE_FLAG_VERBOSE_WARNINGS turns it on.
+describe.concurrent("the warning of an API that is not implemented", () => {
+  test("is printed when Error.prepareStackTrace does not return a string", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Error.prepareStackTrace = () => undefined;
+        console.log(require("node:async_hooks").executionAsyncId());`,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_VERBOSE_WARNINGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "0\n",
+      stderr:
+        "[bun] Warning: async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It will return 0 every time.\n",
+      exitCode: 0,
+    });
+  });
+
+  // The known callers are paths with forward slashes.
+  test.skipIf(isWindows)(
+    "is not printed for a known caller when Error.prepareStackTrace hides the frames",
+    async () => {
+      using dir = tempDir("async-hooks-warning", {
+        "node_modules/zx/build/core.js": `module.exports = () => require("node:async_hooks").executionAsyncId();`,
+        "index.js": `Error.prepareStackTrace = () => "not the frames";
+        console.log(require("zx/build/core.js")());`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_VERBOSE_WARNINGS: "1" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+    },
+  );
 });

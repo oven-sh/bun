@@ -92,6 +92,13 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     }
 }
 
+/// The `--trace-exit` warning of `printExitTrace` (BunProcess.cpp). Best-effort, as Node's
+/// `fprintf(stderr, ..)` is: a closed stderr does not stop the exit.
+#[unsafe(export_name = "Bun__Process__writeExitTrace")]
+extern "C" fn write_exit_trace(warning: &bun_core::String) {
+    let _ = bun_core::output::File::stderr().write(&warning.to_utf8());
+}
+
 // ───────────────────────────── misc exports ─────────────────────────────
 
 #[unsafe(no_mangle)]

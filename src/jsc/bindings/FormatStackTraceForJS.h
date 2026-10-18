@@ -70,6 +70,15 @@ WTF::String formatStackTrace(
     WTF::Vector<JSC::StackFrame>& stackTrace,
     JSC::JSObject* errorInstance);
 
+// The JS frames of the current call stack as the default `error.stack` prints them, a newline before each, for the
+// traces Node prints from native code (--trace-exit, --trace-env-js-stack). It makes no Error, runs no JS and throws
+// nothing, so Error.prepareStackTrace and Error.stackTraceLimit have no part in it. A built-in module is
+// `node:internal/<id>`, its name in Node, where a frame of Bun has `internal:<id>`.
+// `framesToSkip` counts from the frame on top, which is the host function that asks.
+WTF::String formatCurrentStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, size_t framesToSkip, size_t frameLimit);
+// (frameLimit, framesToSkip): formatCurrentStackTrace() for a built-in module, counted from its caller.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionFormatCurrentStackTrace);
+
 // JSC Host Functions - Error constructor methods
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace);

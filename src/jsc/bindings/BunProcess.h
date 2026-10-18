@@ -67,6 +67,8 @@ public:
     // Environment's own JS, so every worker warns once itself.
     bool m_warnedProcessBinding = false;
     bool m_warnedErrname = false;
+    // --trace-exit: how many frames process.reallyExit() prints. Unset without the flag.
+    std::optional<uint32_t> m_traceExitFrameLimit;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
@@ -145,6 +147,10 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // Routes its argument onto the uncaught-exception path. Used, via $newCppFunction, by the
 // node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+
+// (frameLimit | undefined): --trace-exit. process.reallyExit() prints Node's warning and that many frames before it
+// exits, or the default number. Used, via $newCppFunction, by internal/process/pre_execution.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionEnableExitTrace);
 
 // process.cwd() as a JSString, cached on the process object until it changes.
 JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);

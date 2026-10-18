@@ -1522,7 +1522,7 @@ static bool isBeingFetchedWithoutFactory(Zig::GlobalObject* globalObject, JSC::M
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionGiveTurnsToModuleMocks);
 
-static void giveTurnsAfter(Zig::GlobalObject* globalObject, JSC::JSPromise* promise)
+__attribute__((minsize)) static void giveTurnsAfter(Zig::GlobalObject* globalObject, JSC::JSPromise* promise)
 {
     auto& vm = JSC::getVM(globalObject);
     if (!promise) {
@@ -1535,7 +1535,7 @@ static void giveTurnsAfter(Zig::GlobalObject* globalObject, JSC::JSPromise* prom
 // Finds the load each waiting mock belongs to. Once a load has fetched all it can without a factory, ranks its mocks in the order
 // their modules would be evaluated, which is the order Vitest calls the factories in. isWaitingForModule() then sees the whole graph.
 // Fetches of other loads aren't waited for, because those may never end.
-__attribute__((minsize)) static void rankWaitingModuleMocks(Zig::GlobalObject* globalObject)
+__attribute__((minsize, noinline)) static void rankWaitingModuleMocks(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto& plugins = globalObject->onLoadPlugins;
@@ -1580,8 +1580,7 @@ __attribute__((minsize)) static void rankWaitingModuleMocks(Zig::GlobalObject* g
                 imported.add(import);
         }
     }
-    loads.removeAllMatching([&](auto* key) { return imported.contains(key); });
-    std::ranges::sort(loads, [](auto* a, auto* b) { return WTF::codePointCompareLessThan(String(a), String(b)); });
+    loads.removeAllMatching([&](auto* key) { return imported.contains(key) || plugins.modulesAskedFor.contains(String(key)); });
     plugins.modulesAskedFor.removeIf([&](const String& key) {
         auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key));
         if (!entry || (entry->record() && !unfinishedRecord(entry)))
@@ -1591,26 +1590,32 @@ __attribute__((minsize)) static void rankWaitingModuleMocks(Zig::GlobalObject* g
         return false;
     });
 
-    // Loads that share a module count as one: a factory's import of a module of the load that called it, for one.
-    Vector<unsigned> mergedInto;
-    auto merged = [&](unsigned load) {
-        while (mergedInto[load] != load)
-            load = mergedInto[load];
+    // Loads that share a module are fetched together: none is ready before all are.
+    // A load that a factory started shares that factory's turn. Two import() calls of a test don't, as in Vitest.
+    Vector<size_t> fetchedWith, sharesTurnWith;
+    auto first = [](Vector<size_t>& group, size_t load) {
+        while (group[load] != load)
+            load = group[load];
         return load;
     };
-    UncheckedKeyHashMap<UniquedStringImpl*, unsigned> seen;
+    auto join = [&](Vector<size_t>& group, size_t a, size_t b) {
+        a = first(group, a);
+        b = first(group, b);
+        group[std::max(a, b)] = std::min(a, b);
+    };
+    UncheckedKeyHashMap<UniquedStringImpl*, size_t> seen;
     Vector<std::pair<JSC::CyclicModuleRecord*, size_t>> stack;
-    Vector<std::pair<size_t, unsigned>> found, holders;
+    Vector<std::pair<size_t, size_t>> found, holders;
     Vector<bool> isBeingFetched;
-    for (unsigned load = 0; load < loads.size(); ++load) {
-        mergedInto.append(load);
+    for (size_t load = 0; load < loads.size(); ++load) {
+        fetchedWith.append(load);
+        sharesTurnWith.append(load);
         isBeingFetched.append(false);
         JSC::JSPromise* fetch = nullptr;
         bool needsTime = false;
         auto enter = [&](UniquedStringImpl* key) {
             if (auto added = seen.add(key, load); !added.isNewEntry) {
-                unsigned first = merged(added.iterator->value), second = merged(load);
-                mergedInto[std::max(first, second)] = std::min(first, second);
+                join(fetchedWith, added.iterator->value, load);
                 return;
             }
             if (auto index = indexOf.find(key); index != indexOf.end()) {
@@ -1646,18 +1651,25 @@ __attribute__((minsize)) static void rankWaitingModuleMocks(Zig::GlobalObject* g
             giveTurnsAfter(globalObject, fetch);
         }
     }
-    for (unsigned load = 0; load < loads.size(); ++load) {
+    for (size_t load = 0; load < loads.size(); ++load) {
         if (isBeingFetched[load])
-            isBeingFetched[merged(load)] = true;
+            isBeingFetched[first(fetchedWith, load)] = true;
+    }
+    for (auto [holder, holderLoad] : holders) {
+        auto* running = findRunningModuleMock(globalObject, uncheckedDowncast<JSModuleMock>(plugins.moduleMocksWithTurn[holder].mock.get()));
+        for (size_t load = 0; running && load < loads.size(); ++load) {
+            if (running->importChain.contains(String(loads[load])))
+                join(sharesTurnWith, holderLoad, load);
+        }
     }
     for (auto [holder, load] : holders)
-        plugins.moduleMocksWithTurn[holder].load = String(loads[merged(load)]);
+        plugins.moduleMocksWithTurn[holder].load = String(loads[first(sharesTurnWith, load)]);
     unsigned rank = 0;
     for (auto [index, load] : found) {
-        if (isBeingFetched[merged(load)])
+        if (isBeingFetched[first(fetchedWith, load)])
             continue;
         plugins.waitingModuleMocks[index].rank = ++rank;
-        plugins.waitingModuleMocks[index].load = String(loads[merged(load)]);
+        plugins.waitingModuleMocks[index].load = String(loads[first(sharesTurnWith, load)]);
     }
 
     // Nothing unfinished imports these: import() asked for them.
@@ -1669,7 +1681,7 @@ __attribute__((minsize)) static void rankWaitingModuleMocks(Zig::GlobalObject* g
     }
 }
 
-static void giveTurns(Zig::GlobalObject* globalObject)
+__attribute__((minsize)) static void giveTurns(Zig::GlobalObject* globalObject)
 {
     auto& plugins = globalObject->onLoadPlugins;
     plugins.turnsGiven++;
@@ -1705,7 +1717,7 @@ static void giveTurns(Zig::GlobalObject* globalObject)
     }
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionGiveTurnsToModuleMocks, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionGiveTurnsToModuleMocks, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& plugins = globalObject->onLoadPlugins;
@@ -1718,7 +1730,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGiveTurnsToModuleMocks, (JSC::JSGlobalObject 
 }
 
 // From a microtask, so the mocks that the loader asks for next are waiting by then.
-static void giveTurnsSoon(Zig::GlobalObject* globalObject)
+__attribute__((minsize)) static void giveTurnsSoon(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     if (std::exchange(globalObject->onLoadPlugins.willGiveTurns, true))
@@ -1737,7 +1749,7 @@ static void returnTurn(Zig::GlobalObject* globalObject, JSModuleMock* mock)
 // The factories that one load calls run one at a time, as in Vitest, and only once the load has fetched all it can without them.
 // So what a factory imports doesn't depend on how far another factory's imports have come, or on which module was fetched first.
 // Returns null if `mock` can call its factory now, else a promise that is fulfilled when it should ask again.
-static JSC::JSPromise* waitForTurn(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+__attribute__((minsize)) static JSC::JSPromise* waitForTurn(Zig::GlobalObject* globalObject, JSModuleMock* mock)
 {
     auto& vm = JSC::getVM(globalObject);
     auto& plugins = globalObject->onLoadPlugins;
@@ -3468,7 +3480,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateModuleMockWithDependency, (JSC::JSGlo
     RELEASE_AND_RETURN(scope, JSValue::encode(evaluateModuleMock(defaultGlobalObject(globalObject), record, dependency)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateModuleMockInTurn, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionEvaluateModuleMockInTurn, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -4226,6 +4238,40 @@ String keyOfImportByPackage(Zig::GlobalObject* globalObject, const String& key, 
     return hasOriginal ? Zig::originalModuleKey(key) : key;
 }
 
+// Whether some unfinished module imports both, directly or through other modules. The factories of two loads run at the same time.
+// If a third load imports both modules, the later factory waits for the earlier one's mock, as if one load had called both.
+__attribute__((minsize)) static bool haveUnfinishedImporterInCommon(Zig::GlobalObject* globalObject, const String& earlier, const String& later)
+{
+    Zig::ModuleImporters importersOf;
+    for (auto& [mapKey, entry] : Bun::testFileModuleLoader(globalObject)->moduleMap()) {
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
+        if (!cyclic || cyclic->isSCCEvaluated())
+            continue;
+        for (auto& resolved : cyclic->resolvedRequests().values())
+            Zig::addImporter(importersOf, String(mapKey.first), String { resolved.get() });
+    }
+    auto importersAbove = [&](const String& key) {
+        UncheckedKeyHashSet<String> above;
+        Vector<String> queue { key };
+        for (size_t i = 0; i < queue.size(); ++i) {
+            auto importers = importersOf.find(queue[i]);
+            if (importers == importersOf.end())
+                continue;
+            for (auto& importer : importers->value) {
+                if (above.add(importer).isNewEntry)
+                    queue.append(importer);
+            }
+        }
+        return above;
+    };
+    auto aboveEarlier = importersAbove(earlier);
+    for (auto& importer : importersAbove(later)) {
+        if (aboveEarlier.contains(importer))
+            return true;
+    }
+    return false;
+}
+
 __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
 {
     // It imports nothing, so it waits for no mock, and only its own key is served.
@@ -4291,7 +4337,9 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
             // Once another mock has replaced it, imports from its file are no longer attributed to the factory.
             bool isFactory = importer == running.file && (!Zig::registeredModuleMock(globalObject, mocked) || Zig::isStillRegisteredModuleMock(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())));
             // The file alone can't tell which of its factories called import(). The async context can.
-            if (callers.contains(running.mock.get()))
+            if (!callers.isEmpty() && !callers.contains(running.mock.get()))
+                isFactory = isFactory && !haveUnfinishedImporterInCommon(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(callers[0])->specifier->tryGetValue().data);
+            else if (!callers.isEmpty())
                 isFactory = true;
             if (!isInChain && !isFactory && (isImporterBeingLoaded || !running.importChainWithoutQuery.contains(importer)))
                 continue;

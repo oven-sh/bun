@@ -1758,6 +1758,29 @@ test.concurrent("the factories that one import calls run one at a time, in the o
   );
 });
 
+test.concurrent("two import() calls that share a module don't wait for each other's factories", async () => {
+  await expectFixturesToPass(
+    {
+      "shared.ts": `export const shared = 1;`,
+      "a.ts": ``,
+      "b.ts": ``,
+      "uses-a.ts": `import "./shared"; export { name } from "./a";`,
+      "uses-b.ts": `import "./shared"; export { name } from "./b";`,
+      "together.test.ts": `
+        import { expect, test, vi } from "vitest";
+        const second = vi.hoisted(() => Promise.withResolvers());
+        vi.mock("./a", async () => (await second.promise, { name: "mock a" }));
+        vi.mock("./b", async () => (second.resolve(), { name: "mock b" }));
+        test("names", async () => {
+          const [a, b] = await Promise.all([import("./uses-a"), import("./uses-b")]);
+          expect([a.name, b.name]).toEqual(["mock a", "mock b"]);
+        });
+      `,
+    },
+    1,
+  );
+});
+
 test.concurrent("a factory that another factory's import calls also waits for what that import fetches", async () => {
   await expectFixturesToPass(
     {

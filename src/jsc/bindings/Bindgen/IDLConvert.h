@@ -42,7 +42,7 @@ template<> struct IDLHumanReadableName<Bindgen::IDLStrictUTF8String> : BaseIDLHu
     static constexpr auto humanReadableName = std::to_array("string");
 };
 template<> struct IDLHumanReadableName<Bindgen::IDLLooseUTF8String> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
-template<> struct IDLHumanReadableName<Bindgen::IDLRawBufferSource> : BaseIDLHumanReadableName {
+template<bool allowShared> struct IDLHumanReadableName<Bindgen::IDLRawBufferSource<allowShared>> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer or ArrayBufferView");
 };
 
@@ -146,11 +146,15 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictStringOrStringObject
     }
 };
 
-template<> struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawBufferSource> {
+template<bool allowShared>
+struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource<allowShared>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawBufferSource<allowShared>> {
     template<Bun::IDLConversionContext Ctx>
     static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&)
     {
-        if (!Bun::Bindgen::unsharedBufferSourceSpan(JSC::getVM(&globalObject), value))
+        if constexpr (allowShared) {
+            if (!value.inherits<JSC::JSArrayBufferView>() && !value.inherits<JSC::JSArrayBuffer>())
+                return std::nullopt;
+        } else if (!Bun::Bindgen::unsharedBufferSourceSpan(JSC::getVM(&globalObject), value))
             return std::nullopt;
         return value;
     }
@@ -158,7 +162,10 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource> : Bun::De
     template<Bun::IDLConversionContext Ctx>
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
-        Bun::Bindgen::throwNotUnsharedBufferSource(globalObject, scope, ctx);
+        if constexpr (allowShared)
+            ctx.throwTypeMustBe(globalObject, scope, "an ArrayBuffer or ArrayBufferView"_s);
+        else
+            Bun::Bindgen::throwNotUnsharedBufferSource(globalObject, scope, ctx);
     }
 };
 

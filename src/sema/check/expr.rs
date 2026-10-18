@@ -2078,7 +2078,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         // `GetDeclarationOfKind`: the first function declaration of a function, else the first variable declaration, has to be ambient.
-        let is_first_ambient = self.files().decls(sym).iter().find_map(|&(f, decl)| {
+        let is_first_ambient = self.files().decls_of(sym).iter().find_map(|&(f, decl)| {
             let of = self.hir(f);
             let is_ambient =
                 |flags: Flags| flags.contains(Flags::AMBIENT) || of.kind == FileKind::Declaration;
@@ -4368,14 +4368,11 @@ impl<'p, 's> Checker<'p, 's> {
         check_mode: CheckMode,
     ) -> TypeId {
         // Results computed under one mode are not valid under another.
-        let found_outside = (
-            std::mem::take(&mut self.rechecked_exprs),
-            std::mem::take(&mut self.rechecked_members),
-        );
+        let found_outside = self.set_rechecked_aside();
         let outer = self.begin_recheck();
         let ty = self.check_expression_ex(file, e, check_mode);
         self.end_recheck(outer);
-        (self.rechecked_exprs, self.rechecked_members) = found_outside;
+        self.restore_rechecked(found_outside);
         ty
     }
 

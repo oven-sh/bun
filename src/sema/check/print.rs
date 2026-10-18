@@ -263,7 +263,7 @@ impl Checker<'_, '_> {
     /// `getSpecifierForModuleSymbol` without an enclosing file: the name of the symbol without its quotes.
     pub(super) fn specifier_of_module(&self, symbol: Sym) -> Vec<u8> {
         let files = self.files();
-        let decls = files.decls(symbol);
+        let decls = files.decls_of(symbol);
         if let Some(&(file, _)) = decls.iter().find(|d| d.1 == Decl::File) {
             let file_name = displayed_path(files.module(file).file_name());
             return remove_file_extension(&file_name).to_owned();
@@ -2269,7 +2269,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         // `remappedSymbolReferences`
         self.c.get_symbol_id(symbol);
         let files = self.c.files();
-        let decls = files.decls(symbol);
+        let decls = files.decls_of(symbol);
         let name = files.symbol(symbol).name;
         let is_in_other_binding_context = |&(file, decl): &(FileId, Decl)| {
             self.enclosing_declaration.is_some_and(|at| {
@@ -3620,7 +3620,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let files = self.c.files();
         files.symbol(function).parent.is_some()
             || files
-                .decls(function)
+                .decls_of(function)
                 .into_iter()
                 .any(|(file, decl)| match decl {
                     Decl::Fn(f) => {
@@ -3674,7 +3674,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             return true;
         }
         // `ast.IsClassDeclaration(symbol.ValueDeclaration)`
-        let is_class_declaration = self.c.files().decls(symbol).iter().any(|&(file, decl)| {
+        let is_class_declaration = self.c.files().decls_of(symbol).iter().any(|&(file, decl)| {
             matches!(decl, Decl::Class(c)
                 if matches!(self.c.bound(file).class_owner[c.idx()], ClassOwner::Stmt(_)))
         });
@@ -4328,7 +4328,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     fn place_of_symbol(&self, symbol: Sym) -> Place {
         let files = self.c.files();
-        let Some((file, decl)) = files.decls(symbol).first().copied() else {
+        let Some((file, decl)) = files.decls_of(symbol).first().copied() else {
             return Place::Nowhere;
         };
         let pos = self.c.files().start_of_declaration(file, decl);

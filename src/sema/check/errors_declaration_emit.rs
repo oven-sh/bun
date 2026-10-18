@@ -1062,8 +1062,8 @@ impl<'p, 's> Checker<'p, 's> {
         self.files().flags(self.target_of_module_clone(symbol))
     }
 
-    fn decls_of(&self, symbol: Sym) -> Vec<(FileId, Decl)> {
-        self.files().decls(self.target_of_module_clone(symbol))
+    fn decls_of(&self, symbol: Sym) -> crate::util::List<'p, (FileId, Decl)> {
+        self.files().decls_of(self.target_of_module_clone(symbol))
     }
 
     fn name_of(&self, symbol: Sym) -> Atom {
@@ -2844,7 +2844,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             && let Some(equals) = files.export(files.file_symbol(file), known::export_equals)
             && files.decls_of(equals).len() > 1
         {
-            for (of, declaration) in files.decls(equals) {
+            for (of, declaration) in files.decls_of(equals) {
                 if let Some(range) = self.c.error_range_of_declaration(of, declaration) {
                     self.tracker.add_diagnostic(range, 6424, Vec::new());
                 }
@@ -3534,7 +3534,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             }
             visited.push(symbol);
             at = None;
-            for (file, decl) in files.decls(symbol) {
+            for (file, decl) in files.decls_of(symbol) {
                 self.c.emit_resolver_links.paint_visible(file, decl);
                 // `import a = b.c` makes `b` visible.
                 if let Decl::ImportEquals(i) = decl

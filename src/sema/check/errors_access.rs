@@ -750,7 +750,7 @@ impl<'p> Checker<'p, '_> {
             return None;
         }
         let first = symbol.is_some().then(|| {
-            let declarations = files.decls(files.canonical(files.sym(file, symbol)));
+            let declarations = files.decls_of(files.canonical(files.sym(file, symbol)));
             declarations.into_iter().find_map(|(file, declaration)| {
                 let hir = self.hir(file);
                 let type_params = declaration.type_params_of_class_or_interface(hir)?;
@@ -1120,14 +1120,14 @@ impl<'p> Checker<'p, '_> {
     }
 
     /// The classes enclosing `e`, innermost first.
-    pub(super) fn enclosing_classes(&self, file: FileId, e: ExprId) -> Vec<ClassId> {
+    pub(super) fn enclosing_classes(&self, file: FileId, e: ExprId) -> SmallVec<[ClassId; 4]> {
         let hir = self.hir(file);
         Self::classes_from(hir, hir.get_containing_class(hir.node(e)))
     }
 
     /// `class`, then `GetContainingClass` applied repeatedly.
-    fn classes_from(hir: &File, mut class: Node) -> Vec<ClassId> {
-        let mut classes = Vec::new();
+    fn classes_from(hir: &File, mut class: Node) -> SmallVec<[ClassId; 4]> {
+        let mut classes = SmallVec::new();
         while class.is_some() {
             classes.push(hir.class_of(class));
             class = hir.get_containing_class(class);
@@ -1137,7 +1137,7 @@ impl<'p> Checker<'p, '_> {
 
     /// The same for a direct child of `parent`. `Parent::Expr(e)` represents `e` itself: only what
     /// encloses it counts.
-    pub(super) fn classes_around(&self, file: FileId, parent: Parent) -> Vec<ClassId> {
+    pub(super) fn classes_around(&self, file: FileId, parent: Parent) -> SmallVec<[ClassId; 4]> {
         let hir = self.hir(file);
         let innermost = match parent {
             Parent::Expr(e) => hir.get_containing_class(hir.node(e)),
@@ -1251,7 +1251,11 @@ impl<'p> Checker<'p, '_> {
     }
     /// `getContainingClassExcludingClassDecorators`, then `GetContainingClass` applied repeatedly:
     /// the classes in which the private name of `e`, an `a.#b`, is resolved.
-    pub(super) fn classes_around_private_name(&self, file: FileId, e: ExprId) -> Vec<ClassId> {
+    pub(super) fn classes_around_private_name(
+        &self,
+        file: FileId,
+        e: ExprId,
+    ) -> SmallVec<[ClassId; 4]> {
         let hir = self.hir(file);
         Self::classes_from(
             hir,
@@ -1485,7 +1489,7 @@ impl<'p> Checker<'p, '_> {
             Parent::Expr(e) if e.is_some() => self.enclosing_classes(file, e),
             _ => self.classes_around(file, at),
         };
-        let enclosing: Vec<Sym> = classes
+        let enclosing: SmallVec<[Sym; 4]> = classes
             .into_iter()
             .map(|c| self.class_sym(file, c))
             .collect();

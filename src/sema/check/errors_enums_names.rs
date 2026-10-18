@@ -207,7 +207,7 @@ impl Checker<'_, '_> {
                 let start = hir[e].pos;
                 if let ScopeKind::Enum(en) = s.kind
                     && !hir[en].flags.contains(Flags::AMBIENT)
-                    && files.decls(found).first().is_some_and(|d| d.0 != file)
+                    && files.decls_of(found).first().is_some_and(|d| d.0 != file)
                 {
                     let option = super::errors_modules::isolated_modules_like_flag_name(files);
                     let (of, member) = (self.atoms().bytes(hir[en].name), self.atoms().bytes(name));
@@ -517,7 +517,7 @@ fn umd_global(files: &Files, name: Atom) -> Option<Sym> {
     let symbol = *files.globals.get(name)?;
     (files.flags(symbol).contains(SymFlags::ALIAS)
         && files
-            .decls(symbol)
+            .decls_of(symbol)
             .iter()
             .all(|d| matches!(d.1, Decl::UmdGlobal(_))))
     .then_some(symbol)

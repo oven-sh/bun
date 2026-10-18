@@ -13210,6 +13210,52 @@ export declare const twice: Args<typeof f> | Parameters<typeof f>;
       expect(exitCode).toBe(1);
     });
 
+    test("tuples that differ only in their labels have the same members and print their own labels", async () => {
+      using dir = project({
+        "a.ts": `import { other } from "./b";
+type First = [a: string, b?: number];
+type Second = [x: string, y?: number];
+type Plain = [string, number?];
+declare const first: First, second: Second, plain: Plain;
+function f(...args: First) {}
+function g(...args: Second) {}
+export const n1: never = first;
+export const n2: never = second;
+export const n3: never = plain;
+export const n4: never = other;
+export const n5: never = first.length;
+export const n6: never = second[1];
+export const n7: never = first.concat(second);
+export const n8: never = second.slice();
+export const n9: never = other.indexOf;
+export const n10: never = first[2];
+export const n11: never = f;
+export const n12: never = g;
+`,
+        "b.ts": `export declare const other: [p: string, q?: number];
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(8,14): error TS2322: Type 'First' is not assignable to type 'never'.
+        a.ts(9,14): error TS2322: Type 'Second' is not assignable to type 'never'.
+        a.ts(10,14): error TS2322: Type 'Plain' is not assignable to type 'never'.
+        a.ts(11,14): error TS2322: Type '[p: string, q?: number | undefined]' is not assignable to type 'never'.
+        a.ts(12,14): error TS2322: Type '1 | 2' is not assignable to type 'never'.
+          Type '1' is not assignable to type 'never'.
+        a.ts(13,14): error TS2322: Type 'number | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        a.ts(14,14): error TS2322: Type '(string | number | undefined)[]' is not assignable to type 'never'.
+        a.ts(15,14): error TS2322: Type '(string | number | undefined)[]' is not assignable to type 'never'.
+        a.ts(16,14): error TS2322: Type '(searchElement: string | number | undefined, fromIndex?: number | undefined) => number' is not assignable to type 'never'.
+        a.ts(17,14): error TS2322: Type 'undefined' is not assignable to type 'never'.
+        a.ts(17,33): error TS2493: Tuple type 'First' of length '2' has no element at index '2'.
+        a.ts(18,14): error TS2322: Type '(a: string, b?: number | undefined) => void' is not assignable to type 'never'.
+        a.ts(19,14): error TS2322: Type '(x: string, y?: number | undefined) => void' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("inference to `keyof T` from string literals and enum members", async () => {
       using dir = project({
         "a.ts": `enum SE { A = "a", B = "b" }

@@ -2601,7 +2601,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The type parameter list of each declaration of the class, interface or type alias `sym`.
     fn type_parameter_lists(&self, sym: Sym) -> Vec<(FileId, Span<TypeParamId>)> {
-        let declarations = self.files().decls(sym).into_iter();
+        let declarations = self.files().decls_of(sym).into_iter();
         declarations
             .filter_map(|(file, decl)| match decl {
                 crate::bind::Decl::Class(c) => Some((file, self.hir(file)[c].type_params)),
@@ -6812,7 +6812,7 @@ impl<'p, 's> Checker<'p, 's> {
             // declarations with one name the first is used.
             SigData::Construct { class, .. } | SigData::DefaultConstruct { class, .. } => self
                 .files()
-                .decls(class)
+                .decls_of(class)
                 .iter()
                 .find_map(|&(file, decl)| match decl {
                     crate::bind::Decl::Class(c) => {

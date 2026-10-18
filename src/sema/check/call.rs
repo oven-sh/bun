@@ -129,8 +129,7 @@ pub(super) struct CallState<'a> {
 /// What `push_inference_context` replaces in the checker, and `pop_inference_context` puts back.
 struct OutsideInferenceContext {
     mode_of_recheck: CheckMode,
-    rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
-    rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
+    rechecked: Rechecked,
     /// The argument for `end_recheck`.
     recheck: (usize, usize),
 }
@@ -2881,8 +2880,7 @@ impl<'p, 's> Checker<'p, 's> {
             mode_of_recheck: std::mem::replace(&mut self.mode_of_recheck, check_mode),
             // A result computed under one pushed contextual type is not valid under another, or
             // under none.
-            rechecked_exprs: std::mem::take(&mut self.rechecked_exprs),
-            rechecked_members: std::mem::take(&mut self.rechecked_members),
+            rechecked: self.set_rechecked_aside(),
             recheck: self.begin_recheck(),
         };
         (check_mode, outside)
@@ -2901,8 +2899,7 @@ impl<'p, 's> Checker<'p, 's> {
         ty: TypeId,
     ) -> TypeId {
         self.end_recheck(outside.recheck);
-        self.rechecked_exprs = outside.rechecked_exprs;
-        self.rechecked_members = outside.rechecked_members;
+        self.restore_rechecked(outside.rechecked);
         self.mode_of_recheck = outside.mode_of_recheck;
         let is_literal_of_contextual_type = self.maybe_type_of_kind(ty, tf::LITERAL) && {
             let instantiated =

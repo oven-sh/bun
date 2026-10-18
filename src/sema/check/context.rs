@@ -965,14 +965,11 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         // Results computed under what is pushed are not valid here, nor these there.
-        let found_outside = (
-            std::mem::take(&mut self.rechecked_exprs),
-            std::mem::take(&mut self.rechecked_members),
-        );
+        let found_outside = self.set_rechecked_aside();
         let outer = self.begin_recheck();
         let ty = self.check_expression_ex(file, initializer, CheckMode::empty());
         self.end_recheck(outer);
-        (self.rechecked_exprs, self.rechecked_members) = found_outside;
+        self.restore_rechecked(found_outside);
         // Of two nested visits the outer one assigns last. A visit that was refused assigns nothing.
         if ty != TypeId::UNRESOLVED {
             match self
@@ -1446,6 +1443,27 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(mut placeholder) = slot.replace(context) {
             placeholder.become_empty();
             self.spare_inferences.push(placeholder);
+        }
+    }
+
+    /// Empties `rechecked_exprs` and `rechecked_members`. Returns their contents for `restore_rechecked`.
+    pub(super) fn set_rechecked_aside(&mut self) -> Rechecked {
+        let (exprs, members) = self.spare_rechecked.pop().unwrap_or_default();
+        (
+            std::mem::replace(&mut self.rechecked_exprs, exprs),
+            std::mem::replace(&mut self.rechecked_members, members),
+        )
+    }
+
+    /// Discards `rechecked_exprs` and `rechecked_members` and puts back what `set_rechecked_aside` returned.
+    pub(super) fn restore_rechecked(&mut self, (exprs, members): Rechecked) {
+        let mut exprs = std::mem::replace(&mut self.rechecked_exprs, exprs);
+        let mut members = std::mem::replace(&mut self.rechecked_members, members);
+        // Clearing a map costs time proportional to its capacity, so large maps are dropped instead.
+        if exprs.capacity() + members.capacity() <= 1024 {
+            exprs.clear();
+            members.clear();
+            self.spare_rechecked.push((exprs, members));
         }
     }
 

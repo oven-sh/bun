@@ -305,7 +305,7 @@ impl Checker<'_, '_> {
             return false;
         };
         // `getSignaturesOfSymbol`
-        let decls = files.decls(target);
+        let decls = files.decls_of(target);
         for (i, &(file, decl)) in decls.iter().enumerate() {
             let Decl::Fn(f) = decl else {
                 continue;

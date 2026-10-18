@@ -2072,7 +2072,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn symbol_place(&self, sym: Sym) -> Option<Place> {
         let files = self.files();
         let (file, decl) = if files.flags(sym).contains(SymFlags::MERGED) {
-            files.decls(sym).first().copied()?
+            files.decls_of(sym).first().copied()?
         } else {
             (sym.file, files.symbol(sym).decls.first().copied()?)
         };

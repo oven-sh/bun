@@ -152,7 +152,7 @@ impl Checker<'_, '_> {
             let object = self.apparent_type(object);
             if let Some((prop, _)) = self.prop_ref(object, name)
                 && let PropSource::Symbol(sym) = prop.source
-                && self.files().decls(sym).len() > 1
+                && self.files().decls_of(sym).len() > 1
             {
                 return;
             }

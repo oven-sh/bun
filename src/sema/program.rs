@@ -7888,12 +7888,7 @@ impl<'s> Files<'s> {
         self.symbol(sym).flags
     }
 
-    /// Every declaration of `sym`, which is canonical.
-    pub fn decls(&self, sym: Sym) -> Vec<(FileId, Decl)> {
-        self.decls_of(sym).into_vec()
-    }
-
-    /// `decls`, cached permanently if there are several.
+    /// Returns every declaration of `sym`, which is canonical. The list is cached permanently if there are several.
     pub fn decls_of(&self, sym: Sym) -> List<'_, (FileId, Decl)> {
         let symbol = self.symbol(sym);
         if !symbol.flags.contains(SymFlags::MERGED) {

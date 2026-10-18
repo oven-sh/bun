@@ -516,6 +516,12 @@ impl crate::types::Follow for decl::Predicate {
     }
 }
 
+/// `Checker::rechecked_exprs` and `Checker::rechecked_members`.
+type Rechecked = (
+    FxHashMap<(FileId, ExprId), TypeId>,
+    FxHashMap<(FileId, PropId), TypeId>,
+);
+
 impl<'s> Program<'s> {
     /// The footprint of the shared part of every table, with the name of the field. It reads every
     /// cell: for `--timing`.
@@ -810,6 +816,7 @@ impl<'s> Program<'s> {
             type_only_node: None,
             rechecked_exprs: Default::default(),
             rechecked_members: Default::default(),
+            spare_rechecked: Vec::new(),
             literals_checked_under: Default::default(),
             inference_contexts: Vec::new(),
             inference_memo: Default::default(),
@@ -1510,6 +1517,8 @@ pub struct Checker<'p, 's> {
     /// expression, and by member of an object literal or JSX attribute.
     rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
     rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
+    /// Empty maps that `set_rechecked_aside` reuses.
+    spare_rechecked: Vec<Rechecked>,
     /// `arg_type_under`: the type of a literal argument under a parameter type.
     literals_checked_under: FxHashMap<(FileId, ExprId, TypeId, u8), TypeId>,
     /// `inferenceContextInfos`

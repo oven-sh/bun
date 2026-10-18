@@ -1713,11 +1713,15 @@ impl<'p, 's> Checker<'p, 's> {
                     let mut shape = Shape::new_in(self.arena);
                     for &(file, func) in decls.iter() {
                         let sig = c.sig_of_declaration(file, func);
-                        if c.hir(file)[func].kind == FnKind::ConstructorType {
-                            shape.construct.push(sig);
-                        } else {
-                            shape.call.push(sig);
+                        let is_constructor = c.hir(file)[func].kind == FnKind::ConstructorType;
+                        let list = match is_constructor {
+                            true => &mut shape.construct,
+                            false => &mut shape.call,
+                        };
+                        if list.is_empty() {
+                            list.reserve_exact(decls.len());
                         }
+                        list.push(sig);
                     }
                     if let [(file, func)] = decls[..] {
                         let symbol = c.bound(file).symbol_of_function(c.hir(file), func);
@@ -2701,7 +2705,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isThislessInterface`
     fn is_thisless_interface(&mut self, sym: Sym) -> bool {
-        for (file, decl) in self.files().decls(sym) {
+        for (file, decl) in self.files().decls_of(sym) {
             let Decl::Interface(i) = decl else { continue };
             let (hir, bound) = (self.hir(file), self.bound(file));
             if bound.interface_contains_this[i.idx()] {
@@ -2747,13 +2751,17 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let parameters: Vec<TypeId> = pairs.iter().map(|pair| pair.0).collect();
         let this = self.intern(TypeData::Marker(Marker::TupleThis));
+        // Labels don't change the members, so tuples that differ only in labels share one shape.
+        let flags: SmallVec<[ElemFlags; 8]> = (flags.iter())
+            .map(|flags| flags.with_label(LabeledDeclaration::NONE))
+            .collect();
         let target = self.intern_key(TypeKey::Tuple {
             elems: &parameters,
-            flags,
+            flags: &flags,
             readonly: *readonly,
         });
         let mut resolved = self.shape_memo(target, |c| {
-            c.build_tuple_shape(this, &parameters, flags, *readonly)
+            c.build_tuple_shape(this, &parameters, &flags, *readonly)
         });
         // The mapper is built from `arguments`. They are provisional unless they are the stored
         // ones.
@@ -2993,7 +3001,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.declared_members_in_progress.push(declaring);
         }
         let reads_names = is_late && self.begin_late_binding(sym, false);
-        for (file, decl) in self.files().decls(sym) {
+        for (file, decl) in self.files().decls_of(sym) {
             let Some(members) = decl.members_of_class_or_interface(self.hir(file)) else {
                 continue;
             };
@@ -3089,7 +3097,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `Loc` of each declaration of the class or interface `sym`.
     fn ranges_of_declarations(&self, sym: Sym) -> Vec<(u32, u32)> {
         let mut ranges = Vec::new();
-        for (file, decl) in self.files().decls(sym) {
+        for (file, decl) in self.files().decls_of(sym) {
             match (decl, self.files().loc_of_declaration(file, decl)) {
                 (Decl::Class(_) | Decl::Interface(_), Some(loc)) => ranges.push((loc.pos, loc.end)),
                 (Decl::Class(class), None) => ranges.push((
@@ -3145,7 +3153,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// The declaration of class `sym` that has the `extends` clause.
     fn extending_declaration(&self, sym: Sym) -> Option<(FileId, ClassId)> {
         self.files()
-            .decls(sym)
+            .decls_of(sym)
             .into_iter()
             .find_map(|(file, decl)| match decl {
                 Decl::Class(c)
@@ -3285,7 +3293,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn sigs_of_function_declarations(&mut self, sym: Sym) -> ArenaVec<'s, SigId> {
         let decls: Vec<(FileId, FnId)> = self
             .files()
-            .decls(sym)
+            .decls_of(sym)
             .into_iter()
             .filter_map(|(file, d)| match d {
                 Decl::Fn(f) => Some((file, f)),
@@ -3412,7 +3420,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         // `resolveBaseTypesOfInterface`
-        for (file, decl) in self.files().decls(sym) {
+        for (file, decl) in self.files().decls_of(sym) {
             let Decl::Interface(i) = decl else { continue };
             let hir = self.hir(file);
             let interface = &hir[i];
@@ -3469,7 +3477,7 @@ impl<'p, 's> Checker<'p, 's> {
         // regardless of which one has which base type.
         if in_cycle {
             (p.circular_base_types).insert(&self.task, sym, (), Stored::new());
-            for (file, decl) in self.files().decls(sym) {
+            for (file, decl) in self.files().decls_of(sym) {
                 let is_declaration = match decl {
                     Decl::Class(c) => matches!(
                         self.bound(file).class_owner[c.idx()],
@@ -3540,7 +3548,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Where in check order the first class or interface declaration of `sym` is, among the files
     /// that `checkSourceFile` visits before the file with the rank `before`.
     fn first_declaration_checked_before(&self, sym: Sym, before: u32) -> Option<(u32, u32)> {
-        let declarations = self.files().decls(sym).into_iter();
+        let declarations = self.files().decls_of(sym).into_iter();
         let places = declarations.filter_map(|(file, declaration)| {
             let start = declaration.name_pos_of_class_or_interface(self.hir(file))?;
             let rank = self.files().rank_of_file(file);
@@ -4068,7 +4076,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let mut has_constructor = false;
                 let mut is_abstract = false;
                 let mut outer = MapperId::IDENTITY;
-                for (file, decl) in self.files().decls(sym) {
+                for (file, decl) in self.files().decls_of(sym) {
                     let Decl::Class(c) = decl else { continue };
                     if !self.is_declaration_of_symbol(sym, file, decl) {
                         continue;
@@ -6791,7 +6799,7 @@ impl<'p, 's> Checker<'p, 's> {
         if symbol.is_none() {
             return own;
         }
-        for (f, decl) in self.files().decls(self.files().sym(file, symbol)) {
+        for (f, decl) in self.files().decls_of(self.files().sym(file, symbol)) {
             let hir = self.hir(f);
             let Some(members) = decl.members_of_class_or_interface(hir) else {
                 continue;
@@ -8137,7 +8145,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn is_const_enum_object_by_record(&self, ty: TypeId) -> bool {
         matches!(*self.data(ty), TypeData::Anon { origin: Origin::EnumObject(sym), .. }
-            if self.files().decls(sym).iter().any(|&(f, d)| matches!(d, Decl::Enum(id) if self.hir(f)[id].flags.contains(Flags::CONST))))
+            if self.files().decls_of(sym).iter().any(|&(f, d)| matches!(d, Decl::Enum(id) if self.hir(f)[id].flags.contains(Flags::CONST))))
     }
 
     /// `getPropertyOfType`

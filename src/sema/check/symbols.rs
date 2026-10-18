@@ -2646,16 +2646,13 @@ impl<'p, 's> Checker<'p, 's> {
             let loops = std::mem::take(&mut self.flow_loops);
             let cache = std::mem::take(&mut self.flow_type_cache);
             let depth = std::mem::replace(&mut self.flow_type_cache_depth, self.stack.len());
-            let found_outside = (
-                std::mem::take(&mut self.rechecked_exprs),
-                std::mem::take(&mut self.rechecked_members),
-            );
+            let found_outside = self.set_rechecked_aside();
             let mode = std::mem::replace(&mut self.mode_of_recheck, CheckMode::empty());
             let outer = self.begin_recheck();
             let ty = self.type_of_pat_uncached(file, pat);
             self.end_recheck(outer);
             self.mode_of_recheck = mode;
-            (self.rechecked_exprs, self.rechecked_members) = found_outside;
+            self.restore_rechecked(found_outside);
             self.flow_type_cache = cache;
             self.flow_type_cache_depth = depth;
             self.flow_loops = loops;

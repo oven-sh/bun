@@ -359,7 +359,8 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 // "If we have an existing early-bound member, combine its declarations so that we can report an error at each
                 // declaration."
-                let mut declarations = early_symbol(name).map_or(Vec::new(), |it| files.decls(it));
+                let mut declarations =
+                    early_symbol(name).map_or(Vec::new(), |it| files.decls_of(it).into_vec());
                 declarations.extend_from_slice(&there.declarations);
                 conflicts.push(LateBoundConflict::Refused(
                     name,
@@ -411,7 +412,10 @@ impl<'p, 's> Checker<'p, 's> {
                     && !(source_flags | flags).contains(SymFlags::ASSIGNMENT)
             };
             let not_merged = || {
-                let (early, late) = (files.decls(target), source.declarations.clone());
+                let (early, late) = (
+                    files.decls_of(target).into_vec(),
+                    source.declarations.clone(),
+                );
                 LateBoundConflict::NotMerged(early, late, target_flags | source_flags)
             };
             if is_excluded(target_flags) {
@@ -430,7 +434,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let merged = &mut late[index];
                     merged.is_late = false;
                     merged.flags |= target_flags;
-                    merged.declarations.splice(0..0, files.decls(target));
+                    merged.declarations.splice(0..0, files.decls_of(target));
                     let of_target = files.value_declaration(target);
                     let of_source = std::mem::replace(&mut merged.value_declaration, of_target);
                     if let Some(node) = of_source {

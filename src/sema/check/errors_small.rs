@@ -764,7 +764,7 @@ impl<'p> Checker<'p, '_> {
         }
         let files = self.files();
         let enum_symbol = files.sym(file, symbol);
-        let declarations = files.decls(enum_symbol);
+        let declarations = files.decls_of(enum_symbol);
         let enums = declarations.into_iter().filter_map(|(f, d)| match d {
             Decl::Enum(e) => Some((f, e)),
             _ => None,

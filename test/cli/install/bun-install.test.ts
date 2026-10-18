@@ -2138,6 +2138,37 @@ describe.concurrent("bun-install", () => {
     expect(exitCode).toBe(1);
   });
 
+  // `--analyze` installs from inside the bundler's dependency-scan callback, so the install runs
+  // before `BuildCommand::exec` would print a summary of a build that never happened. The callback
+  // returns instead of exiting the process, which leaves `main` to end the run with status 0.
+  // Not concurrent: this runs the bundler, which is slow on a debug build.
+  it("bun install --analyze installs scanned dependencies and exits 0 without a build summary", async () => {
+    await withContext(defaultOpts, async ctx => {
+      setContextHandler(ctx, dummyRegistryForContext(ctx, []));
+      await writeFile(join(ctx.package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+      await writeFile(join(ctx.package_dir, "entry.js"), `import "bar";`);
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "entry.js", "--analyze"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("installed bar@0.0.2");
+      expect(stdout).not.toContain("Bundled");
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+        name: "bar",
+        version: "0.0.2",
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   // When node_modules already exists, the hoisted installer first checks what is installed at
   // node_modules/<alias> by appending "/package.json" (or "/.bun-tag" for git dependencies) to
   // the alias inside the path buffer holding it. The alias may be up to one byte short of the

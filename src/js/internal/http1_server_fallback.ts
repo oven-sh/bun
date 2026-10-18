@@ -381,7 +381,6 @@ function connectionListenerHTTP1(server, socket, options) {
   const IncomingMessageClass: new (socket) => Http1FallbackRequest =
     http1Options.IncomingMessage || http.IncomingMessage;
   const ServerResponseClass = http1Options.ServerResponse || http.ServerResponse;
-  const keepAliveTimeout = typeof server.keepAliveTimeout === "number" ? server.keepAliveTimeout : 5000;
 
   // Node's connectionListenerInternal sets this so handlers can reach the server
   // through req.socket.server (nodejs/node#13435).
@@ -505,6 +504,8 @@ function connectionListenerHTTP1(server, socket, options) {
     // The native dispatcher seeds these from the server; renderNativeHeaders
     // reads them to decide the Keep-Alive auto-header bits, so the fallback
     // path must carry them too or keep-alive responses lose their timeout line.
+    // Read for each request, like Node's parserOnIncoming.
+    const keepAliveTimeout = typeof server.keepAliveTimeout === "number" ? server.keepAliveTimeout : 5000;
     res._keepAliveTimeout = keepAliveTimeout;
     const { maxRequestsPerSocket } = server;
     res._maxRequestsPerSocket = maxRequestsPerSocket;

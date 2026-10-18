@@ -1618,7 +1618,9 @@ describe("backpressure", () => {
           const { req, res } = await arrived.promise;
           expect(upload.sentWhileStalled).toBeLessThan(TOTAL);
           expect(req.readableLength).toBeGreaterThan(0);
-          expect(req.readableLength).toBeLessThan(TOTAL);
+          // The request's buffer, and what the socket read before it stopped too: a highWaterMark and
+          // two socket reads stay far below this.
+          expect(req.readableLength + req.socket.readableLength).toBeLessThan(TOTAL / 8);
 
           expect(await countBody(req, res)).toBe(TOTAL);
           expect(await upload.finish()).toStartWith("HTTP/1.1 200 ");
@@ -1995,6 +1997,37 @@ describe("backpressure", () => {
     describe.each(['emit("connection")', "http2 allowHTTP1"] as const)("%s", name => {
       const transport = transports[name];
 
+      // Node's parserOnIncoming reads server.keepAliveTimeout for each request.
+      it("puts the keepAliveTimeout that the server has when a request arrives in its Keep-Alive header", async () => {
+        await using server = transport.createServer((req, res) => {
+          if (req.url === "/first") (req.socket as any).server.keepAliveTimeout = 9000;
+          res.end("ok");
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+
+        const sock = await transport.connect((server.address() as AddressInfo).port);
+        try {
+          const headers = Promise.withResolvers<string[]>();
+          let received = "";
+          let sentSecond = false;
+          sock.on("data", chunk => {
+            received += chunk.toString("latin1");
+            const found = received.match(/Keep-Alive: timeout=\d+/g) ?? [];
+            // The second request leaves when the first response has arrived: it is not pipelined.
+            if (found.length === 1 && !sentSecond && received.endsWith("ok")) {
+              sentSecond = true;
+              sock.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+            }
+            if (found.length === 2) headers.resolve(found);
+          });
+          sock.on("close", () => headers.reject(new Error(`the connection closed after ${JSON.stringify(received)}`)));
+          sock.write("GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n");
+          expect(await headers.promise).toEqual(["Keep-Alive: timeout=5", "Keep-Alive: timeout=9"]);
+        } finally {
+          sock.destroy();
+        }
+      });
+
       it("closes a connection it stopped reading once the response is out and the keep-alive timeout passes", async () => {
         const events: string[] = [];
         const closed = Promise.withResolvers<void>();
@@ -2084,21 +2117,26 @@ describe("backpressure", () => {
       }
     });
 
-    // The handler restarts the stopped socket from inside its own AsyncLocalStorage store when it
-    // starts to read, and the request pipelined behind must not run in that store. A duplexPair
-    // side gets one 'data' per write of the other side, so what waits behind the stop is fixed.
-    it("does not run the next pipelined request in the async context that restarted the socket", async () => {
+    // Node's parser is an AsyncResource made when the connection is attached, so every request on
+    // the connection runs in the async context of that moment. The bytes of a request can arrive in
+    // another one: the handler restarts the stopped socket from inside its own AsyncLocalStorage
+    // store when it starts to read, and a duplexPair side that flows gets a write of the other side
+    // inside that write. A duplexPair side gets one 'data' per write of the other side, so what
+    // waits behind the stop is fixed.
+    it("runs each request in the async context of the connection, not in the one that delivered its bytes", async () => {
       const als = new AsyncLocalStorage<string>();
       const CHUNK = Buffer.alloc(16 * 1024, "b");
       const CHUNKS = 8;
       const stores: Record<string, string | undefined> = {};
       const second = Promise.withResolvers<void>();
+      const secondWritten = Promise.withResolvers<void>();
+      const third = Promise.withResolvers<void>();
       const server = http.createServer((req, res) => {
         stores[`request ${req.url}`] = als.getStore();
-        if (req.url === "/second") {
+        if (req.url !== "/first") {
           req.resume();
-          res.end("second");
-          return void second.resolve();
+          res.end(req.url);
+          return void (req.url === "/second" ? second : third).resolve();
         }
         const socket = req.socket;
         const readOnceStopped = () => {
@@ -2118,17 +2156,62 @@ describe("backpressure", () => {
       });
       const [clientSide, serverSide] = duplexPair();
       try {
-        server.emit("connection", serverSide);
+        als.run("connection", () => server.emit("connection", serverSide));
         clientSide.resume();
         clientSide.write(`POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${CHUNKS * CHUNK.length}\r\n\r\n`);
         for (let i = 0; i < CHUNKS; i++) clientSide.write(CHUNK);
-        clientSide.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
-        await second.promise;
-        expect(stores).toEqual({
-          "request /first": undefined,
-          "read of /first starts": "first",
-          "request /second": undefined,
+        clientSide.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n", () => secondWritten.resolve());
+        await Promise.all([second.promise, secondWritten.promise]);
+        // Nothing waits on either side now, so this write hands its bytes to the parser before it returns.
+        als.run("client", () => {
+          clientSide.write("GET /third HTTP/1.1\r\nHost: localhost\r\n\r\n");
+          stores["the client after its write"] = als.getStore();
         });
+        await third.promise;
+        expect(stores).toEqual({
+          "request /first": "connection",
+          "read of /first starts": "first",
+          "request /second": "connection",
+          "request /third": "connection",
+          "the client after its write": "client",
+        });
+      } finally {
+        clientSide.destroy();
+        serverSide.destroy();
+      }
+    });
+
+    // Node's connectionListenerInternal clears the mark of the pipelining read gate. An earlier HTTP
+    // connection on the same socket can leave the mark set (a CONNECT tunnel that is given to a server
+    // again), and a socket with the mark is not restarted after the body of a request stops it.
+    it("reads a body on a socket that an earlier connection left marked as held by the read gate", async () => {
+      const PIECE = Buffer.alloc(64 * 1024, "b");
+      const PIECES = 4;
+      const received = Promise.withResolvers<number>();
+      const server = http.createServer((req, res) => {
+        const socket = req.socket;
+        // The handler starts to read once the body has filled the request's buffer and stopped the socket.
+        const readOnceStopped = () => {
+          if (!socket.isPaused() || req.readableLength < req.readableHighWaterMark) return;
+          socket.removeListener("pause", readOnceStopped);
+          let total = 0;
+          req.on("data", chunk => (total += chunk.length));
+          req.on("end", () => {
+            res.end("ok");
+            received.resolve(total);
+          });
+        };
+        socket.on("pause", readOnceStopped);
+        readOnceStopped();
+      });
+      const [clientSide, serverSide] = duplexPair();
+      try {
+        (serverSide as typeof serverSide & { _paused: boolean })._paused = true;
+        server.emit("connection", serverSide);
+        clientSide.resume();
+        clientSide.write(`POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${PIECES * PIECE.length}\r\n\r\n`);
+        for (let i = 0; i < PIECES; i++) clientSide.write(PIECE);
+        expect(await received.promise).toBe(PIECES * PIECE.length);
       } finally {
         clientSide.destroy();
         serverSide.destroy();

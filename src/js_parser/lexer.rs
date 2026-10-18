@@ -1920,16 +1920,27 @@ impl<'a> Lexer<'a> {
         {
             return;
         }
-        self.react_hooks_suppressed_until = if is_block {
-            REACT_HOOKS_SUPPRESSED_TO_END
-        } else {
-            let contents = self.contents;
-            let line_end = |from: usize| {
-                strings::index_of_char_usize(&contents[from..], b'\n').map(|i| from + i)
-            };
-            let next_line_end = line_end(self.end).and_then(|end| line_end(end + 1));
-            bun_ast::usize2loc(next_line_end.unwrap_or(contents.len()))
-        };
+        if is_block {
+            self.react_hooks_suppressed_until = REACT_HOOKS_SUPPRESSED_TO_END;
+            return;
+        }
+        let file_end = bun_ast::usize2loc(self.contents.len());
+        // No later comment reaches further, and a file of one line is not searched once per comment.
+        if self.react_hooks_suppressed_until == file_end {
+            return;
+        }
+        let rest = &self.contents[self.end..];
+        let next_line_end = strings::find_js_line_break(rest).and_then(|(at, len)| {
+            let next_line = at + len;
+            Some(next_line + strings::find_js_line_break(&rest[next_line..])?.0)
+        });
+        self.react_hooks_suppressed_until =
+            next_line_end.map_or(file_end, |end| bun_ast::usize2loc(self.end + end));
+    }
+
+    /// Upstream counts a bare `eslint-disable` for a react-hooks rule for every function of the file.
+    pub(crate) fn has_react_hooks_block_suppression(&self) -> bool {
+        self.react_hooks_suppressed_until == REACT_HOOKS_SUPPRESSED_TO_END
     }
 
     fn scan_comment_text(&mut self, for_pragma: bool) {

@@ -3917,8 +3917,8 @@ describe("bundler", () => {
 
   // A react-hooks eslint suppression counts for each function that the
   // comment is inside of, and for a function that starts on the line that the
-  // comment is for. A bare `eslint-disable` counts for every function that
-  // closes after it.
+  // comment is for. A bare `eslint-disable` counts for every function of the
+  // file.
   //
   // The parser gave the suppression to the first function that closed into
   // top-level code, whatever the place of the comment. The parser knows
@@ -3937,6 +3937,7 @@ describe("bundler", () => {
             AfterALaterComment,
             ArrowAfterALaterComment,
           } from "./block-form";
+          import { AfterALineThatEndsInCR, AfterALineThatEndsInU2028 } from "./line-breaks";
           import {
             GenericArrow,
             AfterGenericArrow,
@@ -4214,6 +4215,8 @@ describe("bundler", () => {
             AfterTheBlockForm,
             AfterALaterComment,
             ArrowAfterALaterComment,
+            AfterALineThatEndsInCR,
+            AfterALineThatEndsInU2028,
             GenericArrow,
             AfterGenericArrow,
             ArrowWithAReturnType,
@@ -4227,7 +4230,6 @@ describe("bundler", () => {
             console.log(name + ": " + render(form, { label: "a" }).cacheHooks + " cache hooks in a render");
           }
         `,
-        // Upstream counts a bare "eslint-disable" for every function of the file.
         "/block-form.jsx": /* jsx */ `
           import { useState } from "react";
 
@@ -4250,15 +4252,35 @@ describe("bundler", () => {
           // A later comment for one line does not end the block form.
           // eslint-disable-next-line react-hooks/rules-of-hooks
           const [initial] = useState("a");
-          export function AfterALaterComment({ label = initial }) {
+          export function AfterALaterComment({ label }) {
             const style = { color: label };
             return <button style={style}>{label}</button>;
           }
-          export const ArrowAfterALaterComment = ({ label = initial }) => {
+          export const ArrowAfterALaterComment = ({ label }) => {
             const style = { color: label };
             return <button style={style}>{label}</button>;
           };
         `,
+        // The comment is for the line after it, and a line can end in another way than "\n".
+        "/line-breaks.jsx":
+          [
+            `import { useState } from "react";`,
+            `// eslint-disable-next-line react-hooks/rules-of-hooks`,
+            `const [first] = useState("a");`,
+            `export function AfterALineThatEndsInCR({ label }) {`,
+            `  const style = { color: label };`,
+            `  return <button style={style}>{label}</button>;`,
+            `}`,
+          ].join("\r") +
+          [
+            ``,
+            `// eslint-disable-next-line react-hooks/rules-of-hooks`,
+            `const [second] = useState("b");`,
+            `export function AfterALineThatEndsInU2028({ label }) {`,
+            `  const style = { color: label };`,
+            `  return <button style={style}>{label}</button>;`,
+            `}`,
+          ].join("\u2028"),
         // The parser takes a different path to each of these arrows.
         "/typescript.tsx": /* tsx */ `
           export const GenericArrow = <T,>({
@@ -4343,11 +4365,13 @@ describe("bundler", () => {
           AfterAClassStaticBlockWithTheComment: 1 cache hooks in a render
           TwoLinesBelowTheComment: 1 cache hooks in a render
           ExpressionBodyRightAboveTheComment: 0 cache hooks in a render
-          AboveTheBlockForm: 1 cache hooks in a render
+          AboveTheBlockForm: 0 cache hooks in a render
           BlockFormInTheParameterList: 0 cache hooks in a render
           AfterTheBlockForm: 0 cache hooks in a render
           AfterALaterComment: 0 cache hooks in a render
           ArrowAfterALaterComment: 0 cache hooks in a render
+          AfterALineThatEndsInCR: 1 cache hooks in a render
+          AfterALineThatEndsInU2028: 1 cache hooks in a render
           GenericArrow: 0 cache hooks in a render
           AfterGenericArrow: 1 cache hooks in a render
           ArrowWithAReturnType: 0 cache hooks in a render

@@ -742,16 +742,20 @@ impl<S: RuleSet> Linter<S> {
             (options.js_plugins, &config.js_settings, options.again)
             && !running_js.is_empty()
         {
-            // What a rule that does not run would have reported cannot be told.
-            running_js.retain(|it| {
-                let has_asked = host.has_asked_for_types(&it.configured.rule);
-                if has_asked {
-                    rules_to_ignore.push(RuleId::Js(Arc::clone(&it.configured.rule)));
-                }
-                !has_asked
-            });
+            let wants_types = host.wants_types_of(file);
             // Once more for each rule that asks for types.
-            while !running_js.is_empty() {
+            loop {
+                // What a rule that does not run would have reported cannot be told. Another thread may know since.
+                running_js.retain(|it| {
+                    let has_asked = host.has_asked_for_types(&it.configured.rule, wants_types);
+                    if has_asked {
+                        rules_to_ignore.push(RuleId::Js(Arc::clone(&it.configured.rule)));
+                    }
+                    !has_asked
+                });
+                if running_js.is_empty() {
+                    break;
+                }
                 let enabled: Vec<&js_plugin::Configured> =
                     running_js.iter().map(|it| &**it.configured).collect();
                 match host.run_on_block(
@@ -772,7 +776,7 @@ impl<S: RuleSet> Linter<S> {
                     }
                     Err(failure) => {
                         let asks = |it: &RunningJs| {
-                            host.asks_for_types(&it.configured.rule, &failure.message)
+                            host.asks_for_types(&it.configured.rule, &failure.message, wants_types)
                         };
                         let at = failure.rule.map(|it| it as usize);
                         if let Some(at) = at.filter(|it| running_js.get(*it).is_some_and(asks)) {

@@ -347,8 +347,18 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeVisitorKeys, (JSGlobalObject*, EncodedJ
     return JSValue::encode(host->nodes.visitorKeys(globalObject, host, host->nodes.kindFor(host->isEspree(), host->isOxlint(), host->shortensNodes())));
 }
 
+// `parserServices.program` of a file that wants types, which a rule in JavaScript does not get: what `getParserServices` of
+// `@typescript-eslint/utils` throws, so that the rule is taken out. See `asks_for_types` in src/lint/js_plugin/host.rs.
+JSC_DEFINE_CUSTOM_GETTER(jsLintProgramOfFileWithTypes, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    throwException(globalObject, scope, createError(globalObject, "You have used a rule which requires type information, but rules that run in JavaScript cannot use type information. The file is configured for types, and bun lint gives them to the built-in rules only."_s));
+    return {};
+}
+
 // What typescript-eslint's parser gives without type information. Rules take the maps for a sign of TypeScript. There are no
-// nodes of TypeScript's own tree to put in them. oxlint has none for any file.
+// nodes of TypeScript's own tree to put in them. oxlint has none for any file. On a file that wants types `program` throws.
 JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeParserServices, (JSGlobalObject*, EncodedJSValue holder, PropertyName))
 {
     JSGlobalObject* globalObject = LintHost::realmOfHolder(holder);
@@ -370,14 +380,15 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeParserServices, (JSGlobalObject*, Encod
     else {
         JSValue options = callHook(globalObject, state.parserOptions);
         RETURN_IF_EXCEPTION(scope, {});
-        services = constructEmptyObject(vm, state.servicesStructure.get());
+        bool wantsTypes = host->wantsTypes();
+        services = constructEmptyObject(vm, wantsTypes ? state.servicesWithTypesStructure.get() : state.servicesStructure.get());
         PropertyOffset offset = 0;
         for (auto* name : { &state.emitDecoratorMetadata, &state.experimentalDecorators, &state.isolatedDeclarations }) {
             JSValue option = options.get(globalObject, *name);
             RETURN_IF_EXCEPTION(scope, {});
             services->putDirectOffset(vm, offset++, jsBoolean(option.isTrue()));
         }
-        services->putDirectOffset(vm, offset++, jsNull());
+        services->putDirectOffset(vm, offset++, wantsTypes ? JSValue(state.programOfFileWithTypes.get()) : jsNull());
         services->putDirectOffset(vm, offset++, JSWeakMap::create(vm, globalObject->weakMapStructure()));
         services->putDirectOffset(vm, offset++, JSWeakMap::create(vm, globalObject->weakMapStructure()));
     }
@@ -1461,7 +1472,21 @@ __attribute__((minsize)) void LintSourceCodeState::finishCreation(VM& vm, JSGlob
     directiveStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "type"_s, "node"_s, "value"_s, "justification"_s })));
     directivesStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "problems"_s, "directives"_s })));
     commentsStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "leading"_s, "trailing"_s })));
-    servicesStructure.set(vm, host, LintHost::createShape(vm, globalObject, globalObject->objectPrototype(), std::to_array<ASCIILiteral>({ "emitDecoratorMetadata"_s, "experimentalDecorators"_s, "isolatedDeclarations"_s, "program"_s, "esTreeNodeToTSNodeMap"_s, "tsNodeToESTreeNodeMap"_s })));
+    auto servicesKeys = std::to_array<ASCIILiteral>({ "emitDecoratorMetadata"_s, "experimentalDecorators"_s, "isolatedDeclarations"_s, "program"_s, "esTreeNodeToTSNodeMap"_s, "tsNodeToESTreeNodeMap"_s });
+    constexpr size_t programOffset = 3;
+    servicesStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, servicesKeys));
+    // The same keys, with `program` a property that throws when it is read: made like a plugin would, and its Structure taken.
+    programOfFileWithTypes.set(vm, host, CustomGetterSetter::create(vm, jsLintProgramOfFileWithTypes, nullptr));
+    JSFinalObject* like = JSFinalObject::create(vm, JSFinalObject::createStructure(vm, globalObject, objectPrototype, servicesKeys.size()));
+    for (size_t i = 0; i < servicesKeys.size(); ++i) {
+        Identifier key = Identifier::fromString(vm, servicesKeys[i]);
+        if (i == programOffset)
+            like->putDirectCustomAccessor(vm, key, programOfFileWithTypes.get(), static_cast<unsigned>(PropertyAttribute::CustomValue));
+        else
+            like->putDirect(vm, key, jsUndefined());
+        RELEASE_ASSERT(like->structure()->get(vm, key) == static_cast<PropertyOffset>(i));
+    }
+    servicesWithTypesStructure.set(vm, host, like->structure());
 }
 
 void LintSourceCodeState::setTree(VM& vm, LintHost* host, JSArray* nodesOfFile, std::span<const uint32_t> startsOfNodes, std::span<const uint32_t> endsOfNodes, std::span<const uint32_t> parentsOfNodes)

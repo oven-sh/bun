@@ -1853,6 +1853,104 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // As `eslint-plugin-svelte` and `eslint-plugin-unicorn` do it: a rule that reads `parserServices.program` and does less
+  // when it is null runs in JavaScript without types. On a file whose configuration asks for types that would report what
+  // ESLint does not, so the read throws what `getParserServices` throws and the rule is taken out of that file only. A rule
+  // that throws that itself when `program` is null, as `getParserServices` does, asks on every file and is taken out of all.
+  test(
+    "a rule that reads parserServices.program is taken out of the files that want types, and runs on the others",
+    async () => {
+      const files = {
+        "bunfig.toml": "[lint]\nnativePluginRules = false\n",
+        "eslint.config.mjs": `
+          const whenNoProgram = program => context => ({ Program(node) { if (!program(context)) context.report({ node, message: "no program" }); } });
+          const typed = {
+            rules: {
+              "at-once": { create: context => { const { program } = context.sourceCode.parserServices; return whenNoProgram(() => program)(context); } },
+              later: { create: whenNoProgram(context => context.parserServices.program) },
+              keys: { create: context => ({ Program(node) { context.report({ node, message: Object.keys(context.sourceCode.parserServices).join() }); } }) },
+              strict: { create: context => {
+                if (context.sourceCode.parserServices.program == null) throw new Error("You have used a rule which requires type information, but don't have parserOptions set to generate type information for this file.");
+                return whenNoProgram(() => true)(context);
+              } },
+            },
+          };
+          export default [
+            { files: ["**/*.ts"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
+            { files: ["src/**/*.ts"], languageOptions: { parserOptions: { projectService: true } } },
+            { plugins: { typed }, rules: { "typed/at-once": "error", "typed/later": "error", "typed/keys": "error", "typed/strict": "error" } },
+          ];`,
+        "src/a.ts": "export const a = 1;\n",
+        "b.ts": "export const b = 1;\n",
+      };
+      const withTypes = await lint(files, ["-f", "unix", "src/a.ts", "b.ts"]);
+      expect(withTypes.stdout).toMatchInlineSnapshot(`
+        "<dir>/b.ts:1:1: no program [Error/typed/at-once]
+        <dir>/b.ts:1:1: no program [Error/typed/later]
+        <dir>/b.ts:1:1: emitDecoratorMetadata,experimentalDecorators,isolatedDeclarations,program,esTreeNodeToTSNodeMap,tsNodeToESTreeNodeMap [Error/typed/keys]
+        <dir>/src/a.ts:1:1: emitDecoratorMetadata,experimentalDecorators,isolatedDeclarations,program,esTreeNodeToTSNodeMap,tsNodeToESTreeNodeMap [Error/typed/keys]
+
+        4 problems"
+      `);
+      expect(withTypes.stderr).toContain(
+        "1 rule did not run because rules that run in JavaScript cannot use type information: typed/strict",
+      );
+      expect(withTypes.stderr).toContain(
+        "2 rules did not run on the files that are configured for types because rules that run in JavaScript cannot use type information: typed/at-once, typed/later",
+      );
+      expect(withTypes.stderr).not.toContain("You have used a rule");
+      // Only for a rule of typescript-eslint, which the built-in rules stand in for.
+      expect(withTypes.stderr).not.toContain("--native-plugin-rules");
+      expect(withTypes.exitCode).toBe(2);
+
+      // `--no-type-aware` skips the rules that need types: `program` is null on every file. `--type-aware` alone makes no
+      // project: ESLint has no program either, so the rule runs where the configuration asks for none.
+      const [withoutTypes, typeAware] = await Promise.all([
+        lint(files, ["-f", "unix", "--no-type-aware", "src/a.ts", "b.ts"]),
+        lint(files, ["-f", "unix", "--type-aware", "src/a.ts", "b.ts"]),
+      ]);
+      expect(withoutTypes.stdout).toMatchInlineSnapshot(`
+        "<dir>/b.ts:1:1: no program [Error/typed/at-once]
+        <dir>/b.ts:1:1: no program [Error/typed/later]
+        <dir>/b.ts:1:1: emitDecoratorMetadata,experimentalDecorators,isolatedDeclarations,program,esTreeNodeToTSNodeMap,tsNodeToESTreeNodeMap [Error/typed/keys]
+        <dir>/src/a.ts:1:1: no program [Error/typed/at-once]
+        <dir>/src/a.ts:1:1: no program [Error/typed/later]
+        <dir>/src/a.ts:1:1: emitDecoratorMetadata,experimentalDecorators,isolatedDeclarations,program,esTreeNodeToTSNodeMap,tsNodeToESTreeNodeMap [Error/typed/keys]
+
+        6 problems"
+      `);
+      expect(withoutTypes.stderr).toContain(
+        "1 rule did not run because rules that run in JavaScript cannot use type information: typed/strict",
+      );
+      expect(withoutTypes.stderr).not.toContain("configured for types");
+      expect(withoutTypes.exitCode).toBe(2);
+      expect(typeAware.stdout).toBe(withTypes.stdout);
+      expect(typeAware.stderr).toBe(withTypes.stderr);
+      expect(typeAware.exitCode).toBe(2);
+    },
+    timeout,
+  );
+
+  test(
+    "the hint to run the built-in rules of typescript-eslint comes only when one of them is taken out",
+    async () => {
+      const asks = `{ create: context => { if (context.sourceCode.parserServices.program == null) throw new Error("You have used a rule which requires type information"); return {}; } }`;
+      const files = {
+        "bunfig.toml": "[lint]\nnativePluginRules = false\n",
+        "eslint.config.mjs": `
+        const plugin = { rules: { "no-floating-promises": ${asks} } };
+        export default [{ plugins: { "@typescript-eslint": plugin, other: plugin }, rules: { "@typescript-eslint/no-floating-promises": "error", "other/no-floating-promises": "error" } }];`,
+        "a.js": "a;\n",
+      };
+      const { stderr, exitCode } = await lint(files, ["-f", "unix", "a.js"]);
+      expect(stderr).toContain(
+        "2 rules did not run because rules that run in JavaScript cannot use type information: @typescript-eslint/no-floating-promises, other/no-floating-promises\n  Use --native-plugin-rules=@typescript-eslint to run the built-in versions.",
+      );
+      expect(exitCode).toBe(2);
+    },
+    timeout,
+  );
+
   // As `eslint-plugin-import` does it to read the modules that a file imports.
   test.each(["parser", "* as parser"])(
     "a rule parses a text of its own with languageOptions.parser, which is loaded when it is called: import %s",

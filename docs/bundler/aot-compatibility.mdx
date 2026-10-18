@@ -1,0 +1,384 @@
+---
+title: "Compatibility with --aot"
+description: "What works as it does in Bun, what differs on purpose, and what is not available in an executable built with --aot"
+---
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+An executable built with [`--aot`](/bundler/aot) runs the same language and the same APIs as Bun. This page lists what differs. [Ahead-of-time compilation](/bundler/executables#ahead-of-time-compilation) in the reference has every detail.
+
+## What works the same
+
+- npm packages, with or without types
+- ES modules, CommonJS, `require()`, `import()` of a string literal, top-level `await`
+- every `node:` and `bun:` module
+- [Workers](#workers) and [native addons](#native-addons)
+- [`eval` and `new Function`](#code-from-strings), in the interpreter
+- proxies, getters and setters, generators, symbols, `Reflect`, private members, `delete`, BigInt, regular expressions
+
+```ts language.ts icon="/icons/typescript.svg"
+const seen: string[] = [];
+const proxy = new Proxy({ a: 1 } as Record<string, number>, {
+  get(target, key) {
+    seen.push(String(key));
+    return Reflect.get(target, key);
+  },
+});
+
+function* count(): Generator<number> {
+  yield 1;
+  yield 2;
+}
+
+class Temperature {
+  #celsius = 20;
+  get fahrenheit(): number {
+    return this.#celsius * 1.8 + 32;
+  }
+}
+
+const bag: Record<string, unknown> = { keep: 1, drop: 2 };
+delete bag.drop;
+
+console.log(proxy.a, seen, [...count()], new Temperature().fahrenheit, Object.keys(bag));
+console.log(await Promise.all([1, Promise.resolve(2)]), /(?<year>\d{4})/.exec("in 2026")?.groups?.year, 2n ** 64n);
+```
+
+```bash terminal icon="terminal"
+bun compile ./language.ts && ./language
+```
+
+```txt
+1 [ "a" ] [ 1, 2 ] 68 [ "keep" ]
+[ 1, 2 ] 2026 18446744073709551616n
+```
+
+## What differs on purpose
+
+| Area                                                       | Without `--aot`                        | With `--aot`                                                             |
+| ---------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------ |
+| [Type errors](/bundler/aot#type-errors-stop-the-build)     | `bun build` ignores them               | They stop the build                                                      |
+| [`any`, `as` and typed code](/bundler/aot-types#where-untyped-values-meet-typed-code) | Types are gone when the program runs   | An `any` is checked where it reaches a type, and `as number` converts    |
+| [Built-in objects](#built-in-objects-are-immutable)        | Can be changed                         | Are immutable                                                            |
+| [Seven prototypes that Bun defines](#request-response-and-five-more) | Can be changed               | Are immutable. Subclasses work                                           |
+| [Arrays](#an-array-type-means-an-ordinary-array)           | An element can be a getter             | Reading such an element through an array type throws                     |
+| [Code from strings](#code-from-strings)                    | The JIT compiles it                    | Bun interprets it                                                        |
+| WebAssembly                                                | The JIT compiles it                    | Bun interprets it. A tight loop runs about 20 times slower               |
+| [Modules named at run time](#modules-named-at-run-time)    | Loaded from disk                       | Loaded from disk and interpreted, unless you pass them as entry points   |
+| [Some error messages](#error-messages)                     | `null is not an object`                | `Cannot read properties of null`                                         |
+| [Sloppy-mode code](#sloppy-mode-code)                      | `with`, `f.caller`                     | `with` stops the build, `f.caller` is `null`                             |
+| Objects per thread                                         | Limited by memory                      | 32 GB, or no limit with `--aot-huge-heap`                                |
+
+## What is not available
+
+| Feature                                        | What you see                                                                        | Instead                                              |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `--target` for another platform                | `error: --aot: ahead-of-time compilation makes machine code for the platform it runs on and cannot target another` | Run the build on the target platform, or pass `--no-aot` |
+| [Macros](/bundler/macros)                      | `error: --aot does not support macros`                                              | Generate the value in a build script                 |
+| `JSCallback` from `bun:ffi`                    | `TypeError: bun:ffi requires the JIT`, when the program runs                        | `dlopen` and calls into native code work             |
+| Breakpoints, stepping, `debugger` statements   | A breakpoint never binds                                                            | `bun --inspect-brk ./app.ts`, from your sources      |
+| `Bun.build` with `aot: true`, called by the executable | `TypeError: compile.aot is not available in an executable that was itself compiled with --aot` | Run the build script with `bun`                      |
+| `--bytecode-depth`, `--bytecode-order`         | An error from `bun build`                                                           | Nothing. The executable has no bytecode              |
+
+## Built-in objects are immutable
+
+The compiler turns `array.push(x)` into a few instructions without first checking whether somebody has replaced `push`. So nobody can.
+
+```ts builtins.ts icon="/icons/typescript.svg"
+function attempt(change: () => unknown): void {
+  try {
+    console.log(change());
+  } catch (error) {
+    console.log(String(error));
+  }
+}
+
+attempt(() => ((Array.prototype as any).last = 1));
+attempt(() => ((Math as any).random = () => 4));
+attempt(() => delete (String.prototype as any).trim);
+attempt(() => Reflect.set(Math, "random", () => 4));
+attempt(() => ((Date as any).tomorrow = 1));
+attempt(() => ((console as any).debug = 1));
+```
+
+```bash terminal icon="terminal"
+bun compile ./builtins.ts && ./builtins
+```
+
+```txt
+TypeError: Cannot change 'last' of Array.prototype: built-ins are locked in a program compiled with --aot (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+TypeError: Cannot change 'random' of Math: built-ins are locked in a program compiled with --aot (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+TypeError: Cannot delete 'trim' of String.prototype: built-ins are locked in a program compiled with --aot (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+false
+1
+1
+```
+
+| Throws a `TypeError`                                                     | Works                                                              |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| Replacing, redefining or deleting a property of a built-in object        | Adding a property to a constructor or a namespace: `Date.tomorrow` |
+| Adding a property to a built-in prototype                                | Changing `Error.prototype` and the prototypes that inherit from it |
+| Changing the prototype of a built-in object                              | Changing what Bun defines: `console`, `process`, `fetch`, `setTimeout` |
+| Replacing a global that names a built-in: `globalThis.Promise = ...`     | The `Reflect` functions, which return `false`                      |
+
+A few packages change built-ins, mostly to support old browsers. [Packages that change built-in objects](/bundler/aot-adoption#packages-that-change-built-in-objects) lists them, with what to use instead. The lint rule [`bun/aot-locked-builtin-write`](/lint/rules/bun/aot-locked-builtin-write) finds such writes in your own code.
+
+### Request, Response and five more
+
+The prototypes of `Request`, `Response`, `Headers`, `Blob`, `URL` and `URLSearchParams` are immutable too. So is the prototype of the requests that the `routes` of `Bun.serve` receive. `File.prototype` is the same object as `Blob.prototype`.
+
+Use a subclass. It has a prototype of its own.
+
+```ts response.ts icon="/icons/typescript.svg"
+try {
+  (Response.prototype as any).text = async () => "patched";
+} catch (error) {
+  console.log(String(error));
+}
+
+class Upper extends Response {
+  async upper(): Promise<string> {
+    return (await this.text()).toUpperCase();
+  }
+}
+
+console.log(await new Upper("hello").upper());
+```
+
+```bash terminal icon="terminal"
+bun compile ./response.ts && ./response
+```
+
+```txt
+TypeError: Cannot change 'text' of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+HELLO
+```
+
+A subclass can also override a method that `Response` has. `@types/bun` declares those methods as properties, so TypeScript reports `TS2425` for the override, and `TS2855` for a call of `super.text()`. Either error stops the build. Put a `// @ts-expect-error` comment above the line.
+
+These also work as they do without `--aot`:
+
+- a property on one instance: `Object.defineProperty(response, "url", { value })`
+- replacing a static function: `URL.createObjectURL = stub`
+- replacing the global: `globalThis.Response = Upper`
+
+## An array type means an ordinary array
+
+```ts getter.ts icon="/icons/typescript.svg"
+const list: number[] = [1, 2, 3];
+Object.defineProperty(list, 1, { get: () => 20 });
+console.log(list[1]);
+```
+
+```bash terminal icon="terminal"
+bun compile ./getter.ts && ./getter
+```
+
+```txt
+TypeError: Cannot read array element: the array or its prototype chain has accessors or a Proxy, which are not run for an array of a declared element type (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+      at /$bunfs/root/getter.ts:3:13
+```
+
+`bun getter.ts` prints `20`. `a[i]`, `for...of` and destructuring are affected. Methods such as `map` and `join`, and the spread syntax, still call the getter.
+
+## Code from strings
+
+`eval`, `new Function` and `node:vm` work. The build can't see their code, and the executable has no JIT, so Bun interprets it.
+
+```ts strings.ts icon="/icons/typescript.svg"
+const add = new Function("a", "b", "return a + b");
+const local = 5;
+console.log(add(2, 3), eval("local * 2"), (0, eval)("typeof Bun"));
+```
+
+```bash terminal icon="terminal"
+bun compile ./strings.ts && ./strings
+```
+
+```txt
+5 10 object
+```
+
+That's fine for a template or a configuration file. It matters when a library generates its hot code that way: zod 4, ajv, fast-json-stringify and Elysia do. `--aot-deny=interpreted` fails the build wherever your program or a dependency turns a string into code.
+
+```bash terminal icon="terminal"
+bun compile ./strings.ts --aot-deny=interpreted
+```
+
+```txt
+error: TS100025: 'Function' evaluates source text when the program runs. An --aot executable has no JIT, so that code runs in the interpreter. [interpreted]
+    at /path/to/strings.ts:1:17
+```
+
+If your program needs none of it, [`--disallow-code-generation-from-strings`](/bundler/executables#refusing-eval-and-new-function) turns it off in the executable, as the flag of the same name does in Node.js.
+
+```bash terminal icon="terminal"
+bun compile --disallow-code-generation-from-strings ./strings.ts && ./strings
+```
+
+```txt
+EvalError: Code generation from strings disallowed for this context
+      at /$bunfs/root/strings.ts:1:17
+```
+
+## Modules named at run time
+
+`bun compile` compiles what the entry point reaches through string literals. It can't follow a name that your program puts together when it runs.
+
+```ts app.ts icon="/icons/typescript.svg"
+const wanted = process.argv[2] ?? "csv";
+const plugin = await import("./plugins/" + wanted + ".ts");
+console.log(plugin.name);
+```
+
+```ts plugins/csv.ts icon="/icons/typescript.svg"
+export const name: string = "csv";
+```
+
+```ts plugins/json.ts icon="/icons/typescript.svg"
+export const name: string = "json";
+```
+
+On your machine the executable finds `plugins/csv.ts` on disk, and Bun interprets it. Nothing tells you. Remove the folder to see what happens on a machine without your sources.
+
+```bash terminal icon="terminal"
+bun compile ./app.ts && rm -r plugins && ./app
+```
+
+```txt
+error: Cannot find module './plugins/csv.ts' from '/$bunfs/root/app'
+```
+
+Pass the files as additional entry points. An entry point can be a glob pattern. The executable then holds their compiled code, and finds it by the path each file had when you built.
+
+```bash terminal icon="terminal"
+bun compile ./app.ts './plugins/*.ts' --outfile app && rm -r plugins && ./app json
+```
+
+```txt
+json
+```
+
+The same goes for `require()` with a computed name. [Frameworks that load your pages by path](/bundler/aot-adoption#frameworks-that-load-your-pages-by-path) has the commands for Next.js and Angular.
+
+## Workers
+
+Pass the worker as an additional entry point, as for [any executable](/bundler/executables#worker). It's compiled with the rest.
+
+```ts worker.ts icon="/icons/typescript.svg"
+declare var self: Worker;
+self.onmessage = event => self.postMessage(event.data * 2);
+```
+
+```ts spawn.ts icon="/icons/typescript.svg"
+const worker = new Worker("./worker.ts");
+worker.onmessage = event => {
+  console.log(event.data);
+  worker.terminate();
+};
+worker.postMessage(21);
+```
+
+```bash terminal icon="terminal"
+bun compile ./spawn.ts ./worker.ts --outfile spawn && rm worker.ts && ./spawn
+```
+
+```txt
+42
+```
+
+Bun interprets a Worker that you create from a blob URL.
+
+## Native addons
+
+`require("./addon.node")` embeds the addon in the executable, as [without `--aot`](/bundler/executables#embed-n-api-addons). Calls into it work the same.
+
+## `Function.prototype.toString()`
+
+The executable keeps the text of your functions, with the types removed, and `toString()` returns it. `--no-compile-function-source` leaves the text out. The executable is smaller and doesn't contain your code as text.
+
+```ts text.ts icon="/icons/typescript.svg"
+function add(a: number, b: number): number {
+  return a + b;
+}
+console.log(String(add), add.name, add.length);
+```
+
+```bash terminal icon="terminal"
+bun compile --no-compile-function-source ./text.ts && ./text
+```
+
+```txt
+function add() { [native code] } add 2
+```
+
+## Error messages
+
+```ts messages.ts icon="/icons/typescript.svg"
+const o: any = { a: null };
+try {
+  o.a.c;
+} catch (error) {
+  console.log(String(error));
+}
+try {
+  o.b();
+} catch (error) {
+  console.log(String(error));
+}
+```
+
+```bash terminal icon="terminal"
+bun messages.ts
+```
+
+```txt
+TypeError: null is not an object (evaluating 'o.a.c')
+TypeError: o.b is not a function. (In 'o.b()', 'o.b' is undefined)
+```
+
+```bash terminal icon="terminal"
+bun compile ./messages.ts && ./messages
+```
+
+```txt
+TypeError: Cannot read properties of null (reading 'c')
+TypeError: b is not a function, it is undefined
+```
+
+A service that groups errors by message, such as Sentry, sees new groups.
+
+## Sloppy-mode code
+
+These concern CommonJS files without `"use strict"`. ES modules and TypeScript files with `import` or `export` are always strict.
+
+| You write                                             | With `--aot`                                              |
+| ----------------------------------------------------- | --------------------------------------------------------- |
+| `with (options) { ... }`                              | The build stops: ``--aot doesn't support a `with` statement`` |
+| `eval("var made = 1")` inside a function              | A `SyntaxError` when that line runs. `let` and `const` in the text are fine |
+| `f.caller`, `f.arguments`                             | `null`                                                    |
+
+## Debugging and profiling
+
+Stack traces have the files, lines and columns of your sources, with no source map.
+
+| Tool                                                       | With `--aot`                                                   |
+| ---------------------------------------------------------- | -------------------------------------------------------------- |
+| Stack traces, `Error.captureStackTrace`, `console.trace`   | Work                                                           |
+| `BUN_OPTIONS="--cpu-prof" ./app`                           | Writes a `.cpuprofile` that names your functions               |
+| `BUN_OPTIONS="--heap-prof" ./app`                          | Writes a heap profile                                          |
+| `BUN_INSPECT="ws://127.0.0.1:6499/app" ./app`              | Starts the inspector. The console and evaluation work          |
+| Breakpoints, stepping, `debugger` statements               | Don't work                                                    |
+
+See [Debugging and profiling with `--aot`](/bundler/aot-debugging).
+
+## Platforms
+
+`--aot` compiles for arm64 and x64, on the platform that runs the build.
+
+| Platform                              | State                              |
+| ------------------------------------- | ---------------------------------- |
+| Linux x64 and arm64, glibc and musl   | Tested in Bun's CI                 |
+| macOS arm64                           | Tested in Bun's CI                 |
+| Windows x64 and arm64                 | Tested in Bun's CI                 |
+| macOS x64, FreeBSD, Android           | Builds. Not tested yet             |

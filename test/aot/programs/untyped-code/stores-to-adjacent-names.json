@@ -1,4 +1,7 @@
 {
+  "buildEnv": {
+    "BUN_JSC_aotHotByTextForTesting": "4"
+  },
   "env": {
     "JSC_useAOTOperationCounters": "1"
   }

@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
 import { slot } from "../aot/run-programs";
 import { test } from "../aot/supported";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -59,8 +59,9 @@ test("harmless names of node:module and node:worker_threads do not bring every b
     expect({ entry, stdout, ranWith }).toEqual({ entry, stdout: "run\n", ranWith: 0 });
     sizes[entry] = statSync(outfile).size;
   })));
+  const everyModule = Math.min(...Object.keys(withADoor).map(entry => sizes[entry])) - sizes[plain];
   for (const entry of Object.keys(withoutADoor)) {
-    expect({ entry, grows: sizes[entry] - sizes[plain] > (isASAN ? 6 : 2) * 1024 * 1024 }).toEqual({ entry, grows: false });
+    expect({ entry, grows: sizes[entry] - sizes[plain] > everyModule / 2 }).toEqual({ entry, grows: false });
   }
 }, 240_000);
 

@@ -1,0 +1,5 @@
+{
+  "buildEnv": {
+    "BUN_JSC_aotHotByTextForTesting": "0"
+  }
+}

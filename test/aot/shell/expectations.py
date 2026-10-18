@@ -7,6 +7,8 @@ lines; this script reads them and checks them with the `jsc` shell, without buil
     JSC=<jsc> SEMA=<bun-sema> test/aot/shell/expectations.py [-j <jobs>] <program>... | all
 
 See quick.py for how to build the two tools and how a program is named. PROGRAMS and WORK mean the same as there.
+A program is compiled as most of a large program is: no function is among the hottest (JSC_aotHotByTextForTesting=4), unless the variable is set
+or "buildEnv" in <program>.json says otherwise ("BUN_JSC_aotHotByTextForTesting": "0": as a user's build compiles it).
 SEMA may also be a canary or debug build of Bun, which is its own front end: `bun check --aot --aot-out=<file>`.
 
 Checked against JavaScriptCore's optimized IR (`dump.js -- <IR> optimized`), on every platform:
@@ -45,7 +47,7 @@ Prints `ok <program>: <n> expectations` for a program that meets them all, one l
 for every expectation that is not met, then a summary line. Exits with 1 if anything failed. known-failures.txt lists the expectations that are known to fail today: they are reported but
 do not fail the run, while a listed one that passes again does, so that the list only shrinks. --write-known rewrites the list.
 """
-import concurrent.futures, os, platform, re, struct, subprocess, sys, tempfile
+import concurrent.futures, json, os, platform, re, struct, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROGRAMS = os.path.realpath(os.environ.get('PROGRAMS', HERE + '/../programs'))
@@ -80,8 +82,10 @@ def everything():
     return sorted(names)
 
 
-def run(*command):
-    return subprocess.run(command, capture_output=True, text=True, errors='replace', timeout=300)
+def environment_of(name):
+    beside = '%s/%s.json' % (PROGRAMS, name)
+    asked = json.load(open(beside)).get('buildEnv', {}) if os.path.isfile(beside) else {}
+    return {'JSC_aotHotByTextForTesting': '4', **{key[len('BUN_'):] if key.startswith('BUN_JSC_') else key: value for key, value in asked.items()}, **os.environ}
 
 
 def bodies(ir, wanted):
@@ -181,6 +185,8 @@ def one(name):
     # Two were written for BSD's grep, whose end of a word is spelled so.
     lines = [(kind, rest.replace('[[:>:]]', r'\b').replace('[[:<:]]', r'\b')) for kind, rest in LINE.findall(text)]
     room = '%s/%s' % (WORK, name.replace('/', '.'))
+    env = environment_of(name)
+    run = lambda *command: subprocess.run(command, capture_output=True, text=True, errors='replace', timeout=300, env=env)
     options = []
     config = os.path.dirname(path) + '/tsconfig.json'
     if path.count('/') > PROGRAMS.count('/') + 2 and os.path.isfile(config):

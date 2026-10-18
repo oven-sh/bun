@@ -410,6 +410,15 @@ pub(crate) mod js_bundler {
             if let Some(trim_runtime) =
                 object.get_own(global_this, &BunString::static_("trimRuntime"))?
             {
+                use crate::cli::arguments::{LEFT_OUT_BY_TRIMMING, option_of_exec_argv_left_out_by_trimming};
+                let left_out = option_of_exec_argv_left_out_by_trimming(&this.exec_argv.list);
+                if let Some(option) = left_out.filter(|_| trim_runtime.to_boolean()) {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "{} {}",
+                        bstr::BStr::new(&option),
+                        LEFT_OUT_BY_TRIMMING
+                    )));
+                }
                 bun_standalone_graph::StandaloneModuleGraph::set_trims_runtime(
                     trim_runtime.to_boolean(),
                 );

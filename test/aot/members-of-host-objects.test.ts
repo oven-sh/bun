@@ -51,6 +51,28 @@ test("every function that Bun, console, the global object, performance and proce
   }
 });
 
+// The first argument of these constructors is the type of the event, which sits in a native slot.
+test("the listed classes of events are all that the global object has, and each takes its type first", () => {
+  const found = Object.getOwnPropertyNames(globalThis).filter(name => {
+    const value = (globalThis as any)[name];
+    return typeof value === "function" && (value === Event || value.prototype instanceof Event);
+  });
+  expect(found.sort()).toEqual(membersOf("classes-of-events"));
+  expect(found.map(name => new (globalThis as any)[name]("mine", {}).type)).toEqual(found.map(() => "mine"));
+});
+
+// What is dispatched there without the program's asking: a listener for one of these types always counts.
+test("native code dispatches on the global object only in a worker: message, messageerror, error", () => {
+  const bindings = join(import.meta.dir, "../../src/jsc/bindings");
+  const places = [...new Bun.Glob("**/*.{cpp,h}").scanSync(bindings)]
+    .flatMap(file => readFileSync(join(bindings, file), "utf8").split("\n").filter(line => /globalEventScope(->|\.)dispatchEvent|eventTarget\(\)\.dispatchEvent/.test(line)).map(line => file + ": " + line.trim()))
+    .sort();
+  expect(places).toEqual([
+    "webcore/Worker.cpp: globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));",
+    "webcore/WorkerMessagingProxy.cpp: globalObject.globalEventScope->dispatchEvent(event);",
+  ]);
+});
+
 // A free name in this list is taken for what the runtime made.
 test("every listed member of the global object is one", () => {
   expect(membersOf("global").filter(name => !Object.hasOwn(globalThis, name))).toEqual([]);

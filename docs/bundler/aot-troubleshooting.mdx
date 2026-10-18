@@ -1,0 +1,247 @@
+---
+title: "Troubleshooting --aot"
+description: "The errors and surprises you are most likely to meet when you first compile a program with --aot: the message, the cause and the fix"
+---
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+## When you build
+
+### The build stops at a type error
+
+```ts port.ts icon="/icons/typescript.svg"
+const port: number = "3000";
+console.log(port);
+```
+
+```bash terminal icon="terminal"
+bun compile ./port.ts
+```
+
+```txt
+error: TS2322: Type 'string' is not assignable to type 'number'.
+    at /path/to/port.ts:1:7
+```
+
+`bun run` and `bun build` remove your types and never check them, so a project can carry type errors for years. With `--aot` the compiler depends on the types, and a type error stops the build.
+
+Run [`bun check`](/runtime/check) and fix what it reports. For an error that you can't fix now, put `// @ts-expect-error` above the line. The build accepts it, as `tsc` does.
+
+### Could not find a declaration file for module
+
+```txt
+error: TS7016: Could not find a declaration file for module 'no-types'. '/path/to/node_modules/no-types/index.js' implicitly has an 'any' type.
+  Try `bun add -d @types/no-types` if it exists or add a new declaration (.d.ts) file containing `declare module 'no-types';`
+```
+
+The package is JavaScript and ships no types. It's a type error like any other, so it stops the build. Do what the message says.
+
+### Cannot find name 'console'
+
+```txt
+warn: TS2584: Cannot find name 'console'. Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'.
+
+note: Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: bun add -d @types/bun
+```
+
+This one is a warning. The build goes on, and the compiler treats each name that Bun provides as `any`. Install the declarations, and those names have types.
+
+```bash terminal icon="terminal"
+bun add -d @types/bun
+```
+
+### A package has type errors: it is compiled untyped
+
+```txt
+warn: TS100009: 'typed-pkg' has 2 type errors, the first at /path/to/node_modules/typed-pkg/index.ts:2:9: it is compiled untyped. [untyped-file]
+
+2 |   const n: number = text;
+            ^
+note: TS2322: Type 'string' is not assignable to type 'number'.
+```
+
+A dependency ships TypeScript sources, and they don't pass the type checker in your project. The build doesn't stop. It compiles that package like JavaScript, which behaves the same and runs slower.
+
+The warning shows the first error only. `bun check` lists all of them.
+
+```bash terminal icon="terminal"
+bun check --all --no-pretty ./app.ts
+```
+
+Common causes:
+
+- A `declare module` in your project, or in another package, changes the interfaces of the package.
+- `@types/bun` and the DOM or Node.js types disagree about a name such as `ReadableStream` or `Event`.
+- The package has a `"bun"` export condition. The bundler takes it and the type checker doesn't. Add `"customConditions": ["bun"]` to `compilerOptions`.
+- The package relies on a declaration file of its own that nothing imports. Name that file under `"files"` in your `tsconfig.json`.
+
+### Ahead-of-time compilation cannot target another platform
+
+```txt
+error: --aot: ahead-of-time compilation makes machine code for the platform it runs on and cannot target another. Run this build on the target platform, with that platform's Bun
+note: bun compile --no-aot builds an executable that is not compiled ahead of time
+```
+
+Drop `--target` and run the build where the executable runs: in CI on a runner of that platform, or in a container. Or pass `--no-aot`, and the executable holds JavaScript for the JIT.
+
+### --aot does not apply to a package.json script
+
+```txt
+error: --aot does not apply to a package.json script (dev). Add it to the command inside the script, or run a file.
+```
+
+`bun run --aot` takes a file. Put the flag in the script.
+
+```json title="package.json" icon="file-json"
+{
+  "scripts": {
+    "dev": "bun server.ts" // [!code --]
+    "dev": "bun --aot server.ts" // [!code ++]
+  }
+}
+```
+
+### --aot does not support macros, or a `with` statement
+
+The build names the file and the line. [What is not available](/bundler/aot-compatibility#what-is-not-available) lists what to use instead.
+
+### Nothing can be left out of this Bun
+
+```txt
+--compile-trim-runtime: nothing can be left out of this Bun: NoIslands
+```
+
+[`--compile-trim-runtime`](/bundler/aot-size) needs a `bun` that was linked for it. A `bun` that you built yourself may not be.
+
+## When the program runs
+
+### TypeError: expected number, got string
+
+```ts visits.ts icon="/icons/typescript.svg"
+function double(n: number): number {
+  return n * 2;
+}
+
+const body: any = JSON.parse('{"visits":"3"}');
+console.log(double(body.visits));
+```
+
+```bash terminal icon="terminal"
+bun compile ./visits.ts && ./visits
+```
+
+```txt
+TypeError: expected number | undefined, got string "3" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+      at /$bunfs/root/visits.ts:6:20
+```
+
+An `any` holds a value that doesn't match the declared type it reaches. The `(bun --aot: ...)` at the end marks a `TypeError` that only `--aot` throws. [An `any` that reaches a declared type](/bundler/aot-types#an-any-that-reaches-a-declared-type) explains the rule.
+
+The stack trace points at the place where the value meets the type. Fix it where the value enters your program: narrow it with `typeof`, or convert it with `Number()`.
+
+The `any` isn't always in sight. Here it is the result of a callback.
+
+```ts show.ts icon="/icons/typescript.svg"
+function render(value: number, format: (value: any) => string): string {
+  return format(value);
+}
+
+const identity = (value: any) => value;
+console.log(render(2, identity));
+```
+
+```bash terminal icon="terminal"
+bun compile ./show.ts && ./show
+```
+
+```txt
+TypeError: expected string, got number 2 (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+      at /$bunfs/root/show.ts:2:10
+```
+
+To find all of them before your users do:
+
+| Command                                                   | Finds                                                        |
+| --------------------------------------------------------- | ------------------------------------------------------------ |
+| `bun check --aot --aot-explain=throws ./app.ts`           | every check that can fail, from your source                  |
+| `bun test --aot-audit`                                    | the checks that fail with the data of your tests             |
+| `bun compile --aot-type-errors=log ./app.ts` | the checks that fail in production. It logs, and keeps going where it can |
+
+[Adopting `--aot`](/bundler/aot-adoption) walks through them in that order.
+
+### A value is different after `as`
+
+`as number`, `as string` and `as boolean` convert under `--aot`. Without it they do nothing. If `query.page` is `"2"`, then `(query.page as number) + 1` is `3` in the executable and `"21"` in `bun run`.
+
+Write the conversion out: `Number(query.page)`. See [`as` converts between primitives](/bundler/aot-types#as-converts-between-primitives). `bun --aot-audit` reports each such cast as `would-convert`.
+
+### Cannot change 'last' of Array.prototype: built-ins are locked
+
+```txt
+TypeError: Cannot change 'last' of Array.prototype: built-ins are locked in a program compiled with --aot (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+```
+
+Your program or a dependency changes a built-in object. The message names the object and the property, and the stack trace leads to the line.
+
+- In your own code, use a function or a subclass. See [Built-in objects are immutable](/bundler/aot-compatibility#built-in-objects-are-immutable).
+- In a dependency, look it up in [Packages that change built-in objects](/bundler/aot-adoption#packages-that-change-built-in-objects). `core-js`, `sass`, `@colors/colors`, `chai.should()` and the fake timers of `sinon` are there.
+
+### Cannot find module, on another machine
+
+```txt
+error: Cannot find module './plugins/csv.ts' from '/$bunfs/root/app'
+```
+
+Your program loads a module by a name that it puts together when it runs. On your machine the file is on disk. On the server it isn't. Pass such files to `bun compile` as additional entry points. See [Modules named at run time](/bundler/aot-compatibility#modules-named-at-run-time).
+
+### bun:ffi requires the JIT
+
+`JSCallback` isn't available. `dlopen` and calls into native code work.
+
+### Breakpoints never bind
+
+The inspector connects, and its console works. Breakpoints, stepping and `debugger` statements don't. Debug from your sources with `bun --inspect-brk ./app.ts`. To see whether a bug only shows under the rules of `--aot`, compare with `bun run --aot ./app.ts`.
+
+### My error tracker shows new groups
+
+Two common messages have other words: `Cannot read properties of null (reading 'c')` and `b is not a function, it is undefined`. See [Error messages](/bundler/aot-compatibility#error-messages).
+
+## When the numbers disappoint
+
+### The executable is slower than `bun run`
+
+Startup and memory improve for every server in [What to expect](/bundler/aot#what-to-expect). Requests per second don't. Look for these, in this order.
+
+**Most of the hot code is untyped JavaScript.** A build with `--aot-explain` says how much of the program each JavaScript package is.
+
+```txt
+  1. app.ts:1:1 [untyped-package]
+     'tiny-label' is JavaScript, so it is compiled without types: 1 file, 38.9% of the program's source text.
+     cost: 2 reads by name in 1 function
+     fix: use a version of the package that ships TypeScript sources, or add a typed version of it
+```
+
+[Typed versions of packages](/bundler/executables#typed-versions-of-packages) give a package its types back.
+
+**A library generates code when the program runs.** Bun interprets that code. `--aot-deny=interpreted` names every place. If the library has a mode without generated code, measure both: `z.config({ jitless: true })` makes `parse` in zod 4 about 2.5 times cheaper.
+
+**The program runs WebAssembly.** The executable has no JIT, so Bun interprets WebAssembly. A tight loop runs about 20 times slower.
+
+**Files are loaded from disk.** Bun interprets what the executable loads by a computed path. Next.js and Angular load your pages that way. See [Frameworks that load your pages by path](/bundler/aot-adoption#frameworks-that-load-your-pages-by-path).
+
+**One line takes the types away from many.** An `any` that reaches a declared type, or a `JSON.parse` that is cast to one, costs every access through that type. `--aot-explain` prints the most expensive lines first. See [See what the compiler did](/bundler/aot-reports).
+
+### The executable is larger than with `--compile`
+
+It holds the same copy of Bun, plus the machine code of your program.
+
+- [`--compile-trim-runtime`](/bundler/aot-size) leaves out the parts of Bun that your program can't reach.
+- `--no-compile-function-source` leaves out the text of your functions. `toString()` on a function then returns `[native code]`.
+
+### A trimmed executable is still large
+
+The compiler has found a place that could name any part of Bun, so it keeps all of them. `--aot-explain=runtime-use` prints the reason and the file in its first lines. See [Why a program keeps everything](/bundler/aot-size#why-a-program-keeps-everything).
+
+## Report a bug
+
+A program that passes `bun check --aot` and behaves differently from `bun run` in a way that these pages don't describe has found a bug in Bun. So has a crash, or exit code `70` from a trimmed executable. [Open an issue](https://github.com/oven-sh/bun/issues) with the smallest program that shows it.

@@ -27,8 +27,10 @@ const inExecutablesOnly: Record<string, string> = {
   "hands-module-on.cjs": `console.log(Object.keys(module).length > 0 ? "run" : "");`,
 };
 
+const withEveryModule = "requires-a-computed-name.cjs";
+
 test("tests of module.parent and module.hot do not bring every built-in module into the executable", async () => {
-  const all = { ...programs, ...inExecutablesOnly };
+  const all = { ...programs, ...inExecutablesOnly, [withEveryModule]: `console.log(typeof require(["node:zlib"][0]).gzipSync === "function" ? "run" : "");` };
   using dir = tempDir("builtin-modules-of-a-small-program", all);
   const sizes: Record<string, number> = {};
   await Promise.all(Object.keys(all).map(entry => slot(async () => {
@@ -41,8 +43,9 @@ test("tests of module.parent and module.hot do not bring every built-in module i
     expect({ entry, stdout, ranWith }).toEqual({ entry, stdout: "run\n", ranWith: 0 });
     sizes[entry] = statSync(outfile).size;
   })));
-  for (const entry of Object.keys(all)) {
-    expect({ entry, grows: sizes[entry] - sizes["plain.cjs"] > 64 * 1024 }).toEqual({ entry, grows: false });
+  const everyModule = sizes[withEveryModule] - sizes["plain.cjs"];
+  for (const entry of Object.keys(all).filter(entry => entry !== withEveryModule)) {
+    expect({ entry, grows: sizes[entry] - sizes["plain.cjs"] > everyModule / 2 }).toEqual({ entry, grows: false });
   }
 }, 120_000);
 

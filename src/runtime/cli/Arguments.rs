@@ -643,6 +643,51 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
 const BUILD_PARAMS: &[ParamType] =
     concat_params!(BUILD_ONLY_PARAMS, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
+pub(crate) const COMPILE_ONLY_PARAMS: &[ParamType] = &[
+    parse_param!(
+        "--library                        Build a package to publish instead of an executable: JavaScript, .d.ts files and a package.json, in --outdir (default: \"dist\")"
+    ),
+    parse_param!(
+        "--no-aot                         Keep the JavaScript in the executable instead of compiling it to machine code ahead of time"
+    ),
+    parse_param!(
+        "--trim                           Leave the parts of Bun that the program cannot reach out of the executable. Same as --compile-trim-runtime"
+    ),
+    parse_param!("--no-trim                        Keep all of Bun in the executable (default)"),
+    parse_param!(
+        "--no-script                      Run this command even if package.json has a \"compile\" script"
+    ),
+];
+const COMPILE_PARAMS: &[ParamType] = concat_params!(COMPILE_ONLY_PARAMS, BUILD_PARAMS);
+
+const BUILD_PARAMS_IN_COMPILE_HELP: [&[u8]; 18] = [
+    b"outfile",
+    b"outdir",
+    b"target",
+    b"define",
+    b"env",
+    b"asset",
+    b"external",
+    b"minify",
+    b"sourcemap",
+    b"tsconfig-override",
+    b"compile-exec-argv",
+    b"disallow-code-generation-from-strings",
+    b"aot-explain",
+    b"aot-type-errors",
+    b"aot-deny",
+    b"aot-warn",
+    b"aot-allow",
+    b"aot-huge-heap",
+];
+
+pub(crate) fn params_in_compile_help() -> Vec<ParamType> {
+    let of_build = BUILD_PARAMS_IN_COMPILE_HELP
+        .iter()
+        .filter_map(|name| BUILD_PARAMS.iter().find(|param| param.names.long == Some(*name)));
+    COMPILE_ONLY_PARAMS.iter().chain(of_build).copied().collect()
+}
+
 // TODO: update test completions
 pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
@@ -767,6 +812,7 @@ const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
 pub(crate) static AUTO_TABLE: &clap::ConvertedTable = clap::comptime_table!(AUTO_PARAMS);
 pub(crate) static RUN_TABLE: &clap::ConvertedTable = clap::comptime_table!(RUN_PARAMS, cold);
 pub(crate) static BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(BUILD_PARAMS, cold);
+static COMPILE_TABLE: &clap::ConvertedTable = clap::comptime_table!(COMPILE_PARAMS, cold);
 pub(crate) static TEST_TABLE: &clap::ConvertedTable = clap::comptime_table!(TEST_PARAMS, cold);
 static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
     clap::comptime_table!(BASE_RUNTIME_TRANSPILER_PARAMS, cold);
@@ -780,6 +826,7 @@ fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
         CommandTag::AutoCommand => AUTO_TABLE,
         CommandTag::RunCommand | CommandTag::RunAsNodeCommand => RUN_TABLE,
         CommandTag::BuildCommand => BUILD_TABLE,
+        CommandTag::CompileCommand => COMPILE_TABLE,
         CommandTag::TestCommand => TEST_TABLE,
         CommandTag::BunxCommand => RUN_TABLE,
         _ => BASE_RUNTIME_TRANSPILER_TABLE,
@@ -865,6 +912,43 @@ pub(crate) fn is_option_of_a_compiled_executable(name: &[u8]) -> bool {
     }
 }
 
+pub(crate) const LEFT_OUT_BY_TRIMMING: &str =
+    "cannot be used with an executable built with --compile-trim-runtime: the part of Bun that it needs is left out";
+
+#[cold]
+pub(crate) fn refuse_option_left_out_by_trimming(option: &[u8]) -> ! {
+    Output::err_generic("{}", format_args!("{} {}", BStr::new(option), LEFT_OUT_BY_TRIMMING));
+    Global::exit(1);
+}
+
+pub(crate) fn is_trimmed_executable() -> bool {
+    unsafe extern "C" {
+        safe fn Bun__hasTypeChecker() -> bool;
+    }
+    !Bun__hasTypeChecker()
+}
+
+#[cold]
+pub(crate) fn option_left_out_by_trimming(options: &[&[u8]]) -> Option<Vec<u8>> {
+    const LEFT_OUT: [&[u8]; 4] = [b"help", b"aot", b"aot-audit", b"sql-preconnect"];
+    if let Some(option) = options.iter().find(|option| bun_core::is_bootstrap_flag(option)) {
+        return strings::split(option, b"=").next().map(<[u8]>::to_vec);
+    }
+    let given = clap::names_given(AUTO_PARAMS, options, NODE_SHORT_ALIASES);
+    let names = given.iter().find(|names| names.long.is_some_and(|long| LEFT_OUT.contains(&long)))?;
+    let long = [&b"--"[..], names.long?].concat();
+    let is_written_out = options.iter().any(|option| *option == long.as_slice());
+    Some(names.short.filter(|_| !is_written_out).map_or(long, |short| vec![b'-', short]))
+}
+
+#[cold]
+pub(crate) fn option_of_exec_argv_left_out_by_trimming(compile_exec_argv: &[u8]) -> Option<Vec<u8>> {
+    let mut arguments: Vec<Box<bun_core::ZStr>> = vec![bun_core::ZStr::boxed(b"")];
+    bun_core::append_options_env(compile_exec_argv, &mut arguments);
+    let options: Vec<&[u8]> = arguments[1..].iter().map(|argument| argument.as_bytes()).map(|option| option.strip_suffix(b"\0").unwrap_or(option)).collect();
+    option_left_out_by_trimming(&options)
+}
+
 /// `--disallow-code-generation-from-strings[=<value>]`. Raises the process's level; never lowers it.
 fn disallow_code_generation_from_strings(value: &[u8]) {
     match bun_core::CodeGenerationFromStrings::from_flag_value(value) {
@@ -925,7 +1009,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         Err(err) => {
             // Report useful error and exit
             let _ = diag.report(Output::error_writer(), err);
-            command::tag_print_help(cmd, false);
+            if !is_trimmed_executable() {
+                command::tag_print_help(cmd, false);
+            }
             Global::exit(1);
         }
     };
@@ -935,6 +1021,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         Output::flush();
         Global::exit(0);
     }
+
+    let is_compile_command = cmd == CommandTag::CompileCommand;
+    let cmd = if is_compile_command { CommandTag::BuildCommand } else { cmd };
 
     if cmd == CommandTag::AutoCommand {
         if args.flag(b"--version") {
@@ -1692,7 +1781,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     ctx.bundler_options.ignore_dce_annotations = args.flag(b"--ignore-dce-annotations");
 
     if cmd == CommandTag::BuildCommand {
-        parse_build_command_options(cmd, &args, &mut opts, ctx, &mut diag);
+        parse_build_command_options(cmd, is_compile_command, &args, &mut opts, ctx, &mut diag);
     }
 
     if opts.entry_points.is_empty() {
@@ -1701,7 +1790,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         match cmd {
             CommandTag::BuildCommand => {
                 if !entry_points.is_empty()
-                    && (&*entry_points[0] == b"build" || &*entry_points[0] == b"bun")
+                    && (&*entry_points[0] == b"build"
+                        || &*entry_points[0] == b"bun"
+                        || (is_compile_command && &*entry_points[0] == b"compile"))
                 {
                     let mut out_entry = &entry_points[1..];
                     for (i, entry) in entry_points.iter().enumerate() {
@@ -1802,6 +1893,17 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 development: false,
                 side_effects: jsx_side_effects,
             });
+        }
+    }
+
+    if is_compile_command && opts.entry_points.is_empty() && !ctx.bundler_options.bake {
+        let found = cli::compile_command::find_entry_point_or_exit(
+            ctx.args.absolute_working_dir.as_deref().unwrap_or_default(),
+            ctx.bundler_options.library.then_some(&ctx.bundler_options.outdir[..]),
+        );
+        opts.entry_points = vec![found.path];
+        if ctx.bundler_options.outfile.is_empty() && !ctx.bundler_options.library {
+            ctx.bundler_options.outfile = found.executable_name;
         }
     }
 
@@ -2205,6 +2307,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
 #[inline(never)]
 fn parse_build_command_options(
     cmd: CommandTag,
+    is_compile_command: bool,
     args: &clap::Args<clap::Help>,
     opts: &mut api::TransformOptions,
     ctx: Context<'_>,
@@ -2212,8 +2315,42 @@ fn parse_build_command_options(
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.check = args.flag(b"--check");
-    ctx.bundler_options.dts = args.flag(b"--dts");
-    ctx.bundler_options.aot = args.flag(b"--aot");
+    let library = is_compile_command && args.flag(b"--library");
+    if library {
+        let refused = [
+            ("--compile", args.flag(b"--compile")),
+            ("--aot", args.flag(b"--aot")),
+            ("--trim", args.flag(b"--trim")),
+            ("--compile-trim-runtime", args.flag(b"--compile-trim-runtime")),
+        ];
+        if let Some((flag, _)) = refused.iter().find(|flag| flag.1) {
+            Output::err_generic("--library cannot be used with {}", format_args!("{}", flag));
+            Global::exit(1);
+        }
+        if args.option(b"--outfile").is_some() {
+            Output::err_generic("--library writes a folder. Use --outdir instead of --outfile", ());
+            Global::exit(1);
+        }
+        if args.option(b"--format").is_some_and(|format| format != b"esm") {
+            Output::err_generic("--library only supports --format=esm", ());
+            Global::exit(1);
+        }
+        ctx.bundler_options.outdir = cli::compile_command::DEFAULT_LIBRARY_OUTDIR.into();
+        ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAllWithoutInlining;
+        opts.target = Some(api::Target::Node);
+    }
+    ctx.bundler_options.library = library;
+    ctx.bundler_options.dts = library || args.flag(b"--dts");
+    let compiles = (is_compile_command && !library) || args.flag(b"--compile");
+    let is_aot_default = is_compile_command
+        && !library
+        && !args.flag(b"--no-aot")
+        && (args.option(b"--target")).is_none_or(|target| target == b"bun" || target.starts_with(b"bun-"));
+    if is_compile_command && args.flag(b"--aot") && args.flag(b"--no-aot") {
+        Output::err_generic("Cannot use both --aot and --no-aot", ());
+        Global::crash();
+    }
+    ctx.bundler_options.aot = is_aot_default || args.flag(b"--aot");
     ctx.bundler_options.aot_explain = slice_to_owned(args.options(b"--aot-explain"));
     if let Some(word) = ctx.bundler_options.aot_explain.iter().find(|word| !bun_aot::Explain::default().set(word)) {
         Output::err_generic("--aot-explain does not take \"{}\": it is one of {}", (BStr::new(word), bun_aot::Explain::REPORTS.join(", ")));
@@ -2368,7 +2505,7 @@ fn parse_build_command_options(
     if let Some(target) = args.option(b"--target") {
         'brk: {
             if cmd == CommandTag::BuildCommand {
-                if args.flag(b"--compile") {
+                if compiles {
                     if target.len() > 4 && strings::has_prefix(target, b"bun-") {
                         ctx.bundler_options.compile_target =
                             cli::Cli::CompileTarget::from(&target[3..]);
@@ -2385,7 +2522,7 @@ fn parse_build_command_options(
                 }
             }
 
-            opts.target = Some(opts.target.unwrap_or_else(|| match target {
+            opts.target = Some(opts.target.filter(|_| !library).unwrap_or_else(|| match target {
                 b"browser" => api::Target::Browser,
                 b"node" => api::Target::Node,
                 b"macro" => {
@@ -2455,7 +2592,7 @@ fn parse_build_command_options(
         }
     }
 
-    if args.flag(b"--compile") {
+    if compiles {
         ctx.bundler_options.compile = true;
         ctx.bundler_options.inline_entrypoint_import_meta_main = true;
     }
@@ -2689,6 +2826,9 @@ fn parse_build_command_options(
     if ctx.bundler_options.aot {
         if let Some(why) = crate::cli::aot::unsupported_reason(&ctx.bundler_options.compile_target) {
             Output::err_generic("--aot: {}", format_args!("{}", why));
+            if is_compile_command {
+                bun_core::note!("<b>bun compile --no-aot<r> builds an executable that is not compiled ahead of time");
+            }
             Global::crash();
         }
         let ignored_flags = [
@@ -2707,10 +2847,20 @@ fn parse_build_command_options(
         }
     }
 
-    if args.flag(b"--compile-trim-runtime") {
+    let trims_runtime_as_compile_command = is_compile_command
+        && !library
+        && (args.flag(b"--trim") || (cli::compile_command::TRIMS_RUNTIME_BY_DEFAULT && !args.flag(b"--no-trim")));
+    if is_compile_command && args.flag(b"--trim") && args.flag(b"--no-trim") {
+        Output::err_generic("Cannot use both --trim and --no-trim", ());
+        Global::crash();
+    }
+    if trims_runtime_as_compile_command || args.flag(b"--compile-trim-runtime") {
         if !ctx.bundler_options.compile {
             Output::err_generic("--compile-trim-runtime requires --compile", ());
             Global::crash();
+        }
+        if let Some(option) = option_of_exec_argv_left_out_by_trimming(ctx.bundler_options.compile_exec_argv.as_deref().unwrap_or_default()) {
+            refuse_option_left_out_by_trimming(&option);
         }
         bun_standalone_graph::StandaloneModuleGraph::set_trims_runtime(true);
         if !args.flag(b"--compile-autoload-bunfig") {

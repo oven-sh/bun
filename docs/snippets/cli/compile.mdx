@@ -1,0 +1,96 @@
+## CLI Usage
+
+```bash
+bun compile [flags] [entry point]
+```
+
+`bun compile` is short for `bun build --compile --aot` and takes every flag of [`bun build`](/bundler#cli-usage).
+
+Without an entry point, it compiles the file that `package.json` names in `"bin"`, else `"module"`, else `"main"`, else
+`index.ts`, `index.tsx`, `index.mts` or `index.js`. The executable is named after the `"bin"` entry or the package.
+
+If `package.json` has a `"compile"` script, `bun compile` runs that script.
+
+### Output
+
+<ParamField path="--outfile" type="string">
+  Write the executable to this path
+</ParamField>
+
+<ParamField path="--target" type="string">
+  The platform to build for, such as <code>bun-linux-x64</code>. Compiling ahead of time only targets the platform the
+  build runs on: add <code>--no-aot</code> to build for another one
+</ParamField>
+
+<ParamField path="--asset" type="string">
+  Embed a file or directory into the executable, preserving its relative path. Can be repeated
+</ParamField>
+
+<ParamField path="--compile-exec-argv" type="string">
+  Prepend arguments to the executable's <code>process.execArgv</code>
+</ParamField>
+
+### Compiling ahead of time
+
+<ParamField path="--no-aot" type="boolean">
+  Keep the JavaScript in the executable instead of compiling it to machine code ahead of time
+</ParamField>
+
+<ParamField path="--aot-explain" type="string">
+  List the places where the compiler cannot use your types, the most expensive first
+</ParamField>
+
+<ParamField path="--aot-type-errors" type="string" default="throw">
+  What the executable does when a value does not match its TypeScript type: <code>throw</code>, or <code>log</code> to
+  write a line to stderr and continue
+</ParamField>
+
+### Size
+
+<ParamField path="--trim" type="boolean">
+  Leave the parts of Bun that the program cannot reach out of the executable. Same as{" "}
+  <code>--compile-trim-runtime</code>
+</ParamField>
+
+<ParamField path="--no-trim" type="boolean">
+  Keep all of Bun in the executable. This is the default
+</ParamField>
+
+### Libraries
+
+```bash
+bun compile --library [flags] [entry points]
+```
+
+Builds a package to publish instead of an executable. It writes into `--outdir`:
+
+- the JavaScript (ES modules), which any runtime or bundler can use
+- `.d.ts` files, for `tsc` and `bun check`
+- the same JavaScript with its types kept, which `bun compile` compiles in place of the JavaScript when a program uses
+  the package
+- a `package.json` made from the project's own: `main`, `module`, `types`, `exports` and `files` name what was written,
+  and `scripts`, `devDependencies`, `private` and `workspaces` are left out
+- the project's `README` and `LICENSE`
+
+`dependencies`, `peerDependencies` and `optionalDependencies` stay imports. `devDependencies` are bundled.
+
+Without an entry point, it builds `"module"` or `"main"` of `package.json` if that is a TypeScript file, else `index.ts`
+or `src/index.ts`.
+
+<ParamField path="--library" type="boolean">
+  Build a package to publish instead of an executable
+</ParamField>
+
+<ParamField path="--outdir" type="string" default="dist">
+  The folder to write the package to. It cannot be the project's own folder
+</ParamField>
+
+<ParamField path="--target" type="string" default="node">
+  With <code>--library</code>: <code>node</code>, <code>browser</code> or <code>bun</code>
+</ParamField>
+
+### Scripts
+
+<ParamField path="--no-script" type="boolean">
+  Run this command even if <code>package.json</code> has a <code>"compile"</code> script
+</ParamField>

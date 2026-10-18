@@ -5,7 +5,7 @@ pub struct AotOutsideData;
 
 const ENTERS: Message = Message::new(
     "enters",
-    "Data from {{origin}} is cast to `{{type}}` without a check. Under `--aot`, reading a property that does not match throws a `TypeError`, often far from here.",
+    "Data from {{origin}} is cast to `{{type}}` without a check. Under `--aot`, the compiler cannot rely on the shape of `{{type}}`, so every property access through it is looked up by name or checked when the program runs.",
 );
 
 impl Rule for AotOutsideData {

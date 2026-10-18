@@ -1904,7 +1904,7 @@ test("builds are reproducible", async () => {
 
 test("compiles RegExps with the u and v flags", async () => {
   using dir = tempDir("compile-aot-regexps", {
-    "none.ts": `console.log("none");`,
+    "one.ts": `console.log(/o+ne/.test("one"));`,
     "some.ts": `console.log([/a+b/.test("aab"), /\\p{L}+x/u.test("\\xe9x"), /^.$/u.test("\\u{1f600}"), /[\\p{L}--[a-c]]y/v.test("dy")].join());`,
   });
   async function numberOfRegExps(entry: string, expectedStdout: string) {
@@ -1934,9 +1934,9 @@ test("compiles RegExps with the u and v flags", async () => {
     expect(exitCode).toBe(0);
     return Number(stderr.match(/^\[aot\] image: .* (\d+) regular expressions$/m)?.[1]);
   }
-  const none = await numberOfRegExps("none.ts", "none\n");
-  expect(none).toBeGreaterThanOrEqual(0);
-  expect(await numberOfRegExps("some.ts", "true,true,true,true\n")).toBe(none + 4);
+  const one = await numberOfRegExps("one.ts", "true\n");
+  expect(one).toBeGreaterThanOrEqual(1);
+  expect(await numberOfRegExps("some.ts", "true,true,true,true\n")).toBe(one + 3);
 });
 
 test("run-time RegExps are never compiled, however hot: they run on a flat program", async () => {

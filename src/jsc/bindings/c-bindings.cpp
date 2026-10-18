@@ -7,6 +7,7 @@
 #include <wtf/WTFConfig.h>
 #include <sys/resource.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/stat.h>
 #include <signal.h>
 #include <unistd.h>
@@ -1224,7 +1225,9 @@ extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
 #if OS(WINDOWS)
         (void)_write(2, text, static_cast<unsigned>(strlen(text)));
 #else
-        (void)!write(STDERR_FILENO, text, strlen(text));
+        struct pollfd standardError = { STDERR_FILENO, POLLOUT, 0 };
+        if (poll(&standardError, 1, 0))
+            (void)!write(STDERR_FILENO, text, strlen(text));
 #endif
     };
     const char* actsAsBun = getenv("BUN_BE_BUN");

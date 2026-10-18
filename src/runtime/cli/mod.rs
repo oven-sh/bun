@@ -142,6 +142,8 @@ pub(crate) mod add_command;
 pub(crate) mod audit_command;
 #[path = "check_command.rs"]
 pub(crate) mod check_command;
+#[path = "compile_command.rs"]
+pub(crate) mod compile_command;
 #[path = "dedupe_command.rs"]
 pub(crate) mod dedupe_command;
 #[path = "filter_arg.rs"]
@@ -483,6 +485,7 @@ pub(crate) mod help_command {
   <b><blue>why<r>       <d>{:<16}<r>     Explain why a package is installed
 
   <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
+  <b><yellow>compile<r>   <d>./cli.ts<r>             Compile TypeScript & JavaScript into a standalone executable
 
   <b><cyan>init<r>                           Start an empty Bun project from a built-in template
   <b><cyan>create<r>    <d>{:<16}<r>     Create a new project from a template <d>(bun c)<r>
@@ -883,6 +886,12 @@ pub(crate) mod command {
                 false => Tag::FormatCommand,
             };
         }
+        if x == RootCommandMatcher::case(b"compile") {
+            return match super::script_or_command::is_of_the_project(b"compile") {
+                true => Tag::AutoCommand,
+                false => Tag::CompileCommand,
+            };
+        }
         if x == RootCommandMatcher::case(b"info") {
             return Tag::InfoCommand;
         }
@@ -1135,6 +1144,7 @@ pub(crate) mod command {
             Tag::RunAsNodeCommand => exec_run_as_node(log),
             Tag::InfoCommand => bun_info(log),
             Tag::BuildCommand => exec_build(log),
+            Tag::CompileCommand => exec_compile(log),
             Tag::InstallCommand => exec_install(log),
             Tag::AddCommand => exec_add(log),
             Tag::UpdateCommand => exec_update(log),
@@ -1184,6 +1194,14 @@ pub(crate) mod command {
         super::run_command::RunCommand::refuse_to_load_code(names.find(|name| LOAD_CODE.contains(name)).unwrap_or(otherwise));
     }
 
+    #[cold]
+    fn refuse_options_left_out_by_trimming(options: &[&bun_core::ZStr]) {
+        let options: Vec<&[u8]> = options.iter().skip(1).map(|option| option.as_bytes()).collect();
+        if let Some(option) = arguments::option_left_out_by_trimming(&options) {
+            arguments::refuse_option_left_out_by_trimming(&option);
+        }
+    }
+
     /// `bun build --compile` standalone-executable boot. Never taken for a
     /// plain `bun` binary; out-lined so the ~2 KB of argv-splice / ctx-setup
     /// code is not decoded on the `bun --version` path.
@@ -1229,6 +1247,10 @@ pub(crate) mod command {
                 } else {
                     0
                 };
+
+                if arguments::is_trimmed_executable() {
+                    refuse_options_left_out_by_trimming(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
+                }
 
                 // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
                 // This prevents user arguments like --version/--help from being intercepted
@@ -1426,6 +1448,14 @@ pub(crate) mod command {
     #[inline(never)]
     fn exec_build(log: &mut bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::BuildCommand, log)?;
+        super::build_command::BuildCommand::exec(ctx, None)?;
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_compile(log: &mut bun_ast::Log) -> CmdResult {
+        let ctx = init(Tag::CompileCommand, log)?;
         super::build_command::BuildCommand::exec(ctx, None)?;
         Ok(())
     }
@@ -2009,6 +2039,43 @@ Examples<d>:<r>
 A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 "
                 );
+                Output::flush();
+            }
+            Tag::CompileCommand => {
+                pretty!(
+                    "\
+<b>Usage<r>: <b><green>bun compile<r> <cyan>[flags]<r> <blue>[\\<entrypoint\\>]<r>
+  Compile TypeScript and JavaScript to machine code, into a standalone executable.
+  Short for <b>bun build --compile --aot<r>, and takes the same flags.
+
+  Without an entry point, compiles \"bin\", \"module\" or \"main\" of package.json, or else index.ts.
+
+<b>Flags:<r>"
+                );
+                bun_clap::simple_help(&arguments::params_in_compile_help());
+                pretty!(
+                    "\n\n\
+<b>Examples:<r>
+  <d>Compile the project in this directory<r>
+  <b><green>bun compile<r>
+
+  <d>Compile a file<r>
+  <b><green>bun compile<r> <blue>./cli.ts<r> <cyan>--outfile=my-cli<r>
+
+  <d>Show where the compiler cannot use your types<r>
+  <b><green>bun compile<r> <cyan>--aot-explain<r>
+
+  <d>Build for another platform<r>
+  <b><green>bun compile<r> <cyan>--no-aot --target=bun-linux-x64<r> <blue>./cli.ts<r>
+
+  <d>Build a package to publish: JavaScript, .d.ts files and a package.json in ./dist<r>
+  <b><green>bun compile<r> <cyan>--library<r> <blue>./src/index.ts<r>
+
+See every flag with <b><green>bun build<r> <cyan>--help<r>
+Full documentation is available at <magenta>https://bun.com/docs/bundler/executables<r>
+"
+                );
+                print_note_about_script("compile");
                 Output::flush();
             }
             Tag::TestCommand => {

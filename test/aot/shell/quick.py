@@ -134,7 +134,8 @@ def one(program):
         host_module = work + ".host.js"
         open(host_module, "w").write("".join(f"import {name};\n" for name in external) + "0;\n")
 
-    code, said = run([JSC, "--useDollarVM=1", "--validateGraphAtEachPhase=true", "--numberOfAOTCompilerThreads=2", HERE + "/image.js", "--", ir, image, host_module], cwd, 300, for_the_shell(os.environ))
+    build_env = {name[len("BUN_"):] if name.startswith("BUN_JSC_") else name: value for name, value in options.get("buildEnv", {}).items()}
+    code, said = run([JSC, "--useDollarVM=1", "--validateGraphAtEachPhase=true", "--numberOfAOTCompilerThreads=2", HERE + "/image.js", "--", ir, image, host_module], cwd, 300, for_the_shell({**build_env, **os.environ}))
     if not os.path.isfile(image):
         return f"NOT COMPILED (exit code {code}): " + " ".join(said.split("\n")[:3])[:300]
 

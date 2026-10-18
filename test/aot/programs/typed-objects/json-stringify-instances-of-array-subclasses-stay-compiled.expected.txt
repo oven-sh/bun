@@ -1,0 +1,6 @@
+an instance in a record: 8500 characters, 100 texts finished by compiled code
+an instance alone: 5300 characters, 100 texts finished by compiled code
+an instance as a member of unknown type: 4300 characters, 100 texts finished by compiled code
+an instance that holds objects without a type: 3700 characters, 100 texts finished by compiled code
+an instance of a class with toJSON: 3400 characters, 0 texts finished by compiled code
+an instance with a hole: 6500 characters, 0 texts finished by compiled code

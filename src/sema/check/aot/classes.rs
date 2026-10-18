@@ -1006,6 +1006,18 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
+    pub(super) fn is_undeclared_in_known_hierarchy(&mut self, class: (FileId, ClassId), declaring: &[(FileId, ClassId)]) -> bool {
+        let mut at = class;
+        for _ in 0..256 {
+            match self.resolve_superclass(at.0, at.1) {
+                Superclass::None => return !declaring.iter().any(|&other| other == class || self.may_extend(other, class)),
+                Superclass::Known(extended) => at = extended,
+                Superclass::Unknown => return false,
+            }
+        }
+        false
+    }
+
     fn may_extend(&mut self, mut class: (FileId, ClassId), ancestor: (FileId, ClassId)) -> bool {
         for _ in 0..256 {
             match self.resolve_superclass(class.0, class.1) {

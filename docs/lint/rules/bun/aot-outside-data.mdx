@@ -12,7 +12,9 @@ typeAware: true
 deprecated: false
 ---
 
-`JSON.parse(text) as User` tells the type checker what the data is, and checks nothing. Under [`bun build --compile --aot`](/bundler/aot-adoption) the compiler relies on `User`. If the data lacks `name`, or `id` is a string, the `TypeError` comes where that property is read, which can be in another function and another file.
+`JSON.parse(text) as User` tells the type checker what the data is, and checks nothing. Under [`bun build --compile --aot`](/bundler/aot-types#data-from-outside-keeps-its-shape) nothing checks it either. Data that lacks `name`, or whose `id` is a string, goes on as it is, as in plain JavaScript.
+
+The price is speed. The compiler can no longer rely on the shape of a `User`, of the types inside it, or of the types its values are assigned to. It looks their properties up by name, or checks them when the program runs, everywhere in your program.
 
 This rule lists the places where such data enters your program: an `as` on a value of type `any` or `unknown` that comes from `JSON.parse()`, from a function or a package without types, from a `catch` clause, or from a variable declared `any` or `unknown`. There are usually few of them, and they are the places to validate.
 

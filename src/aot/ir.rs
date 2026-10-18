@@ -371,6 +371,7 @@ pub mod field_flags {
     pub const ABSENT_AT_CREATION: u16 = 1 << 10;
     pub const NEVER_OBSERVED_ABSENT: u16 = 1 << 11;
     pub const DECLARED_WITHOUT_UNDEFINED: u16 = 1 << 12;
+    pub const UNDECLARED: u16 = 1 << 13;
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]

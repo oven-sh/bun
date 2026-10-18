@@ -2651,7 +2651,11 @@ impl<'p, 's> Checker<'p, 's> {
         if container != Node::FILE {
             return None;
         }
-        // `undefinedType` in a file with an `ExternalModuleIndicator`, `globalThis` in any other, a CommonJS module too.
+        // `undefinedType` in a file with an `ExternalModuleIndicator`, `globalThis` in any other, a CommonJS module too. In TypeScript
+        // that the runtime takes for CommonJS it is `module.exports`, of which neither is true.
+        if !hir.is_js && self.bound(file).commonjs_indicator.is_some() {
+            return Some(TypeId::ANY);
+        }
         Some(if !hir.has_module_syntax {
             self.intern(TypeData::Anon {
                 origin: Origin::GlobalThis,

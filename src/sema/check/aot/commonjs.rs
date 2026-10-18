@@ -9,6 +9,9 @@ use crate::util::{FxHashMap, FxHashSet, InParallel};
 use super::OnceLock;
 
 const FILES_PER_CHECKER: usize = 32;
+const MODULE_IS_MORE_THAN_ITS_EXPORTS: &str = "`module` is more than module.exports";
+const EXPORTS_A_FUNCTION: &str = "module.exports = a function";
+const IS_AN_ENTRY_POINT: &str = "it is an entry point: the host hands out what it exports";
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum CommonJsExports {
@@ -16,6 +19,11 @@ pub enum CommonJsExports {
     Value,
     Variables,
     Of(FileId),
+}
+
+pub struct ExportsKnownByName {
+    pub names: Vec<Atom>,
+    pub importers: Vec<FileId>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -182,6 +190,7 @@ struct Found {
     stored_once: FxHashSet<FileId>,
     requires_of_evaluated_modules: FxHashSet<(FileId, ExprId)>,
     are_children_read: bool,
+    entry_points_known_by_name: FxHashMap<FileId, ExportsKnownByName>,
     obstacles: Vec<(&'static str, u32)>,
     module_object_reasons: Vec<(&'static str, u32)>,
 }
@@ -216,6 +225,7 @@ struct Module {
     reads: FxHashSet<Atom>,
     stars: Vec<ExprId>,
     is_exact_outside_cycles: bool,
+    is_entry_point_without_other_obstacles: bool,
 }
 
 impl Module {
@@ -432,6 +442,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn commonjs_exports(&mut self, file: FileId) -> CommonJsExports {
         self.commonjs().exports.get(&file).copied().unwrap_or(CommonJsExports::Object)
+    }
+
+    pub fn exports_of_commonjs_entry_point(&mut self, file: FileId) -> Option<&'p ExportsKnownByName> {
+        self.commonjs().entry_points_known_by_name.get(&file)
     }
 
     pub fn module_with_export_variables(&mut self, file: FileId) -> Option<FileId> {
@@ -952,6 +966,13 @@ impl<'p, 's> Checker<'p, 's> {
                 let end = self.prologue_end(file, graph);
                 found.prologues.insert(file, end);
             }
+        }
+        for &file in graph.entry_points.iter().filter(|file| matches!(found.exports.get(file), Some(CommonJsExports::Value | CommonJsExports::Object)) && !graph.reevaluated.contains(file)) {
+            let hands_out_only_its_exports = |module: &&Module| module.module_object_reason.is_none_or(|why| why == MODULE_IS_MORE_THAN_ITS_EXPORTS);
+            let Some(module) = modules.get(&file).filter(|module| module.is_entry_point_without_other_obstacles && module.re_exports.is_none() && module.stars.is_empty() && module.methods.is_empty()).filter(hands_out_only_its_exports) else { continue };
+            let written = graph.resolved.iter().chain(&graph.require_resolutions).filter(|import| *import.1 == file).map(|import| import.0.0);
+            let importers = written.chain(graph.implicit.iter().filter(|import| import.1 == file).map(|import| import.0)).collect();
+            found.entry_points_known_by_name.insert(file, ExportsKnownByName { names: module.stores.keys().chain(module.getters.keys()).copied().collect(), importers });
         }
         found.obstacles = obstacles.into_iter().collect();
         found.obstacles.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
@@ -1767,7 +1788,7 @@ impl<'p, 's> Checker<'p, 's> {
         if bound.get_assignment_target(hir, asserted).is_some() { MemberUse::OtherStore } else { MemberUse::Read }
     }
 
-    fn is_object_prototype_name(&self, name: Atom) -> bool {
+    pub fn is_object_prototype_name(&self, name: Atom) -> bool {
         OBJECT_PROTOTYPE_NAMES.contains(&self.atoms().bytes(name))
     }
 
@@ -1834,10 +1855,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn find_commonjs_module(&mut self, file: FileId, graph: &Graph) -> Module {
         let (hir, bound, by_kind) = (self.hir(file), self.bound(file), self.file_exprs_by_kind(file));
-        let mut module = Module { obstacle: None, module_object_reason: None, values: Vec::new(), unconditional_value_stores: 0, is_redirect: false, re_exports: None, mentions: Vec::new(), stores: FxHashMap::default(), methods: Vec::new(), marker: ExprId::NONE, getters: FxHashMap::default(), literal: ExprId::NONE, name_of_literal: ExprId::NONE, reads: FxHashSet::default(), stars: Vec::new(), is_exact_outside_cycles: false };
-        if graph.entry_points.contains(&file) {
-            module.obstacle = Some("it is an entry point: the host hands out what it exports");
-        }
+        let mut module = Module { obstacle: None, module_object_reason: None, values: Vec::new(), unconditional_value_stores: 0, is_redirect: false, re_exports: None, mentions: Vec::new(), stores: FxHashMap::default(), methods: Vec::new(), marker: ExprId::NONE, getters: FxHashMap::default(), literal: ExprId::NONE, name_of_literal: ExprId::NONE, reads: FxHashSet::default(), stars: Vec::new(), is_exact_outside_cycles: false, is_entry_point_without_other_obstacles: false };
         if self.has_direct_eval(file) {
             module.obstacle = Some("eval");
             module.module_object_reason = module.obstacle;
@@ -1856,6 +1874,8 @@ impl<'p, 's> Checker<'p, 's> {
         if (0..hir.stmts.len() as u32).map(StmtId).any(|stmt| matches!(hir[stmt].kind, StmtKind::Return(_)) && self.enclosing_fn(file, bound.stmt_parent[stmt.idx()]).is_none()) {
             module.obstacle = Some("return at the top level");
         }
+        let mut is_module_looked_at = false;
+        let mut is_function_the_first_obstacle = false;
         for &e in by_kind.of(ExprTag::Ident) {
             let ExprKind::Ident(name) = hir[e].kind else { continue };
             if name == known::arguments && !bound.is_arguments_object(e) && bound.expr_symbol[e.idx()].is_none() {
@@ -1868,8 +1888,9 @@ impl<'p, 's> Checker<'p, 's> {
             match bound.expr_parent[e.idx()] {
                 _ if name == known::exports => module.mentions.push(e),
                 Parent::Expr(parent) if is_module_exports_inside_parentheses(hir, parent) => module.mentions.push(parent),
+                _ if self.is_module_only_looked_at(file, e) => is_module_looked_at = true,
                 _ => {
-                    module.obstacle = Some("`module` is more than module.exports");
+                    module.obstacle = Some(MODULE_IS_MORE_THAN_ITS_EXPORTS);
                     module.module_object_reason = module.obstacle;
                 }
             }
@@ -1946,8 +1967,9 @@ impl<'p, 's> Checker<'p, 's> {
                         _ if matches!(hir[e].kind, ExprKind::Ident(_)) => module.obstacle = Some("exports = .."),
                         _ if !is_whole => module.obstacle = Some("module.exports = .. in a function, a branch or an expression"),
                         _ => {
+                            is_function_the_first_obstacle = module.obstacle.is_none() && matches!(hir[value].kind, ExprKind::Fn(_));
                             module.obstacle = Some(match hir[value].kind {
-                                ExprKind::Fn(_) => "module.exports = a function",
+                                ExprKind::Fn(_) => EXPORTS_A_FUNCTION,
                                 ExprKind::Class(_) => "module.exports = a class",
                                 ExprKind::Ident(_) => match bound.symbols.get(bound.expr_symbol[value.idx()].idx()).map(|symbol| &symbol.decls[..]) {
                                     Some([Decl::Fn(_)]) => "module.exports = the name of a function",
@@ -2066,7 +2088,42 @@ impl<'p, 's> Checker<'p, 's> {
         {
             module.obstacle = Some("__esModule is stored to");
         }
+        if module.obstacle.is_none() && graph.entry_points.contains(&file) {
+            module.obstacle = Some(IS_AN_ENTRY_POINT);
+            module.is_entry_point_without_other_obstacles = true;
+        }
+        if is_function_the_first_obstacle && module.obstacle == Some(EXPORTS_A_FUNCTION) && module.values.len() == 1 && graph.entry_points.contains(&file) {
+            module.is_entry_point_without_other_obstacles = true;
+        }
+        if is_module_looked_at {
+            if module.obstacle.is_none_or(|why| why == IS_AN_ENTRY_POINT) {
+                module.obstacle = Some(MODULE_IS_MORE_THAN_ITS_EXPORTS);
+            }
+            module.module_object_reason = module.module_object_reason.or(Some(MODULE_IS_MORE_THAN_ITS_EXPORTS));
+        }
         module
+    }
+
+    fn is_module_only_looked_at(&self, file: FileId, mention: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let is_nullish = |e: ExprId| matches!(hir[e].kind, ExprKind::Null | ExprKind::Ident(known::undefined));
+        let is_only_tested = |e: ExprId| match bound.expr_parent[e.idx()] {
+            Parent::Expr(around) => match hir[around].kind {
+                ExprKind::Unary { op: UnOp::Typeof | UnOp::Not, .. } | ExprKind::Binary { op: BinOp::EqEqEq | BinOp::NotEqEq, .. } => true,
+                ExprKind::Binary { op: BinOp::EqEq | BinOp::NotEq, left, right } => is_nullish(left) || is_nullish(right),
+                ExprKind::Binary { op: BinOp::And, left, .. } => left == e,
+                ExprKind::Cond { test, .. } => test == e,
+                _ => false,
+            },
+            Parent::Stmt(around) => matches!(hir[around].kind, StmtKind::If { test, .. } if test == e),
+            _ => false,
+        };
+        let member = match bound.expr_parent[mention.idx()] {
+            Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Dot { obj, .. } if obj == mention) => around,
+            _ => return is_only_tested(mention),
+        };
+        let ExprKind::Dot { name, .. } = hir[member].kind else { return false };
+        matches!(self.atoms().bytes(name), b"parent" | b"hot") && is_only_tested(member)
     }
 
     fn required_by_folded_specifier(&self, file: FileId, graph: &Graph, e: ExprId) -> Vec<FileId> {

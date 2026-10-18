@@ -8,6 +8,7 @@ use crate::atom::Atom;
 use crate::bind::{Decl, SymFlags, SymbolId};
 use crate::hir::{ClassId, ExprId, ExprKind, FileKind, ImportEqualsTarget, StmtKind};
 use crate::program::FileId;
+use crate::resolve::get_relative_path_from_directory;
 use crate::types::{Origin, TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
 use bun_core::strings;
@@ -338,7 +339,7 @@ impl<'p, 's> Checker<'p, 's> {
         (module.is_dependency && module.package_directory.is_some()).then(|| package_name(self.atoms().bytes(module.package_directory)).to_vec())
     }
 
-    pub fn find_untyped_packages(&self, linked: &[FileId], scopes: &Scopes) -> Vec<CompilerDiagnostic> {
+    pub fn find_untyped_packages(&self, linked: &[FileId], shown_from: &[u8], scopes: &Scopes) -> Vec<CompilerDiagnostic> {
         let files = self.files();
         let is_program_code = |file: FileId| files.module(file).builtin.is_none() && !strings::contains(files.module(file).path.text, b"/.bun-aot-prelude/");
         let name_of = |module: &crate::program::Module<'_>| package_name(self.atoms().bytes(module.package_directory));
@@ -377,6 +378,13 @@ impl<'p, 's> Checker<'p, 's> {
             let share = format!("{:.1}", 100.0 * package.source_bytes as f64 / all_source_bytes.max(1) as f64);
             let files = format!("{} {}", package.files, if package.files == 1 { "file" } else { "files" });
             found.push(self.finding_at(at, 100026, vec![name.to_vec(), files.into_bytes(), share.into_bytes()]));
+        }
+        for &file in linked.iter().filter(|&&file| is_program_code(file)) {
+            let module = files.module(file);
+            if module.hir.is_js && !(module.is_dependency && module.package_directory.is_some()) && scopes.is_wanted(Rule::UntypedPackage, file, 0) {
+                let name = get_relative_path_from_directory(shown_from, module.file_name(), files.is_case_sensitive);
+                found.push(self.finding_at(Place { file, pos: 0 }, 100083, vec![name]));
+            }
         }
         found
     }

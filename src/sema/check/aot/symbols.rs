@@ -144,7 +144,7 @@ impl<'p, 's> Checker<'p, 's> {
             },
             _ => return None,
         };
-        if !self.is_symbol_or_symbol_for_call(file, e) || !self.is_compiled(file) {
+        if !(self.is_symbol_or_symbol_for_call(file, e) || self.is_required_symbol_constructor(file, hir[call].callee)) || !self.is_compiled(file) {
             return None;
         }
         let declaration = self.files().sym(file, bound.pat_symbol[declared.pat.idx()]);
@@ -177,7 +177,35 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn constant_symbol_required_by(&self, file: FileId, pattern: PatId, element: PatPropId, reexports: u8) -> Option<HeldSymbol> {
+    fn is_required_symbol_constructor(&self, file: FileId, callee: ExprId) -> bool {
+        let required = || {
+            let ExprKind::Ident(name) = self.hir(file)[callee].kind else { return None };
+            let (of, Decl::Var(pat)) = self.variable_declaration(self.resolve_identifier(file, callee, name, true).ok().flatten()?)? else { return None };
+            let PatParent::Prop(pattern, element) = self.bound(of).pat_parent[pat.idx()] else { return None };
+            let (module, name) = self.member_required_by(of, pattern, element)?;
+            Some((module, self.member_of_default_export(module, name)?))
+        };
+        required().is_some_and(|(module, exported)| {
+            let global = self.files().global(known::Symbol, SymFlags::VALUE);
+            matches!(self.hir(module)[exported].kind, ExprKind::Ident(known::Symbol)) && global.is_some() && self.resolve_identifier(module, exported, known::Symbol, true) == Ok(global)
+        })
+    }
+
+    fn builtin_module_held_by(&self, file: FileId, e: ExprId) -> Option<FileId> {
+        if let Some(module) = self.required_builtin_module(file, e) {
+            return Some(module);
+        }
+        let ExprKind::Ident(name) = self.hir(file)[e].kind else { return None };
+        let (of, Decl::Var(pat)) = self.variable_declaration(self.resolve_identifier(file, e, name, true).ok().flatten()?)? else { return None };
+        let PatParent::Var(declaration) = self.bound(of).pat_parent[pat.idx()] else { return None };
+        let declared = &self.hir(of)[declaration];
+        if of != file || declared.kind != VarKind::Const || declared.pat != pat {
+            return None;
+        }
+        self.required_builtin_module(of, skip_assertions(self.hir(of), declared.init.some()?))
+    }
+
+    fn member_required_by(&self, file: FileId, pattern: PatId, element: PatPropId) -> Option<(FileId, Atom)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else { return None };
         let (declared, element) = (&hir[declaration], &hir[element]);
@@ -188,16 +216,25 @@ impl<'p, 's> Checker<'p, 's> {
             (PropKey::Name(name), PatKind::Ident(_)) | (PropKey::None, PatKind::Ident(name)) => name,
             _ => return None,
         };
-        let module = self.required_builtin_module(file, skip_assertions(hir, declared.init))?;
+        let module = self.builtin_module_held_by(file, skip_assertions(hir, declared.init))?;
         if !self.files().module(module).file_name().starts_with(INTERNAL_MODULES) || self.escaped_builtin_exports()?.contains(&module) {
             return None;
         }
+        Some((module, name))
+    }
+
+    fn constant_symbol_required_by(&self, file: FileId, pattern: PatId, element: PatPropId, reexports: u8) -> Option<HeldSymbol> {
+        let (module, name) = self.member_required_by(file, pattern, element)?;
         let files = self.files();
         if files.module_export(files.file_symbol(module), known::default).is_none() {
             let exported = files.module_export(files.file_symbol(module), name)?;
             let exported = if files.flags(exported).contains(SymFlags::ALIAS) { files.resolve_alias(exported)? } else { exported };
             return self.constant_symbol_held_by(exported, reexports);
         }
+        self.constant_symbol_named_at(module, self.member_of_default_export(module, name)?, reexports)
+    }
+
+    fn member_of_default_export(&self, module: FileId, name: Atom) -> Option<ExprId> {
         let hir = self.hir(module);
         let exported = hir.ids(hir.body).find_map(|stmt| match hir[stmt].kind {
             StmtKind::ExportDefault(exported) => Some(exported),
@@ -209,7 +246,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut named = props.iter().filter(|&p| hir[p].key == PropKey::Name(name));
         let (Some(only), None) = (named.next(), named.next()) else { return None };
-        self.constant_symbol_named_at(module, hir[only].value, reexports)
+        Some(hir[only].value)
     }
 
     fn escaped_builtin_exports(&self) -> Option<&'p FxHashSet<FileId>> {
@@ -221,14 +258,16 @@ impl<'p, 's> Checker<'p, 's> {
                     let (hir, bound) = (self.hir(file), self.bound(file));
                     for &call in self.file_exprs_by_kind(file).of(ExprTag::Call) {
                         let Some(module) = self.required_builtin_module(file, call) else { continue };
-                        let mut exports = call;
-                        while let Parent::Expr(around) = bound.expr_parent[exports.idx()]
-                            && around.is_some()
-                            && skip_assertions(hir, around) != around
-                        {
-                            exports = around;
-                        }
-                        let is_only_read = match bound.expr_parent[exports.idx()] {
+                        let with_assertions = |mut exports: ExprId| {
+                            while let Parent::Expr(around) = bound.expr_parent[exports.idx()]
+                                && around.is_some()
+                                && skip_assertions(hir, around) != around
+                            {
+                                exports = around;
+                            }
+                            exports
+                        };
+                        let has_only_members_read = |exports: ExprId| match bound.expr_parent[exports.idx()] {
                             Parent::VarInit(declaration) => matches!(hir[hir[declaration].pat].kind, PatKind::Object(elements) if elements.iter().all(|element| !hir[element].is_rest && !matches!(hir[element].key, PropKey::Computed(_)))),
                             Parent::Expr(read) if read.is_some() => {
                                 let is_called_or_deleted = matches!(bound.expr_parent[read.idx()], Parent::Expr(user) if user.is_some() && match hir[user].kind {
@@ -240,7 +279,14 @@ impl<'p, 's> Checker<'p, 's> {
                             }
                             _ => false,
                         };
-                        if !is_only_read {
+                        let exports = with_assertions(call);
+                        let is_held_by_constant_that_is_only_read = || {
+                            let Parent::VarInit(declaration) = bound.expr_parent[exports.idx()] else { return false };
+                            let holder = bound.pat_symbol[hir[declaration].pat.idx()];
+                            let mut mentions = self.file_exprs_by_kind(file).of(ExprTag::Ident).iter().filter(|mention| bound.expr_symbol[mention.idx()] == holder);
+                            hir[declaration].kind == VarKind::Const && matches!(hir[hir[declaration].pat].kind, PatKind::Ident(_)) && mentions.all(|&mention| has_only_members_read(with_assertions(mention)))
+                        };
+                        if !has_only_members_read(exports) && !is_held_by_constant_that_is_only_read() {
                             escaped.insert(module);
                         }
                     }

@@ -1,6 +1,7 @@
 // What a program is said to name although it names nothing: the names in the built-in JavaScript that is compiled into every executable.
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { builtinModules } from "node:module";
 import { test } from "./supported";
 
 const tsconfig = JSON.stringify({
@@ -91,6 +92,129 @@ describe.concurrent("the built-in code that is part of every program", () => {
     ["a Proxy", `${emitter} declare const Proxy: any; console.log(EventEmitter.prototype.listeners.call(new Proxy({}, {}), "constructor"));`],
   ])("the world is open where the program can put another table of listeners there: %s", async (_, text) => {
     await factsOf(text, openedByTheTableOfListeners);
+  });
+
+  const declared = `declare const URL: any, performance: any, Proxy: any, Bun: any;`;
+  test.each([
+    ["an object literal", `console.log({ a: 1 });`],
+    ["an array", `console.log([1, 2]);`],
+    ["a Map", `console.log(new Map());`],
+    ["an Error", `console.log(new Error("x"));`],
+    ["an element of an array", `const list: string[] = ["p", "q"]; console.log(list[0]);`],
+    ["what came out of data", `console.log(JSON.parse(process.argv[2]));`],
+    ["dates, typed arrays, sets, regular expressions, symbols and functions", `console.log(new Date(0), 5n, new Uint8Array(2), new Set([1]), /x/, Symbol("s"), () => 1);`],
+    ["a URL, which has an inspector of its own", `console.log(new URL("http://x/"));`],
+    ["a mark, whose inspector prints an object of the program", `console.log(performance.mark("m", { detail: { a: 1 } }));`],
+    ["an object with a tag", `class Tagged { get [Symbol.toStringTag]() { return "T"; } } console.log(new Tagged());`],
+    ["a class with a static name", `class Named { static name = "other"; } console.log(Named, new Named());`],
+    ["an object with keys that are symbols of the program's own", `console.log({ [Symbol.for("mine")]: 1, [Symbol.iterator]: 2 });`],
+    ["an object filled under keys that are put together", `const made: Record<string, number> = {}; for (let at = 0; at < 3; at++) made["k" + at] = at; console.log(made);`],
+    ["an object filled under keys that are not seen", `const holder: any = {}; holder[process.argv[2]] = 1; console.log(holder, { [process.argv[3]]: 1 });`],
+    ["what Bun.inspect and Object.values gave", `console.log(Bun.inspect({ a: 1 }), Object.values({ a: 1 }));`],
+    ["beside Bun.inspect, objects filled under keys that are strings", `function fill(holder: Record<string, number>, key: string) { holder[key] = 1; return { [key]: 2, [\`x\${key}\`]: 3 }; } console.log(Bun.inspect(fill({}, "a")), fill({}, process.argv[2]));`],
+  ])("to print %s reads no property that is not named", async (_, text) => {
+    const facts = await factsOf(`${declared} ${text}`);
+    expect(["prints object", "module internal:util/inspect"].filter(fact => !facts.has(fact))).toEqual([]);
+    expect(["property *", "property toLocaleString", "property localeCompare"].filter(fact => facts.has(fact))).toEqual([]);
+  });
+
+  test.each([
+    ["what join answers", `const list: string[] = ["p", "q"]; const text: string = list.join("-"); console.log(text);`],
+    ["a parameter that is a string", `function show(text: string) { console.log(text); } show("x"); show(process.argv[2]);`],
+    ["numbers, booleans, bigints, null and undefined", `function show(n: number, flag: boolean, big: bigint, nothing: null, text: string | undefined) { console.log(n, flag, big, nothing, text); } show(1, true, 1n, null, undefined);`],
+    ["numbers under a format", `function show(n: number) { console.log("%o %O %j", n, n, n); } show(1);`],
+    ["what a Map of strings holds", `const map = new Map<string, string>(); map.set("a", "b"); console.log(map.get("a"), map.size, map.has("a"));`],
+    ["what the methods of a string answer", `function show(text: string) { console.error(text.slice(1), text.toUpperCase(), text.length, text.indexOf("a"), text.trim(), text.charCodeAt(0), text.includes("a")); } show("abc");`],
+    ["what parseInt, Math.max and Date.now answer", `function show(text: string) { console.warn(parseInt(text, 10), Math.max(1, 2), Date.now()); } show("1");`],
+    ["a member of an enum and one of two literals", `enum Kind { One, Two } function show(kind: Kind, word: "a" | "b") { console.info(kind, word); } show(Kind.One, "a");`],
+    ["what a promise of a string resolves to", `async function text(): Promise<string> { return "x"; } async function main() { const got: string = await text(); console.log(got); } main();`],
+    ["a constant that is checked where it is made", `const text: string = JSON.parse(process.argv[2]); console.log(text);`],
+    ["what a function is declared to return, which is checked", `function text(): string { return JSON.parse(process.argv[2]); } console.log(text());`],
+  ])("to print %s, which the compiled code holds to be no object, brings no inspector", async (_, text) => {
+    const facts = await factsOf(text);
+    expect(["prints object", "module internal:util/inspect"].filter(fact => facts.has(fact))).toEqual([]);
+  });
+
+  const shape = `interface Shape { text: string }`;
+  test.each([
+    ["an element of an array of strings", `const list: string[] = JSON.parse(process.argv[2]); console.log(list[0]);`],
+    ["a member of what JSON.parse gave", `${shape} const given: Shape = JSON.parse(process.argv[2]); console.log(given.text);`],
+    ["such a member held by a constant of that type", `${shape} const given: Shape = JSON.parse(process.argv[2]); const text: string = given.text; console.log(text);`],
+    ["a cast", `const text = JSON.parse(process.argv[2]) as string; console.log(text);`],
+    ["what was caught, cast", `try { throw JSON.parse(process.argv[2]); } catch (error) { console.log(error as string); }`],
+    ["a rest parameter", `function show(...list: string[]) { console.log(list[0]); } (show as any)({});`],
+    ["a box of anything taken for a box of strings", `class Box<T> { constructor(public held: T) {} } const box: Box<string> = new Box<any>({}); console.log(box.held);`],
+    ["a member changed through any", `${shape} const made: Shape = { text: "a" }; (made as any).text = JSON.parse(process.argv[2]); console.log(made.text);`],
+    ["unknown", `function show(value: unknown) { console.log(value); } show(1);`],
+    ["a type parameter", `function show<T>(value: T) { console.log(value); } show("a");`],
+    ["a string or an array", `function show(value: string | string[]) { console.log(value); } show("a");`],
+    ["a function beside a string", `function show(text: string, call: () => void) { console.log(text, call); } show("a", () => {});`],
+    ["strings that are spread", `function show(...list: string[]) { console.log(...list); } show("a");`],
+    ["a string through console.log.call", `function show(text: string) { console.log.call(console, text); } show("a");`],
+    ["a string through a constant that holds console.log", `function show(text: string) { const log = console.log; log(text); } show("a");`],
+  ])("the inspector stays where a type is only declared or may hold an object: %s", async (_, text) => {
+    const facts = await factsOf(text);
+    expect(["prints object", "module internal:util/inspect"].filter(fact => !facts.has(fact))).toEqual([]);
+  });
+
+  const inspector = `(depth: any, options: any, inspect: any) { return inspect({}, JSON.parse(process.argv[2])); }`;
+  test.each([
+    ["calls util.inspect", `console.log(require("node:util").inspect({}, JSON.parse(process.argv[2])));`],
+    ["calls util.formatWithOptions", `console.log(require("node:util").formatWithOptions(JSON.parse(process.argv[2]), "%o", {}));`],
+    ["makes a Console", `new console.Console(process.stdout).dir({}, JSON.parse(process.argv[2]));`],
+    ["has an inspector of its own in a class", `class Own { [Symbol.for("nodejs.util.inspect.custom")]${inspector} } console.log(new Own());`],
+    ["has an inspector of its own under a constant", `const custom = Symbol.for("nodejs.util.inspect.custom"); console.log({ [custom]${inspector} });`],
+    ["asks for a registered symbol by a text that is not seen", `console.log({ [Symbol.for(process.argv[3])]${inspector} });`],
+    ["fails an assertion, whose message is made with getters", `require("node:assert").deepStrictEqual(Object.getPrototypeOf(JSON.parse(process.argv[2])), {});`],
+    ["takes node:util under its other name", `console.log(require("sys").inspect({}, JSON.parse(process.argv[2])));`],
+    ["imports node:util when it runs", `import("node:util").then((util: any) => console.log(util.inspect({}, JSON.parse(process.argv[2]))));`],
+    ["takes a function of node:util by its position", `console.log((Object.values(require("node:util")) as any[])[Number(process.argv[3])]({}, JSON.parse(process.argv[2])));`],
+    ["imports Console", `const { Console } = require("node:console"); new Console(process.stdout).dir({}, JSON.parse(process.argv[2]));`],
+    ["makes a Console of console under another name", `const output = console; new output.Console(process.stdout).dir({}, JSON.parse(process.argv[2]));`],
+    ["defines properties by descriptors that are not seen", `console.log(Object.defineProperties({}, JSON.parse(process.argv[2])));`],
+    ["defines a property under a key that is not seen", `console.log(Object.defineProperty({}, process.argv[2], { value: 1 }));`],
+  ])("any property may be read by util.inspect where the program %s", async (_, text) => {
+    const facts = await factsOf(`${declared} ${text}`);
+    expect(["property *", "escapes property /$bun/js/internal/util/inspect.ts"].filter(fact => !facts.has(fact))).toEqual([]);
+  });
+
+  const replacing = `(depth: any, options: any, inspect: any) { inspect.styles = function () {};`;
+  const called = `("return 42", "constructor")();`;
+  test.each([
+    ["replaces the styles in an inspector of its own and takes stylize by its position", `const custom = Symbol.for("nodejs.util.inspect.custom"); console.log({ [custom]${replacing} return (Object.values(options) as any[])[0]${called} } });`],
+    ["stores on inspect under a key that is not seen", `const custom = Symbol.for("nodejs.util.inspect.custom"); console.log({ [custom](depth: any, options: any, inspect: any) { inspect[process.argv[2]] = function () {}; return options.stylize${called} } });`],
+    ["takes the symbol from Bun.inspect", `console.log({ [Bun.inspect.custom]${replacing} return options.stylize${called} } });`],
+    ["takes the symbol from Bun.inspect by its position", `const custom: symbol = (Object.values(Bun.inspect) as any[])[0]; const holder: any = {}; holder[custom] = function ${replacing} return options.stylize${called} }; console.log(holder);`],
+    ["installs such a symbol through Object.fromEntries", `const custom: symbol = (Object.values(Bun.inspect) as any[])[0]; console.log(Object.fromEntries([[custom, function ${replacing} return options.stylize${called} }]]));`],
+    ["takes inspect, the symbol and the table of node:util by their positions", `const inspect: any = (Object.values(require("node:util")) as any[])[Number(process.argv[2])]; const custom: any = (Object.values(inspect) as any[])[0]; console.log({ [custom](depth: any, options: any) { Object.setPrototypeOf((Object.values(inspect) as any[])[2], function () {}); return options.stylize${called} } });`],
+    ["lists the symbols of a URL", `console.log({ [Object.getOwnPropertySymbols(Object.getPrototypeOf(new URL("http://x/")))[0]]${replacing} return options.stylize${called} } });`],
+    ["lists the keys of a URL", `console.log({ [Reflect.ownKeys(Object.getPrototypeOf(new URL("http://x/")))[0]]${replacing} return options.stylize${called} } });`],
+    ["answers for the symbol with a Proxy among the ancestors", `console.log(Object.create(new Proxy({}, { get() { return function ${replacing} return options.stylize${called} }; } })));`],
+  ])("the world is open where an inspector of the program's own can make util.inspect call Function: it %s", async (_, text) => {
+    const facts = await factsOf(`${declared} ${text}`, openedByTheTableOfListeners);
+    expect(["property *", "escapes property /$bun/js/internal/util/inspect.ts"].filter(fact => !facts.has(fact))).toEqual([]);
+  });
+
+  test("built-in code that only defines an inspector brings none: the table behind require.cache", async () => {
+    const facts = await factsOf(`declare const module: any; module.exports = { value: 1 }; console.log("x");`);
+    expect(facts.has("global module")).toBe(true);
+    expect(["module internal:util/inspect", "symbol nodejs.util.inspect.custom"].filter(fact => facts.has(fact))).toEqual([]);
+    const printing = await factsOf(`declare const module: any; module.exports = { value: 1 }; console.log(module.exports);`);
+    expect(printing.has("module internal:util/inspect")).toBe(true);
+  });
+
+  test("util.inspect copies a regular expression that exists: it asks for no table of Unicode properties", async () => {
+    expect((await factsOf(`console.log({ a: 1 }, /x/);`)).has("regexp computed")).toBe(false);
+    expect((await factsOf(`console.log(new RegExp(process.argv[2]));`)).has("regexp computed")).toBe(true);
+  });
+
+  test("node:module's wrapper, a Proxy that stores for its caller, does not open the world", async () => {
+    await factsOf(`console.log(require("node:http"), require("node:child_process"), require("node:readline/promises"), require("node:util"));`);
+  });
+
+  const openTheWorldThemselves = ["bun:ffi", "bun:jsc", "inspector", "inspector/promises", "module", "repl", "vm", "worker_threads"];
+  test.each(builtinModules.filter(name => !openTheWorldThemselves.includes(name)))("to require %s does not open the world", async name => {
+    await factsOf(`console.log(typeof require("${name}"));`);
   });
 
   test("the world is open where the program gives node:http an agent whose constructor it calls", async () => {

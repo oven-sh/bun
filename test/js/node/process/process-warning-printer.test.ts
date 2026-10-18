@@ -168,7 +168,7 @@ async function run(cmd: string[], folder: string, it: Case, extraEnv: Record<str
   const env = Object.fromEntries(Object.entries(it.env ?? {}).map(([name, value]) => [name, value.replace("$FOLDER", folder)]));
   await using proc = Bun.spawn({ cmd: command, cwd: folder, env: { ...bunEnv, ...env, ...extraEnv }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (it.stdout !== undefined) expect(stdout).toBe(it.stdout);
+  if (it.stdout !== undefined) expect({ stdout, refused: exitCode === 70 ? stderr.slice(-400) : "" }).toEqual({ stdout: it.stdout, refused: "" });
   if (typeof it.stderr === "string") expect(normalize(stderr)).toBe(it.stderr);
   else if (it.stderr) expect(normalize(stderr)).toMatch(it.stderr);
   if (it.file !== undefined) expect(normalize(readFileSync(join(folder, "redirected.txt"), "utf8"))).toBe(it.file);

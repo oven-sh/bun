@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
-import { statSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, readElf64ProgramHeaders, tempDir } from "harness";
+import { closeSync, constants, openSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/run-programs";
 
@@ -149,6 +149,37 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       expect(await run([join(folder, "asked")], folder)).toEqual({ stdout: "{\n  a: {\n    b: [Object ...],\n  },\n}\n", stderr: "", exitCode: 0 });
     });
 
+    test.skipIf(!isLinux || (flags.length > 0 && !!unsupported))(`${how}: the program is mapped where a part was left out, and the zeros of .bss are not in the file`, async () => {
+      using dir = tempDir("compile-trim-runtime-bss", programs);
+      const folder = String(dir);
+      const build = [bunExe(), "build", "--compile", ...flags, "--compile-trim-runtime", "hello.ts", "--outfile", "hello"];
+      expect(await run(build, folder)).toMatchObject({ exitCode: 0 });
+      const segments = readElf64ProgramHeaders(join(folder, "hello")).filter(header => header.type === 1);
+      for (const [index, segment] of segments.entries()) {
+        if (index) expect(segment.vaddr).toBeGreaterThanOrEqual(segments[index - 1].vaddr + segments[index - 1].memsz);
+      }
+      expect(segments.at(-1)!.filesz).toBeLessThan(segments.at(-1)!.memsz);
+      expect(await run([join(folder, "hello")], folder)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
+    });
+
+    test.skipIf(isWindows || (flags.length > 0 && !!unsupported))(`${how}: a part that was left out ends the program where descriptor 2 takes no more bytes`, async () => {
+      using dir = tempDir("compile-trim-runtime-door", programs);
+      const folder = String(dir);
+      const build = [bunExe(), "build", "--compile", ...flags, "--compile-trim-runtime", "hello.ts", "--outfile", "hello"];
+      expect(await run(build, folder)).toMatchObject({ exitCode: 0 });
+      expect(Bun.spawnSync(["mkfifo", join(folder, "pipe")]).exitCode).toBe(0);
+      const readerThatNeverReads = openSync(join(folder, "pipe"), constants.O_RDWR | constants.O_NONBLOCK);
+      const descriptor2 = openSync(join(folder, "pipe"), constants.O_WRONLY);
+      try {
+        expect(() => { while (true) writeSync(readerThatNeverReads, Buffer.alloc(512, "y")); }).toThrow(expect.objectContaining({ code: "EAGAIN" }));
+        await using asked = Bun.spawn({ cmd: [join(folder, "hello"), "install"], cwd: folder, env: { ...bunEnv, BUN_BE_BUN: "1" }, stdout: "pipe", stderr: descriptor2 });
+        expect(await Promise.race([asked.exited, Bun.sleep(20_000).then(() => "it stands still")])).toBe(70);
+      } finally {
+        closeSync(descriptor2);
+        closeSync(readerThatNeverReads);
+      }
+    });
+
     test.skipIf(flags.length > 0 && !!unsupported)(`${how}: a part that was left out says so when it is asked for`, async () => {
       using dir = tempDir("compile-trim-runtime-door", programs);
       const folder = String(dir);
@@ -161,9 +192,6 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       expect(asked).toMatchObject({ stdout: "", exitCode: 70 });
       const version = await run([join(folder, "hello"), "--version"], folder, { ...bunEnv, BUN_BE_BUN: "1" });
       expect(version).toEqual({ stdout: Bun.version + "\n", stderr: "", exitCode: 0 });
-      const help = await run([join(folder, "hello")], folder, { ...bunEnv, BUN_OPTIONS: "--help" });
-      expect(help.stderr).toContain("BUN_OPTIONS is set: an option in it may be what asked.");
-      expect(help).toMatchObject({ stdout: "", exitCode: 70 });
     });
   }
 
@@ -278,6 +306,8 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       const asked = await run([join(folder, "taken-away")], folder);
       expect(asked.stderr).toStartWith("error: this executable was built with --compile-trim-runtime, without HTMLRewriter, and something has just asked for it.");
       expect(asked).toMatchObject({ stdout: "", exitCode: 70 });
+      expect(asked.stderr).not.toContain("BUN_OPTIONS");
+      expect((await run([join(folder, "taken-away")], folder, { ...bunEnv, BUN_OPTIONS: "--smol" })).stderr).toContain("BUN_OPTIONS is set: an option in it may be what asked.");
 
       expect(await run([...trim, "hello.ts", "--outfile", "hello-by-use"], folder)).toMatchObject({ exitCode: 0 });
       expect(await run([...trim, "hello.ts", "--outfile", "hello-taken-away"], folder, without)).toMatchObject({ exitCode: 0 });

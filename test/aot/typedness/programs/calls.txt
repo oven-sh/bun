@@ -76,7 +76,7 @@ inlined-early-return-reads-widened-field: 2 layouts, 0 given, 4 open, places 47 
 inlined-guard-read-keeps-declared-type: 2 layouts, 0 given, 4 open, places 47 of 63, reads 21 of 36
 inlined-guard-reads-open-type: 2 layouts, 0 given, 4 open, places 47 of 63, reads 21 of 36
 inlined-guards-run-twice: 4 layouts, 1 given, 0 open, places 34 of 49, reads 19 of 33
-inspecting-class-prototypes: 180 layouts, 7 given, 89 open, places 1000 of 1420, reads 462 of 635
+inspecting-class-prototypes: 180 layouts, 0 given, 89 open, places 1000 of 1422, reads 462 of 635
 inspecting-prototypes-of-builtin-subclasses: 2 layouts, 7 given, 2 open, places 780 of 1304, reads 367 of 619
 keys-of-rest: 3 layouts, 1 given, 1 open, places 52 of 79, reads 8 of 25
 large-switch-predicate-bit-windows: 0 layouts, 0 given, 0 open, places 11 of 23, reads 0 of 2

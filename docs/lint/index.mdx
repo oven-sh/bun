@@ -228,7 +228,7 @@ With an oxlint config, `--tsconfig` does what it does in oxlint. It sets the `ts
 
 ## Before you compile with `--aot`
 
-[`bun build --compile --aot`](/bundler/aot-adoption) holds your program to its TypeScript types when it runs, and makes built-in objects immutable. `--aot` turns on the rules that find the code this affects. Each report is something that can throw a `TypeError` in the compiled program.
+[`bun build --compile --aot`](/bundler/aot-adoption) holds your program to its TypeScript types when it runs, and makes built-in objects immutable. `--aot` turns on the rules that find the code this affects. Each report is something that can throw a `TypeError` in the compiled program, or that takes types away from the compiler.
 
 ```bash terminal icon="terminal"
 bun lint --aot

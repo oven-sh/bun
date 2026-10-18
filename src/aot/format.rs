@@ -1,12 +1,13 @@
 use crate::declared::Part;
-use crate::id::{FuncId, V};
-use crate::ir::{BinOp, Def, Func, Literal, Op, Prediction, Program, RelOp, Target, Term, UnOp, CoerceReason};
+use crate::id::{FuncId, StrId, V};
+use crate::ir::{BinOp, Def, Func, Literal, Op, Prediction, Program, RelOp, Strs, Target, Term, UnOp, CoerceReason};
+use bun_sema::check::locked_builtins::accessors_of_host_prototypes;
 use bun_sema::util::{InParallel, for_each_mut};
 use smallvec::SmallVec;
 use std::mem::MaybeUninit;
 
 pub const MAGIC: u32 = 0x5249_5442;
-pub const VERSION: u32 = 37;
+pub const VERSION: u32 = 38;
 pub const PROGRAM_LOGS_TYPE_ERRORS: u32 = 1;
 pub const NONE: u32 = u32::MAX;
 pub const PREDICTION_IS_CLOSURE: u32 = 1 << 31;
@@ -734,6 +735,9 @@ fn write_slices(p: &Program, func_count: usize, funcs: Vec<Slice<'_>>, site_tabl
     };
     let extended_globals = list(&mut p.extended_globals.iter().map(|name| name.0));
     let prototype_property_names = list(&mut p.prototype_property_names.iter().map(|name| name.0));
+    let host_accessors: rustc_hash::FxHashMap<u64, &[u8]> = accessors_of_host_prototypes().map(|name| (Strs::hash_of(name), name)).collect();
+    let is_host_accessor = |id: &StrId| host_accessors.get(&p.strs.hash(*id)).is_some_and(|&name| name == p.strs.get(*id));
+    let host_accessor_names = list(&mut (0..p.strs.len()).map(StrId::new).filter(is_host_accessor).map(|name| name.0));
     let builtin_modules = list(&mut p.builtin_modules.iter().flat_map(|&(id, func)| [id, func.0]));
     let builtin_functions = list(&mut p.builtin_functions.iter().flat_map(|&(id, func, visibility)| [id, func.0, visibility]));
     let functions_by_key = list(&mut p.functions_by_key.iter().flat_map(|&(property, key, func)| [property.0, key.0, func.0]));
@@ -745,7 +749,7 @@ fn write_slices(p: &Program, func_count: usize, funcs: Vec<Slice<'_>>, site_tabl
     let bytes_of = |modules: &[crate::ir::Module]| modules.iter().map(|module| module.line_table.len() + module.printed.len()).sum::<usize>();
     let number_of_bytes = (w.bytes.len() + bytes_of(&p.modules)) as u32;
     let padding = &[0u8; 3][..number_of_bytes.wrapping_neg() as usize % 4];
-    const HEADER_WORDS: usize = 6 + 14 * 2 + 18 + 12;
+    const HEADER_WORDS: usize = 6 + 14 * 2 + 20 + 12;
     let small_tables: [&[u32]; 8] = [&w.strings, &w.declared, &w.parts, &w.shapes, &w.fields, &w.methods, &w.variables, &w.modules];
     let lengths: [usize; 13] = [
         before[0] as usize + w.words.len(),
@@ -772,6 +776,7 @@ fn write_slices(p: &Program, func_count: usize, funcs: Vec<Slice<'_>>, site_tabl
     }
     header.extend(extended_globals);
     header.extend(prototype_property_names);
+    header.extend(host_accessor_names);
     header.extend(builtin_modules);
     header.extend(builtin_functions);
     header.extend(functions_by_key);

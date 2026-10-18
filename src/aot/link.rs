@@ -9,7 +9,7 @@ use bun_sema::atom::Atom;
 use bun_sema::check::task::Finished;
 use bun_sema::check::{SubtypeAnswer, Checker, CompilerDiagnostic, ConstantSymbol, FieldKey, Identity, Int32Verdict, KindsDeclared, MethodStore, FlowNotes, NumberFlow, Program as Checked, SubtypeQuery, ReplacedMethods, compute_ecma_line_starts, expected_int32};
 use bun_sema::hir::{self, ClassId, Flags, StmtKind};
-use bun_sema::program::{Builtin, CompiledFunctions, EVERY_ROOT, FileId, LoadedBy};
+use bun_sema::program::{Builtin, CompiledFunctions, EVERY_ROOT, FileId, LoadedBy, ReleasedRoot};
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::types::TypeId;
 use bun_sema::util::{InParallel, for_each_mut};
@@ -128,7 +128,7 @@ pub struct Explain {
 }
 
 impl Explain {
-    pub const REPORTS: [&'static str; 7] = ["throws", "throws-all", "throws-json", "throws-all-json", "rules-json", "costs", "costs-json"];
+    pub const REPORTS: [&'static str; 8] = ["throws", "throws-all", "throws-json", "throws-all-json", "rules-json", "costs", "costs-json", "runtime-use"];
     pub const WORDS: [&'static str; 16] = ["mutations", "costs", "costs-json", "deferred", "fields", "foreign", "given", "integers", "joins", "plugins", "rows", "runtime-use", "throws", "throws-all", "throws-all-json", "throws-json"];
 
     pub fn set(&mut self, word: &[u8]) -> bool {
@@ -392,6 +392,8 @@ struct Reachability {
     loader_entry_points: FxHashSet<FragmentIndex>,
     has_unreached_loader_entries: AtomicBool,
     roots_released_by: FxHashMap<FragmentIndex, Vec<u32>>,
+    may_print_an_object: FxHashSet<FragmentIndex>,
+    is_printing_of_an_object_reached: AtomicBool,
     roots_waiting: FxHashMap<u32, u32>,
     unresolved: Unresolved,
 }
@@ -854,6 +856,9 @@ impl<'a> ReachWorker<'a> {
                 }
                 if reach.has_unreached_loader_entries.load(Ordering::Relaxed) && reach.loader_entry_points.contains(&at) {
                     self.reach_loader_entries();
+                }
+                if reach.may_print_an_object.contains(&at) {
+                    reach.is_printing_of_an_object_reached.store(true, Ordering::Relaxed);
                 }
                 for &number in reach.roots_released_by.get(&at).into_iter().flatten() {
                     for (_, &root) in reach.roots_waiting.iter().filter(|waiting| number == EVERY_ROOT || *waiting.0 == number) {
@@ -2935,11 +2940,17 @@ fn link_with_helper_threads<'scope>(
             _ => [hir::FnId::NONE; 2],
         };
         let defined: FxHashSet<hir::FnId> = own().flat_map(|it| holders_of(it.1.key)).collect();
-        for &(mut holder, root) in released {
+        for &ReleasedRoot { mut holder, root, only_if_holder_may_print_an_object } in released {
             while holder.is_some() && !defined.contains(&holder) {
                 holder = module.bound.fns[holder.idx()].enclosing;
             }
-            for (index, _) in own().filter(|it| holders_of(it.1.key).contains(&holder)) {
+            for (index, function) in own().filter(|it| holders_of(it.1.key).contains(&holder)) {
+                if only_if_holder_may_print_an_object {
+                    if function.func.as_ref().is_some_and(|func| !keys::may_print_an_object(&fragment.strs, &fragment.tys, func)) {
+                        continue;
+                    }
+                    reach.may_print_an_object.insert(FragmentIndex::new(number, index));
+                }
                 reach.roots_released_by.entry(FragmentIndex::new(number, index)).or_default().push(root);
             }
         }
@@ -3062,6 +3073,7 @@ fn link_with_helper_threads<'scope>(
         let defined = missing.iter().filter_map(|(identity, _)| ids.layouts.find(&LayoutKey::Record(*identity))).filter(|&id| index.layout(id).is_some());
         reach.work.extend(defined.map(Work::Layout));
     }
+    checked.may_print_an_object.store(reach.is_printing_of_an_object_reached.load(Ordering::Relaxed), Ordering::Relaxed);
     remove_unreached_parts(&mut fragments, &mut index.outline, &reach, in_parallel);
     {
         let mut of_files: Vec<Option<(Vec<u64>, Vec<u64>, bool)>> = checked.files.modules.iter().map(|_| None).collect();
@@ -4259,7 +4271,7 @@ fn link_with_helper_threads<'scope>(
         }
     }
     if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::UntypedPackage)) {
-        found.append(&mut c.find_untyped_packages(&modules, scopes));
+        found.append(&mut c.find_untyped_packages(&modules, shown_from, scopes));
     }
     if explain.costs || explain.costs_json {
         let other_places = checked.checker().find_other_places_where_external_data_enters();
@@ -4275,11 +4287,13 @@ fn link_with_helper_threads<'scope>(
     let typedness = typedness::measure(&program, &is_runtime_layout, &modules, checked, in_parallel);
     times.add("typedness", &mut since);
     let files_of_prelude: FxHashSet<FileId> = crate::prelude::FILES.iter().filter_map(|file| checked.files.by_path.get(&crate::prelude::path_of(shown_from, file.0))).collect();
-    let reads = keys::reads_without_a_name(&program, &modules, &files_of_prelude, in_parallel);
+    let reads = keys::reads_without_a_name(&program, &modules, checked.files, &files_of_prelude, in_parallel);
     *checked.reads_of_any_property.lock() = reads.of_any_property;
     *checked.reads_that_may_find_the_constructor_of_functions.lock() = reads.that_may_find_the_constructor_of_functions;
     *checked.reads_that_may_find_what_makes_or_loads_code.lock() = reads.that_may_find_what_makes_or_loads_code;
+    *checked.loads_of_modules_that_are_not_compiled.lock() = reads.of_modules_that_are_not_compiled;
     checked.stores_under_a_key_that_is_not_seen.store(keys::stores_under_a_key_that_is_not_seen(&program, &modules, &files_of_prelude), Ordering::Relaxed);
+    checked.writes_under_a_key_that_may_be_a_symbol.store(keys::writes_under_a_key_that_may_be_a_symbol(&program, &modules, &files_of_prelude), Ordering::Relaxed);
     let failure_check = Some(FailureCheck { setup: setup_of_what_always_fails, modules });
     Linked { program, problems, members, explained, errors, skipped_builtin_modules, skipped_builtin_functions, found, typedness, times, failure_check }
 }

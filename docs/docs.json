@@ -260,7 +260,12 @@
           {
             "group": "Single File Executable",
             "icon": "binary",
-            "pages": ["/bundler/executables", "/bundler/aot-adoption", "/bundler/aot-debugging"]
+            "pages": ["/bundler/executables"]
+          },
+          {
+            "group": "Ahead-of-Time Compilation",
+            "icon": "cpu",
+            "pages": ["/bundler/aot", "/bundler/aot-types", "/bundler/aot-reports", "/bundler/aot-compatibility", "/bundler/aot-adoption", "/bundler/aot-debugging", "/bundler/aot-size", "/bundler/aot-libraries", "/bundler/aot-troubleshooting"]
           },
           {
             "group": "Extensions",

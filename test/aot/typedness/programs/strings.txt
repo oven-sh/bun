@@ -33,7 +33,7 @@ flat-string-keys: 1 layouts, 0 given, 0 open, places 235 of 246, reads 39 of 59
 graphemes: 2 layouts, 0 given, 3 open, places 85 of 109, reads 16 of 58
 if-chains-long-literals: 0 layouts, 0 given, 0 open, places 117 of 126, reads 13 of 28
 integers-and-doubles: 0 layouts, 0 given, 1 open, places 124 of 141, reads 15 of 18
-json-stringify-typed-objects: 41 layouts, 0 given, 30 open, places 133 of 182, reads 16 of 60
+json-stringify-typed-objects: 41 layouts, 0 given, 30 open, places 133 of 184, reads 16 of 60
 last-index: 4 layouts, 0 given, 6 open, places 54 of 99, reads 11 of 40
 lengths-in-loops: 1 layouts, 0 given, 2 open, places 129 of 142, reads 26 of 35
 literal-chains-32-char-literal: 0 layouts, 0 given, 0 open, places 37 of 45, reads 7 of 10

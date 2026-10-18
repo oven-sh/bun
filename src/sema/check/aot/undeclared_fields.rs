@@ -1,8 +1,9 @@
 use super::first_stores::FirstStore;
 use super::subtypes::Facts;
 use crate::atom::Atom;
+use crate::bind::{Decl, PatParent};
 use crate::check::Checker;
-use crate::hir::{ExprId, ExprKind, ExprTag, FnId, FnKind, MemberKind};
+use crate::hir::{Chain, ClassId, ExprId, ExprKind, ExprTag, Flags, FnId, FnKind, Keyword, MemberKind, PropKey, TypeNodeId, TypeNodeKind};
 use crate::program::{FileId, Sym};
 use crate::types::{TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
@@ -15,12 +16,15 @@ type Store = (TypeId, TypeId, Atom);
 pub(super) struct Shared {
     storing_through_assertions: OnceLock<Vec<(FileId, FnId)>>,
     typed_files: OnceLock<Vec<FileId>>,
+    targets_written_as_any: OnceLock<Vec<(FileId, ExprId)>>,
+    classes_by_member_name: OnceLock<FxHashMap<Atom, Vec<(FileId, ClassId)>>>,
 }
 
 #[derive(Default)]
 pub(super) struct State {
     stores: Option<Rc<Vec<Store>>>,
     fields: FxHashMap<TypeId, Rc<Vec<(Atom, TypeId)>>>,
+    stored_through_any: Option<Rc<FxHashMap<(FileId, ClassId), Vec<Atom>>>>,
 }
 
 impl<'p, 's> Checker<'p, 's> {
@@ -44,6 +48,97 @@ impl<'p, 's> Checker<'p, 's> {
         let found = Rc::new(found);
         self.aot.undeclared_fields.fields.insert(ty, Rc::clone(&found));
         found
+    }
+
+    pub fn properties_stored_through_any(&mut self, file: FileId, class: ClassId) -> Vec<Atom> {
+        if self.aot.undeclared_fields.stored_through_any.is_none() {
+            let found = self.find_properties_stored_through_any();
+            self.aot.undeclared_fields.stored_through_any = Some(Rc::new(found));
+        }
+        self.aot.undeclared_fields.stored_through_any.as_ref().and_then(|all| all.get(&(file, class)).cloned()).unwrap_or_default()
+    }
+
+    fn find_properties_stored_through_any(&mut self) -> FxHashMap<(FileId, ClassId), Vec<Atom>> {
+        let mut found: FxHashMap<(FileId, ClassId), Vec<Atom>> = FxHashMap::default();
+        let declaring = self.classes_by_member_name();
+        for &(file, target) in self.targets_written_as_any() {
+            let ExprKind::Dot { obj, name, .. } = self.hir(file)[target].kind else { continue };
+            if self.type_of_expr(file, obj) != TypeId::ANY {
+                continue;
+            }
+            let Some(predicted) = self.predicted_expr_type(file, obj) else { continue };
+            let predicted = self.non_nullable(predicted);
+            let Some(class) = self.class_for_type(predicted, false) else { continue };
+            let c = &self.hir(class.0)[class.1];
+            if self.is_untyped_file(class.0)
+                || !self.is_compiled(class.0)
+                || c.flags.contains(Flags::AMBIENT)
+                || c.members.iter().any(|member| matches!(self.hir(class.0)[member].key, PropKey::Computed(_)))
+                || self.type_of_property(predicted, name).is_some()
+                || !self.is_undeclared_in_known_hierarchy(class, declaring.get(&name).map_or(&[][..], |classes| &classes[..]))
+            {
+                continue;
+            }
+            let names = found.entry(class).or_default();
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        for names in found.values_mut() {
+            names.sort_by(|a, b| self.atoms().bytes(*a).cmp(self.atoms().bytes(*b)));
+        }
+        found
+    }
+
+    fn classes_by_member_name(&self) -> &'p FxHashMap<Atom, Vec<(FileId, ClassId)>> {
+        self.p.aot.undeclared_fields.classes_by_member_name.get_or_init(|| {
+            let mut declaring: FxHashMap<Atom, Vec<(FileId, ClassId)>> = FxHashMap::default();
+            for file in self.files_declaring_classes() {
+                let hir = self.hir(file);
+                for (index, class) in hir.classes.iter().enumerate() {
+                    for name in class.members.iter().filter_map(|member| hir[member].key.name()) {
+                        let classes = declaring.entry(name).or_default();
+                        if classes.last() != Some(&(file, ClassId(index as u32))) {
+                            classes.push((file, ClassId(index as u32)));
+                        }
+                    }
+                }
+            }
+            declaring
+        })
+    }
+
+    fn targets_written_as_any(&self) -> &'p [(FileId, ExprId)] {
+        self.p.aot.undeclared_fields.targets_written_as_any.get_or_init(|| {
+            let mut targets = Vec::new();
+            for file in (0..self.p.files.modules.len() as u32).map(FileId) {
+                if self.is_untyped_file(file) || !self.is_compiled(file) {
+                    continue;
+                }
+                let (hir, bound) = (self.hir(file), self.bound(file));
+                let is_any = |ty: TypeNodeId| ty.is_some() && matches!(hir[ty].kind, TypeNodeKind::Keyword(Keyword::Any));
+                for &e in self.file_exprs_by_kind(file).of(ExprTag::Assign) {
+                    let ExprKind::Assign { op: None, target, .. } = hir[e].kind else { continue };
+                    let ExprKind::Dot { obj, chain: Chain::No, .. } = hir[target].kind else { continue };
+                    let is_written_as_any = match hir[obj].kind {
+                        ExprKind::As { ty, .. } => is_any(ty),
+                        ExprKind::Ident(_) => bound.expr_symbol[obj.idx()].some().and_then(|id| bound.symbols[id.idx()].decls.first()).is_some_and(|decl| match *decl {
+                            Decl::Param(pat) | Decl::Var(pat) => match bound.pat_parent[pat.idx()] {
+                                PatParent::Var(declaration) => is_any(hir[declaration].ty),
+                                PatParent::Param(param) => is_any(hir[param].ty),
+                                _ => false,
+                            },
+                            _ => false,
+                        }),
+                        _ => false,
+                    };
+                    if is_written_as_any {
+                        targets.push((file, target));
+                    }
+                }
+            }
+            targets
+        })
     }
 
     pub(super) fn add_undeclared_fields_to(&mut self, facts: &mut Facts, ty: TypeId, stored: &FxHashSet<Atom>) {

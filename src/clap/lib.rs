@@ -522,6 +522,34 @@ where
 
 #[cold]
 #[inline(never)]
+pub fn names_given<Id>(
+    params: &[Param<Id>],
+    arguments: &[&[u8]],
+    short_aliases: &'static [(&'static [u8], &'static [u8])],
+) -> Vec<Names> {
+    let mut iter = args::SliceIterator { remain: arguments };
+    let mut stream = streaming::StreamingClap {
+        params,
+        iter: &mut iter,
+        state: streaming::State::Normal,
+        positional: None,
+        diagnostic: None,
+        short_aliases,
+        unknown_long_flags_are_positional: false,
+        unknown_long_flags_are_errors: false,
+    };
+    let mut names = Vec::new();
+    while let Ok(Some(given)) = stream.next() {
+        if given.param.names.long.is_none() && given.param.names.short.is_none() {
+            break;
+        }
+        names.push(given.param.names);
+    }
+    names
+}
+
+#[cold]
+#[inline(never)]
 pub(crate) fn simple_print_param(param: &Param<Help>) -> crate::Result<()> {
     bun_core::pretty!("\n");
     if let Some(s) = param.names.short {

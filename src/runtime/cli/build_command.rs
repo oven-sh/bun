@@ -88,6 +88,10 @@ impl BuildCommand {
             ctx.bundler_options.compile = false;
         }
 
+        if ctx.bundler_options.library {
+            crate::cli::compile_command::configure_library(ctx);
+        }
+
         if ctx.bundler_options.compile && ctx.bundler_options.aot && !ctx.bundler_options.compile_run {
             match expand_entry_point_patterns(&ctx.args.entry_points) {
                 Ok(entry_points) => ctx.args.entry_points = entry_points,
@@ -182,7 +186,8 @@ impl BuildCommand {
             ];
             unsupported.iter().find(|(is_set, _)| *is_set && options.dts).map(|(_, option)| *option)
         };
-        let writes_sound_files = ctx.bundler_options.dts && skips_sound_files_for.is_none();
+        let has_typescript_entry_point = !this_transpiler.options.entry_points.iter().all(|path| is_javascript_path(path));
+        let writes_sound_files = ctx.bundler_options.dts && skips_sound_files_for.is_none() && has_typescript_entry_point;
         this_transpiler.options.skips_sound_files_for = skips_sound_files_for;
         let mut declaration_files: options::DeclarationFiles = Vec::new();
         let mut module_types = None;
@@ -649,7 +654,7 @@ impl BuildCommand {
         this_transpiler.resolver.env_loader = core::ptr::NonNull::new(this_transpiler.env);
 
         // Allow tsconfig.json overriding, but always set it to false if --production is passed.
-        if ctx.bundler_options.production {
+        if ctx.bundler_options.production || ctx.bundler_options.library {
             this_transpiler.options.jsx.development = false;
             this_transpiler.resolver.opts.jsx.development = false;
         }
@@ -906,6 +911,10 @@ impl BuildCommand {
                 Output::err_generic("{}", (msg.as_str(),));
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
+        }
+
+        if ctx.bundler_options.library {
+            crate::cli::compile_command::add_package_files(ctx, &mut output_files);
         }
 
         let output_files: &mut [options::OutputFile] = &mut output_files;
@@ -1422,6 +1431,10 @@ impl BuildCommand {
             ctx.debug.hot_reload == HotReload::Watch,
         );
     }
+}
+
+pub(crate) fn is_javascript_path(path: &[u8]) -> bool {
+    matches!(bun_paths::extension(path), b".js" | b".mjs" | b".cjs" | b".jsx")
 }
 
 fn compile_outfile(outfile: &[u8]) -> &[u8] {

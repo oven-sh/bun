@@ -35,7 +35,7 @@ end
 set -l bun_install_boolean_flags yarn production no-save dry-run force no-cache silent verbose global
 set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Don't update package.json or save a lockfile" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependencies" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
 
-set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add update audit dedupe prune publish init pm x repl check lint fmt
+set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add update audit dedupe prune publish init pm x repl compile check lint fmt
 # The package manager commands and `bun x` reject a flag they do not have.
 set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init
 
@@ -218,6 +218,32 @@ complete -c bun -n "__fish_use_subcommand" -a "pm" -d "Additional package manage
 complete -c bun -n "__fish_use_subcommand" -a "x" -d "Execute a package binary, installing if needed" -f
 complete -c bun -n "__fish_use_subcommand" -a "outdated" -d "Display the latest versions of outdated dependencies" -f
 complete -c bun -n "__fish_use_subcommand" -a "audit" -d "Check installed packages for vulnerabilities" -f
+complete -c bun -n "__fish_use_subcommand" -a "compile" -F -d "Compile TypeScript & JavaScript into a standalone executable"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "library" -d "Build a package to publish instead of an executable: JavaScript, .d.ts files and a package.json"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "outfile" -r -F -d "Write the executable to this path"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "outdir" -r -F -d "With --library: the folder to write the package to (default: dist)"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "target" -r -d "The platform to build for, such as bun-linux-x64"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "define" -r -d "Substitute K:V while parsing"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "env" -r -d "Inline environment variables: inline, disable or a prefix*"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "asset" -r -F -d "Embed a file or directory into the executable"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "external" -r -d "Leave a module out of the executable"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "minify" -d "Enable all minification flags"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "sourcemap" -r -d "Build with sourcemaps"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "tsconfig-override" -r -F -d "Use this tsconfig.json"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "compile-exec-argv" -r -d "Prepend arguments to the executable's execArgv"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "disallow-code-generation-from-strings" -d "In the executable, eval() and new Function() throw"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-explain" -d "List the places where the compiler cannot use your types"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-type-errors" -r -d "What the executable does when a value does not match its type: throw or log"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-deny" -r -d "Fail where a rule finds something"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-warn" -r -d "The same, as warnings"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-allow" -r -d "Turn a rule off"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-huge-heap" -d "Let each thread have more than 32 GB of objects"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "no-aot" -d "Keep the JavaScript in the executable instead of compiling it ahead of time"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "trim" -d "Leave the parts of Bun that the program cannot reach out of the executable"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "no-trim" -d "Keep all of Bun in the executable"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "no-script" -d "Run this command even if the project has a compile script"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "cwd" -r -F -d "Set the working directory"
+complete -c bun -n "__fish_seen_subcommand_from compile" -s "h" -l "help" -d "Print this help menu"
 complete -c bun -n "__fish_use_subcommand" -a "check" -d "Type check a TypeScript project" -f
 complete -c bun -n "__fish_seen_subcommand_from check" -s "p" -l "project" -r -F -d "Path to a tsconfig.json or its directory"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "pretty" -d "Show source code around each error"
@@ -235,6 +261,7 @@ complete -c bun -n "__fish_seen_subcommand_from check" -l "aot-warn" -r -d "With
 complete -c bun -n "__fish_seen_subcommand_from check" -l "aot-allow" -r -d "With --aot: turn a rule off. Of two flags that name the same rule and file, the later one counts"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "aot-baseline" -r -F -d "With --aot: a file with the number of findings per rule and file that are accepted"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "aot-update-baseline" -d "With --aot-baseline: write the file anew from this build"
+complete -c bun -n "__fish_seen_subcommand_from check" -l "disallow-code-generation-from-strings" -d "With --aot: as for an executable built with that flag"
 complete -c bun -n "__fish_use_subcommand" -a "lint" -d "Lint JavaScript and TypeScript" -f
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "c" -l "config" -r -F -d "Use this config file instead of looking for one"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-config-lookup" -d "Do not look for a config file"

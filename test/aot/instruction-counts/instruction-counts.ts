@@ -108,6 +108,27 @@ function functionsOf(map: string, entry: string): CompiledFunction[] {
   return functions;
 }
 
+const bytesOfNearCall = process.arch === "arm64" ? 4 : 5;
+
+/**
+ * The outliner replaces a run of instructions that the whole program repeats often enough with a call. How often depends on which of
+ * Bun's own modules are in the program, so a function is measured as the compiler made it: a P line of the map lists what was taken out.
+ */
+function bytesBeforeOutlining(map: string, entry: string, name: string) {
+  const measured = new Set<string>();
+  let bytes = 0;
+  for (const line of map.split("\n")) {
+    const fields = line.split("\t");
+    if (fields[0] === "F" && fields[7] === name && (fields[10] === entry || name.startsWith("module "))) {
+      measured.add(fields[1]);
+      bytes += Number(fields[3]);
+    } else if (fields[0] === "P" && measured.has(fields[1])) {
+      for (let length = 3; length < fields.length; length += 3) bytes += Number(fields[length]) - bytesOfNearCall;
+    }
+  }
+  return bytes;
+}
+
 async function countInstructions(request: Request): Promise<Counted> {
   await using child = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "count-in-a-child.ts")],
@@ -163,14 +184,12 @@ async function lineOf(
   const built = await run(
     [bunExe(), "build", "--compile", "--aot", ...withoutDebugInformation(), entry, "--outfile", executable],
     dir,
-    { ...bunEnv, BUN_JSC_aotMapFilePath: mapFile },
+    { ...bunEnv, BUN_JSC_aotMapFilePath: mapFile, BUN_JSC_aotHotByTextForTesting: "4" },
   );
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  const functions = functionsOf(readFileSync(mapFile, "utf8"), entry);
-  const measured = form.place === "module level" ? `module ${entry}` : "kernel";
-  const bytes = functions
-    .filter(compiled => compiled.name === measured)
-    .reduce((sum, compiled) => sum + compiled.size, 0);
+  const map = readFileSync(mapFile, "utf8");
+  const functions = functionsOf(map, entry);
+  const bytes = bytesBeforeOutlining(map, entry, form.place === "module level" ? `module ${entry}` : "kernel");
   const label = `${form.types}, ${form.place}`;
   if (!countsInstructions) return `${label}: ${bytes} bytes`;
 
@@ -240,7 +259,7 @@ function describeCasesOf(folder: string, platform: string, isSkipped: boolean, t
     const built = await run(
       [bunExe(), "build", "--compile", "--aot", ...withoutDebugInformation(), "main.ts", ...flags, "--outfile", executable],
       dir,
-      { ...bunEnv, BUN_JSC_aotMapFilePath: mapFile },
+      { ...bunEnv, BUN_JSC_aotMapFilePath: mapFile, BUN_JSC_aotHotByTextForTesting: "4" },
     );
     expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
       stderr: "",

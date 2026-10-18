@@ -38,7 +38,7 @@ pub use callees::{Callee, SingleFunction};
 pub use captures::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopiedReason, Receiver};
 pub use escape::argument_use;
 pub use classes::{AddedMembers, ClassFacts, MethodStore, ReplacedMethods};
-pub use commonjs::{CommonJsExports, ExportsReference};
+pub use commonjs::{CommonJsExports, ExportsKnownByName, ExportsReference};
 pub use first_stores::FirstStore;
 pub use identity::Identity;
 pub use int32_fields::{NotInt32Reason, FlowNode, FlowSource, Int32Verdict, NumberFlow, CodeOwner, expected_int32};

@@ -685,6 +685,11 @@ impl<'s> Interner<'s> {
         self.tables.number
     }
 
+    #[inline]
+    pub fn sees_atoms_of(&self, number: u64) -> bool {
+        self.tables.number == number || self.below.number == number
+    }
+
     pub fn intern(&self, text: &[u8]) -> Atom {
         if text.len() > Recent::LONGEST {
             return self.intern_shared(hash_of(text), text);

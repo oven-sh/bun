@@ -1,0 +1,1 @@
+exports.join = function join() {};

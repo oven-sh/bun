@@ -5165,7 +5165,9 @@ fn check_named_files(
     let files = session.arena().alloc(files);
     let root = session.arena().alloc(Program::new(&session, files));
     let program: &Program = root;
-    host.program_is_loaded(program);
+    if request.is_one_program {
+        host.program_is_loaded(program);
+    }
     report.files_loaded = program.files.modules.len();
     report.load_time = started.elapsed();
     if includes_everything

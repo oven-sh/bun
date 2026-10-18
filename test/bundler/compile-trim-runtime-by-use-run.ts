@@ -224,12 +224,12 @@ export function testFeatures(part: number) {
       ["package_files", ["--compile-autoload-tsconfig"]],
       ["bunfig", []],
       ["cli_options", ["--compile-exec-argv=--smol"]],
-      ["text", ["--compile-exec-argv=--sql-preconnect"]],
       ["inspector", ["--compile-exec-argv=--inspect=127.0.0.1:0"]],
       ["cli_options", []],
       ["profiler", []],
       ["valkey", []],
       ["worker", []],
+      ["file_sink", []],
     ])("%s is kept for an executable built with %j", async (feature, flags) => {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);
@@ -246,6 +246,7 @@ export function testFeatures(part: number) {
       ["sql", ["--compile-exec-argv=--smol --title=hello"]],
       ["performance_timeline", []],
       ["structured_clone", []],
+      ["web_streams", []],
     ])("%s is left out of an executable built with %j", async (feature, flags) => {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);

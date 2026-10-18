@@ -2,6 +2,7 @@
 //!
 //! A segment with pages left out becomes one segment per stretch that stays, each at the address it had. The gaps between
 //! them are not mapped. That takes more program headers than the linker made room for: see `room_for_program_headers`.
+//! The largest gap is named by a header of no kind: `bun_exe_format` maps the payload there, so that `.bss` stays out of the file.
 
 use bun_collections::index_sort::sort_slice_by_key;
 use core::ops::Range;
@@ -197,9 +198,44 @@ fn stretches(range: Range<u64>, gaps: &[Range<u64>]) -> Vec<Range<u64>> {
     list
 }
 
+/// What `llvm-strip -R` leaves of a section that is mapped: zeros that no section header speaks of. (GNU strip takes the room too.)
+fn room_of_removed_sections(file: &[u8], headers: &[ProgramHeader]) -> Result<Vec<Range<u64>>> {
+    let (first, count) = section_headers(file)?;
+    let mut claimed: Vec<Range<u64>> = Vec::new();
+    for at in (0..count).map(|index| first + index * SECTION_HEADER) {
+        if u64_at(file, at + 8)? & SHF_ALLOC != 0 {
+            let address = u64_at(file, at + 16)?;
+            claimed.push(address..plus(address, u64_at(file, at + 32)?)?);
+        }
+    }
+    sort_slice_by_key(&mut claimed, |c| c.start);
+    let mut list = Vec::new();
+    if claimed.is_empty() {
+        return Ok(list);
+    }
+    for h in headers.iter().filter(|h| h.kind == PT_LOAD && h.flags & PF_W == 0 && h.memory_size == h.file_size) {
+        for free in stretches(h.address..h.address + h.file_size, &claimed) {
+            let bytes = slice(file, (h.offset + (free.start - h.address)) as usize, (free.end - free.start) as usize)?;
+            if bytes.iter().all(|&byte| byte == 0) {
+                list.push(free);
+            }
+        }
+    }
+    Ok(list)
+}
+
 /// `file` without the whole pages of `dead`, which is sorted address ranges.
 pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Limits) -> Result<Vec<u8>> {
     let headers = program_headers(file)?;
+    let mut all: Vec<Range<u64>> = dead.iter().cloned().chain(room_of_removed_sections(file, &headers)?).collect();
+    sort_slice_by_key(&mut all, |range| range.start);
+    let mut dead: Vec<Range<u64>> = Vec::new();
+    for range in all {
+        match dead.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => dead.push(range),
+        }
+    }
     let room = room_for_program_headers(file, &headers)?;
     let loads = || headers.iter().filter(|h| h.kind == PT_LOAD);
     // A file offset and its address are the same but for a multiple of this.
@@ -221,7 +257,7 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Lim
 
     // {addresses, where in the file}
     let mut gaps: Vec<(Range<u64>, u64)> = Vec::new();
-    for range in dead {
+    for range in &dead {
         let Some(gap) = whole_pages(range, page, limits.smallest_hole) else {
             continue;
         };
@@ -237,7 +273,7 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Lim
     }
     // One more header each. The largest that there is room for.
     sort_slice_by_key(&mut gaps, |g| core::cmp::Reverse(g.0.end - g.0.start));
-    gaps.truncate((room.len() / PROGRAM_HEADER).min(MOST_PROGRAM_HEADERS).saturating_sub(headers.len()).min(limits.most_holes));
+    gaps.truncate((room.len() / PROGRAM_HEADER).min(MOST_PROGRAM_HEADERS).saturating_sub(headers.len() + 1).min(limits.most_holes));
     sort_slice_by_key(&mut gaps, |g| g.1);
     if gaps.is_empty() {
         return Ok(file.to_vec());
@@ -291,6 +327,19 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>], limits: crate::Lim
             });
         }
     }
+    let largest = gaps.iter().max_by_key(|g| g.end - g.start).ok_or(Error::InvalidExecutable)?;
+    let behind_it = new.iter().position(|h| h.kind == PT_LOAD && h.address > largest.start).unwrap_or(new.len());
+    let room_for_the_payload = ProgramHeader {
+        kind: PT_NULL,
+        flags: 0,
+        offset: 0,
+        address: largest.start,
+        physical_address: largest.start,
+        file_size: 0,
+        memory_size: largest.end - largest.start,
+        align: page,
+    };
+    new.insert(behind_it, room_for_the_payload);
     let moved = grow_table_in_place(file, &mut out, &headers, &mut new, &room)?;
     if moved.is_none() {
         let size = (new.len() * PROGRAM_HEADER) as u64;
@@ -478,9 +527,39 @@ mod tests {
 
     #[test]
     fn the_largest_holes_take_the_room_there_is() {
-        let file = executable(7 * PROGRAM_HEADER as u64);
+        let file = executable(8 * PROGRAM_HEADER as u64);
         let dead = [pages(10..12), pages(20..25), pages(30..31), pages(40..44), pages(50..53)];
         assert_eq!(code_of(&without_pages(&file, &dead, of_at_least(PAGE)).unwrap()), [0..20, 25..40, 44..50, 53..PAGES]);
+    }
+
+    #[test]
+    fn the_largest_hole_is_named_as_room_for_the_payload() {
+        let out = without_pages(&executable(3584), &[pages(10..20), pages(200..300), pages(320..330)], of_at_least(PAGE)).unwrap();
+        let headers = program_headers(&out).unwrap();
+        let at = headers.iter().position(|h| h.kind == PT_NULL && h.file_size == 0).unwrap();
+        assert_eq!(headers[at].address..headers[at].address + headers[at].memory_size, pages(200..300));
+        assert_eq!(headers[at - 1].address + headers[at - 1].memory_size..headers[at + 1].address, pages(200..300));
+    }
+
+    #[test]
+    fn the_room_of_a_section_that_was_stripped_goes_too() {
+        let mut file = executable(3584);
+        file[(0x10000 + 100 * PAGE) as usize..(0x10000 + 150 * PAGE) as usize].fill(0);
+        let table = file.len();
+        for (address, offset, size) in [(0x200000, 0, 0x10000), (CODE, 0x10000, 100 * PAGE), (CODE + 150 * PAGE, 0x10000 + 150 * PAGE, 250 * PAGE)] {
+            let at = file.len();
+            file.resize(at + SECTION_HEADER, 0);
+            put_u32(&mut file, at + 4, SHT_PROGBITS).unwrap();
+            for (field, value) in [(8, SHF_ALLOC), (16, address), (24, offset), (32, size)] {
+                put_u64(&mut file, at + field, value).unwrap();
+            }
+        }
+        put_u64(&mut file, 0x28, table as u64).unwrap();
+        put_u16(&mut file, 0x3a, SECTION_HEADER as u16).unwrap();
+        put_u16(&mut file, 0x3c, 3).unwrap();
+        assert_eq!(code_of(&without_pages(&file, &[pages(150..160), pages(300..310)], of_at_least(PAGE)).unwrap()), [0..100, 160..300, 310..PAGES]);
+        file[(0x10000 + 120 * PAGE) as usize] = 1;
+        assert_eq!(code_of(&without_pages(&file, &[pages(300..310)], of_at_least(PAGE)).unwrap()), [0..300, 310..PAGES]);
     }
 
     #[test]

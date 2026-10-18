@@ -1,0 +1,109 @@
+---
+title: "Libraries"
+description: "Publish a package whose types survive, so that programs compiled with --aot get typed code from it"
+---
+
+<Warning>
+  Ahead-of-time compilation is experimental. The files that `--dts` writes for `--aot`, and how a package names them, are going to change.
+</Warning>
+
+Most packages on npm ship JavaScript and a `.d.ts` file. The `.d.ts` file describes the exports, not the code inside, so [`--aot`](/bundler/aot) compiles the package [without types](/bundler/aot-types#what-a-type-buys). `bun build --dts` writes your bundle a second time with its types kept, and an `--aot` build compiles that file instead.
+
+## Build the package
+
+```ts src/index.ts icon="/icons/typescript.svg"
+export interface Options {
+  name: string;
+  times: number;
+}
+
+export function greet(options: Options): string {
+  return ("hello " + options.name + " ").repeat(options.times).trim();
+}
+```
+
+```bash terminal icon="terminal"
+bun build ./src/index.ts --outdir ./dist --dts
+```
+
+Bun writes three files.
+
+```txt
+  index.js       135 bytes  (entry point)
+  index.sound.ts  232 bytes  (sound types)
+  index.d.ts     242 bytes  (declaration)
+```
+
+| File             | Holds                                                     | Read by                        |
+| ---------------- | --------------------------------------------------------- | ------------------------------ |
+| `index.js`       | The bundle, byte for byte what the build writes without `--dts` | Every runtime and bundler      |
+| `index.d.ts`     | The declarations of what `index.js` exports, in one file  | Editors, `tsc`, `bun check`    |
+| `index.sound.ts` | `index.js` with its types put back, and nothing else changed | `bun compile`    |
+
+`--dts` type checks the entry points first. A type error fails the build.
+
+Point `"types"` in `package.json` at `index.d.ts` and publish the folder. There's nothing else to set up.
+
+```json title="package.json" icon="file-json"
+{
+  "name": "greeter",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"]
+}
+```
+
+## Use the package
+
+The user of the package has nothing to do either.
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+import { greet } from "greeter";
+
+console.log(greet({ name: "Ada", times: 2 }));
+```
+
+```bash terminal icon="terminal"
+bun compile ./app.ts --aot-explain
+```
+
+The build says that it uses the typed file, and `--aot-explain` finds nothing that the compiler gives up.
+
+```txt
+aot: there is no place where the compiler gives something up
+note: "greeter" 1.0.0 is compiled from its typed version in node_modules/greeter/dist
+```
+
+Without `index.sound.ts`, the same build compiles the package as JavaScript.
+
+```txt
+  1. app.ts:1:1 [untyped-package]
+     'greeter' is JavaScript, so it is compiled without types: 1 file, 62.5% of the program's source text.
+     cost: 3 reads by name, 2 calls by name in 1 function (1 runs only while the program starts)
+```
+
+The first line of `index.d.ts` names the typed file, with the SHA-256 of `index.js`. Other tools read it as a comment. An `--aot` build uses the typed file only if the hash matches the installed `index.js`. Otherwise it prints a warning and compiles the package untyped.
+
+## Before you publish
+
+Compiled code [holds a program to its types](/bundler/aot-types#where-untyped-values-meet-typed-code), and with a typed file that includes the code inside your package. Run its tests under the same rules.
+
+```bash terminal icon="terminal"
+bun test --aot
+```
+
+## What does not work yet
+
+Bun writes no typed file with `--minify`, `--splitting`, `--sourcemap=inline` or a `--format` other than `esm`. It writes the declaration files as usual, and a warning says why `index.sound.ts` is left out.
+
+```bash terminal icon="terminal"
+bun build ./src/index.ts --outdir ./dist --dts --minify
+```
+
+```txt
+warn: --dts: the typed JavaScript that --aot compiles a package from is left out: it does not support --minify yet
+```
+
+[`dts`](/bundler#dts) in the bundler reference has the details. To add types to a package that you don't maintain, see [Typed versions of packages](/bundler/executables#typed-versions-of-packages).

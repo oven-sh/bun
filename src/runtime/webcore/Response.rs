@@ -1299,6 +1299,17 @@ impl Response {
         // SAFETY: `response` is freshly boxed; ownership transfers to the JSC wrapper.
         Ok(unsafe { (*response).to_js(global_this) })
     }
+
+    fn from_utf8_and_parts(global_this: &JSGlobalObject, bytes: Vec<u8>, parts: &InitParts) -> JsResult<JSValue> {
+        let init = Init::from_parts(global_this, parts)?;
+        let response = bun_core::heap::into_raw(Box::new(Response {
+            body: JsCell::new(Body::new(BodyValue::InternalBlob(super::InternalBlob { bytes, was_string: true }))),
+            init: JsCell::new(init),
+            ..Default::default()
+        }));
+        // SAFETY: `response` is freshly boxed; ownership transfers to the JSC wrapper.
+        Ok(unsafe { (*response).to_js(global_this) })
+    }
 }
 
 pub(crate) struct InitParts {
@@ -1333,6 +1344,25 @@ pub(crate) unsafe extern "C" fn Response__createFromParts(
 ) -> JSValue {
     let parts = InitParts { status, status_text, headers, header_count, header_names_and_values };
     bun_jsc::host_fn::to_js_host_call(global_this, || Response::from_parts(global_this, body, &parts))
+}
+
+/// # Safety
+/// `bytes` must point to `size` bytes of valid UTF-8, which are copied. `header_names_and_values` as for `Response__createFromParts`.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Response__createFromUTF8AndParts(
+    global_this: &JSGlobalObject,
+    bytes: *const u8,
+    size: usize,
+    status: JSValue,
+    status_text: JSValue,
+    headers: JSValue,
+    header_count: u32,
+    header_names_and_values: *const JSValue,
+) -> JSValue {
+    let parts = InitParts { status, status_text, headers, header_count, header_names_and_values };
+    // SAFETY: the caller upholds the contract above.
+    let bytes = unsafe { core::slice::from_raw_parts(bytes, size) }.to_vec();
+    bun_jsc::host_fn::to_js_host_call(global_this, || Response::from_utf8_and_parts(global_this, bytes, &parts))
 }
 
 /// # Safety

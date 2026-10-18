@@ -12,6 +12,7 @@ pub(crate) enum ScalarClass {
     Url,
     SearchParams,
     Query,
+    QueryBuilder,
 }
 
 #[derive(Copy, Clone)]
@@ -27,6 +28,7 @@ enum Member {
     Getter(&'static [u8]),
     Nested(ScalarClass),
     Method(&'static [u8]),
+    Store(&'static [u8]),
     Count,
     Text(&'static [u8]),
     Walk(i64),
@@ -50,12 +52,15 @@ fn scalar_member(kind: ScalarClass, name: &[u8]) -> Option<Member> {
         (ScalarClass::Query, b"keys") => Member::Walk(0),
         (ScalarClass::Query, b"values") => Member::Walk(1),
         (ScalarClass::Query, b"entries") => Member::Walk(WALKS_ENTRIES),
+        (ScalarClass::QueryBuilder, b"append") => Member::Store(b"appendQueryPair"),
+        (ScalarClass::QueryBuilder, b"set") => Member::Store(b"setQueryPair"),
+        (ScalarClass::QueryBuilder, b"toString") => Member::Text(b"builtQueryText"),
         _ => return None,
     })
 }
 
 fn is_scalar_member_name(name: &[u8]) -> bool {
-    [ScalarClass::Url, ScalarClass::SearchParams, ScalarClass::Query].into_iter().any(|kind| scalar_member(kind, name).is_some())
+    [ScalarClass::Url, ScalarClass::SearchParams, ScalarClass::Query, ScalarClass::QueryBuilder].into_iter().any(|kind| scalar_member(kind, name).is_some())
 }
 
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
@@ -64,13 +69,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let ExprKind::New(call) = hir[e].kind else { return None };
         let ExprKind::Ident(name) = hir[hir[call].callee].kind else { return None };
         let mut arguments = hir.ids(hir[call].args);
-        let (Some(input), base, None) = (arguments.next(), arguments.next(), arguments.next()) else { return None };
-        if matches!(hir[input].kind, ExprKind::Spread(_)) || base.is_some_and(|base| matches!(hir[base].kind, ExprKind::Spread(_))) {
+        let (input, base, None) = (arguments.next(), arguments.next(), arguments.next()) else { return None };
+        if [input, base].into_iter().flatten().any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_))) {
             return None;
         }
-        let kind = match self.c.atoms().bytes(name) {
-            b"URL" => ScalarClass::Url,
-            b"URLSearchParams" if base.is_none() => ScalarClass::Query,
+        let kind = match (self.c.atoms().bytes(name), input) {
+            (b"URL", Some(_)) => ScalarClass::Url,
+            (b"URLSearchParams", Some(_)) if base.is_none() => ScalarClass::Query,
+            (b"URLSearchParams", None) => ScalarClass::QueryBuilder,
             _ => return None,
         };
         let bound = self.c.identifier_binding(file, hir[call].callee, name)?;
@@ -160,6 +166,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         hir[call].callee == parent && hir[call].chain == Chain::No && hir[call].args.is_empty() && (matches!(member, Member::Text(_)) || self.is_walked_by_for_of(file, call_expr))
                     }
                     Some(Member::Nested(nested)) => !self.is_written_or_called(file, parent) && self.is_scalar_use(file, parent, nested),
+                    Some(Member::Store(_)) => {
+                        let Parent::Expr(call_expr) = bound.expr_parent[parent.idx()] else { return false };
+                        let ExprKind::Call(call) = hir[call_expr].kind else { return false };
+                        let mut arguments = hir.ids(hir[call].args);
+                        let (Some(name_expr), Some(value_expr), None) = (arguments.next(), arguments.next(), arguments.next()) else { return false };
+                        hir[call].callee == parent && hir[call].chain == Chain::No && ![name_expr, value_expr].into_iter().any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_)))
+                    }
                     Some(Member::Method(_)) => {
                         let Parent::Expr(call_expr) = bound.expr_parent[parent.idx()] else { return false };
                         let ExprKind::Call(call) = hir[call_expr].kind else { return false };
@@ -328,6 +341,34 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let hir = self.hir(fx.file);
         let pos = hir[e].pos;
         match hir[e].kind {
+            ExprKind::New(call) if self.preevaluated_operand(fx, hir[call].callee).is_none() && self.replaced_scalar_class(fx.file, e) == Some(ScalarClass::QueryBuilder) => {
+                let constructor = self.expr(fx, hir[call].callee);
+                let number = self.emit(fx, Op::Int(URL_SEARCH_PARAMS_CONSTRUCTOR_HOST_CLASS));
+                let is_original = self.emit(fx, Op::Operation { which: Operation::HasHostClassStructure, args: [constructor, number].into_iter().collect() });
+                fx.b.func.values[is_original.idx()].ty = self.known.boolean;
+                let (original, replaced, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
+                let (made, marker) = (self.new_temporary(fx), self.new_temporary(fx));
+                self.branch(fx, is_original, original, replaced);
+                fx.b.seal(original);
+                fx.b.seal(replaced);
+                fx.b.switch_to(original);
+                let pairs = self.emit_throwing(fx, Op::NewArray([].into_iter().collect()));
+                let zero = self.emit(fx, Op::Int(0));
+                fx.b.write(made, pairs);
+                fx.b.write(marker, zero);
+                fx.b.jump(join);
+                fx.b.switch_to(replaced);
+                let undefined = self.emit(fx, Op::Undefined);
+                fx.b.write(made, undefined);
+                fx.b.write(marker, undefined);
+                fx.b.jump(join);
+                fx.b.seal(join);
+                fx.b.switch_to(join);
+                let (input, offsets) = (fx.b.read(made), fx.b.read(marker));
+                let object = self.emit_scalar_or_generic(fx, offsets, |this, fx| this.emit(fx, Op::Undefined), &[(hir[call].callee, constructor)], generic);
+                self.record_scalar_url(fx, e, ScalarUrl { constructor, input, offsets, base: None });
+                object
+            }
             ExprKind::New(call) if self.preevaluated_operand(fx, hir[call].callee).is_none() && self.replaced_scalar_class(fx.file, e).is_some() => {
                 let mut argument_exprs = hir.ids(hir[call].args);
                 let Some(argument_expr) = argument_exprs.next() else { return generic(self, fx) };
@@ -400,12 +441,28 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let object = self.expr(fx, obj);
                     let Some(url) = self.scalar_url_for(fx, obj) else { return self.with_preevaluated_operands(fx, &[(obj, object)], generic) };
                     let scalar = |this: &mut Self, fx: &mut Fx| match member {
+                        Member::Text(helper) if holder == ScalarClass::QueryBuilder => this.call_host_class_helper(fx, pos, helper, &[url.constructor, url.input]),
                         Member::Text(helper) => this.call_host_class_helper(fx, pos, helper, &[url.input]),
                         Member::Walk(kind) => this.plain_query_entries(fx, url, kind),
                         _ => unreachable!(),
                     };
                     let value = self.emit_scalar_or_generic(fx, url.offsets, scalar, &[(obj, object)], generic);
                     return if matches!(member, Member::Text(_)) { self.coerce_to_expr_type(fx, value, e) } else { value };
+                }
+                if let Some(Member::Store(helper)) = member {
+                    let mut argument_exprs = hir.ids(hir[call].args);
+                    let (Some(name_expr), Some(value_expr)) = (argument_exprs.next(), argument_exprs.next()) else { return generic(self, fx) };
+                    let object = self.expr(fx, obj);
+                    let Some(url) = self.scalar_url_for(fx, obj) else { return self.with_preevaluated_operands(fx, &[(obj, object)], generic) };
+                    let name = self.expr(fx, name_expr);
+                    let value = self.expr(fx, value_expr);
+                    return self.emit_scalar_or_generic(
+                        fx,
+                        url.offsets,
+                        |this, fx| this.call_host_class_helper(fx, pos, helper, &[url.input, name, value]),
+                        &[(obj, object), (name_expr, name), (value_expr, value)],
+                        generic,
+                    );
                 }
                 let (Some(Member::Method(helper)), Some(argument_expr)) = (member, hir.ids(hir[call].args).next()) else { return generic(self, fx) };
                 let object = self.expr(fx, obj);

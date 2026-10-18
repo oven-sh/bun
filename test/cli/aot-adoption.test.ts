@@ -345,6 +345,13 @@ console.log(five, later);
     expect(exitCode).toBe(0);
   });
 
+  test("one check that can fail is counted in the singular", async () => {
+    const one = `function double(n: number): number {\n  return n * 2;\n}\nconst body: any = JSON.parse('{"visits":3}');\nconsole.log(double(body.visits));\n`;
+    const dir = project("aot-check-one", { "app.ts": one });
+    const { stderr } = await bun(dir, "check", "--aot", "--aot-explain=throws", "app.ts");
+    expect(stderr.split("\n").find(line => line.startsWith("[aot] type-check summary: "))).toStartWith("[aot] type-check summary: 1 check can fail when the program runs, 0 always fail");
+  });
+
   test("--aot-explain=throws-json prints one object per line on stdout", async () => {
     const dir = project("aot-check-json", { "app.ts": app });
     const { stdout } = await bun(dir, "check", "--aot", "--aot-explain=throws-json", "app.ts");
@@ -385,7 +392,7 @@ console.log(result.success, result.logs.filter(log => String(log.message).includ
   test("an unknown report name is an error that lists the valid names", async () => {
     const dir = project("aot-build-unknown", { "app.ts": app });
     const { stdout, stderr, exitCode } = await bun(dir, "build", "--compile", "--aot", "--aot-explain=nonsense", "app.ts", "--outfile", "app");
-    expect(stdout + stderr).toContain("it is one of throws, throws-all, throws-json, throws-all-json");
+    expect(stdout + stderr).toContain("it is one of throws, throws-all, throws-json, throws-all-json, rules-json, costs, costs-json, runtime-use");
     expect(exitCode).not.toBe(0);
   }, 120_000);
 

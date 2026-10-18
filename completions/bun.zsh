@@ -785,6 +785,39 @@ _bun_prune_completion() {
         ret=0
 }
 
+_bun_compile_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :_files' \
+        '--library[Build a package to publish instead of an executable\: JavaScript, .d.ts files and a package.json]' \
+        '--outfile[Write the executable to this path]:outfile:_files' \
+        '--outdir[With --library\: the folder to write the package to (default\: dist)]:outdir:_files -/' \
+        '--target[The platform to build for, such as bun-linux-x64]:target' \
+        '--define[Substitute K\:V while parsing]:define' \
+        '--env[Inline environment variables\: inline, disable or a prefix*]:env' \
+        '--asset[Embed a file or directory into the executable]:asset:_files' \
+        '--external[Leave a module out of the executable]:external' \
+        '--minify[Enable all minification flags]' \
+        '--sourcemap[Build with sourcemaps]:sourcemap' \
+        '--tsconfig-override[Use this tsconfig.json]:tsconfig-override:_files' \
+        '--compile-exec-argv[Prepend arguments to the executable'"'"'s execArgv]:compile-exec-argv' \
+        '--disallow-code-generation-from-strings[In the executable, eval() and new Function() throw]' \
+        '--aot-explain[List the places where the compiler cannot use your types]' \
+        '--aot-type-errors[What the executable does when a value does not match its type\: throw or log]:aot-type-errors' \
+        '--aot-deny[Fail where a rule finds something]:aot-deny' \
+        '--aot-warn[The same, as warnings]:aot-warn' \
+        '--aot-allow[Turn a rule off]:aot-allow' \
+        '--aot-huge-heap[Let each thread have more than 32 GB of objects]' \
+        '--no-aot[Keep the JavaScript in the executable instead of compiling it ahead of time]' \
+        '--trim[Leave the parts of Bun that the program cannot reach out of the executable]' \
+        '--no-trim[Keep all of Bun in the executable]' \
+        '--no-script[Run this command even if the project has a compile script]' \
+        '--cwd[Set the working directory]:cwd:_files -/' \
+        '--help[Print this help menu]' \
+        '-h[Print this help menu]' &&
+        ret=0
+}
+
 _bun_check_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
@@ -807,6 +840,7 @@ _bun_check_completion() {
         '--aot-allow[With --aot\: turn a rule off. Of two flags that name the same rule and file, the later one counts]:rule' \
         '--aot-baseline[With --aot\: a file with the number of findings per rule and file that are accepted]:file:_files' \
         '--aot-update-baseline[With --aot-baseline\: write the file anew from this build]' \
+        '--disallow-code-generation-from-strings[With --aot\: as for an executable built with that flag]::level:(strict)' \
         '--help[Print this help menu]' \
         '-h[Print this help menu]' &&
         ret=0
@@ -1149,6 +1183,7 @@ _bun() {
             'unlink\:"Globally unlink an npm package" '
             'pm\:"More commands for managing packages" '
             'build\:"Bundle TypeScript & JavaScript into a single file" '
+            'compile\:"Compile TypeScript & JavaScript into a standalone executable" '
             'upgrade\:"Get the latest version of bun" '
             'help\:"Show all supported flags and commands" '
         )
@@ -1229,6 +1264,10 @@ _bun() {
             ;;
         build)
             _bun_build_completion
+
+            ;;
+        compile)
+            _bun_compile_completion
 
             ;;
         update)
@@ -1340,6 +1379,10 @@ _bun() {
                     ;;
                 build)
                     _bun_build_completion
+
+                    ;;
+                compile)
+                    _bun_compile_completion
 
                     ;;
                 update)

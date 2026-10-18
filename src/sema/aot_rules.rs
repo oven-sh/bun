@@ -51,9 +51,9 @@ pub static RULES: [RuleInfo; Rule::COUNT] = [
     RuleInfo {
         rule: Rule::UntypedPackage,
         name: "untyped-package",
-        codes: &[100026],
+        codes: &[100026, 100083],
         default: Severity::Allow,
-        help: "a dependency is compiled as plain JavaScript",
+        help: "a dependency, or a file of the program, is compiled as plain JavaScript",
     },
     RuleInfo {
         rule: Rule::LostLayout,

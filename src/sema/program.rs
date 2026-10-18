@@ -242,7 +242,7 @@ pub struct Module<'s> {
     pub loader_entry_points: &'s [hir::ExprId],
     pub file_loader_entry_points: &'s [hir::ExprId],
     pub compiled_functions: std::sync::OnceLock<CompiledFunctions<'s>>,
-    pub roots_released: std::sync::OnceLock<&'s [(hir::FnId, u32)]>,
+    pub roots_released: std::sync::OnceLock<&'s [ReleasedRoot]>,
     /// No file refers to it, and it adds no globally visible declarations. So only the task that
     /// checks it reads its HIR, which is freed at the end of that task (`Files::free_tree`), and
     /// nothing that mentions one of its nodes is published.
@@ -254,6 +254,13 @@ pub struct Module<'s> {
 }
 
 pub const EVERY_ROOT: u32 = u32::MAX;
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct ReleasedRoot {
+    pub holder: hir::FnId,
+    pub root: u32,
+    pub only_if_holder_may_print_an_object: bool,
+}
 
 pub struct CompiledFunctions<'s> {
     pub defined: &'s [u64],

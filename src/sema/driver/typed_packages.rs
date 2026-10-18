@@ -9,6 +9,8 @@ const REPLACEMENTS: &[u8] = b"lay";
 const NODE_MODULES_DIR: &[u8] = b"node_modules";
 const PACKAGE_JSON: &[u8] = b"package.json";
 const MARK: &[u8] = b"// @sound ";
+pub const CONDITION: &[u8] = b"bun-aot";
+const TYPED_EXTENSIONS: [(&[u8], &[u8]); 3] = [(b".js", b".sound.ts"), (b".mjs", b".sound.mts"), (b".cjs", b".sound.cts")];
 const MAX_DEPTH: usize = 8;
 
 pub type Files = Vec<(Box<[u8]>, Box<[u8]>, bool)>;
@@ -126,6 +128,38 @@ fn package_javascript_files(package: &Json) -> Vec<Vec<u8>> {
     found
 }
 
+fn javascript_files_with_the_condition(directory: &[u8], package: &Json) -> Vec<Vec<u8>> {
+    fn add(value: &Json, folder: &[u8], depth: usize, found: &mut Vec<Vec<u8>>) {
+        for (key, inner) in value.as_object().unwrap_or_default() {
+            match inner.as_str().filter(|_| &key[..] == CONDITION) {
+                Some(typed) => {
+                    let javascript = javascript_path_beside(typed.strip_prefix(b"./").unwrap_or(typed)).map(|javascript| [folder, &javascript[..]].concat());
+                    found.extend(javascript.filter(|javascript| is_relative_inner_path(javascript) && !found.contains(javascript)));
+                }
+                None if depth < MAX_DEPTH => add(inner, folder, depth + 1, found),
+                None => {}
+            }
+        }
+    }
+    let mut found = Vec::new();
+    package.get(b"exports").into_iter().for_each(|exports| add(exports, b"", 0, &mut found));
+    if found.is_empty() {
+        let mut folders: Vec<Vec<u8>> = Vec::new();
+        for javascript in package_javascript_files(package) {
+            for folder in ancestors(&javascript).skip(1) {
+                if !folders.iter().any(|known| &known[..] == folder) {
+                    folders.push(folder.to_vec());
+                }
+            }
+        }
+        for folder in folders {
+            let nested = read_json(&join(&[directory, &folder, PACKAGE_JSON]));
+            nested.as_ref().and_then(|nested| nested.get(b"exports")).into_iter().for_each(|exports| add(exports, &[&folder[..], b"/"].concat(), 0, &mut found));
+        }
+    }
+    found
+}
+
 fn read_marker(directory: &[u8], javascript: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     let declarations = read(&join(&[directory, &declarations_path_beside(javascript)?]))?;
     let (typed, sha256) = parse_marker(&declarations)?;
@@ -134,7 +168,8 @@ fn read_marker(directory: &[u8], javascript: &[u8]) -> Option<(Vec<u8>, Vec<u8>)
 
 fn package_typed_home(directory: &[u8]) -> Option<Vec<u8>> {
     let package = read_json(&join(&[directory, PACKAGE_JSON]))?;
-    let marked = package_javascript_files(&package).into_iter().find(|javascript| read_marker(directory, javascript).is_some())?;
+    let marked = (javascript_files_with_the_condition(directory, &package).into_iter().next())
+        .or_else(|| package_javascript_files(&package).into_iter().find(|javascript| read_marker(directory, javascript).is_some()))?;
     Some(match bun_core::strings::last_index_of_char(&marked[..], b'/') {
         Some(slash) => join(&[directory, &marked[..slash]]),
         None => directory.to_vec(),
@@ -143,20 +178,30 @@ fn package_typed_home(directory: &[u8]) -> Option<Vec<u8>> {
 
 fn shipped_files(directory: &[u8]) -> Result<(Files, Vec<u8>), String> {
     let package = read_json(&join(&[directory, PACKAGE_JSON])).ok_or("the installed package.json is not JSON")?;
-    let mut waiting = package_javascript_files(&package);
+    let with_the_condition = javascript_files_with_the_condition(directory, &package);
+    let mut waiting = if with_the_condition.is_empty() { package_javascript_files(&package) } else { with_the_condition.clone() };
     let mut seen = waiting.clone();
     let mut files = Vec::new();
     while let Some(javascript) = waiting.pop() {
-        let Some((typed, wanted)) = read_marker(directory, &javascript) else { continue };
         let folder = bun_core::strings::last_index_of_char(&javascript[..], b'/').map_or(&b""[..], |slash| &javascript[..slash + 1]);
-        let (Some(beside), true) = (typed_path_beside(&javascript), is_relative_inner_path(&typed)) else {
-            return Err(format!("the declaration file beside {} names no typed file inside the package", BStr::new(&javascript)));
+        let typed = if with_the_condition.is_empty() {
+            let Some((typed, wanted)) = read_marker(directory, &javascript) else { continue };
+            let (Some(beside), true) = (typed_path_beside(&javascript), is_relative_inner_path(&typed)) else {
+                return Err(format!("the declaration file beside {} names no typed file inside the package", BStr::new(&javascript)));
+            };
+            verify_typed_against(directory, &javascript, &wanted)?;
+            let typed = [folder, &typed[..]].concat();
+            if typed != beside {
+                return Err(format!("the typed file of {} is not {}", BStr::new(&javascript), BStr::new(&beside)));
+            }
+            typed
+        } else {
+            let Some(beside) = typed_path_beside(&javascript) else { continue };
+            if !with_the_condition.contains(&javascript) && !crate::fs_queries::exists(&join(&[directory, &beside])) {
+                continue;
+            }
+            beside
         };
-        verify_typed_against(directory, &javascript, &wanted)?;
-        let typed = [folder, &typed[..]].concat();
-        if typed != beside {
-            return Err(format!("the typed file of {} is not {}", BStr::new(&javascript), BStr::new(&beside)));
-        }
         let Some(text) = read(&join(&[directory, &typed])) else {
             return Err(format!("it has no {}", BStr::new(&typed)));
         };
@@ -202,12 +247,15 @@ fn shipped_files(directory: &[u8]) -> Result<(Files, Vec<u8>), String> {
     Ok((files, package.get(b"version").and_then(Json::as_str).unwrap_or_default().to_vec()))
 }
 
-pub(crate) fn typed_path_beside(javascript: &[u8]) -> Option<Vec<u8>> {
-    const EXTENSIONS: [(&[u8], &[u8]); 3] = [(b".js", b".sound.ts"), (b".mjs", b".sound.mts"), (b".cjs", b".sound.cts")];
-    EXTENSIONS.iter().find_map(|(from, to)| Some([javascript.strip_suffix(*from)?, *to].concat()))
+pub fn typed_path_beside(javascript: &[u8]) -> Option<Vec<u8>> {
+    TYPED_EXTENSIONS.iter().find_map(|(from, to)| Some([javascript.strip_suffix(*from)?, *to].concat()))
 }
 
-pub(crate) fn declarations_path_beside(javascript: &[u8]) -> Option<Vec<u8>> {
+fn javascript_path_beside(typed: &[u8]) -> Option<Vec<u8>> {
+    TYPED_EXTENSIONS.iter().find_map(|(to, from)| Some([typed.strip_suffix(*from)?, *to].concat()))
+}
+
+pub fn declarations_path_beside(javascript: &[u8]) -> Option<Vec<u8>> {
     const EXTENSIONS: [(&[u8], &[u8]); 3] = [(b".js", b".d.ts"), (b".mjs", b".d.mts"), (b".cjs", b".d.cts")];
     EXTENSIONS.iter().find_map(|(from, to)| Some([javascript.strip_suffix(*from)?, *to].concat()))
 }

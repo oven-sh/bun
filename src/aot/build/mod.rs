@@ -22,7 +22,7 @@ mod types;
 mod validate;
 
 use self::coerce::Ty;
-pub(crate) use self::imports::ImportSource;
+pub(crate) use self::imports::{ImportSource, is_builtin_specifier};
 use crate::builder::{FuncBuilder, Var};
 use crate::builtins_generated::Operation;
 use crate::declared::DeclaredTable;

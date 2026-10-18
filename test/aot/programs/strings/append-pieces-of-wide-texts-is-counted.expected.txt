@@ -1,0 +1,3 @@
+a wide text: 33 characters, 3 pieces found to be Latin-1 in 16 bits
+a Latin-1 text: 33 characters, 0 pieces found to be Latin-1 in 16 bits
+wide pieces alone: 11 characters, 0 pieces found to be Latin-1 in 16 bits

@@ -1,4 +1,4 @@
-//! `bun check`, `bun lint` and `bun fmt` ran the script of that name in `package.json` before they
+//! `bun check`, `bun lint`, `bun fmt` and `bun compile` ran the script of that name in `package.json` before they
 //! were commands, so where a project has such a script they still do. In that script, and in what it
 //! runs, they are the commands: `"lint": "bun lint"`. So it is with a file `lint.ts` and with
 //! `node_modules/.bin/lint`. With `--no-script` they are the commands whatever the project has.
@@ -27,10 +27,11 @@ fn asks_the_command(command: &[u8], arg: &[u8]) -> bool {
     let name = bun_core::strings::split_once_char(arg, b'=').map_or(arg, |it| it.0);
     match name {
         b"--help" | b"-h" | b"--no-script" => true,
-        b"--help-all" | b"--doctor" => command != b"check",
+        b"--help-all" | b"--doctor" => matches!(command, b"lint" | b"fmt"),
         b"--explain" => command == b"lint",
-        b"--aot" => command != b"fmt",
+        b"--aot" => matches!(command, b"check" | b"lint"),
         b"--aot-explain" => command == b"check",
+        b"--library" => command == b"compile",
         _ => false,
     }
 }
@@ -194,7 +195,7 @@ fn read_package_json(path: &[u8]) -> Option<Vec<u8>> {
 
 /// The `package.json` nearest to `dir`, which is where `bun run` looks: its directory, its path and
 /// its text.
-fn nearest_package_json(mut dir: &[u8]) -> Option<(&[u8], Vec<u8>, Vec<u8>)> {
+pub(crate) fn nearest_package_json(mut dir: &[u8]) -> Option<(&[u8], Vec<u8>, Vec<u8>)> {
     use bun_paths::platform::Auto;
     use bun_paths::resolve_path::join_abs_string;
     loop {
@@ -239,6 +240,7 @@ fn command_of_script(name: &[u8]) -> Option<&'static [u8]> {
         b"check" | b"precheck" | b"postcheck" => Some(b"check"),
         b"lint" | b"prelint" | b"postlint" => Some(b"lint"),
         b"fmt" | b"prefmt" | b"postfmt" => Some(b"fmt"),
+        b"compile" | b"precompile" | b"postcompile" => Some(b"compile"),
         _ => None,
     }
 }
@@ -276,7 +278,7 @@ pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir
         }
     };
     // `name` takes the place of what another package manager has said, for what the script runs.
-    for command in [&b"check"[..], b"lint", b"fmt"] {
+    for command in [&b"check"[..], b"lint", b"fmt", b"compile"] {
         if let Some(inherited) = package_of_inherited_script(command) {
             note(command, &inherited);
         }

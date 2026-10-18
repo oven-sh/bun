@@ -1,0 +1,1 @@
+{ "skipInShell": "without the bundler nothing finds the .cjs files that it requires" }

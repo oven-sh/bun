@@ -708,6 +708,7 @@ pub(super) fn explain(sources: &Sources<'_, '_>, as_json: bool, in_parallel: InP
                 let row = table.add(finding, &[], rule, None, None, &tally);
                 table.rows[row].other_causes.extend(finding.related.iter().map(|other| (other.file, other.start)));
             }
+            Rule::UntypedPackage if finding.code == 100083 => {}
             Rule::UntypedPackage => {
                 if let Some(inside) = finding.args.first().and_then(|package| untyped_by_package.get(package)) {
                     tally.absorb(inside);

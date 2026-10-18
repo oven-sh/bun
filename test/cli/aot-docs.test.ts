@@ -2,7 +2,7 @@
 // here. Every line of the output on the page has to be printed, in that order; a page may leave lines out.
 import { describe, expect, test } from "bun:test";
 import { unsupported } from "../aot/run-programs";
-import { mkdirSync, readFileSync, realpathSync, symlinkSync } from "fs";
+import { mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, tempDirWithBunTypes } from "harness";
 import { join } from "path";
 
@@ -42,7 +42,9 @@ const withoutTimes = (text: string) =>
     .split("\n")
     .map(line => line.replace(/ *\[\d+(\.\d+)?m?s\]/, "").trimEnd());
 
-describe.skipIf(!compiles || !hasTheShellOfThePages).each(["aot-adoption.mdx", "aot-debugging.mdx"])("docs/bundler/%s", name => {
+const pages = readdirSync(join(import.meta.dir, "..", "..", "docs", "bundler")).filter(name => /^aot.*\.mdx$/.test(name));
+
+describe.skipIf(!compiles || !hasTheShellOfThePages).each(pages)("docs/bundler/%s", name => {
   const page = readFileSync(join(import.meta.dir, "..", "..", "docs", "bundler", name), "utf8");
   const { files, examples } = examplesOf(page);
 
@@ -74,5 +76,5 @@ describe.skipIf(!compiles || !hasTheShellOfThePages).each(["aot-adoption.mdx", "
       return true;
     });
     expect({ found, output }).toEqual({ found: expected, output });
-  });
+  }, 120_000);
 });

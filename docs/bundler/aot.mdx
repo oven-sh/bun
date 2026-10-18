@@ -1,0 +1,264 @@
+---
+title: "Ahead-of-time compilation"
+description: "Compile TypeScript and JavaScript to machine code when you build, with bun compile"
+---
+
+import Compile from "/snippets/cli/compile.mdx";
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+```bash terminal icon="terminal"
+bun compile ./server.ts
+```
+
+`bun compile` compiles your program to machine code and writes a standalone executable. Normally, Bun interprets your program when it starts, and its just-in-time compiler (JIT) compiles the functions that run often while the program runs.
+
+- The executable has no JIT and no bytecode. It parses nothing when it starts, and it has nothing to warm up.
+- The compiler uses your TypeScript types. An object of a declared class or interface gets a fixed layout, so reading a property is a load from a known offset.
+- JavaScript files and npm packages are compiled too. Without types, the compiled code looks properties up by name.
+- The result is one file, as with [`--compile`](/bundler/executables). It runs on a machine that has neither Bun nor your sources.
+
+There's no new syntax and nothing to annotate. Point `bun compile` at the entry point you already have.
+
+`bun compile` is short for `bun build --compile --aot` and takes the same flags. The other commands have the flag too: `bun check --aot`, `bun run --aot`, `bun test --aot`, `bun lint --aot`. So these pages call the feature `--aot`.
+
+## Build an executable
+
+The build type checks your program, so install Bun's type declarations first. [`bun init`](/runtime/templating/init) does that for a new project.
+
+```bash terminal icon="terminal"
+bun add -d @types/bun
+```
+
+```ts server.ts icon="/icons/typescript.svg"
+interface Todo {
+  id: number;
+  title: string;
+  done: boolean;
+}
+
+const todos: Todo[] = [{ id: 1, title: "Try --aot", done: false }];
+
+const server = Bun.serve({
+  port: 3000,
+  routes: {
+    "/todos": () => Response.json(todos),
+    "/todos/:id": req => {
+      const todo = todos.find(todo => todo.id === Number(req.params.id));
+      return todo ? Response.json(todo) : new Response("Not found", { status: 404 });
+    },
+  },
+});
+
+console.log(`Listening on ${server.url}`);
+```
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun compile ./server.ts
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./server.ts"],
+      compile: { outfile: "./server", aot: true },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+```txt
+ [282ms]  bundle  1 modules
+ [100ms] compile  server
+aot: 14.3% of reads typed, 0 of 1 type open, 0 classes without a layout, 0 packages and 0 files untyped (--aot-warn=all lists them)
+```
+
+Run it like any other program.
+
+```bash terminal icon="terminal"
+./server
+```
+
+The server prints its address and waits for requests.
+
+```txt
+Listening on http://localhost:3000/
+```
+
+```bash terminal icon="terminal"
+curl localhost:3000/todos/1
+```
+
+```txt
+{"id":1,"title":"Try --aot","done":false}
+```
+
+### The last line of the build
+
+The line that starts with `aot:` says how much of your program the compiler has types for. A read is typed if the compiler knows the type of the value that a property or element access produces.
+
+Reads of objects that Bun provides, such as `req.params` and `server.url`, count as untyped. A short program that mostly calls Bun's APIs shows a low number, as this one does. The number says more about a program with classes and interfaces of its own.
+
+`--aot-explain` lists the lines of your program that cost the most, and it is the better guide. [See what the compiler did](/bundler/aot-reports) runs it on an example.
+
+### Type errors stop the build
+
+`bun run` and `bun build` remove your types and never check them. `bun compile` depends on them, so a type error stops the build. Bun writes no executable and exits with code `1`.
+
+```ts wrong.ts icon="/icons/typescript.svg"
+const port: number = "3000";
+console.log(port);
+```
+
+```bash terminal icon="terminal"
+bun compile ./wrong.ts
+```
+
+```txt
+1 | const port: number = "3000";
+          ^
+error: TS2322: Type 'string' is not assignable to type 'number'.
+    at /path/to/wrong.ts:1:7
+```
+
+[`bun check --aot`](/runtime/check) reports every error that the build reports, and builds nothing. Get it to pass first.
+
+```bash terminal icon="terminal"
+bun check --aot ./wrong.ts
+```
+
+```txt
+wrong.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
+Found 1 error in 1 file, checked 1 file [49.21ms]
+```
+
+### Compile a project
+
+Without an entry point, `bun compile` reads `package.json`. It compiles the file that `"bin"` names, else `"module"`, else `"main"`, else `index.ts`. The executable gets the name of the `"bin"` entry, or of the package without its scope.
+
+```json package.json icon="file-json"
+{
+  "name": "@acme/todo-server",
+  "module": "server.ts"
+}
+```
+
+```bash terminal icon="terminal"
+bun compile
+```
+
+```txt
+ [125ms]  bundle  1 modules
+  [72ms] compile  todo-server
+```
+
+If `package.json` has a `"compile"` script, `bun compile` runs that script. `bun compile --no-script` is always the compiler.
+
+### Run from your sources
+
+`bun run --aot` and `bun test --aot` run your program from its sources, under the rules of `--aot`. They compile nothing ahead of time, so use them to test behavior and not speed.
+
+```bash terminal icon="terminal"
+bun run --aot ./server.ts
+bun test --aot
+```
+
+See [Try your code without building an executable](/bundler/executables#try-your-code-without-building-an-executable).
+
+## What to expect
+
+Servers start faster and use less memory. Requests per second depend on how much of the code that handles a request has types.
+
+Eight small servers, Bun 1.4.3 against the same application built with `--aot`:
+
+|                  | Requests per second | Peak memory (RSS) | Start to first response |
+| ---------------- | ------------------: | ----------------: | ----------------------: |
+| `Bun.serve`      |               +6.7% |        42 → 32 MB |              17 → 11 ms |
+| `node:http`      |               +1.0% |        66 → 44 MB |              36 → 14 ms |
+| Hono             |               +0.9% |        47 → 33 MB |              21 → 12 ms |
+| Elysia           |               -2.7% |        48 → 39 MB |              37 → 14 ms |
+| TanStack Start   |               -3.9% |        62 → 40 MB |              48 → 15 ms |
+| Express          |              -12.6% |        82 → 53 MB |              74 → 23 ms |
+| Fastify          |              -19.3% |        82 → 51 MB |              83 → 20 ms |
+| Effect           |              -24.4% |        75 → 45 MB |             110 → 34 ms |
+
+One server process on one core of an AMD EPYC 9R14, Linux x64, 64 connections, after warm-up. Each number is the mean over the routes of the application, among them plain text, JSON, path parameters, a validated `POST`, async and streaming. Requests per second are ±0.3 to ±0.6 points. The time to the first response is a median.
+
+- **Startup.** Every server answers its first request sooner. There's no source to parse and no bytecode to generate.
+- **Memory.** Peak memory is 18% to 40% lower. The process holds no bytecode, no JIT-compiled code and no profiling data. The machine code is part of the file, so the operating system shares it between processes.
+- **Throughput.** Express, Fastify and Effect are slower today. Most of their code is untyped JavaScript from npm that runs once per request. A JIT learns the types of that code by watching it run. The compiler can't, so each property access is a lookup by name.
+
+Typed code does better. Two programs written in strict TypeScript:
+
+|                                                                        | Bun 1.4.3 |  `--aot` |
+| ---------------------------------------------------------------------- | --------: | -------: |
+| The TypeScript 6 compiler, type checking the `effect` repository: time |   14.20 s |   3.83 s |
+| Its peak memory                                                        |  2,680 MB |   928 MB |
+| An issue tracker on `Bun.serve` and Postgres: requests per second      |     2,987 |    4,420 |
+| Its peak memory                                                        |     99 MB |    63 MB |
+
+The same issue tracker written in Go handles 5,300 requests per second, and in Rust 9,336.
+
+Two things get worse:
+
+- **The executable is larger.** It holds a copy of Bun, as with `--compile`, plus the machine code of your program and of the built-in modules it imports. The server above grows by 0.4 MB. A large application grows by tens of megabytes. [`--compile-trim-runtime`](/bundler/aot-size) leaves out the parts of Bun that your program can't reach: that server is 20 MB with it.
+- **The build takes longer.** Bun type checks the whole program and compiles every function in it.
+
+## Compare on your application
+
+Build the same entry point both ways. `--no-aot` keeps the JavaScript in the executable, for the JIT.
+
+```bash terminal icon="terminal"
+bun compile --no-aot ./server.ts --outfile server-jit
+bun compile ./server.ts --outfile server-aot
+ls -l server-jit server-aot
+```
+
+For a command-line tool, compare the time of a whole run with [`hyperfine`](https://github.com/sharkdp/hyperfine).
+
+```bash terminal icon="terminal"
+hyperfine --warmup 10 -N './cli-jit --help' './cli-aot --help'
+```
+
+For a server, put each executable under the same load with [`oha`](https://github.com/hatoo/oha) or [`bombardier`](https://github.com/codesenberg/bombardier). Run the load twice and keep the second result, so that the JIT has compiled the hot functions of `server-jit` by the time you measure.
+
+```bash terminal icon="terminal"
+oha -z 10s -c 64 --no-tui http://localhost:3000/todos
+```
+
+Use routes that do what your application does in production. A route that returns a constant measures Bun's HTTP server, which is native code either way.
+
+[Benchmarking](/project/benchmarking) has more on measuring time and memory.
+
+## When to stay with the JIT
+
+- **Peak requests per second matter most, and your hot code is untyped.** See Express, Fastify and Effect above.
+- **You build on one platform and deploy to another.** `--aot` makes machine code for the platform that runs the build. Run the build on the target platform, in CI or in a container.
+
+  ```txt
+  error: --aot: ahead-of-time compilation makes machine code for the platform it runs on and cannot target another. Run this build on the target platform, with that platform's Bun
+  note: bun compile --no-aot builds an executable that is not compiled ahead of time
+  ```
+
+- **A library generates its hot code when the program runs.** zod 4, ajv, fast-json-stringify and Elysia build functions with `new Function`. The build can't see that code, so Bun interprets it for as long as the program runs. `--aot-deny=interpreted` fails the build where your program or a dependency does that.
+- **Your program spends its time in WebAssembly.** The executable has no JIT, so Bun interprets WebAssembly. A tight loop runs about 20 times slower.
+- **A dependency changes built-in objects.** `Array.prototype`, `Object.prototype`, `Promise` and the rest are immutable in a compiled program. [Packages that change built-in objects](/bundler/aot-adoption#packages-that-change-built-in-objects) lists known cases and what to use instead.
+- **You set breakpoints in the executable.** The inspector connects, and its console, heap snapshots and CPU profiles work. Breakpoints and stepping don't. See [Debugging and profiling with `--aot`](/bundler/aot-debugging).
+- **Your project has type errors that you can't fix yet.**
+- **You use [macros](/bundler/macros), or `JSCallback` from `bun:ffi`.** Neither is available.
+
+## Read next
+
+- [How `--aot` uses your types](/bundler/aot-types): what a type buys, and what happens where `any`, `as` and `JSON.parse` meet typed code.
+- [See what the compiler did](/bundler/aot-reports): every report, run on one small program.
+- [Compatibility with `--aot`](/bundler/aot-compatibility): what works the same, what differs on purpose, what isn't available.
+- [Adopting `--aot`](/bundler/aot-adoption): find what changes in your program before you ship it.
+- [Debugging and profiling with `--aot`](/bundler/aot-debugging): stack traces, crash reports, profilers, and the rules that fail a build when code loses its types.
+- [Smaller executables](/bundler/aot-size): leave out the parts of Bun that your program can't reach.
+- [Libraries](/bundler/aot-libraries): publish a package whose types survive.
+- [Troubleshooting `--aot`](/bundler/aot-troubleshooting): the errors you are most likely to meet first, with the cause and the fix.
+- [Every difference from an executable built without `--aot`](/bundler/executables#ahead-of-time-compilation).
+
+<Compile />

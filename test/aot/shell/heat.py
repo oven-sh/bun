@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Runs the programs in ../programs with quick.py, compiled as if every function were hot, or as if every function were cold.
+"""Runs the programs in ../programs with quick.py, compiled as if every function were hot, as if every function were cold, or as if none were either.
 
 The compiler estimates how hot each function is and compiles hot code in other forms than the rest: callees are guessed and copied in,
 a field that holds one function is called without being read, built-ins that take a callback become loops around it. The coldest part of
 a large program gets forms of its own again: compact code, nothing copied in, bodies shared between call sites. A test program meets few
-of them. Most of its functions run once, and a program this small has no coldest part at all. Here each form is made wherever it can be.
+of them: a program this small has no coldest part at all, and all its functions are among the hottest, which remember where they found a
+property and are hot. Most of a large program is neither: `neither` compiles every function so. Here each form is made wherever it can be.
 
-    JSC=<jsc> SEMA=<bun-sema> PLAIN=<any bun> python3 test/aot/shell/heat.py [-j <jobs>] [--part <i>/<n>] hot | cold <program>... | all
+    JSC=<jsc> SEMA=<bun-sema> PLAIN=<any bun> python3 test/aot/shell/heat.py [-j <jobs>] [--part <i>/<n>] hot | cold | neither <program>... | all
 
     --part <i>/<n>  of `all`: every n-th program, from the i-th on. ../heat/*.test.ts deal the programs out so
     the rest        as for quick.py, whose top says how to build the tools
@@ -20,7 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import quick
 
-HEATS = {"hot": "2", "cold": "3"}
+HEATS = {"hot": "2", "cold": "3", "neither": "4"}
 
 
 def verdicts(arguments, work, heat):

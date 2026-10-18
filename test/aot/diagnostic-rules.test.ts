@@ -233,6 +233,34 @@ describe.concurrent("untyped-package", () => {
     const typed = { ...packageWithTypeError, "node_modules/typed/index.ts": "export function thrice(n: number): number { return n * 3; }\n" };
     expect(await build(typed, "--aot-deny=untyped-package")).toMatchObject({ exitCode: 0, wroteExecutable: true });
   }, 120_000);
+
+  const allowsJavaScript = JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, allowJs: true } });
+  const ownFile = {
+    "tsconfig.json": allowsJavaScript,
+    "main.ts": `import { twice } from "./plain.js";\nexport const four = twice(2);\n`,
+    "plain.js": "export function twice(n) {\n  return n * 2;\n}\n",
+  };
+
+  test("a JavaScript file of the program is reported at its start", async () => {
+    const { findings, exitCode } = await check(ownFile, "--aot-deny=untyped-package");
+    expect(findings).toEqual(["deny untyped-package TS100083 plain.js:1:1 'plain.js' is JavaScript, so it is compiled without types."]);
+    expect(exitCode).toBe(1);
+  }, 60_000);
+
+  test("and it stops a build", async () => {
+    const { stderr, exitCode, wroteExecutable } = await build(ownFile, "--aot-deny=untyped-package");
+    expect(stderr).toMatch(/^error: TS100083: 'plain\.js' is JavaScript, so it is compiled without types\. \[untyped-package\]$/m);
+    expect({ exitCode, wroteExecutable }).toEqual({ exitCode: 1, wroteExecutable: false });
+  }, 120_000);
+
+  test("the rule is off by default", async () => {
+    expect(await check(ownFile)).toMatchObject({ findings: [], exitCode: 0 });
+  }, 60_000);
+
+  test("the same file in TypeScript is not reported", async () => {
+    const typed = { "main.ts": `import { twice } from "./plain";\nexport const four = twice(2);\n`, "plain.ts": "export function twice(n: number): number {\n  return n * 2;\n}\n" };
+    expect(await check(typed, "--aot-deny=untyped-package")).toMatchObject({ findings: [], exitCode: 0 });
+  }, 60_000);
 });
 
 describe.concurrent("lost-layout", () => {

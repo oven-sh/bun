@@ -7,7 +7,7 @@ description: "Stack traces, crashes, CPU and heap profiles, the inspector, instr
 
 An executable built with [`--aot`](/bundler/executables#ahead-of-time-compilation) has no bytecode and no JIT. Most tools work as they do for any other executable. The debugger does not. This page lists what to expect from each.
 
-Every runtime flag below can be passed to an executable that is already built, through [`BUN_OPTIONS`](/bundler/executables#runtime-arguments-via-bun_options).
+The profiling flags below can be passed to an executable that is already built, through [`BUN_OPTIONS`](/bundler/executables#runtime-arguments-via-bun_options).
 
 ## Stack traces
 
@@ -187,7 +187,13 @@ BUN_OPTIONS="--heap-prof" ./app
 
 ## The inspector
 
-`--inspect`, `--inspect-wait` and `--inspect-brk` start the inspector, and VS Code and `debug.bun.sh` connect to it.
+`BUN_INSPECT` starts the inspector in an executable, and VS Code and `debug.bun.sh` connect to it.
+
+```bash terminal icon="terminal"
+BUN_INSPECT="ws://127.0.0.1:6499/app" ./app
+```
+
+`--inspect`, `--inspect-wait` and `--inspect-brk` in `BUN_OPTIONS` start nothing in a standalone executable, with or without `--aot`.
 
 | Works | Does not work |
 | --- | --- |
@@ -250,7 +256,7 @@ bun build --compile --aot ./app.ts --outfile app --aot-deny=untyped-file,lost-la
 | Rule              | Reports                                                                                                                        | Default |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------- |
 | `untyped-file`    | A TypeScript file or package has type errors that do not stop the build, so it is compiled without its types                   | warning |
-| `untyped-package` | A dependency is JavaScript, so it is compiled without types. Says how much of the program it is                                | off     |
+| `untyped-package` | A dependency, or a file of your own, is JavaScript, so it is compiled without types. Says how much of the program a package is | off     |
 | `lost-layout`     | A class has no fixed layout, or leaves declared fields out of it. Its instances or those fields are accessed by name           | off     |
 | `untyped-base`    | A class has no fixed layout because it extends a built-in class, such as `Error`, or a JavaScript class                        | off     |
 | `open-layout`     | A declared type can also hold objects that typed code did not create, so every property access through it checks first         | off     |

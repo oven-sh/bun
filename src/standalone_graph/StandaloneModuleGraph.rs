@@ -2769,13 +2769,6 @@ fn name_of_option(option: &[u8]) -> &[u8] {
     &option[..strings::index_of_any(option, b"= \t\n\x0C\r\0").unwrap_or(option.len())]
 }
 
-fn option_that_runs_uncompiled_code(compile_exec_argv: &[u8]) -> Option<Vec<u8>> {
-    let mut arguments: Vec<Box<ZStr>> = vec![ZStr::boxed(b"")];
-    bun_core::append_options_env(compile_exec_argv, &mut arguments);
-    let mut arguments = arguments[1..].iter().map(|argument| argument.as_bytes());
-    arguments.find(|argument| bun_core::is_bootstrap_flag(argument)).map(|option| name_of_option(option).to_vec())
-}
-
 fn options_named_in(compile_exec_argv: &[u8], is_declared_option: fn(&[u8]) -> bool) -> Vec<u8> {
     let mut arguments: Vec<Box<ZStr>> = vec![ZStr::boxed(b"")];
     bun_core::append_options_env(compile_exec_argv, &mut arguments);
@@ -4091,12 +4084,10 @@ pub fn to_executable(
     let runtime_use: Option<&[u8]> = (output_files.iter())
         .find(|file| file.output_kind == options::OutputKind::RuntimeUse)
         .map(|facts| facts.value.as_slice());
-    let option_that_runs_uncompiled_code = option_that_runs_uncompiled_code(compile_exec_argv);
     let runtime_options = RuntimeOptions {
         runs_static_code_only: trims_runtime()
             && output_files.iter().any(|file| file.output_kind == options::OutputKind::AotImage)
-            && runtime_use.is_some_and(is_closed_world)
-            && option_that_runs_uncompiled_code.is_none(),
+            && runtime_use.is_some_and(is_closed_world),
         ..runtime_options
     };
     let mut aot_image_at: Option<usize> = None;
@@ -4124,9 +4115,7 @@ pub fn to_executable(
         return Ok(CompileResult::fail(CompileErrorReason::NoOutputFiles));
     }
     // bytes drops at end of scope
-    let why_open: Option<Vec<u8>> = uncompiled_module
-        .map(|path| [&b"something is not compiled in "[..], &path].concat())
-        .or_else(|| option_that_runs_uncompiled_code.map(|option| [&option[..], b" runs built-in JavaScript that is not compiled into the executable"].concat()));
+    let why_open: Option<Vec<u8>> = uncompiled_module.map(|path| [&b"something is not compiled in "[..], &path].concat());
     let opened_runtime_use: Option<Vec<u8>> = runtime_use.zip(why_open).map(|(facts, why)| bun_ast::type_tags::open_world(facts, &why));
     let runtime_use_of_build: Option<Vec<u8>> = opened_runtime_use.as_deref().or(runtime_use).map(|facts| {
         let before_facts_of_build: &[u8] = if facts.ends_with(b"\n") { b"" } else { b"\n" };

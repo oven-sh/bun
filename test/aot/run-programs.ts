@@ -10,7 +10,7 @@
 //   <program>.build-errors.txt            the build must fail with exit code 1 and exactly these `error:` lines; an
 //                                         .expected.txt next to it is only used by shell/quick.py, which still runs the program
 //   <program>.todo.txt                    the program fails today, and why; it is listed as a todo and not run
-//   <program>.json                        { "build": [flags for `bun build`], "env": { .. }, "reference": "compiled" }
+//   <program>.json                        { "build": [flags for `bun build`], "buildEnv": { .. }, "env": { .. }, "reference": "compiled" }
 //                                         "compiled": compare with `bun build --compile` without --aot, for features that
 //                                         only the bundler provides (--define, --feature, files imported as text)
 //                                         "skipInShell": why shell/quick.py skips the program; not read here
@@ -148,7 +148,7 @@ export function withoutDebugInformation(_folder?: string): string[] {
 let executables = 0;
 
 async function run(path: string, beside: string, folder: string, carrier: string[], buildEnv: Record<string, string>, runEnv: Record<string, string>) {
-  const options: { build?: string[]; env?: Record<string, string>; reference?: "compiled"; skipInShell?: string } = existsSync(beside + ".json")
+  const options: { build?: string[]; buildEnv?: Record<string, string>; env?: Record<string, string>; reference?: "compiled"; skipInShell?: string } = existsSync(beside + ".json")
     ? JSON.parse(readFileSync(beside + ".json", "utf8"))
     : {};
   const flags = options.build ?? [];
@@ -156,7 +156,7 @@ async function run(path: string, beside: string, folder: string, carrier: string
   const cwd = join(path, "..");
   const executable = join(folder, `program-${executables++}${isWindows ? ".exe" : ""}`);
   try {
-    const build = await spawned([bunExe(), "build", "--compile", "--aot", ...carrier, ...flags, path, "--outfile", executable], cwd, { ...bunEnv, ...buildEnv });
+    const build = await spawned([bunExe(), "build", "--compile", "--aot", ...carrier, ...flags, path, "--outfile", executable], cwd, { ...bunEnv, ...options.buildEnv, ...buildEnv });
     if (existsSync(beside + ".build-errors.txt")) {
       // Each distinct error counts once; how often it is repeated for different positions is not what is tested.
       const errors = [...new Set(build.stderr.split("\n").filter(line => line.startsWith("error: ")))].join("\n") + "\n";

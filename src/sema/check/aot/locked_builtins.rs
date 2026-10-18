@@ -47,6 +47,10 @@ pub fn is_locked_global(name: &[u8]) -> bool {
     global_object().has(name)
 }
 
+pub fn accessors_of_host_prototypes() -> impl Iterator<Item = &'static [u8]> {
+    BUILTINS.iter().filter(|it| it.is_prototype_of_host_class()).flat_map(Builtin::accessors)
+}
+
 impl Builtin {
     pub fn is_global_object(&self) -> bool {
         self.name.is_empty()
@@ -94,6 +98,19 @@ impl Builtin {
         let names = strings::split(self.properties.as_bytes(), b" ");
         let unmarked = names.filter(|it| !matches!(it.first(), Some(b'~' | b'=' | b'!' | b'-')));
         unmarked.filter_map(|it| str::from_utf8(strings::split(it, b":").next()?).ok())
+    }
+
+    fn accessors(&self) -> impl Iterator<Item = &'static [u8]> {
+        let marked = strings::split(self.properties.as_bytes(), b" ").filter_map(|it| it.strip_suffix(b":accessor"));
+        marked.map(|it| match it.split_first() {
+            Some((b'~' | b'=' | b'!' | b'-', name)) => name,
+            _ => it,
+        })
+    }
+
+    fn is_prototype_of_host_class(&self) -> bool {
+        let class = self.name.as_bytes().strip_suffix(b".prototype");
+        class.is_some_and(|class| !strings::contains_char(class, b'.') && !class.starts_with(b"%") && !is_locked_global(class))
     }
 
     pub fn has_property(&self, name: &[u8]) -> bool {

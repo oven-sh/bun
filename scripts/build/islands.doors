@@ -65,16 +65,17 @@ feature node_v8 node:v8's native half
 feature post_message the global postMessage
 feature valkey_calls Bun.redis and Bun.RedisClient in the program's hands
 feature worker_calls Worker and node:worker_threads in the program's hands
+feature text what turns text and files into code at run time
+feature bundler Bun.build, HTML imports and the development server
+feature package_files reading package.json and tsconfig.json at run time
+feature mux HTTP/2 and HTTP/3 in Bun.serve
 feature segmenter Intl.Segmenter
 feature display_names Intl.DisplayNames
 feature intl Intl.ListFormat, Locale, PluralRules, RelativeTimeFormat, getCanonicalLocales and supportedValuesOf
 feature libdeflate_compressor gzip and deflate compression in one call
 feature brotli_encoder compression with Brotli
 feature performance_timeline performance.mark, performance.measure, PerformanceObserver and the entries they make
-feature text what turns text and files into code at run time
-feature bundler Bun.build, HTML imports and the development server
 feature zstd compression with zstd
-feature package_files reading package.json and tsconfig.json at run time
 feature napi native addons: N-API and the V8 and libuv symbols
 feature terminal Bun.Terminal
 feature cryptohasher Bun.CryptoHasher
@@ -100,6 +101,7 @@ feature node_cluster node:cluster's native half
 feature node_url_natives node:url's domainToASCII and domainToUnicode
 feature bun_misc Bun.stripANSI, mmap, which, indexOfLine, sleep, sleepSync, gc, shrink, allocUnsafe, nanoseconds, peek and concatArrayBuffers
 feature weak_references WeakRef and FinalizationRegistry
+feature node_http the native half of node:http's server
 feature float16array Float16Array
 feature biguint64array BigUint64Array
 feature bigint64array BigInt64Array
@@ -162,14 +164,13 @@ feature string_last_index_of String.prototype.lastIndexOf
 feature escape_unescape escape and unescape
 feature uri_coding encodeURI, encodeURIComponent, decodeURI and decodeURIComponent
 feature regexp regular expressions
+feature http3 HTTP/3 in Bun.serve and fetch
 feature tls_users a TLS socket or server in the program's hands
 feature x509_users a certificate or a key in the program's hands
+feature x509 X509Certificate and KeyObject
 feature process_control process.kill, chdir, umask, execve, title and the functions for users and groups
-feature mux HTTP/2 and HTTP/3 in Bun.serve
 feature bun_info the /bun:info route of a development server
-feature node_http the native half of node:http's server
 feature serve Bun.serve
-feature http3 HTTP/3 in Bun.serve and fetch
 feature url URL and URLSearchParams
 feature events Event, CustomEvent, ErrorEvent, MessageEvent and CloseEvent
 feature abort_signal AbortController and AbortSignal
@@ -184,9 +185,9 @@ feature profiler the CPU and heap profilers, heap snapshots and code coverage
 feature valkey Bun.redis and Bun.RedisClient
 feature cli_options options given to the executable by --compile-exec-argv or BUN_OPTIONS
 feature bunfig reading bunfig.toml when the executable starts
-feature x509 X509Certificate and KeyObject
 feature tls TLS
 feature fetch fetch and Bun.FetchSession
+feature file_sink the native sink that writes to a file, a pipe, a socket or a terminal
 door tools exit ^bun_runtime::cli::command::(exec_\w+|bun_info|bun_create|bun_getcompletes|which|tag_print_help)$
 door tools return ^Bun__AOT__hasCompiler$
 door tools return ^Bun__hasTypeChecker$
@@ -205,13 +206,13 @@ operations operations_common_data ^operationAOT(Typed(ScanPlainURL|FindPlainQuer
 operations operations_common_objects ^operationAOT(Typed(GetFreeVariableForTypeOf|SetByNameSloppy|ThrowIfReadOnly|DefineByName|GetByKey|MakeModuleNamespace|CreateArguments|ObjectEntriesFlat|OwnPropertyDescriptorsUnlessCopied|CopyOwnPropertyDescriptors|PromiseAll|InstanceOfClass|CopyClosureOutOfFrame|CoerceProperty|DidCreateFieldAt|EnforceTypeOrConvert|GetByNameCheckedAsNumber|StoreCreatesField|GetAbsentField|PrivateGetAtSite|PrivateSetAtSite|PrivateHas|DefineGetterByKey|DefineSetterByKey|TryGetByValWithKeyParts|FailModuleCycle|SloppyThis|ForInKeys|HasEnumerableProperty|ListFieldsBelow|PropertyIsEnumerable|ObjectCreate|PromiseCatch)|PutByValAndCacheSloppy|DeleteByValAndCacheSloppy)$
 operations operations_common_containers ^operationAOT(Typed(ArrayPushNumber|ArrayGet|ArrayElementAtNumberAs|NewTypedArray|NewMapInImage|GrowNewArray|ArrayGrow|ArrayIndexOfDouble|ArrayIndexOfInt32|NewArrayWithIndexingType|FindBufferAccessor|MapClear)|MapSetWithStringKey|SetAddWithStringKey)$
 operations operations_common_text ^operationAOT(Typed(StringEq|ConcatenateWithIntegers|RegExpTest|RegExpTestFound|NewRegExp|RegExpSource|StringReplaceString|StringSplitRegExp|FindSeparators8|FindSeparators16|StringUTF8Length8|StringLastIndexOfLiteral|StringReverseFindLiteral8|CharactersToCompareWithLiterals|StringBuilderFlush))$
-operations operations_common_numbers ^operationAOT(Typed(DivNumberAndValueAsNumber|Exp|Neg|BitNot|Pow|PutInNumberBox|PutNumberInNumberBox|BigIntConstant|NewBigInt64)|ValueBitXor|ValueURShift|CompareEqToString)$
-operations operations_rare_classes ^operationAOT(Typed(GetStaticField|SetStaticField|SetByNameInThisStructure|PutLazyClosure|Call|ParkAsyncFunction|SuspendAtFirstAwait|GetExternalModule|ConstructWith|DefineAccessors|InheritsFromClass|InstanceOf|DidCreateField|DidCreateFieldsAt|EnsureStorage|CountClosure|CountPlainAllocation|BarrierSlowPreservingRegisters|CountBranch|ThrowStackOverflow|NewObject|NewObjectWithCapacity|FinishObjectLiteral|CreateThis|CreateThisWithCapacity|TryCreateThisWithStores|AssignThisStructure|DidStoreToThis|IterGet|SuspendAsyncFunction|GetIteratorNext))$
+operations operations_common_numbers ^operationAOT(Typed(DivNumberAndValueAsNumber|Exp|Neg|BitNot|Pow|PutNumberInNumberBox|BigIntConstant|NewBigInt64)|ValueBitXor|ValueURShift|CompareEqToString)$
+operations operations_rare_classes ^operationAOT(Typed(GetStaticField|SetStaticField|SetByNameInThisStructure|PutLazyClosure|Call|ParkAsyncFunction|SuspendAtFirstAwait|GetExternalModule|ConstructWith|DefineAccessors|InheritsFromClass|InstanceOf|DidCreateField|DidCreateFieldsAt|EnsureStorage|CountClosure|CountPlainAllocation|CountBranch|ThrowStackOverflow|NewObject|NewObjectWithCapacity|FinishObjectLiteral|CreateThis|CreateThisWithCapacity|TryCreateThisWithStores|AssignThisStructure|DidStoreToThis|IterGet|SuspendAsyncFunction|GetIteratorNext))$
 operations operations_rare_properties ^operationAOT(Typed(ValidateGlobalPermanently|SetFreeVariable|SetFreeVariableSloppy|HasName|DeleteByName|SetByKey|GetExtra|HasExtra|PutExtra|TryAddNamedProperties|CachePropertyRun|CachePropertyLocation)|GetByIdWellKnown)$
 operations operations_rare_text ^operationAOT(Typed(ToLiteralString|FieldEqualsString|ParseInt16|StringToNumber16|RegExpFind|RegExpFlags|StringSearchRegExp|StringAppendBegin|StringAppendMeasure|StringAppendSync|FindLongSeparators8|FindLongSeparators16|StringBuilderFinish))$
 operations operations_rare_data ^operationAOT(Typed(ScanPlainURLWithBase|ScanPlainQuery|FindInPlainQuery|PlainQueryEntries|JSONOpen|JSONDecodeSource|JSONStringAt|JSONNumberAt|JSONIntegerAt|JSONKeyAt|JSONValueAt|JSONSkipValue|JSONSkipMember|JSONGiveUpIfEscaped|JSONGiveUpIfRepeated|JSONParseWithShape|JSONAppendDate))$
 operations operations_rare_copies ^operationAOT(Typed(CloneObjectAndExtendWithNumber|CloneObjectAs|CloneObjectWithSubtypeCheck|TryCopyRecordAs|TryCopyRecordAsAt|TryMergeRecordsAs|TryCloneWithPrototype|AdoptPrototype))$
-operations operations_rare_containers ^operationAOT(Typed(ElementOrEmpty|TryMapOrSetLookupWithKeyParts|ArrayPut|TypedArrayIteratorOpen|TypedArrayIteratorHasNext|TypedArrayPut|TryNewMapWithStringKeys|NewArrayEntries|MapKeyAt|MapValueAt|SetKeyAt|ConstantTableHas|ConstantTableGet)|NewArray)$
+operations operations_rare_containers ^operationAOT(Typed(TryMapOrSetLookupWithKeyParts|ArrayPut|TypedArrayIteratorOpen|TypedArrayIteratorHasNext|TypedArrayPut|TryNewMapWithStringKeys|NewArrayEntries|MapKeyAt|MapValueAt|SetKeyAt|ConstantTableHas|ConstantTableGet)|NewArray)$
 operations operations_rare_casts ^operationAOT(Typed(CoerceInPlace|CoerceElement|AuditCoerce|EnforceType|RecordTypeMismatch|AssertionFailed|StoreAssertionFailed|ThrowReachedUnreachable|CheckKnownSlot|SetExpectedRowType|TryConvertRow))$
 operations operations_rare_numbers ^operationAOT(Typed(Add|MulNumberAndValueAsNumber|Sub|Mul|Div|Mod|BitAnd|BitOr|BitXor|Shl|Shr|Ushr|Less|LessEq|Greater|GreaterEq|StrictEq|LooseEq|Truthy|MathSin|MathSinh|MathCos|MathCosh|MathTan|MathTanh|MathASin|MathASinh|MathACos|MathACosh|MathATan|MathATanh|MathLog|MathLog10|MathLog2|MathCbrt|MathExp|MathExpm1|MathLog1p|MathATan2|MathHypot|MathHypot3|MathF16Round)|ValuePow)$
 door jit return ^Bun__installCompilers$
@@ -611,7 +612,7 @@ door nodequic exit ^WebCore::JSQuic(Endpoint|Session|Stream)::create(Prototype|S
 door nodequic exit ^us_nq_
 door nodequic exit ^Bun__nodeQuic__
 smallest http3 0
-when http3 Bun serve
+when http3 serve-option http3
 when http3 global fetch
 when http3 Bun fetch
 when http3 Bun FetchSession
@@ -627,7 +628,8 @@ door nodehttp2 exit ^WebCore::JSH2FrameParser::create(Prototype|Structure|Constr
 door nodehttp2 exit ^H2FrameParser(Prototype|Class)__
 door nodehttp2 exit ^<*bun_runtime::api::(h2_frame_parser_body|h2)::
 smallest mux 0
-when mux Bun serve
+when mux serve-option http2
+when mux serve-option http3
 door mux exit ^uws_h2_(?!res_is_closed$|res_write_continue$)
 door mux exit (^| )uWS::(Http2|H2)\w*::
 door mux exit ^<*bun_uws_sys::h2::
@@ -762,7 +764,6 @@ when x509_users global crypto
 when x509_users global Crypto
 when x509_users global SubtleCrypto
 when x509_users global CryptoKey
-when x509_users Bun serve
 when x509_users Bun listen
 when x509_users Bun connect
 when x509_users module node:tls
@@ -788,14 +789,40 @@ when x509_users Bun file
 when x509_users Bun write
 when x509_users module node:quic
 when x509_users native node_quic_binding.rs:createNodeQuicBinding
-door x509 exit ^(i2d_X509|PEM_write_bio_PUBKEY|PEM_write_bio_PKCS8PrivateKey)$
+door x509 exit ^(PEM_write_bio_PUBKEY|PEM_write_bio_PKCS8PrivateKey)$
 door x509 exit ^Bun::setup(X509CertificateClassStructure|AsymmetricKeyObjectPrototype|KeyObjectClassStructure|PrivateKeyObjectClassStructure|PublicKeyObjectClassStructure|SecretKeyObjectClassStructure)\(
 door x509 exit ^WebCore::CloneDeserializer::read(KeyObject|X509Certificate)\(
 door x509 exit ^Bun::JSX509Certificate::
 door x509 exit ^Bun::JS(KeyObject|PublicKeyObject|PrivateKeyObject|SecretKeyObject)::(?!finishCreation)
+smallest tls_users 0
 smallest tls 0
 when tls feature tls_users
-when tls_users Bun serve
+when tls_users serve-option tls
+when tls_users serve-option passphrase
+when tls_users serve-option dhParamsFile
+when tls_users serve-option serverName
+when tls_users serve-option servername
+when tls_users serve-option lowMemoryMode
+when tls_users serve-option rejectUnauthorized
+when tls_users serve-option requestCert
+when tls_users serve-option ca
+when tls_users serve-option cert
+when tls_users serve-option key
+when tls_users serve-option secureOptions
+when tls_users serve-option minVersion
+when tls_users serve-option maxVersion
+when tls_users serve-option keyFile
+when tls_users serve-option certFile
+when tls_users serve-option caFile
+when tls_users serve-option ALPNProtocols
+when tls_users serve-option ciphers
+when tls_users serve-option clientRenegotiationLimit
+when tls_users serve-option clientRenegotiationWindow
+when tls_users serve-option crl
+when tls_users serve-option allowPartialTrustChain
+when tls_users serve-option sessionTimeout
+when tls_users serve-option sigalgs
+when tls_users serve-option ecdhCurve
 when tls_users Bun listen
 when tls_users Bun connect
 when tls_users module node:tls
@@ -835,19 +862,19 @@ door tls exit ^(?!SSL_library_init$)(SSL|SSL_CTX|SSL_SESSION|DTLS)_\w+$
 door tls exit ^<*bun_uws::ssl_wrapper::
 door tls exit ^<*bun_runtime::api::bun_(secure_context|ssl_context_cache)::(?!SSLContextCache as core::ops::drop::Drop>::drop$)
 door tls exit ^<*bun_runtime::socket::(system_certs|upgraded_duplex|bundled_root_certs|cert_files)::
-door tls exit ^<*bun_runtime::socket::socket_body::(tls_socket_functions::|js_upgrade_duplex_to_tls|DuplexUpgradeContext|select_alpn_callback)
-door tls exit ^<bun_runtime::socket::socket_body::NewSocket<true>>::
-door tls exit ^<bun_runtime::socket::socket_body::NewSocket<false>>::upgrade_tls
-door tls exit ^<bun_uws_sys::vtable::Trampolines<bun_runtime::socket::uws_handlers::(BunListener<true>|RawPtrHandler<bun_runtime::socket::socket_body::NewSocket<true>, true>)>>::
-door tls exit ^(TLSSocket|SecureContext)(Prototype|Class)__
-door tls exit ^WebCore::JS(TLSSocket|SecureContext|HTTPSServer|DebugHTTPSServer)::create(Prototype|Structure|Constructor)\(
-door tls exit ^(Debug)?HTTPSServer(Prototype|Class)__
-door tls exit ^Bun__HTTPRequestContext(Debug)?TLS__
-door tls exit ^<bun_runtime::server::NewServer<true, (true|false)>>::
-door tls exit ^<bun_runtime::server::request_context::RequestContext<bun_runtime::server::NewServer<true, (true|false)>, true, (true|false), false>>::
-door tls exit (^| )uWS::(TemplatedApp|HttpContext|HttpResponse|AsyncSocket|HttpContextData|HttpResponseData)<true>::
-door tls exit (^| )uWS::(WebSocket|WebSocketContext)<true, (true|false), void\*>::
-door tls exit ^void Bun::write(AutoHeaders|FetchHeadersToUWSResponse|ResponseHeader)<true[,>]
+door tls_users exit ^<*bun_runtime::socket::socket_body::(tls_socket_functions::|js_upgrade_duplex_to_tls|DuplexUpgradeContext|select_alpn_callback)
+door tls_users exit ^<bun_runtime::socket::socket_body::NewSocket<true>>::
+door tls_users exit ^<bun_runtime::socket::socket_body::NewSocket<false>>::upgrade_tls
+door tls_users exit ^<bun_uws_sys::vtable::Trampolines<bun_runtime::socket::uws_handlers::(BunListener<true>|RawPtrHandler<bun_runtime::socket::socket_body::NewSocket<true>, true>)>>::
+door tls_users exit ^(TLSSocket|SecureContext)(Prototype|Class)__
+door tls_users exit ^WebCore::JS(TLSSocket|SecureContext|HTTPSServer|DebugHTTPSServer)::create(Prototype|Structure|Constructor)\(
+door tls_users exit ^(Debug)?HTTPSServer(Prototype|Class)__
+door tls_users exit ^Bun__HTTPRequestContext(Debug)?TLS__
+door tls_users exit ^<bun_runtime::server::NewServer<true, (true|false)>>::
+door tls_users exit ^<bun_runtime::server::request_context::RequestContext<bun_runtime::server::NewServer<true, (true|false)>, true, (true|false), false>>::
+door tls_users exit (^| )uWS::(TemplatedApp|HttpContext|HttpResponse|AsyncSocket|HttpContextData|HttpResponseData)<true>::
+door tls_users exit (^| )uWS::(WebSocket|WebSocketContext)<true, (true|false), void\*>::
+door tls_users exit ^void Bun::write(AutoHeaders|FetchHeadersToUWSResponse|ResponseHeader)<true[,>]
 door tls exit ^bun_boringssl::(ssl_ctx_setup|check_x509_server_identity|write_server_identity_mismatch_reason|check_server_identity|server_identity_mismatch_message|server_identity)($|::)
 door tls exit ^Bun::(getBundledRootCertificates|getExtraCACertificates|getSystemCACertificates|loadExtraCACertificates|parseCACertificates|selectServerName)\(
 door tls exit ^Bun__(get|set)TLSDefaultCiphers$
@@ -1310,19 +1337,15 @@ when fetch_calls feature s3client
 when fetch_calls feature websocket
 when tls feature fetch
 when tls_users feature sockets
-when tls_users feature serve
 when tls feature valkey
 when tls_users feature sql
 when tls_users feature websocket
 when tls_users feature nodequic
 when tls_users feature testing
-when x509 feature tls
 when http3 feature fetch_calls
-when http3 feature serve
 when brotli_decoder feature fetch_calls
-when mux feature serve
 when bun_info feature serve
-when node_http feature serve
+when node_http serve-option onNodeHTTPRequest
 when sockets feature inspector
 when cryptohasher feature nodecrypto
 when sqlite feature sql
@@ -1340,7 +1363,6 @@ when valkey environment BUN_OPTIONS
 when worker environment BUN_DESTRUCT_VM_ON_EXIT
 when fetch exec-argv --fetch-preconnect
 when valkey exec-argv --redis-preconnect
-when sql exec-argv --sql-preconnect
 when profiler exec-argv --cpu-prof
 when profiler exec-argv --cpu-prof-md
 when profiler exec-argv --heap-prof
@@ -1350,15 +1372,6 @@ when inspector exec-argv --inspect-wait
 when inspector exec-argv --inspect-brk
 when text exec-argv --hot
 when text exec-argv --watch
-when text exec-argv --sql-preconnect
-when text exec-argv --stack-trace-limit
-when text exec-argv --trace-env
-when text exec-argv --trace-env-js-stack
-when text exec-argv --trace-env-native-stack
-when text exec-argv --trace-exit
-when text exec-argv --trace-events-enabled
-when text exec-argv --trace-event-categories
-when text exec-argv --trace-event-file-pattern
 when net_addresses feature outside_bytes
 when net_addresses feature nodequic
 when napi feature ffi
@@ -1869,6 +1882,11 @@ when web_streams console _stdout
 when web_streams console _stderr
 when web_streams console Console
 smallest web_streams 0
+when file_sink native runtime/webcore/FileSink.rs:standardErrorSink
+when file_sink feature web_streams
+when file_sink feature fetch
+when file_sink feature valkey
+smallest file_sink 0
 when bodies global Blob
 when bodies global File
 when bodies global Request
@@ -2008,13 +2026,23 @@ door web_streams exit ^Bun__NativeStreamSource(Adapter)?__
 door web_streams exit ^WebCore::jsFunction(ReadableStreamTo(?!FormData)\w+|TransferToNativeReadableStream)\(
 door web_streams exit ^Zig::jsWebStream(ClosedPromise|ControllerError)\(
 door web_streams exit ^Bun::WebStreams::(sinkControllerOn(Close|Ready)|assignToStream|readStreamIntoSink|readDirectStream|startJSSinkController)\(
-door web_streams exit ^<*bun_runtime::webcore::(readable_stream|streams|file_reader|byte_stream|byte_blob_loader|sink|array_buffer_sink|file_sink)::
-door web_streams exit ^<bun_runtime::webcore::(SinkHandle|AutoFlusher)>::
+door web_streams exit ^<*bun_runtime::webcore::(readable_stream|file_reader|byte_stream|byte_blob_loader|array_buffer_sink)::
+door web_streams exit ^<*bun_runtime::webcore::streams::(HTTPServerWritable|NetworkSink|BufferAction|Pending\b|StreamResult>::(to_js|fulfill_promise)|Start>::to_js)
+door web_streams exit ^<*bun_runtime::webcore::sink::(?!JSSink<bun_runtime::webcore::file_sink::FileSink>>::)
+door file_sink exit ^<*bun_runtime::webcore::file_sink::
+door file_sink exit ^<*bun_runtime::webcore::streams::(?!(HTTPServerWritable|NetworkSink|BufferAction|Pending\b|StreamResult>::(to_js|fulfill_promise)|Start>::to_js))
+door file_sink exit ^<*bun_runtime::webcore::sink::JSSink<bun_runtime::webcore::file_sink::FileSink>>::
+door web_streams exit ^<bun_runtime::webcore::SinkHandle>::
+door web_streams exit ^<bun_runtime::webcore::AutoFlusher>::.*<bun_runtime::webcore::streams::HTTPServerWritable<
+door file_sink exit ^<bun_runtime::webcore::AutoFlusher>::(?!.*<bun_runtime::webcore::streams::HTTPServerWritable<)
 door web_streams exit ^WebCore::JS(Blob|Bytes|File)InternalReadableStreamSource::create(Prototype|Structure|Constructor)\(
 door web_streams exit ^(WebCore::)?(Blob|Bytes|File)InternalReadableStreamSource(Prototype|Class)__(?!\w+CachedValue|updateRefFromJS)
-door web_streams exit ^(ArrayBuffer|File|HTTPResponse|HTTPSResponse|Network|FetchRequestBody)Sink__(?!(fromJS|close|endWithSink|finalize|controllerFinalize|controllerDetached|memoryCost|getInternalFd|updateRef)$)
+door web_streams exit ^(ArrayBuffer|HTTPResponse|HTTPSResponse|Network|FetchRequestBody)Sink__(?!(fromJS|close|endWithSink|finalize|controllerFinalize|controllerDetached|memoryCost|getInternalFd|updateRef)$)
+door web_streams exit ^FileSink__createController$
+door file_sink exit ^FileSink__(?!(createController|fromJS|close|endWithSink|finalize|controllerFinalize|controllerDetached|memoryCost|getInternalFd|updateRef)$)
 door web_streams exit ^JSSinkController__
-door web_streams exit ^WebCore::createJSSink(Prototype|ControllerPrototype|ControllerStructure)\(
+door web_streams exit ^WebCore::createJSSink(ControllerPrototype|ControllerStructure)\(
+door file_sink exit ^WebCore::createJSSinkPrototype\(
 door compression_streams exit ^WebCore::JS(De)?[cC]ompressionStream::getConstructor\(
 door bodies exit ^WebCore::JS(Blob|Request|Response)::create(Prototype|Structure|Constructor)\(
 door bodies exit ^(WebCore::)?(Blob|Request|Response)(Prototype|Class)__(?!\w+CachedValue|getFormData|formDataCallback|image|finalize$|get(Integrity|ReferrerPolicy|Destination)$)

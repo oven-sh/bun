@@ -400,6 +400,8 @@ Bun.unsafe.setJITPolicy(1); // back to the normal JIT policy
 
 <Warning>Ahead-of-time compilation is experimental.</Warning>
 
+`bun compile` is short for `bun build --compile --aot`. If you haven't used it before, start with [Ahead-of-time compilation](/bundler/aot). If an error message sent you here, see [Troubleshooting `--aot`](/bundler/aot-troubleshooting). This section lists every difference.
+
 `--aot` compiles your JavaScript to machine code when you build the executable. Without it, JavaScriptCore compiles the functions that run often while your program runs.
 
 <Tabs>
@@ -885,7 +887,9 @@ What no longer works:
 | --- | --- | --- |
 | `BUN_BE_BUN=1 ./myapp install`, `run`, `x`, `-e`, a file name, or no argument | acts as the `bun` CLI | prints that the Bun command line was left out, and exits with code 70 |
 | `BUN_BE_BUN=1 ./myapp --version` or `--revision` | prints it | prints it |
-| `BUN_OPTIONS=--help ./myapp` | prints the help of `bun` | prints that the Bun command line was left out, and exits with code 70 |
+| one of the [thirteen options](#which-options-still-work) that need a part of Bun that is left out, such as `--help` or `--stack-trace-limit`, in `BUN_OPTIONS` | is obeyed | prints that the option cannot be used, and exits with code 1 |
+| the same options in `--compile-exec-argv` (`execArgv`) | are built in | `bun build` prints the same error and builds nothing, `Bun.build` throws a `TypeError` |
+| an option in `BUN_OPTIONS` that Bun does not accept, such as `-Z` | prints the error and the help of `bun`, and exits with code 1 | prints the error, and exits with code 1 |
 | a `bunfig.toml` in the directory the executable runs in | is read at startup | is not read, unless you also pass `--compile-autoload-bunfig` (`autoloadBunfig: true`) |
 | `Bun.build({ check: true })` or `({ dts: true })`, called by the executable | type checks | throws a `TypeError` |
 | `Bun.build({ compile: { aot: true } })`, called by the executable | compiles ahead of time | throws a `TypeError` |
@@ -929,28 +933,28 @@ aot: runtime use: Bun serve
 
 The first line is `closed`, or `open` with the reason and the file.
 
-When there is no such place, the executable also runs with [`--disallow-code-generation-from-strings=strict`](/runtime/code-generation-from-strings): it runs the code it was built from, and nothing else. That closes the ways to make code that a compiler cannot see:
+The compiler also counts the ways to make code that do not name `Function`. This program is `open`, and prints `function` with and without the flag:
 
 ```ts
 const AsyncFunction = (async () => {}).constructor;
-new AsyncFunction("return 1");
-// EvalError: Code generation from strings disallowed for this context: this executable was built with
-// --compile-trim-runtime, and nothing in the program was seen to turn a string into code or to load code
-// at run time
+console.log(typeof AsyncFunction("return 1"));
 ```
+
+```txt
+aot: runtime use: open constructor, or a name that is computed, read from what may be a function in /path/to/app.ts
+```
+
+When there is no such place, the executable runs the code it was built from, and nothing else. As a second line of defense it also runs with [`--disallow-code-generation-from-strings=strict`](/runtime/code-generation-from-strings). Your program should never meet the `EvalError` of that mode. If it does, and the untrimmed executable does not, that is a bug in Bun.
 
 What no longer works in such an executable, on top of the table above:
 
 | | otherwise | in an executable that runs only its own code |
 | --- | --- | --- |
-| `f.constructor("code")`, for any function `f` | makes a function | throws an `EvalError` |
 | `--preload`, `-r`, `--require`, `--import`, `--eval`, `-e`, `--print` or `-p` in `BUN_OPTIONS` or `--compile-exec-argv`, or `preload` in a `bunfig.toml` that the executable reads | loads the file first | prints that the option cannot be used with this executable, and exits with code 1 |
 | `BUN_INSPECT` | starts the debugger | prints an error and exits |
 | `BUN_INSPECT_CONNECT_TO`, which editors set for every process in their terminals | connects to the editor | is ignored |
 | `inspector.open()` from `node:inspector`, `startRemoteDebugger()` from `bun:jsc` | starts the debugger | throws an `EvalError` |
 | `Bun.serve()` with the experimental `app` option | starts the development server | throws an `EvalError` |
-
-Every other option in `BUN_OPTIONS` and `--compile-exec-argv` is obeyed as before: `--smol`, `--expose-gc`, `--title`, `--console-depth`, `--dns-result-order`, `--max-http-header-size`, `--use-system-ca`, `--unhandled-rejections`, `--env-file`, `--config` and so on. What comes after the name of the executable on the command line is never read as an option of Bun. It goes to your program, whatever it looks like.
 
 An executable that keeps everything, because the first line above says `open` or because it was built without `--aot`, also obeys the eight options that load code.
 
@@ -969,6 +973,30 @@ bun build --compile --aot --compile-trim-runtime --disallow-code-generation-from
 [`--disallow-code-generation-from-strings`](/runtime/code-generation-from-strings) means what it means in Node.js: `eval()`, `new Function()` and the constructors of async and generator functions throw an `EvalError`. `node:vm` is not affected. The executable behaves that way with or without `--compile-trim-runtime`, and with or without `--aot`. Since those calls can no longer run code the compiler has not seen, they no longer keep anything in the executable. The other entries in the list above still do.
 
 Libraries that try `new Function` in a `try` block and fall back to plain code, as zod 4 does, keep working. Others have an option for it, such as `new Elysia({ aot: false })`. A library that needs `new Function` throws, so run your tests against the executable.
+
+### Which options still work
+
+In `BUN_OPTIONS` and in `--compile-exec-argv`:
+
+| | options |
+| --- | --- |
+| refused by every executable built with `--compile-trim-runtime` | `--help`, `-h`, `--aot`, `--aot-audit`, `--sql-preconnect`, `--stack-trace-limit`, `--trace-exit`, `--trace-env`, `--trace-env-js-stack`, `--trace-env-native-stack`, `--trace-events-enabled`, `--trace-event-categories`, `--trace-event-file-pattern` |
+| refused by an executable that runs only its own code | `--preload`, `-r`, `--require`, `--import`, `--eval`, `-e`, `--print`, `-p` |
+| obeyed as before | every other option: `--smol`, `--expose-gc`, `--title`, `--console-depth`, `--dns-result-order`, `--max-http-header-size`, `--use-system-ca`, `--tls-min-v1.3`, `--unhandled-rejections`, `--no-deprecation`, `--trace-warnings`, `--fetch-preconnect`, `--redis-preconnect`, `--cpu-prof`, `--heap-prof`, `--user-agent`, `--port`, `--env-file`, `--config` and so on |
+
+The options in the first row need the `bun` command line itself, or JavaScript inside Bun that is never compiled into an executable. They are refused whatever your program does, with or without `--aot`:
+
+```bash icon="terminal" terminal
+BUN_OPTIONS=--stack-trace-limit=50 ./myapp
+```
+
+```txt
+error: --stack-trace-limit cannot be used with an executable built with --compile-trim-runtime: the part of Bun that it needs is left out
+```
+
+The executable exits with code 1 before any of your code runs. `bun build --compile --compile-trim-runtime --compile-exec-argv=--stack-trace-limit=50` prints the same error and builds nothing. In your program, `Error.stackTraceLimit = 50` does the same as the option.
+
+What comes after the name of the executable on the command line is never read as an option of Bun. It goes to your program, whatever it looks like.
 
 ### What does not change
 

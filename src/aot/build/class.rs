@@ -276,7 +276,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fields.len() - 1
             });
             if fields[index].flags & field_flags::ABSENT_AT_CREATION != 0 {
-                fields[index].flags &= !(field_flags::ABSENT_AT_CREATION | field_flags::OPTIONAL);
+                fields[index].flags &= !(field_flags::ABSENT_AT_CREATION | field_flags::OPTIONAL | field_flags::UNDECLARED);
             }
             if flags.contains(Flags::OPTIONAL) {
                 fields[index].flags |= field_flags::OPTIONAL;
@@ -337,6 +337,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if !fields.iter().any(|field| field.name == text) {
                 implemented.push((fields.len() as u32, instances, name));
                 fields.push(Field::new(text, TyId::NONE, field_flags::OPTIONAL | field_flags::ABSENT_AT_CREATION));
+            }
+        }
+        for name in self.c.properties_stored_through_any(file, class) {
+            let bytes = self.c.atoms().bytes(name);
+            if bytes.first() == Some(&0xFE) || bytes == b"__proto__" || !Self::is_field_name(bytes) {
+                continue;
+            }
+            let text = self.str(name);
+            let fields = &mut self.out.layouts[layout.idx()].fields;
+            if !fields.iter().any(|field| field.name == text) {
+                fields.push(Field::new(text, TyId::NONE, field_flags::OPTIONAL | field_flags::ABSENT_AT_CREATION | field_flags::UNDECLARED));
             }
         }
         for name in self.c.methods_with_fields(file, class) {

@@ -3543,14 +3543,16 @@ pub(super) fn explain(program: &Program, logs_type_errors: bool, as_json: bool, 
     }
     let counted = if lists_all { 0 } else { sites.iter().filter(|site| site.tier == Tier::Typed && site.verdict != Verdict::Wrong).count() };
     let always = sites.iter().filter(|site| site.verdict == Verdict::Wrong).count();
-    let mut summary = format!("[aot] type-check summary: {} checks can fail when the program runs, {always} always fail", sites.len() - counted - always);
+    let can_fail = sites.len() - counted - always;
+    let mut summary = format!("[aot] type-check summary: {can_fail} {} can fail when the program runs, {always} always {}", if can_fail == 1 { "check" } else { "checks" }, if always == 1 { "fails" } else { "fail" });
     if logs_type_errors {
         let listed = || sites.iter().filter(|site| site.verdict != Verdict::Wrong && (lists_all || site.tier != Tier::Typed));
         let count = |what: &str| listed().filter(|site| site.name_in_log_build() == what).count();
         let _ = write!(summary, "; after logging, this build continues at {}, converts at {} and still throws at {}", count("continues"), count("converts"), count("throws"));
     }
     if counted != 0 {
-        let _ = write!(summary, "; {counted} more fail only if TypeScript code of the program itself produces a value of the wrong type (--aot-explain=throws-all lists them)");
+        let (fail, them) = if counted == 1 { ("fails", "it") } else { ("fail", "them") };
+        let _ = write!(summary, "; {counted} more {fail} only if TypeScript code of the program itself produces a value of the wrong type (--aot-explain=throws-all lists {them})");
     }
     lines.push(summary);
     let caused_by = |cause: Cause| sites.iter().filter(|site| site.verdict != Verdict::Wrong && (lists_all || site.tier != Tier::Typed) && site.cause() == cause).count();

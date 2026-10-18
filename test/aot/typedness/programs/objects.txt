@@ -14,7 +14,7 @@ field-read-after-aliased-store: 1 layouts, 0 given, 1 open, places 65 of 95, rea
 field-read-after-distant-store: 4 layouts, 0 given, 2 open, places 31 of 42, reads 30 of 56
 fields-via-reflection: 2 layouts, 0 given, 0 open, places 11 of 20, reads 11 of 21
 for-in-reads-in-nested-loops: 2 layouts, 0 given, 0 open, places 349 of 375, reads 72 of 85
-freeze: 7 layouts, 0 given, 7 open, places 21 of 34, reads 9 of 58
+freeze: 7 layouts, 0 given, 7 open, places 21 of 35, reads 9 of 58
 global-members: 0 layouts, 0 given, 0 open, places 61 of 75, reads 1 of 61
 in-and-has-own-cache-misses: 10 layouts, 0 given, 12 open, places 113 of 171, reads 9 of 53
 key-order-is-creation-order: 4 layouts, 0 given, 3 open, places 18 of 27, reads 0 of 11

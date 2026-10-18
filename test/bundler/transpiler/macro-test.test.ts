@@ -1,7 +1,7 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, type DirectoryTree } from "harness";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync, renameSync, symlinkSync } from "node:fs";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
   addStrings,
@@ -626,14 +626,12 @@ describe("--no-macros", () => {
   });
 });
 
-// A dependency must not run code at build time, so a macro call in installed package code is
-// refused. `bun install --backend=symlink` keeps the files of a package in the install cache and
-// links each one into node_modules. The real path of such a file has no node_modules segment.
-describe("macro calls in installed package code", () => {
+// A dependency must not run code at build time, so a macro call in a file under node_modules is refused.
+describe("macro calls in node_modules", () => {
   const refused = "For security reasons, macros cannot be run from node_modules.";
 
-  const packageFiles = (name: string): DirectoryTree => ({
-    "package.json": JSON.stringify({ name, version: "1.0.0", main: "index.js" }),
+  const dep = {
+    "package.json": JSON.stringify({ name: "dep", version: "1.0.0", main: "index.js" }),
     "m.js": `
       import { writeFileSync } from "node:fs";
       export function stamp() {
@@ -649,51 +647,28 @@ describe("macro calls in installed package code", () => {
       import { stamp } from "./m.js" with { type: "macro" };
       export default stamp\`\`;
     `,
-    "relative.js": `export { default } from "./lib/inner.js";`,
-    "lib": {
-      "inner.js": `
-        import { stamp } from "../m.js" with { type: "macro" };
-        export default stamp();
-      `,
-    },
     "dead.js": `
       import { stamp } from "./m.js" with { type: "macro" };
       export default false ? stamp() : "DEAD_BRANCH";
     `,
-  });
-
-  const appFiles: DirectoryTree = {
-    "call.js": `import v from "dep"; console.log(v);`,
-    "tagged.js": `import v from "dep/tagged.js"; console.log(v);`,
-    "relative.js": `import v from "dep/relative.js"; console.log(v);`,
-    "dead.js": `import v from "dep/dead.js"; console.log(v);`,
   };
 
-  // Puts every file of `from` into `to`, as a link to the file or as a copy of it.
-  function place(layout: "linked" | "copied", from: string, to: string) {
-    for (const file of new Bun.Glob("**").scanSync({ cwd: from })) {
-      mkdirSync(path.dirname(path.join(to, file)), { recursive: true });
-      if (layout === "linked") symlinkSync(path.join(from, file), path.join(to, file));
-      else copyFileSync(path.join(from, file), path.join(to, file));
-    }
-  }
+  const files = {
+    node_modules: { dep },
+    "call.js": `import v from "dep"; console.log(v);`,
+    "tagged.js": `import v from "dep/tagged.js"; console.log(v);`,
+    "dead.js": `import v from "dep/dead.js"; console.log(v);`,
+    "own.js": `
+      import { stamp } from "dep/m.js" with { type: "macro" };
+      console.log(stamp());
+    `,
+  };
 
-  // "linked" is the layout of `bun install --backend=symlink`: a real directory in node_modules
-  // whose files are links to a store outside it. "copied" is the layout of the default backend.
-  function install(layout: "linked" | "copied", app: DirectoryTree = {}) {
-    const dir = tempDir(`macro-guard-${layout}`, {
-      store: { dep: packageFiles("dep") },
-      app: { ...appFiles, ...app },
-    });
-    place(layout, path.join(String(dir), "store", "dep"), path.join(String(dir), "app", "node_modules", "dep"));
-    return dir;
-  }
-
-  async function bun(cwd: string, ...args: string[]) {
+  async function bun(cwd: string, args: string[], env: Record<string, string> = {}) {
     const marker = path.join(cwd, "MACRO_RAN");
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
-      env: { ...bunEnv, MACRO_MARKER: marker },
+      env: { ...bunEnv, ...env, MACRO_MARKER: marker },
       cwd,
       stdout: "pipe",
       stderr: "pipe",
@@ -704,219 +679,86 @@ describe("macro calls in installed package code", () => {
 
   const isRefused = { stderr: expect.stringContaining(refused), exitCode: 1, macroRan: false };
 
-  // The package as an npm tarball.
-  async function writeTarball(file: string) {
-    const entries: Record<string, string> = {};
-    const add = (tree: DirectoryTree, prefix: string) => {
-      for (const [name, value] of Object.entries(tree)) {
-        if (typeof value === "string") entries[prefix + name] = value;
-        else add(value as DirectoryTree, `${prefix}${name}/`);
-      }
-    };
-    add(packageFiles("dep"), "package/");
-    await Bun.Archive.write(file, entries, { compress: "gzip" });
-  }
-
-  // The layout that the path test already refuses. Both macro call sites must keep that test.
   test.concurrent.each([
     ["a call", "call.js"],
     ["a tagged template", "tagged.js"],
-  ])("copied into node_modules: bun build refuses %s", async (_, entry) => {
-    using dir = install("copied");
-    const app = path.join(String(dir), "app");
-    expect(await bun(app, "build", `./${entry}`, "--outdir", "out")).toMatchObject(isRefused);
+  ])("bun build refuses %s in a package", async (_, entry) => {
+    using dir = tempDir("macro-guard-build", files);
+    expect(await bun(String(dir), ["build", `./${entry}`, "--outdir", "out"])).toMatchObject(isRefused);
   });
 
-  // Windows needs a privilege to create a file link, and `bun install` does not write this layout there.
-  describe.skipIf(isWindows)("linked into node_modules", () => {
-    test.concurrent.each([
-      ["a call", "call.js"],
-      ["a tagged template", "tagged.js"],
-      ["a call in a file that the package reaches by a relative import", "relative.js"],
-      ["a call in a package file that is the entry point", "node_modules/dep/index.js"],
-    ])("bun build refuses %s", async (_, entry) => {
-      using dir = install("linked");
-      const app = path.join(String(dir), "app");
-      expect(await bun(app, "build", `./${entry}`, "--outdir", "out")).toMatchObject(isRefused);
-    });
+  test.concurrent("bun run refuses a call in a package", async () => {
+    using dir = tempDir("macro-guard-run", files);
+    expect(await bun(String(dir), ["run", "./call.js"])).toMatchObject(isRefused);
+  });
 
-    test.concurrent("bun run refuses the macro", async () => {
-      using dir = install("linked");
-      const app = path.join(String(dir), "app");
-      expect(await bun(app, "run", "./call.js")).toMatchObject(isRefused);
+  test.concurrent("Bun.build refuses a call in a package", async () => {
+    using dir = tempDir("macro-guard-api", {
+      ...files,
+      "build.ts": `
+        const result = await Bun.build({ entrypoints: ["./call.js"], outdir: "./out", throw: false });
+        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(l => l.message) }));
+      `,
     });
-
-    test.concurrent("Bun.build refuses the macro", async () => {
-      using dir = install("linked", {
-        "build.ts": `
-          const result = await Bun.build({ entrypoints: ["./call.js"], outdir: "./out", throw: false });
-          console.log(JSON.stringify({ success: result.success, logs: result.logs.map(l => l.message) }));
-        `,
-      });
-      const app = path.join(String(dir), "app");
-      const { stdout, stderr, exitCode, macroRan } = await bun(app, "run", "build.ts");
-      expect({ result: JSON.parse(stdout.trim().split("\n").pop()!), stderr, exitCode, macroRan }).toMatchObject({
-        result: { success: false, logs: expect.arrayContaining([expect.stringContaining(refused)]) },
-        exitCode: 0,
-        macroRan: false,
-      });
-    });
-
-    test.concurrent("--no-macros is reported before the package check", async () => {
-      using dir = install("linked");
-      const app = path.join(String(dir), "app");
-      const result = await bun(app, "build", "--no-macros", "./call.js", "--outdir", "out");
-      expect(result).toMatchObject({ stderr: expect.stringContaining("Macros are disabled"), exitCode: 1 });
-      expect(result).toMatchObject({ stderr: expect.not.stringContaining(refused), macroRan: false });
-    });
-
-    test.concurrent("a call in dead code is removed without an error", async () => {
-      using dir = install("linked");
-      const app = path.join(String(dir), "app");
-      expect(await bun(app, "build", "./dead.js", "--outdir", "out")).toMatchObject({ exitCode: 0, macroRan: false });
-      expect(await Bun.file(path.join(app, "out", "dead.js")).text()).toContain("DEAD_BRANCH");
+    const { stdout, stderr, exitCode, macroRan } = await bun(String(dir), ["run", "build.ts"]);
+    expect({ result: JSON.parse(stdout.trim().split("\n").pop()!), stderr, exitCode, macroRan }).toMatchObject({
+      result: { success: false, logs: expect.arrayContaining([expect.stringContaining(refused)]) },
+      exitCode: 0,
+      macroRan: false,
     });
   });
 
-  test.concurrent.skipIf(isWindows)("bun install --backend=symlink: bun build refuses the macro", async () => {
-    using dir = tempDir("macro-guard-symlink-backend", {
-      app: { ...appFiles, "package.json": JSON.stringify({ name: "app", dependencies: { dep: "file:../dep.tgz" } }) },
-    });
-    const root = String(dir);
-    const app = path.join(root, "app");
-    await writeTarball(path.join(root, "dep.tgz"));
-
-    await using install = Bun.spawn({
-      cmd: [bunExe(), "install", "--backend=symlink"],
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: path.join(root, "cache") },
-      cwd: app,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [installStdout, installStderr, installExitCode] = await Promise.all([
-      install.stdout.text(),
-      install.stderr.text(),
-      install.exited,
+  test.concurrent("--no-macros is reported before the package check", async () => {
+    using dir = tempDir("macro-guard-no-macros", files);
+    const { stderr, exitCode, macroRan } = await bun(String(dir), [
+      "build",
+      "--no-macros",
+      "./call.js",
+      "--outdir",
+      "out",
     ]);
-    expect({ installStdout, installStderr, installExitCode }).toMatchObject({ installExitCode: 0 });
-    const installed = path.join(app, "node_modules", "dep", "index.js");
-    expect({
-      isLink: lstatSync(installed).isSymbolicLink(),
-      realPathIsInNodeModules: realpathSync(installed).includes("node_modules"),
-    }).toEqual({ isLink: true, realPathIsInNodeModules: false });
-
-    expect(await bun(app, "build", "./relative.js", "--outdir", "out")).toMatchObject(isRefused);
+    expect(stderr).toContain("Macros are disabled");
+    expect(stderr).not.toContain(refused);
+    expect({ exitCode, macroRan }).toEqual({ exitCode: 1, macroRan: false });
   });
 
-  // With no node_modules directory, the runtime installs a package into the install cache and
-  // runs it from there.
-  test.concurrent("an auto-installed package: bun run refuses the macro", async () => {
-    using dir = tempDir("macro-guard-auto-install", { app: { "call.js": appFiles["call.js"] } });
-    const root = String(dir);
-    const app = path.join(root, "app");
-    const tarball = path.join(root, "dep-1.0.0.tgz");
-    await writeTarball(tarball);
-    await using registry = Bun.serve({
-      port: 0,
-      fetch(req) {
-        if (req.url.endsWith(".tgz")) return new Response(Bun.file(tarball));
-        const version = { name: "dep", version: "1.0.0", dist: { tarball: `${registry.url}dep/-/dep-1.0.0.tgz` } };
-        return Response.json({ name: "dep", "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } });
-      },
-    });
-    await Bun.write(path.join(app, "bunfig.toml"), Bun.TOML.stringify({ install: { registry: registry.url.href } }));
-
-    const marker = path.join(app, "MACRO_RAN");
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "./call.js"],
-      env: { ...bunEnv, MACRO_MARKER: marker, BUN_INSTALL_CACHE_DIR: path.join(root, "cache") },
-      cwd: app,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode, macroRan: existsSync(marker) }).toMatchObject(isRefused);
+  test.concurrent("a call in dead code is removed without an error", async () => {
+    using dir = tempDir("macro-guard-dead-code", files);
+    const result = await bun(String(dir), ["build", "./dead.js", "--outdir", "out"]);
+    expect(result).toMatchObject({ exitCode: 0, macroRan: false });
+    expect(await Bun.file(path.join(String(dir), "out", "dead.js")).text()).toContain("DEAD_BRANCH");
   });
 
-  test.concurrent.skipIf(isWindows)("a file linked directly into node_modules is refused", async () => {
-    using dir = tempDir("macro-guard-loose-link", {
-      store: packageFiles("dep"),
-      app: { "entry.js": `import v from "loose.js"; console.log(v);`, node_modules: {} },
-    });
-    const app = path.join(String(dir), "app");
-    symlinkSync(path.join(String(dir), "store", "index.js"), path.join(app, "node_modules", "loose.js"));
-    expect(await bun(app, "build", "./entry.js", "--outdir", "out")).toMatchObject(isRefused);
+  test.concurrent("the project can call a macro that it imports from a package", async () => {
+    using dir = tempDir("macro-guard-own-call", files);
+    const result = await bun(String(dir), ["build", "./own.js", "--outdir", "out"]);
+    expect(result).toMatchObject({ exitCode: 0, macroRan: true });
+    expect(await Bun.file(path.join(String(dir), "out", "own.js")).text()).toContain("INLINED_RESULT");
   });
 
-  // A git or GitHub dependency can hold links, so its package.json can be a link to another of
-  // its files. The directory of that other file is not the directory of the package.
-  test.concurrent.skipIf(isWindows).each(["meta", "node_modules/meta"])(
-    "a linked package whose package.json is a link to %s/package.json is refused",
-    async inner => {
-      using dir = install("linked");
-      const store = path.join(String(dir), "store", "dep");
-      mkdirSync(path.join(store, inner), { recursive: true });
-      renameSync(path.join(store, "package.json"), path.join(store, inner, "package.json"));
-      symlinkSync(`${inner}/package.json`, path.join(store, "package.json"));
-      const app = path.join(String(dir), "app");
-      expect(await bun(app, "build", "./call.js", "--outdir", "out")).toMatchObject(isRefused);
-    },
-  );
-
-  // A workspace package and a `bun link` package are one directory link to the project's own code.
-  test.concurrent.skipIf(isWindows).each([
-    ["", false],
-    [" and has a package.json that is a link", true],
-  ])("a package that is one directory link%s still runs its macros", async (_, linkedPackageJson) => {
+  // `bun install` links a workspace package into node_modules. Its real path is the project's own code.
+  test.concurrent.each([
+    ["hoisted", "node_modules/dep"],
+    ["isolated", "packages/app/node_modules/dep"],
+  ])("a workspace package can call its macro (--linker=%s)", async (linker, link) => {
     using dir = tempDir("macro-guard-workspace", {
-      packages: { dep: packageFiles("dep") },
-      app: appFiles,
-      node_modules: {},
-    });
-    const root = String(dir);
-    const dep = path.join(root, "packages", "dep");
-    if (linkedPackageJson) {
-      renameSync(path.join(dep, "package.json"), path.join(dep, "package.real.json"));
-      symlinkSync("package.real.json", path.join(dep, "package.json"));
-    }
-    symlinkSync(dep, path.join(root, "node_modules", "dep"), "dir");
-    const app = path.join(root, "app");
-    expect(await bun(app, "build", "./relative.js", "--outdir", "out")).toMatchObject({ exitCode: 0, macroRan: true });
-    expect(await Bun.file(path.join(app, "out", "relative.js")).text()).toContain("INLINED_RESULT");
-  });
-
-  // `"lib": "file:../.."` under the symlink backend: node_modules links to the files of a folder
-  // that holds the project. `viaLink` names the entry point through a directory link to the
-  // project, so the resolver knows two paths for it.
-  test.concurrent.skipIf(isWindows).each([
-    ["", false],
-    [", also when a directory link leads to the project", true],
-  ])("a linked folder that holds the project does not stop the project's own macros%s", async (_, viaLink) => {
-    using dir = tempDir("macro-guard-parent-folder", {
-      real: {
-        lib: {
-          ...packageFiles("lib"),
-          examples: {
-            app: {
-              "entry.js": `
-                import { stamp } from "../../m.js" with { type: "macro" };
-                import fromLib from "lib";
-                console.log(stamp(), fromLib);
-              `,
-            },
-          },
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      packages: {
+        dep,
+        app: {
+          "package.json": JSON.stringify({ name: "app", dependencies: { dep: "workspace:*" } }),
+          "call.js": files["call.js"],
         },
       },
     });
     const root = String(dir);
-    const lib = path.join(root, "real", "lib");
-    for (const file of ["package.json", "index.js", "m.js"]) {
-      mkdirSync(path.join(lib, "examples", "app", "node_modules", "lib"), { recursive: true });
-      symlinkSync(path.join(lib, file), path.join(lib, "examples", "app", "node_modules", "lib", file));
-    }
-    symlinkSync(path.join(root, "real"), path.join(root, "link"), "dir");
-    const entry = path.join(root, viaLink ? "link" : "real", "lib", "examples", "app", "entry.js");
-    expect(await bun(root, "build", entry, "--outdir", "out")).toMatchObject({ exitCode: 0, macroRan: true });
-    expect((await Bun.file(path.join(root, "out", "entry.js")).text()).split("INLINED_RESULT").length - 1).toBe(2);
+    const cache = { BUN_INSTALL_CACHE_DIR: path.join(root, ".cache") };
+    expect(await bun(root, ["install", `--linker=${linker}`], cache)).toMatchObject({ exitCode: 0 });
+    expect(realpathSync(path.join(root, link))).toBe(realpathSync(path.join(root, "packages", "dep")));
+
+    const app = path.join(root, "packages", "app");
+    const result = await bun(app, ["build", "./call.js", "--outdir", "out"]);
+    expect(result).toMatchObject({ exitCode: 0, macroRan: true });
+    expect(await Bun.file(path.join(app, "out", "call.js")).text()).toContain("INLINED_RESULT");
   });
 });

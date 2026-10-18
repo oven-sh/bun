@@ -75,10 +75,6 @@ beEvil();
 node_modules/evil/index.js:3:1 50
 ```
 
-The same rule covers a package whose files are links out of `node_modules`. `bun install --backend=symlink` writes that layout: it keeps each package in the install cache and links every file into `node_modules`.
-
-A workspace package and a package from `bun link` are your code. They can invoke macros.
-
 Your application code can still import macros from `node_modules` and invoke them.
 
 ```ts title="cli.tsx" icon="/icons/typescript.svg"

@@ -312,11 +312,6 @@ fn __bun_macro_collect_vm_garbage() {
 }
 
 #[unsafe(no_mangle)]
-fn __bun_macro_call_site_is_in_linked_package(real_path: &[u8]) -> bool {
-    bun_resolver::resolver::linked_package_roots::covers(real_path)
-}
-
-#[unsafe(no_mangle)]
 fn __bun_macro_context_call(
     ctx: &mut js_parser::Macro::MacroContext,
     import_record_path: &[u8],

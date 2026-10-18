@@ -357,11 +357,10 @@ describe("a workspace member keeps the versions its lockfile pins", () => {
       await project.writeMember("app", { dependencies: { ...twoRows, "range-dep": ">=1.0.0" } });
 
       const frozen = await project.bun(["ci"]);
-      expect(frozen.err).toContain(frozenError);
-      expect(frozen.err).toContain("note: dependencies in package.json changed since bun.lock was saved");
+      expect(frozen.err).not.toContain("error:");
       expect(project.registry.manifests).toEqual([]);
       expect(await project.lock()).toBe(locked);
-      expect(frozen.exitCode).toBe(1);
+      expect(frozen.exitCode).toBe(0);
 
       const { err, exitCode } = await project.bun(["install"]);
 

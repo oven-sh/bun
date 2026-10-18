@@ -34,7 +34,6 @@
     macro(file) \
     macro(jest) \
     macro(listen) \
-    macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \
     macro(serve) \

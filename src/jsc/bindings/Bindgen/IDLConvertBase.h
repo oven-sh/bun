@@ -71,4 +71,32 @@ private:
     const WTF::ASCIILiteral m_name;
 };
 
+// A value of the wrong type throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)`.
+struct NodeArgumentContext : Detail::ContextBase<NodeArgumentContext> {
+    using ElementContext = Detail::ElementOf<NodeArgumentContext>;
+
+    NodeArgumentContext(WTF::ASCIILiteral name, std::span<const WTF::ASCIILiteral> expected, JSC::JSValue actual)
+        : m_name(name)
+        , m_expected(expected)
+        , m_actual(actual)
+    {
+    }
+
+    auto source()
+    {
+        return m_name;
+    }
+
+    template<typename String>
+    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&)
+    {
+        Bun::ERR::INVALID_ARG_TYPE(scope, &global, m_name, m_expected, m_actual);
+    }
+
+private:
+    const WTF::ASCIILiteral m_name;
+    const std::span<const WTF::ASCIILiteral> m_expected;
+    const JSC::JSValue m_actual;
+};
+
 }

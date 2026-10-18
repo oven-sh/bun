@@ -256,6 +256,8 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   utf8Optional: $bindgen("bindgen_test.bind.ts", "utf8Optional"),
   utf8Owned: $bindgen("bindgen_test.bind.ts", "utf8Owned"),
   stringEcho: $bindgen("bindgen_test.bind.ts", "stringEcho"),
+  stringLength: $bindgen("bindgen_test.bind.ts", "stringLength"),
+  expectedByNode: $bindgen("bindgen_test.bind.ts", "expectedByNode"),
   nextColor: $bindgen("bindgen_test.bind.ts", "nextColor"),
   optionsEcho: $bindgen("bindgen_test.bind.ts", "optionsEcho"),
   describeValue: $bindgen("bindgen_test.bind.ts", "describeValue"),
@@ -279,6 +281,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   bytesOf: $bindgen("bindgen_test.bind.ts", "bytesOf"),
   bytesOfOrToString: $bindgen("bindgen_test.bind.ts", "bytesOfOrToString"),
   bytesOfString: $bindgen("bindgen_test.bind.ts", "bytesOfString"),
+  bytesOfRefusingStringObject: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingStringObject"),
   bytesOfBufferOrBlob: $bindgen("bindgen_test.bind.ts", "bytesOfBufferOrBlob"),
   bytesOfRefusingUndefined: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingUndefined"),
   bytesOfThen: $bindgen("bindgen_test.bind.ts", "bytesOfThen"),
@@ -299,6 +302,12 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   looseIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "looseIntegerOrBigInt"),
   looseDoubleOrBigInt: $bindgen("bindgen_test.bind.ts", "looseDoubleOrBigInt"),
   wideIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "wideIntegerOrBigInt"),
+  portOf: $bindgen("class_ref_test.bind.ts", "portOf"),
+  portOfOrNull: $bindgen("class_ref_test.bind.ts", "portOfOrNull"),
+  portAfterCallback: $bindgen("class_ref_test.bind.ts", "portAfterCallback"),
+  describeAddressOrList: $bindgen("class_ref_test.bind.ts", "describeAddressOrList"),
+  isAddress: $bindgen("class_ref_test.bind.ts", "isAddress"),
+  portPlus: $bindgen("class_ref_test.bind.ts", "portPlus"),
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
@@ -317,7 +326,7 @@ export const Dequeue = require("internal/fifo");
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
 // so the node edge cases are handled here.
-const rustNormalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
+const rustNormalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
 const nodeKEmptyObject = require("internal/shared").kEmptyObject;
 function nodeNormalizeEncoding(enc) {
   if (enc == null) return "utf8";
@@ -619,14 +628,14 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 
 export const timerInternals = {
   timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
-  monotonicNowMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.monotonicNowMs", 0),
+  monotonicNowMs: $bindgen("Timer.bind.ts", "monotonicNowMs"),
 };
 
 // Raw datagram descriptor helpers for tests that need an unbound fd (which
 // the internal/dgram UDP wrap does not expose — it binds on create).
 export const dgramInternals = {
-  newRawSocketFd: $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2),
-  closeRawFd: $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1),
+  newRawSocketFd: $bindgen("udp_socket.bind.ts", "dgramNewSocketFd"),
+  closeRawFd: $bindgen("udp_socket.bind.ts", "dgramCloseFd"),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(

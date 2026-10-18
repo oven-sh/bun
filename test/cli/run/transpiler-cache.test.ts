@@ -159,7 +159,6 @@ describe("transpiler cache", () => {
             if (exitCode != 0 && !killing) {
               killing = true;
               processes.forEach(x => x.kill(9));
-              remover.kill(9);
             }
           },
         }),
@@ -169,8 +168,6 @@ describe("transpiler cache", () => {
     await Promise.all(processes.map(x => x.exited));
 
     expect(!killing).toBeTrue();
-
-    remover.kill(9);
 
     for (const proc of processes) {
       expect(proc.exitCode).toBe(0);

@@ -94,12 +94,13 @@ test.concurrent("a channel that could not be opened does not hold the event loop
 });
 
 test.concurrent("a message that arrives before there is a 'message' listener is kept for it", async () => {
-  const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc-pending-messages-fixture.mjs`.text();
-  // node (v26.7.0) has identical output, except that a listener that throws gets ["first","first","end"]
+  const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc-pending-messages-fixture.mjs`.env(bunEnv).text();
+  // node (v26.7.0) has identical output
   expect(output).toMatchInlineSnapshot(`
     "child, a late listener: ["first","second","end"]
     child, a handle: [["first","Server"],"second","end"]
-    child, a listener that throws: ["first","second","end"]
+    child, a listener that throws: ["first","first","end"]
+    child, a listener that throws, then a listener for another event: ["first","first","first","end"]
     child, once: ["first","end"]
     child, added and removed in one tick: ["first","second","end"]
     child, disconnect() in the tick that adds it: []
@@ -109,7 +110,8 @@ test.concurrent("a message that arrives before there is a 'message' listener is 
     child, opened by channel.unrefCounted(): ["first","second","end"]
     parent, a late listener: ["first","second","end"]
     parent, a handle: [["first","Server"],"second","end"]
-    parent, a listener that throws: ["first","end"]
+    parent, a listener that throws: ["first","first","end"]
+    parent, a listener that throws, then a listener for another event: ["first","first","first","end"]
     parent, once: ["first","end"]
     parent, added and removed in one tick: ["first","second","end"]
     parent, disconnect() in the tick that adds it: []

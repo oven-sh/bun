@@ -130,9 +130,9 @@ bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgu
     return emit(eventType, arguments);
 }
 
-bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments, bool* listenerThrew)
 {
-    return fireEventListeners(eventType, arguments);
+    return fireEventListeners(eventType, arguments, listenerThrew);
 }
 
 Vector<Identifier> EventEmitter::getEventNames()
@@ -182,7 +182,7 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
 }
 
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
-bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments, bool* listenerThrew)
 {
 
     auto* data = eventTargetData();
@@ -205,7 +205,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 
     bool prevFiringEventListeners = data->isFiringEventListeners;
     data->isFiringEventListeners = true;
-    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments);
+    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments, listenerThrew);
     data->isFiringEventListeners = prevFiringEventListeners;
     return fired;
 }
@@ -213,7 +213,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 // Intentionally creates a copy of the listeners vector to avoid event listeners added after this point from being run.
 // Note that removal still has an effect due to the removed field in RegisteredEventListener.
 // https://dom.spec.whatwg.org/#concept-event-listener-inner-invoke
-bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments, bool* listenerThrew)
 {
     Ref<EventEmitter> protectedThis(*this);
     ASSERT(!listeners.isEmpty());
@@ -261,6 +261,8 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         auto* exception = exceptionPtr.get();
 
         if (exception) [[unlikely]] {
+            if (listenerThrew)
+                *listenerThrew = true;
             auto errorIdentifier = vm.propertyNames->error;
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {

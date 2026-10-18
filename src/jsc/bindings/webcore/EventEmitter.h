@@ -56,7 +56,7 @@ public:
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
-    WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&);
+    WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&, bool* listenerThrew = nullptr);
 
     WEBCORE_EXPORT Vector<Identifier> getEventNames();
     WEBCORE_EXPORT Vector<JSObject*> getListeners(const Identifier& eventType);
@@ -73,7 +73,7 @@ public:
 
     void setMaxListeners(unsigned count);
 
-    bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
+    bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments, bool* listenerThrew = nullptr);
     bool isFiringEventListeners() const;
 
     const EventEmitterData* eventTargetData() const;
@@ -102,7 +102,7 @@ private:
     {
     }
 
-    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
+    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments, bool* listenerThrew);
 
     EventEmitterData m_eventTargetData;
     unsigned m_maxListeners { 10 };

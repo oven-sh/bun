@@ -28,7 +28,7 @@
 use super::super::instantiate::PropInstantiation;
 use super::super::*;
 use super::{
-    Built, IntersectionBuilder, MemberCount, RECENT_MEMBERS, Resolved, members_with_each_name,
+    Built, FEW_MEMBERS, IntersectionBuilder, MemberCount, RECENT_MEMBERS, Resolved, SharedNames,
 };
 use crate::util::PositionSet;
 use smallvec::SmallVec;
@@ -90,15 +90,12 @@ fn find_shared_names(constituents: &mut [Constituent]) -> usize {
         constituent.shared = PositionSet::new(constituent.props().len());
     }
     let all: SmallVec<[Members; 8]> = constituents.iter().map(|it| it.members).collect();
-    if let Some(members_with_name) = members_with_each_name(&all) {
-        for constituent in constituents.iter_mut() {
-            for (position, prop) in constituent.members.shape().props.iter().enumerate() {
-                if members_with_name.get(&prop.name).is_some_and(|&n| n > 1) {
-                    constituent.shared.insert(position);
-                }
-            }
+    if all.len() > FEW_MEMBERS {
+        let names = SharedNames::of(&all);
+        for &(at, position) in names.iter().flatten() {
+            constituents[at as usize].shared.insert(position as usize);
         }
-        return constituents.iter().map(|it| it.shared.iter().count()).sum();
+        return names.iter().map(<[_]>::len).sum();
     }
     for later in 1..constituents.len() {
         let (earlier, rest) = constituents.split_at_mut(later);
@@ -225,18 +222,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `members_with_name`: how many of the constituents of `ty` have each name.
-    pub(super) fn note_names_of_constituents(
-        &mut self,
-        ty: TypeId,
-        members_with_name: &FxHashMap<Atom, u32>,
-    ) {
-        let (mut shared, mut count) = (0, 0);
-        for &members in members_with_name.values() {
-            count += members;
-            shared += members * u32::from(members > 1);
-        }
-        self.unlisted_intersections.shares_most_names = (shared * 2 > count).then_some(ty);
+    /// `names`: those of the constituents of `ty`.
+    pub(super) fn note_names_of_constituents(&mut self, ty: TypeId, names: &SharedNames) {
+        let shared: usize = names.iter().map(<[_]>::len).sum();
+        self.unlisted_intersections.shares_most_names =
+            (shared * 2 > names.holders.len()).then_some(ty);
     }
 
     /// Whether the properties of the intersection `whole` of `parts` may stay in `constituents`, if the list of them would

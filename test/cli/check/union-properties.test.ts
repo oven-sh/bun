@@ -4503,6 +4503,156 @@ export {};
 (34,35): error TS2322: Type 'string' is not assignable to type 'never'.
 `,
   },
+  "the index signatures of the modifiers type of a mapped type with readonly, with -readonly and without": {
+    sizes: [0],
+    program: () => {
+      const rows = [
+        ["readonly ", "B", "string", '"x"'],
+        ["-readonly ", "B", "string", '"x"'],
+        ["", "B", "string", '"x"'],
+        ["+readonly ", "B", "string", '"x"'],
+        ["readonly ", "B | { [k: string]: 1 }", "string", '"x"'],
+        ["-readonly ", "B | { readonly [k: string]: 1 }", "string", '"x"'],
+        ["", "B | { readonly [k: string]: 1 }", "string", '"x"'],
+        ["readonly ", "B", '"a"', '"a"'],
+        ["readonly ", "B", "number", "0"],
+        ["readonly ", "B & { z: 1 }", "string", '"x"'],
+        ["", "B & { readonly [k: string]: 1 }", "string", '"x"'],
+      ];
+      return (
+        rows
+          .map(
+            ([modifier, modifiers, keys, key], n) => `
+namespace N${n} {
+  const shapes = { circle: (null! as RP<${modifiers}, ${keys}>)[${key}] };
+  type RP<T, K extends keyof T> = { ${modifier}[P in K]: 1 };
+  interface Base<T> { [k: string]: 1 }
+  interface B extends Base<typeof shapes> {}
+  interface Plain { [k: string]: 1 }
+  declare const written: RP<${modifiers.replace(/\bB\b/, "Plain")}, ${keys}>;
+  written[${key}] = 1;
+}`,
+          )
+          .join("") + "\nexport {};\n"
+      );
+    },
+    errors: `
+(3,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(6,13): error TS2310: Type 'B' recursively references itself as a base type.
+(9,3): error TS2542: Index signature in type 'RP<Plain, string>' only permits reading.
+(12,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(15,13): error TS2310: Type 'B' recursively references itself as a base type.
+(21,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(24,13): error TS2310: Type 'B' recursively references itself as a base type.
+(30,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(33,13): error TS2310: Type 'B' recursively references itself as a base type.
+(36,3): error TS2542: Index signature in type 'RP<Plain, string>' only permits reading.
+(39,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(42,13): error TS2310: Type 'B' recursively references itself as a base type.
+(45,3): error TS2542: Index signature in type 'RP<Plain | { [k: string]: 1; }, string>' only permits reading.
+(48,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(51,13): error TS2310: Type 'B' recursively references itself as a base type.
+(57,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(60,13): error TS2310: Type 'B' recursively references itself as a base type.
+(63,3): error TS2542: Index signature in type 'RP<Plain | { readonly [k: string]: 1; }, string>' only permits reading.
+(66,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(69,13): error TS2310: Type 'B' recursively references itself as a base type.
+(72,11): error TS2540: Cannot assign to 'a' because it is a read-only property.
+(75,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(78,13): error TS2310: Type 'B' recursively references itself as a base type.
+(81,3): error TS2542: Index signature in type 'RP<Plain, number>' only permits reading.
+(84,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(87,13): error TS2310: Type 'B' recursively references itself as a base type.
+(90,3): error TS2542: Index signature in type 'RP<Plain & { z: 1; }, string>' only permits reading.
+(93,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(96,13): error TS2310: Type 'B' recursively references itself as a base type.
+`,
+  },
+  "a mapped type with readonly or -readonly asks a union for its index signatures": {
+    sizes: [0],
+    program: () => {
+      const rows = [
+        ["readonly ", "B"],
+        ["-readonly ", "B"],
+        ["", "B"],
+        ["readonly ", "B | { [k: string]: 1 }"],
+        ["-readonly ", "B | { readonly [k: string]: 1 }"],
+        ["", "B | { readonly [k: string]: 1 }"],
+        ["readonly ", "B & { z: 1 }"],
+        ["-readonly ", "B & { z: 1 }"],
+      ];
+      // The type is not written in the initializer, where its type arguments would be compared with their constraints.
+      const forms = [
+        (type: string) => `const shapes = { circle: v["x"] };\n  declare const v: ${type};`,
+        (type: string) => `const shapes = { circle: (null! as V)["x"] };\n  type V = ${type};`,
+        (type: string) => `const shapes = { circle: make()["x"] };\n  declare function make(): ${type};`,
+      ];
+      return (
+        forms
+          .flatMap(form => rows.map(([modifier, modifiers]) => [modifier, form(`RP<${modifiers}, string>`)]))
+          .map(
+            ([modifier, uses], n) => `
+namespace N${n} {
+  ${uses}
+  type RP<T, K extends keyof T> = { ${modifier}[P in K]: 1 };
+  interface Base<T> { [k: string]: 1 }
+  interface B extends Base<typeof shapes> {}
+}`,
+          )
+          .join("") + "\nexport {};\n"
+      );
+    },
+    errors: `
+(3,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(7,13): error TS2310: Type 'B' recursively references itself as a base type.
+(10,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(14,13): error TS2310: Type 'B' recursively references itself as a base type.
+(17,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(21,13): error TS2310: Type 'B' recursively references itself as a base type.
+(24,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(28,13): error TS2310: Type 'B' recursively references itself as a base type.
+(31,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(35,13): error TS2310: Type 'B' recursively references itself as a base type.
+(38,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(42,13): error TS2310: Type 'B' recursively references itself as a base type.
+(45,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(49,13): error TS2310: Type 'B' recursively references itself as a base type.
+(52,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(56,13): error TS2310: Type 'B' recursively references itself as a base type.
+(59,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(63,13): error TS2310: Type 'B' recursively references itself as a base type.
+(66,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(70,13): error TS2310: Type 'B' recursively references itself as a base type.
+(73,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(77,13): error TS2310: Type 'B' recursively references itself as a base type.
+(80,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(84,13): error TS2310: Type 'B' recursively references itself as a base type.
+(87,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(91,13): error TS2310: Type 'B' recursively references itself as a base type.
+(94,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(98,13): error TS2310: Type 'B' recursively references itself as a base type.
+(101,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(105,13): error TS2310: Type 'B' recursively references itself as a base type.
+(108,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(112,13): error TS2310: Type 'B' recursively references itself as a base type.
+(115,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(119,13): error TS2310: Type 'B' recursively references itself as a base type.
+(122,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(126,13): error TS2310: Type 'B' recursively references itself as a base type.
+(129,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(133,13): error TS2310: Type 'B' recursively references itself as a base type.
+(136,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(140,13): error TS2310: Type 'B' recursively references itself as a base type.
+(143,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(147,13): error TS2310: Type 'B' recursively references itself as a base type.
+(150,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(154,13): error TS2310: Type 'B' recursively references itself as a base type.
+(157,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(161,13): error TS2310: Type 'B' recursively references itself as a base type.
+(164,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(168,13): error TS2310: Type 'B' recursively references itself as a base type.
+`,
+  },
 };
 
 const bySize = { ...members, ...reduced };

@@ -3225,22 +3225,24 @@ impl<'p, 's> Checker<'p, 's> {
                         } else {
                             ty
                         };
-                        let readonly = match (mapped.readonly, &modifiers) {
-                            (MappedModifier::Add, _) => true,
-                            // `getApplicableIndexInfo(modifiersType, propNameType)`
-                            (MappedModifier::None, Some(modifiers)) => {
-                                let members = match *modifiers {
-                                    Modifiers::Object(_, members) => Some(members),
-                                    // `resolveUnionTypeMembers` creates no property.
-                                    Modifiers::Union(union) => self.members_for_index_infos(union),
-                                };
-                                members.is_some_and(|m| {
-                                    let m = self.structured(m);
-                                    self.applicable_index_info(&m, name_ty)
-                                        .is_some_and(|info| info.readonly)
-                                })
-                            }
-                            _ => false,
+                        // `getApplicableIndexInfo(modifiersType, propNameType)`, which comes before the test of
+                        // `templateModifiers`: it resolves the members of a union under `readonly` and `-readonly` too.
+                        let is_readonly_there = modifiers.as_ref().is_some_and(|modifiers| {
+                            let members = match *modifiers {
+                                Modifiers::Object(_, members) => Some(members),
+                                // `resolveUnionTypeMembers` creates no property.
+                                Modifiers::Union(union) => self.members_for_index_infos(union),
+                            };
+                            members.is_some_and(|m| {
+                                let m = self.structured(m);
+                                self.applicable_index_info(&m, name_ty)
+                                    .is_some_and(|info| info.readonly)
+                            })
+                        });
+                        let readonly = match mapped.readonly {
+                            MappedModifier::Add => true,
+                            MappedModifier::None => is_readonly_there,
+                            MappedModifier::Remove => false,
                         };
                         // `appendIndexInfo`
                         match shape.index.iter_mut().find(|i| i.key == index_key) {

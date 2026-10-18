@@ -93,6 +93,22 @@ describe("PromiseRejectionEvent", () => {
     },
   );
 
+  test("promise and reason survive a garbage collection", () => {
+    const events: PromiseRejectionEvent[] = [];
+    for (let i = 0; i < 2000; i++) {
+      events.push(
+        new PromiseRejectionEvent("unhandledrejection", { promise: Promise.reject(i).catch(() => {}), reason: { i } }),
+      );
+    }
+    Bun.gc(true);
+    let ok = 0;
+    for (let i = 0; i < events.length; i++) {
+      const e = events[i];
+      if (e.promise instanceof Promise && e.reason.i === i) ok++;
+    }
+    expect(ok).toBe(events.length);
+  });
+
   test("assignment through a Proxy of globalThis", () => {
     const handler = () => {};
     try {
@@ -181,6 +197,32 @@ describe("unhandledrejection on the main thread", () => {
     `);
     expect(stderr).toBe("");
     expect(stdout).toBe("web,process:true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a dispatched event keeps promise and reason alive across a garbage collection", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      let saved;
+      addEventListener("unhandledrejection", e => { saved = e; e.preventDefault(); });
+      Promise.reject({ tag: "reason" });
+      setTimeout(() => {
+        Bun.gc(true);
+        console.log(saved.promise instanceof Promise, saved.reason.tag);
+      }, 0);
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true reason\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each(["web", "process"])("an async %s listener runs its continuation", async kind => {
+    const install =
+      kind === "web"
+        ? `addEventListener("unhandledrejection", async e => { e.preventDefault(); await 0; console.log("after"); });`
+        : `process.on("unhandledRejection", async () => { await 0; console.log("after"); });`;
+    const { stdout, stderr, exitCode } = await run(`${install}\nPromise.reject(1);`);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("after\n");
     expect(exitCode).toBe(0);
   });
 

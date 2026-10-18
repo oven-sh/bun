@@ -3911,24 +3911,46 @@ describe("backpressure", () => {
       expect(events).toEqual(["write() returned false", "close"]);
     });
 
-    // Node holds the chunk until the next tick, so destroy() fails it.
-    it("the callback of a write() gets an error when the socket is destroyed in the turn of the write", async () => {
+    it("the callback of a write() under the high water mark gets an error when the socket is destroyed with the chunk", async () => {
       const events: string[] = [];
       const closed = Promise.withResolvers<void>();
       onBudgetSocket((req, res, socket) => {
-        // The socket takes the chunk at once.
-        socket.budget = Infinity;
         res.on("close", () => {
           events.push("close");
           closed.resolve();
         });
-        res.write("a", (err?: NodeJS.ErrnoException | null) => events.push(`write callback: ${err?.code}`));
+        res.write("a", writeCallback(events, "the"));
         socket.destroy();
       });
       await closed.promise;
       await turn();
-      expect(events).toEqual(["write callback: ERR_STREAM_DESTROYED", "close"]);
+      expect(events).toEqual(["the write callback: error", "close"]);
     });
+
+    it.each(["write", "_send"] as const)(
+      "the callback of a res.%s() that the socket takes at once runs behind the callbacks that still wait",
+      async method => {
+        const order: string[] = [];
+        const wrote = Promise.withResolvers<void>();
+        const socket = onBudgetSocket((req, res, socket) => {
+          res.setHeader("Content-Length", 2);
+          socket.budget = Infinity;
+          // The first chunk waits in the socket, which takes it before the second call.
+          socket.cork();
+          res.write("a", () => order.push("first"));
+          socket.uncork();
+          (res as any)[method]("b", "latin1", () => order.push("second"));
+          wrote.resolve();
+        });
+        try {
+          await wrote.promise;
+          await turn();
+          expect(order).toEqual(["first", "second"]);
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
 
     // The buffer is free at 'drain': what its listeners write counts from zero.
     it("a write() under the high water mark in a 'drain' listener returns true", async () => {
@@ -4228,8 +4250,7 @@ describe("backpressure", () => {
       expect(result).toEqual({ drains: [0], backlog: true });
     });
 
-    // Node holds the chunk until the next tick, so destroy() fails it.
-    it("gets no 'drain' after the socket was destroyed, and an error in the callback of the write()", async () => {
+    it("gets no 'drain' after the socket was destroyed", async () => {
       const events: string[] = [];
       const closed = Promise.withResolvers<void>();
       const listener: http.RequestListener = (req, res) => {
@@ -4239,10 +4260,7 @@ describe("backpressure", () => {
           events.push("close");
           closed.resolve();
         });
-        const returned = res.write(CHUNK, (err?: NodeJS.ErrnoException | null) =>
-          events.push(`write callback: ${err?.code}`),
-        );
-        events.push(`write() returned ${returned}`);
+        events.push(`write() returned ${res.write(CHUNK)}`);
         req.socket.destroy();
       };
       const server = protocol === "http" ? http.createServer(listener) : https.createServer(burstTls, listener);
@@ -4258,7 +4276,7 @@ describe("backpressure", () => {
         client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
         await closed.promise;
         await new Promise<void>(resolve => setImmediate(resolve));
-        expect(events).toEqual(["write() returned false", "write callback: ERR_STREAM_DESTROYED", "close"]);
+        expect(events).toEqual(["write() returned false", "close"]);
       } finally {
         client.destroy();
         server.close();

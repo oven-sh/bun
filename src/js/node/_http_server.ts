@@ -3857,8 +3857,8 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   if (callback) {
     // A write callback reports that its bytes reached the socket: uncork them before the callback can destroy the response.
     handle.flushHeaders();
-    if (hasBody) {
-      // settleWhenEmpty() runs it, at the end of this turn or when the handle has drained. The return value stays with the count below.
+    if (hasBody && (this[kPendingCallbacks].length !== 0 || handle.bufferedAmount > 0)) {
+      // The handle holds bytes, or callbacks wait ahead of this one: settleWhenEmpty() runs it. The return value stays with the count below.
       this[kPendingCallbacks].push(callback);
       scheduleWriteAccountingFlush(this);
     } else {
@@ -4039,9 +4039,17 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
   }
   // Socket already gone: like Node's _writeRaw(), the write is dropped and its callback never runs: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L400-L406
   if ($isCallable(callback) && !(handle.flags & NodeHTTPResponseFlags.closed_or_completed)) {
-    // settleWhenEmpty() runs it, like a callback of write().
-    this[kPendingCallbacks].push(callback);
-    scheduleWriteAccountingFlush(this);
+    if (
+      this[kPipelinedQueuedState] !== undefined ||
+      this[kPendingCallbacks].length !== 0 ||
+      handle.bufferedAmount > 0
+    ) {
+      // Like a callback of write(): settleWhenEmpty() runs it, and not before the turn of a queued response.
+      this[kPendingCallbacks].push(callback);
+      scheduleWriteAccountingFlush(this);
+    } else {
+      process.nextTick(callback);
+    }
   }
 };
 

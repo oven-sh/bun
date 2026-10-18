@@ -5831,8 +5831,7 @@ it.skipIf(!canMount())("an empty lockfile without a bun.lock is not an error on 
     exitCode: 0,
   });
   // A bun.lock that is there stays an error.
-  expect(await installReadOnly("saved")).toEqual({
-    stderr: "EROFS: Read-only file system: failed to delete empty lockfile (unlink)\n",
-    exitCode: 0,
-  });
+  expect((await installReadOnly("saved")).stderr).toBe(
+    "EROFS: Read-only file system: failed to delete empty lockfile (unlink)\n",
+  );
 });

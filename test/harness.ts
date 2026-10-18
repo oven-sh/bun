@@ -33,14 +33,21 @@ export const isWindows = process.platform === "win32";
 export const isRoot = process.getuid?.() === 0;
 let canMountCached: boolean | undefined;
 /**
- * Whether a test can mount file systems. It mounts in a private user and mount
- * namespace (`unshare -Urm`). Those are turned off in most containers.
+ * Whether a test can make a bind mount and remount it read-only. It mounts in a private user
+ * and mount namespace (`unshare -Urm`). Those are turned off in most containers.
  */
 export function canMount(): boolean {
-  return (canMountCached ??=
-    isLinux &&
-    which("unshare") !== null &&
-    spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0);
+  if (canMountCached === undefined) {
+    canMountCached = false;
+    if (isLinux && which("unshare") !== null) {
+      using dir = tempDir("can-mount", {});
+      const mount = 'mount -o bind "$0" "$0" && mount -o remount,bind,ro "$0"';
+      canMountCached =
+        spawnSync({ cmd: ["unshare", "-Urm", "/bin/sh", "-c", mount, String(dir)], stdout: "ignore", stderr: "ignore" })
+          .exitCode === 0;
+    }
+  }
+  return canMountCached;
 }
 /**
  * Size of bun's fixed path buffers (`MAX_PATH_BYTES` in `src/bun_core/util.rs`). A path longer than this does not

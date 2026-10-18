@@ -460,21 +460,19 @@ pub mod defines {
         }
 
         /// What one use of the define gets: its own copy of a string, an object or an array.
-        #[inline]
         pub(crate) fn value_for_use(&self, loc: bun_ast::Loc) -> Expr {
-            let table = Expr {
-                data: self.value,
-                loc,
-            };
-            let expr = if let ExprData::EString(string) = self.value {
-                Expr::init(&*string, loc)
-            } else if matches!(self.value, ExprData::EObject(_) | ExprData::EArray(_)) {
-                table.clone_literal_tree()
-            } else {
-                table
+            let expr = match self.value {
+                ExprData::EString(string) => Expr::init(&*string, loc),
+                value @ (ExprData::EObject(_) | ExprData::EArray(_)) => {
+                    Expr { data: value, loc }.clone_literal_tree()
+                }
+                value => Expr { data: value, loc },
             };
             debug_assert!(
-                !expr.shares_literal_node_with(&table),
+                !expr.shares_literal_node_with(&Expr {
+                    data: self.value,
+                    loc
+                }),
                 "a use of a define got a node of the define table"
             );
             expr

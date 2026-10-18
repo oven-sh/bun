@@ -2,18 +2,14 @@
 
 use bun_boringssl_sys as boring;
 use bun_csrf as csrf;
+use bun_jsc::JSValue;
 use bun_jsc::bindgen::{self, JsHeap, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{ErrorCode, JSValue};
 
 use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
 use crate::crypto::evp;
 use crate::generated_bindgen::csrf_jsc::{CSRFGenerateOptions, CSRFVerifyOptions};
 use crate::node::Encoding as NodeEncoding;
-
-fn invalid_arguments<'a>(heap: &JsHeap<'a>, message: &str) -> bindgen::Error<'a> {
-    heap.error_with_code(ErrorCode::INVALID_ARG_TYPE, format_args!("{message}"))
-}
 
 fn non_empty<'a>(
     heap: &JsHeap<'a>,
@@ -21,7 +17,7 @@ fn non_empty<'a>(
     message: &str,
 ) -> bindgen::Result<'a, Option<&'a [u8]>> {
     match value {
-        Some([]) => Err(invalid_arguments(heap, message)),
+        Some([]) => Err(heap.invalid_arguments(format_args!("{message}"))),
         value => Ok(value),
     }
 }
@@ -37,10 +33,9 @@ fn token_format<'a>(
             Some(NodeEncoding::Base64) => Ok(csrf::TokenFormat::Base64),
             Some(NodeEncoding::Base64url) => Ok(csrf::TokenFormat::Base64Url),
             Some(NodeEncoding::Hex) => Ok(csrf::TokenFormat::Hex),
-            _ => Err(invalid_arguments(
-                heap,
-                "Invalid format: must be 'base64', 'base64url', or 'hex'",
-            )),
+            _ => Err(heap.invalid_arguments(format_args!(
+                "Invalid format: must be 'base64', 'base64url', or 'hex'"
+            ))),
         },
     }
 }
@@ -58,7 +53,7 @@ fn algorithm<'a>(heap: &JsHeap<'a>, name: Option<&[u8]>) -> bindgen::Result<'a, 
             | EvpAlgorithm::Sha512
             | EvpAlgorithm::Sha512_256),
         ) => Ok(algorithm),
-        _ => Err(invalid_arguments(heap, "Algorithm not supported")),
+        _ => Err(heap.invalid_arguments(format_args!("Algorithm not supported"))),
     }
 }
 
@@ -72,7 +67,7 @@ fn default_secret<'a>() -> &'a [u8] {
 pub(crate) fn generate<'a>(
     cx: &mut JsScope<'a>,
     secret: Option<&'a [u8]>,
-    options: CSRFGenerateOptions<'a>,
+    options: &CSRFGenerateOptions<'a>,
 ) -> bindgen::Result<'a, JSValue> {
     bun_analytics::features::csrf_generate.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
@@ -116,16 +111,15 @@ pub(crate) fn generate<'a>(
     )?)
 }
 
-#[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
 pub(crate) fn verify<'a>(
     heap: &JsHeap<'a>,
     token: &'a [u8],
-    options: CSRFVerifyOptions<'a>,
+    options: &CSRFVerifyOptions<'a>,
 ) -> bindgen::Result<'a, bool> {
     bun_analytics::features::csrf_verify.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
     if token.is_empty() {
-        return Err(invalid_arguments(heap, "Token must be a non-empty string"));
+        return Err(heap.invalid_arguments(format_args!("Token must be a non-empty string")));
     }
     let secret = non_empty(heap, options.secret, "Secret must be a non-empty string")?;
     let session_id = non_empty(

@@ -1029,7 +1029,7 @@ describe("a falsy flag option means the default flag", () => {
     expect(readFileSync(file, "utf8")).toBe("old");
   });
 
-  it.each([false, "r+"])("reads a %p options.flag once per call, from a frozen options object", async value => {
+  it.each([false, "r+", undefined])("reads a %p options.flag once per call, from a frozen object", async value => {
     using dir = tempDir("fs-falsy-flag-getter", { "f.txt": "old" });
     const file = join(String(dir), "f.txt");
     let reads = 0;
@@ -1086,6 +1086,17 @@ describe("a falsy flag option means the default flag", () => {
     expect(await promises.readFile(missing, { encoding: "utf8", flag: "a+" })).toBe("");
     expect(existsSync(missing)).toBe(true);
     await expect(promises.readFile(file, { flag: "ax+" })).rejects.toMatchObject({ code: "EEXIST" });
+
+    // One read decides the flag. A second read would see "a+" and create the file.
+    let reads = 0;
+    const stateful: any = {
+      get flag() {
+        return reads++ === 0 ? undefined : "a+";
+      },
+    };
+    const absent = join(String(dir), "absent.txt");
+    await expect(promises.readFile(absent, stateful)).rejects.toMatchObject({ code: "ENOENT" });
+    expect({ reads, created: existsSync(absent) }).toEqual({ reads: 1, created: false });
   });
 
   it("fs.readFileSync, fs.readFile and fs.openSync still reject false, NaN and 0n", async () => {

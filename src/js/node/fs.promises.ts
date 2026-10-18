@@ -310,11 +310,8 @@ const exports = {
   readFile: async function (fileHandleOrFdOrPath, options) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     if (typeof options === "object" && options !== null) {
-      const flag = options.flag;
-      if (flag !== undefined) {
-        // Node: `options.flag || 'r'` https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1928
-        options = { encoding: options.encoding, signal: options.signal, flag: flag || "r" };
-      }
+      // Node reads `options.flag || 'r'` once: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1928
+      options = { encoding: options.encoding, signal: options.signal, flag: options.flag || undefined };
     }
     return _readFile(fileHandleOrFdOrPath, options);
   },

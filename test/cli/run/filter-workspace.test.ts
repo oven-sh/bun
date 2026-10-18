@@ -1509,7 +1509,7 @@ describe("output lines", () => {
       "package.json": JSON.stringify({ name: "ws-lines", workspaces: ["packages/*"] }),
       "packages/app/package.json": JSON.stringify({ name: "app", scripts: { go: `"${bunExe()}" steps.js` } }),
       "packages/app/steps.js": `
-        const fs = require("node:fs");
+        import fs from "node:fs";
         const step = async text => {
           const res = await fetch(process.env.STEP_URL + encodeURIComponent(text));
           if (!res.ok) throw new Error("the runner never printed " + JSON.stringify(text));
@@ -1520,15 +1520,18 @@ describe("output lines", () => {
 
     let stdout = "";
     let ended = false;
-    let wake = Promise.withResolvers<void>();
     await using server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       async fetch(req) {
         const text = decodeURIComponent(new URL(req.url).pathname.slice(1));
+        // If the runner does not print `text`, answer 500: the script fails with
+        // an error that names `text`, and the runner prints it. The deadline is
+        // below the 10 seconds after which Bun.serve drops a pending request.
+        const deadline = Date.now() + 5000;
         while (!stdout.includes(text)) {
-          if (ended) return new Response("", { status: 500 });
-          await wake.promise;
+          if (ended || Date.now() > deadline) return new Response("", { status: 500 });
+          await Bun.sleep(10);
         }
         return new Response("");
       },
@@ -1542,13 +1545,8 @@ describe("output lines", () => {
     });
     const decoder = new TextDecoder();
     const read = (async () => {
-      for await (const chunk of proc.stdout) {
-        stdout += decoder.decode(chunk, { stream: true });
-        wake.resolve();
-        wake = Promise.withResolvers<void>();
-      }
+      for await (const chunk of proc.stdout) stdout += decoder.decode(chunk, { stream: true });
       ended = true;
-      wake.resolve();
     })();
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, read]);
     return { stdout, stderr, exitCode };

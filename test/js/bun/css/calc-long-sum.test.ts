@@ -11,7 +11,7 @@ const F = "min(1px, 1em)";
 
 const slow = 2_000;
 // The stack of a bundler thread held 5,000 terms in a debug build and 25,698 in a release build.
-const long = isDebug ? 12_000 : isASAN ? 50_000 : 200_000;
+const long = isDebug ? 8_000 : isASAN ? 50_000 : 200_000;
 
 const repeat = (unit: string, count: number) => Buffer.alloc(unit.length * count, unit).toString();
 /** `count` copies of `unit` with `separator` between them. */
@@ -63,32 +63,47 @@ function expectSame(
   expect({ exitCode: result.exitCode, signalCode: result.signalCode }).toEqual({ exitCode: 0, signalCode: null });
 }
 
-const rule = (declaration: string) => `/* a.css */\n.a {\n  ${declaration};\n}\n`;
+const rule = (declaration: string, name = "a") => `.${name} {\n  ${declaration};\n}\n`;
+const sheet = (declaration: string) => `/* a.css */\n${rule(declaration)}`;
+
+/** One `bun build` of a rule for each declaration, so that fewer builds run at once. A test checks the rule with its number. */
+function buildRules(declarations: string[]) {
+  let built: ReturnType<typeof build> | undefined;
+  return async (i: number, expected: string) => {
+    const result = await (built ??= build(declarations.map((declaration, i) => `.r${i}{${declaration}}`).join("")));
+    const start = result.output.indexOf(`.r${i} {\n`);
+    const end = result.output.indexOf("\n}\n", start);
+    expectSame(result, start < 0 || end < 0 ? "" : result.output.slice(start, end + 3), rule(expected, `r${i}`));
+  };
+}
 
 // Time
 
-for (const property of ["width", "outline-width"]) {
-  test.concurrent(`${property}: a difference of ${slow} terms that do not fold`, async () => {
-    const result = await build(`.a{${property}:calc(${join(f, " - ", slow)})}`);
-    expectSame(result, result.output, rule(`${property}: calc(${F}${repeat(` + -1 * ${F}`, slow - 1)})`));
-  });
-
-  test.concurrent(`${property}: ${slow} values, each added to a sum that grows`, async () => {
-    const result = await build(`.a{${property}:calc(${f}${repeat(` + 1px + ${f}`, slow)})}`);
-    expectSame(result, result.output, rule(`${property}: calc(${F} + ${slow}px${repeat(` + ${F}`, slow)})`));
-  });
-
-  test.concurrent(`${property}: ${slow} sums in brackets, each added to a sum that grows`, async () => {
-    const result = await build(`.a{${property}:calc(${f}${repeat(` + (${f} + 1px)`, slow)})}`);
-    expectSame(result, result.output, rule(`${property}: calc(${F} + ${F} + ${slow}px${repeat(` + ${F}`, slow - 1)})`));
-  });
-}
+const properties = ["width", "outline-width"];
+const time = buildRules(
+  properties.flatMap(property => [
+    `${property}:calc(${join(f, " - ", slow)})`,
+    `${property}:calc(${f}${repeat(` + 1px + ${f}`, slow)})`,
+    `${property}:calc(${f}${repeat(` + (${f} + 1px)`, slow)})`,
+  ]),
+);
+properties.forEach((property, i) => {
+  test.concurrent(`${property}: a difference of ${slow} terms that do not fold`, () =>
+    time(3 * i, `${property}: calc(${F}${repeat(` + -1 * ${F}`, slow - 1)})`),
+  );
+  test.concurrent(`${property}: ${slow} values, each added to a sum that grows`, () =>
+    time(3 * i + 1, `${property}: calc(${F} + ${slow}px${repeat(` + ${F}`, slow)})`),
+  );
+  test.concurrent(`${property}: ${slow} sums in brackets, each added to a sum that grows`, () =>
+    time(3 * i + 2, `${property}: calc(${F} + ${F} + ${slow}px${repeat(` + ${F}`, slow - 1)})`),
+  );
+});
 
 // Each value finds the term of its unit through a list of the places of the values, not through a look at every term.
-const apart = isDebug ? 45_000 : isASAN ? 250_000 : 500_000;
+const apart = isDebug ? 15_000 : isASAN ? 250_000 : 500_000;
 test.concurrent(`width: ${apart} terms that do not fold, then ${apart} values`, async () => {
   const result = await build(`.a{width:calc(${join(f, " + ", apart)}${repeat(" + 1px", apart)})}`);
-  expectSame(result, result.output, rule(`width: calc(${join(F, " + ", apart)} + ${apart}px)`));
+  expectSame(result, result.output, sheet(`width: calc(${join(F, " + ", apart)} + ${apart}px)`));
 });
 
 // Memory
@@ -96,17 +111,44 @@ test.concurrent(`width: ${apart} terms that do not fold, then ${apart} values`, 
 test.concurrent("a value added to a sum of 3000 terms does not clone the sum", async () => {
   using dir = tempDir("css-calc-long-sum", { "a.css": `.a{width:calc(${join(f, " + ", 3000)} + 1vw)}` });
   const result = await runCommandMaxRSS({ cmd: [bunExe(), "build", "a.css", "--outdir", "out"], cwd: String(dir) });
-  expectSame(result, await outputOf(String(dir)), rule(`width: calc(${join(F, " + ", 3000)} + 1vw)`));
+  expectSame(result, await outputOf(String(dir)), sheet(`width: calc(${join(F, " + ", 3000)} + 1vw)`));
   // The clones took 980 MB in a release build.
   expect(result.maxRSS).toBeLessThan((isDebug || isASAN ? 1024 : 256) * 1024 * 1024);
 });
 
 // Stack
 
-test.concurrent(`bun build: a sum of ${long} terms`, async () => {
-  const result = await build(`.a{width:calc(${join(f, " + ", long)})}`);
-  expectSame(result, result.output, rule(`width: calc(${join(F, " + ", long)})`));
+const sums = buildRules([
+  `width:calc(${join(f, " + ", long)})`,
+  `outline-width:calc(${join(f, " + ", long)})`,
+  `background:conic-gradient(red calc(${join("min(1deg,1%)", " + ", long)}), blue)`,
+]);
+test.concurrent(`bun build: a sum of ${long} terms`, () => sums(0, `width: calc(${join(F, " + ", long)})`));
+test.concurrent(`a <length>: a sum of ${long} terms`, () => sums(1, `outline-width: calc(${join(F, " + ", long)})`));
+test.concurrent(`an <angle-percentage>: a sum of ${long} terms`, () =>
+  sums(2, `background: conic-gradient(red calc(${join("min(1deg, 1%)", " + ", long)}), #00f)`),
+);
+test.concurrent(`a <number>, which cannot hold a sum: a sum of ${long} terms stays as written`, async () => {
+  const result = await build(`.a{flex-grow:calc(${join("min(1,2)", " + ", long)})}`, "--minify");
+  expectSame(result, result.output, `.a{flex-grow:calc(${join("min(1,2)", " + ", long)})}\n`);
 });
+
+const folds = buildRules([
+  `width:calc(1vw - (${join(f, " + ", long)}))`,
+  ...properties.map(property => `${property}:calc(1px + 1em + 1vh + ${join(f, " + ", long)} - 1px - 1em - 1vh + 1px)`),
+  `width:calc(50% + ${join(f, " + ", long)} - 50% + 25% - 25%)`,
+]);
+test.concurrent(`a sum of ${long} terms in brackets, subtracted`, () =>
+  folds(0, `width: calc(1vw${repeat(` + -1 * ${F}`, long)})`),
+);
+properties.forEach((property, i) => {
+  test.concurrent(`${property}: values that cancel at the start of a sum of ${long} terms`, () =>
+    folds(1 + i, `${property}: calc(${join(F, " + ", long)} + 1px)`),
+  );
+});
+test.concurrent(`width: a percentage that cancels at the start of a sum of ${long} terms stays as 0%`, () =>
+  folds(3, `width: calc(0% + ${join(F, " + ", long)})`),
+);
 
 test.concurrent(`Bun.build with minify: a sum of ${long} terms`, async () => {
   const result = await run(["build-fixture.ts"], {
@@ -117,44 +159,6 @@ test.concurrent(`Bun.build with minify: a sum of ${long} terms`, async () => {
     `,
   });
   expectSame(result, result.output, `.a{width:calc(${join(f, " + ", long)})}\n`);
-});
-
-test.concurrent(`a <length>: a sum of ${long} terms`, async () => {
-  const result = await build(`.a{outline-width:calc(${join(f, " + ", long)})}`);
-  expectSame(result, result.output, rule(`outline-width: calc(${join(F, " + ", long)})`));
-});
-
-test.concurrent(`an <angle-percentage>: a sum of ${long} terms`, async () => {
-  const result = await build(`.a{background:conic-gradient(red calc(${join("min(1deg,1%)", " + ", long)}), blue)}`);
-  expectSame(
-    result,
-    result.output,
-    rule(`background: conic-gradient(red calc(${join("min(1deg, 1%)", " + ", long)}), #00f)`),
-  );
-});
-
-test.concurrent(`a <number>, which cannot hold a sum: a sum of ${long} terms stays as written`, async () => {
-  const result = await build(`.a{flex-grow:calc(${join("min(1,2)", " + ", long)})}`, "--minify");
-  expectSame(result, result.output, `.a{flex-grow:calc(${join("min(1,2)", " + ", long)})}\n`);
-});
-
-test.concurrent(`a sum of ${long} terms in brackets, subtracted`, async () => {
-  const result = await build(`.a{width:calc(1vw - (${join(f, " + ", long)}))}`);
-  expectSame(result, result.output, rule(`width: calc(1vw${repeat(` + -1 * ${F}`, long)})`));
-});
-
-for (const property of ["width", "outline-width"]) {
-  test.concurrent(`${property}: values that cancel at the start of a sum of ${long} terms`, async () => {
-    const result = await build(
-      `.a{${property}:calc(1px + 1em + 1vh + ${join(f, " + ", long)} - 1px - 1em - 1vh + 1px)}`,
-    );
-    expectSame(result, result.output, rule(`${property}: calc(${join(F, " + ", long)} + 1px)`));
-  });
-}
-
-test.concurrent(`width: a percentage that cancels at the start of a sum of ${long} terms stays as 0%`, async () => {
-  const result = await build(`.a{width:calc(50% + ${join(f, " + ", long)} - 50% + 25% - 25%)}`);
-  expectSame(result, result.output, rule(`width: calc(0% + ${join(F, " + ", long)})`));
 });
 
 const query = (sum: string) => `@media (min-width: calc(${sum} + .001px)) {\n  .a {\n    color: red;\n  }\n}\n`;

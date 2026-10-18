@@ -2563,13 +2563,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
 
   test("blocks of Svelte in Markdown are formatted where components are", async () => {
     const block = (text: string) => `# a\n\n\`\`\`svelte\n${text}\`\`\`\n`;
-    const withOtherVersion = { ".prettierrc": prettierrc, ...plugin("4.1.0") };
-    for (const config of [
-      {},
-      { ".prettierrc": prettierrc },
-      withOtherVersion,
-      { ".oxfmtrc.json": oxfmtrc },
-    ] as Files[]) {
+    const withOtherVersion: Files = { ".prettierrc": prettierrc, ...plugin("4.1.0") };
+    for (const config of [{}, { ".prettierrc": prettierrc }, withOtherVersion, { ".oxfmtrc.json": oxfmtrc }]) {
       expect(await format({ ...config, "a.md": block(input) }, ["a.md"])).toMatchObject({
         stderr: "",
         files: [block(output)],

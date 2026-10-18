@@ -145,11 +145,8 @@ const columns: [string, [string, unknown][]][] = [
       ["TIME(4)", ["01:02:03.0400"]],
       ["TIME(5)", ["-01:02:03.00005"]],
       ["TIME(6)", ["12:34:56.789123", "-838:59:58.999999", "00:00:00.000500", "02:03:04.500000", "00:00:00.000000"]],
-    ] as const
-  ).map(([type, times]): [string, [string, unknown][]] => [
-    type,
-    times.map((time): [string, unknown] => [`'${time}'`, time]),
-  ]),
+    ] as [string, string[]][]
+  ).map(([type, times]): [string, [string, unknown][]] => [type, times.map(time => [`'${time}'`, time])]),
   [
     "BIT(1)",
     [

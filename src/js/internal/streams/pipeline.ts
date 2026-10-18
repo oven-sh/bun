@@ -85,7 +85,7 @@ function createHeldReader() {
 
   // A reader the pipeline can cancel: return() on the stream's own iterator queues behind a pending next().
   return class HeldReader {
-    #stream: ReadableStream | null;
+    #stream: ReadableStream | null = null;
     #reader: ReadableStreamDefaultReader | null = null;
     #frame = $getInternalField($asyncContext, 0);
     #stopped = false;
@@ -241,9 +241,9 @@ async function pumpToNode(iterable, writable, finish, { end }, destroys?) {
         await source.cancel();
         // With `end`, the teardown destroyed the destination: its close and its own error come before the callback.
         if (end && !reported && writable.destroyed) {
-          await new Promise<void>(resolve => {
-            onreported = resolve;
-          });
+          const { promise, resolve } = Promise.withResolvers<void>();
+          onreported = resolve;
+          await promise;
         }
         // The source did not end. The pump fails as it does when a chunk meets a dead destination.
         throw error || torn;

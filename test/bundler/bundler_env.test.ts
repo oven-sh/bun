@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 for (let backend of ["api", "cli"] as const) {
@@ -96,6 +96,29 @@ for (let backend of ["api", "cli"] as const) {
             PUBLIC_BAR: "BAD_BAR",
           },
           stdout: "public_value\nanother_public\nundefined\n",
+        },
+      });
+
+    // A browser has no `process`: a variable that matches the prefix but is not set reads as undefined.
+    // The api backend builds in this process, which does not have `env`.
+    if (backend === "cli")
+      itBundled("env/pattern-matching-browser-unset", {
+        env: {
+          PUBLIC_FOO: "public_value",
+        },
+        dotenv: "PUBLIC_*",
+        backend: backend,
+        target: "browser",
+        files: {
+          "/a.js": `
+        globalThis.out.push(process.env.PUBLIC_FOO, process.env.PUBLIC_UNSET, process.env.PRIVATE_SECRET);
+      `,
+        },
+        onAfterBundle(api) {
+          const code = api.readFile("/out.js");
+          const out: unknown[] = [];
+          new Function("process", "globalThis", code)(undefined, { out });
+          expect(out).toEqual(["public_value", undefined, undefined]);
         },
       });
 

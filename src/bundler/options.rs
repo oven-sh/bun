@@ -881,6 +881,12 @@ pub(crate) fn defines_from_transform_options(
             &framework.prefix,
             bump,
         )?;
+
+        // The browser has no `process`. The variables above are inlined; any other one, such as a
+        // `PUBLIC_*` that is not set, reads from an empty object and is `undefined`.
+        if target == Target::Browser && !user_defines.contains(b"process.env") {
+            user_defines.get_or_put_value(b"process.env", Box::from(b"{}".as_slice()))?;
+        }
     }
 
     if behavior != api::DotEnvBehavior::LoadAllWithoutInlining {

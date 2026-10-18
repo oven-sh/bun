@@ -8140,6 +8140,69 @@ describe("css tests", () => {
       expect(property("<string>#", "Charter,serif")).toBe(rule("<string>#", "Charter,serif"));
     });
 
+    test("the forms of a <string> value", () => {
+      expect([
+        property("<string>", `'a'`),
+        property("<string>", `"a\\62 c"`),
+        property("<string>", `""`),
+        property("<string>", `'a"b'`),
+        property("<string> | <length>", `"a"`),
+        property("<string> | <length>", "2px"),
+        property("<length> | <string>", `"a"`),
+        property("<string> | none", "none"),
+        property("<string> | <string>+", `"a" "b"`),
+      ]).toEqual([
+        rule("<string>", `"a"`),
+        rule("<string>", `"abc"`),
+        rule("<string>", `""`),
+        rule("<string>", `"a\\"b"`),
+        rule("<string>|<length>", `"a"`),
+        rule("<string>|<length>", "2px"),
+        rule("<length>|<string>", `"a"`),
+        rule("<string>|none", "none"),
+        rule("<string>|<string>+", `"a" "b"`),
+      ]);
+      expect(() => property("<string>", `"a" "b"`)).toThrow(`Unexpected token: "a"`);
+      expect(() => property("<string>", `"a" 2px`)).toThrow(`Unexpected token: "a"`);
+      expect(() => property("<string>", "1px")).toThrow("Unexpected token: 1px");
+      expect(() => property("<string>#", `"a" "b"`)).toThrow(`Unexpected token: "a"`);
+      expect(() => property("<string>+", `"a", "b"`)).toThrow(`Unexpected token: "a"`);
+    });
+
+    // Spaces and tabs were stripped from the start of the syntax string only. `"* "` was not
+    // the universal syntax, and the build stopped with "Invalid value".
+    test("spaces and tabs around the syntax string", () => {
+      expect({
+        "star, space": property("* ", "foo bar"),
+        "space, star, space": property(" * ", "foo bar"),
+        "star, tab": property("*\t", "foo bar"),
+        "tab, star, tab, space": body(`syntax: "\t*\t "; inherits: false`),
+        "space, star": property(" *", "foo bar"),
+        "components": property(" <length> | <color> ", "red"),
+      }).toEqual({
+        "star, space": rule("*", "foo bar"),
+        "space, star, space": rule("*", "foo bar"),
+        "star, tab": rule("*", "foo bar"),
+        "tab, star, tab, space": `@property --p{syntax:"*";inherits:false}`,
+        "space, star": rule("*", "foo bar"),
+        "components": rule("<length>|<color>", "red"),
+      });
+
+      expect(() => property("* *", "foo")).toThrow("Invalid value");
+      expect(() => property(" ", "foo")).toThrow("Invalid value");
+    });
+
+    test("a syntax string that is not valid stops the build", () => {
+      // Not a supported syntax component name.
+      expect(() => property("<strings>", `"a"`)).toThrow("Invalid value");
+      expect(() => property("<ratio>", "1/2")).toThrow("Invalid value");
+      // Malformed.
+      expect(() => property("< string >", `"a"`)).toThrow("Invalid value");
+      expect(() => property("<string", `"a"`)).toThrow("Invalid value");
+      expect(() => property("<string>+#", `"a"`)).toThrow("Invalid value");
+      expect(() => property("<length> | ", "0px")).toThrow("Invalid value");
+    });
+
     // The value of the first component that matched the start of the initial-value was
     // printed, and the rest of the initial-value was dropped.
     test("a typed initial-value takes the first component that matches all of it", () => {

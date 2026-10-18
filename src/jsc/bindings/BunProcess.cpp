@@ -2008,7 +2008,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
         for (unsigned i = 0; i < envNames.size(); i++) {
             JSValue value = envObject->get(globalObject, envNames[i]);
             RETURN_IF_EXCEPTION(scope, {});
-            // process.env reads a `$`-prefixed or non-UTF-8 name as undefined: skip it, do not reject the defaulted env.
+            // process.env reads a non-UTF-8 name, and `$NAME` while NAME is not set, as undefined: skip it, do not reject the defaulted env.
             if (value.isUndefined())
                 continue;
             const WTF::String& keyStr = envNames[i].string();

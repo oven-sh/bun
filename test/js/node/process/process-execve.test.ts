@@ -322,7 +322,7 @@ describe.concurrent("process.execve", () => {
   test.skipIf(isWindows)(
     "inherits process.env when env is omitted with a `$`-prefixed name in the OS env",
     async () => {
-      // process.env reads a `$`-prefixed name as undefined: execve must skip it, not reject the defaulted env.
+      // process.env reads `$EXECVE_DOLLAR` as undefined while EXECVE_DOLLAR is not set: execve must skip it, not reject the defaulted env.
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -330,7 +330,7 @@ describe.concurrent("process.execve", () => {
           `try { process.execve("/definitely/does/not/exist", ["x"]); }
          catch (e) { console.log(e.code); }`,
         ],
-        env: { ...bunEnv, $EXECVE_DOLLAR: "1" },
+        env: { ...bunEnv, EXECVE_DOLLAR: undefined, $EXECVE_DOLLAR: "1" },
         stdout: "pipe",
         stderr: "pipe",
       });

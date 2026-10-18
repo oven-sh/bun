@@ -2805,11 +2805,7 @@ function previewEntries(val, isIterator = false) {
   if (isWeakSet(val)) return [];
   else throw new Error("previewEntries(): Invalid object received");
 }
-// Stands in for V8's GetConstructorHelper, which Node.js calls here:
-// https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/deps/v8/src/objects/js-objects.cc#L594-L686
-// A function gets the name of its map's constructor, which is the intrinsic constructor of its kind. A prototype
-// gets a name from the own data properties of its chain. In V8 so do a class, a bound function, a function made
-// by a subclass and a former prototype. That part is not ported: here they get the kind.
+// A function follows V8's GetConstructorHelper: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/deps/v8/src/objects/js-objects.cc#L594-L686
 function internalGetConstructorName(val, isPrototype = false) {
   if (typeof val === "function") {
     if (!isPrototype) {

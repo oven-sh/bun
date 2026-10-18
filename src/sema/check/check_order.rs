@@ -1,7 +1,7 @@
 //! The order in which `checkSourceFile` comes to the expressions of a file.
 //!
-//! TypeScript reports some errors once per file, at the node where its checker first asks: for the module of the JSX
-//! runtime, for the fragment factory, for `tslib`, for each helper in it. It asks when it evaluates the node, and that is
+//! TypeScript reports some errors once per file, at the node where its checker first asks: for the fragment factory of
+//! JSX, for `tslib`, for each helper in it. It asks when it evaluates the node, and that is
 //! before the walk of the file arrives there if something needs a type from it. Here an evaluation stops at an entry that
 //! another task has stored, and which entries are there depends on timing. So such a place is not noted during
 //! evaluation. `follow_check` walks the syntax where `checkSourceFile` goes in a checker that has evaluated nothing of

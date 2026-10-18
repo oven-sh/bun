@@ -2061,7 +2061,7 @@ impl<'p> Printer<'_, 'p, '_> {
         };
         let scope = self.c.enclosing_scope_of_expr(file, name);
         let node = hir.node(name);
-        let computed_property_name = hir.node(self.c.bound(file).expr_parent[name.idx()]);
+        let computed_property_name = hir.node(self.c.bound(file).parent_of_expr(name));
         let existing = self.range_of_node(file, computed_property_name);
         self.try_reuse_existing_node_helper(file, existing, |printer| {
             let introduces_error =

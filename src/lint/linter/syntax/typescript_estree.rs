@@ -321,8 +321,8 @@ impl<'a> Checks<'a> {
     }
 
     fn place_of_statement(&self, id: usize) -> Place {
-        match self.file.bound.stmt_parent.get(id) {
-            Some(Parent::File | Parent::Module(_)) => Place::ModuleOrFile,
+        match self.file.bound.parent_of_stmt(hir::StmtId(id as u32)) {
+            Parent::File | Parent::Module(_) => Place::ModuleOrFile,
             _ => Place::Other,
         }
     }
@@ -344,7 +344,7 @@ impl<'a> Checks<'a> {
                         | StmtKind::ImportEquals(_)
                 )
                 || matches!(raw.kind, StmtKind::Var(list) if list.is_empty());
-            if !has_check || matches!(bound.stmt_parent.get(i), None | Some(Parent::None)) {
+            if !has_check || matches!(bound.parent_of_stmt(hir::StmtId(i as u32)), Parent::None) {
                 continue;
             }
             let node = Span::new(raw.start, raw.loc.end);

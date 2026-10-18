@@ -104,7 +104,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// which is checked under `check_mode`, passes to `e`.
     fn check_mode_passed_to(&self, file: FileId, e: ExprId, check_mode: CheckMode) -> CheckMode {
         let hir = self.hir(file);
-        match self.bound(file).expr_parent[e.idx()] {
+        match self.bound(file).parent_of_expr(e) {
             Parent::Prop(p) if hir[p].kind == PropKind::Spread => {
                 check_mode & CheckMode::INFERENTIAL
             }
@@ -780,14 +780,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// there is none, and whether `IsConstAssertion(parent)`.
     fn const_context_parent(&self, file: FileId, e: ExprId) -> ControlFlow<bool, ExprId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let property = match bound.expr_parent[e.idx()] {
+        let property = match bound.parent_of_expr(e) {
             Parent::Expr(parent) => match hir[parent].kind {
                 ExprKind::AsConst(_) => return ControlFlow::Break(true),
                 ExprKind::Array(_) | ExprKind::Spread(_) | ExprKind::Template { .. } => {
                     return ControlFlow::Continue(parent);
                 }
                 // The parent of `a` and of `d` in `{ a = d }` is the shorthand property assignment.
-                ExprKind::Assign { op: None, .. } => match bound.expr_parent[parent.idx()] {
+                ExprKind::Assign { op: None, .. } => match bound.parent_of_expr(parent) {
                     Parent::Prop(p) if hir[p].kind == PropKind::Shorthand => p,
                     _ => return ControlFlow::Break(false),
                 },
@@ -936,7 +936,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = e;
         loop {
-            let Parent::Expr(parent) = bound.expr_parent[at.idx()] else {
+            let Parent::Expr(parent) = bound.parent_of_expr(at) else {
                 return false;
             };
             match hir[parent].kind {
@@ -1213,7 +1213,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if how == Found::ByIndex {
             // `indexInfo.isReadonly && (IsAssignmentTarget(node) || isDeleteTarget(node))`
-            let is_deleted = matches!(bound.expr_parent[e.idx()], Parent::Expr(p)
+            let is_deleted = matches!(bound.parent_of_expr(e), Parent::Expr(p)
                 if matches!(hir[p].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
             if (target.written || is_deleted)
                 && self.is_index_info_for_name_readonly(apparent, name)
@@ -1712,7 +1712,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `checkIdentifier`: the placeholder the parser synthesizes for a missing expression is
             // an error, so it is compatible with anything. A hole in an array literal is handled
             // differently.
-            ExprKind::Missing => match self.bound(file).expr_parent[e.idx()] {
+            ExprKind::Missing => match self.bound(file).parent_of_expr(e) {
                 Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Array(_)) => {
                     self.undefined_widening()
                 }
@@ -1750,7 +1750,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // The value it evaluates to, if that can be determined from the source text alone.
                 // `IsTaggedTemplateExpression(node.Parent)`: neither the tag nor the template of a
                 // tagged template is evaluated.
-                let is_tag = matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p)
+                let is_tag = matches!(self.bound(file).parent_of_expr(e), Parent::Expr(p)
                     if matches!(hir[p].kind, ExprKind::TaggedTemplate(c) if hir[c].callee == e || hir[c].template == e))
                     && !is_parenthesized(hir, e);
                 if !is_tag && let Some(EnumValue::String(text)) = self.constant_value(file, e) {
@@ -1759,7 +1759,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let expects_literal = self.is_const_context(file, e)
                     // `isTemplateLiteralContext`: as an element access key it is typed by its
                     // possible values.
-                    || matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Index { index, .. } if index == e))
+                    || matches!(self.bound(file).parent_of_expr(e), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Index { index, .. } if index == e))
                     || self.contextual_type(file, e, ContextFlags::empty()).is_some_and(|c| self.parts(c).iter().any(|&m| self.is_template_literal_contextual_type(m)));
                 if !expects_literal {
                     return TypeId::STRING;
@@ -2199,12 +2199,12 @@ impl<'p, 's> Checker<'p, 's> {
                 // `RequireSymbol`
                 known::require
                     if self.hir(file).is_js
-                        && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(call) if crate::bind::require_argument(self.hir(file), call).is_some()) =>
+                        && matches!(self.bound(file).parent_of_expr(e), Parent::Expr(call) if crate::bind::require_argument(self.hir(file), call).is_some()) =>
                 {
                     TypeId::ANY
                 }
                 // Not reached by the binder: nothing is reported for it.
-                _ if matches!(self.bound(file).expr_parent[e.idx()], Parent::None) => {
+                _ if matches!(self.bound(file).parent_of_expr(e), Parent::None) => {
                     TypeId::UNRESOLVED
                 }
                 // `getResolvedSymbol` gives `unknownSymbol`.
@@ -2355,7 +2355,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isMethodAccessForCall`. A call does not see through `x!`.
     fn is_called(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
-        matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(parent)
+        matches!(self.bound(file).parent_of_expr(e), Parent::Expr(parent)
             if matches!(hir[parent].kind, ExprKind::Call(c) | ExprKind::New(c) if hir[c].callee == e))
     }
 
@@ -2402,7 +2402,10 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let container = match parent {
             Parent::Expr(e) => hir.get_this_container(hir.node(e), false, false),
-            Parent::Decorator(class, _) => hir.get_this_container(hir.node(class), false, false),
+            Parent::ClassDecorator(_) | Parent::MemberDecorator(_) | Parent::ParamDecorator(_) => {
+                let class = self.bound(file).class_of_decorator(parent);
+                hir.get_this_container(hir.node(class), false, false)
+            }
             _ => hir.this_container_from(hir.node(parent), false, false),
         };
         Self::function_or_class_of(hir, container)
@@ -2755,7 +2758,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if let Parent::Prop(p) = bound.expr_parent[owner.idx()] {
+        if let Parent::Prop(p) = bound.parent_of_expr(owner) {
             let containing = bound.prop_owner[p.idx()];
             // `getContainingObjectLiteral`: for a method, an accessor, or a function that is the
             // whole value of a property.
@@ -2805,7 +2808,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 });
                         return Some(self.instantiate(this, mapper.unwrap_or(MapperId::IDENTITY)));
                     }
-                    let Parent::Prop(outer) = bound.expr_parent[literal.idx()] else {
+                    let Parent::Prop(outer) = bound.parent_of_expr(literal) else {
                         break;
                     };
                     if hir[outer].kind != PropKind::Init || is_parenthesized(hir, literal) {
@@ -2830,7 +2833,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         // `obj.xxx = function () {}`, whatever the operator: `obj`.
-        if let Parent::Expr(parent) = bound.expr_parent[owner.idx()]
+        if let Parent::Expr(parent) = bound.parent_of_expr(owner)
             && let ExprKind::Assign { target, value, .. } = hir[parent].kind
             && value == owner
             && target.is_some()
@@ -2983,7 +2986,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_returned = |returned: ExprId| {
             matches!(
-                bound.expr_parent[returned.idx()],
+                bound.parent_of_expr(returned),
                 Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::Return(_))
             )
         };
@@ -2994,7 +2997,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `GetRightMostAssignedExpression`
         let mut rightmost = e;
         while !is_parenthesized(hir, rightmost)
-            && let Parent::Expr(parent) = bound.expr_parent[rightmost.idx()]
+            && let Parent::Expr(parent) = bound.parent_of_expr(rightmost)
             && parent.is_some()
             && let ExprKind::Assign { value, .. } = hir[parent].kind
             && value == rightmost
@@ -3007,7 +3010,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             rightmost = parent;
         }
-        match bound.expr_parent[e.idx()] {
+        match bound.parent_of_expr(e) {
             // "`return await` is also safe to unwrap here"
             Parent::Expr(parent) => {
                 parent.is_some()
@@ -3486,9 +3489,9 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `isSpreadIntoCallOrNew`
-        if let Parent::Expr(spread) = bound.expr_parent[e.idx()]
+        if let Parent::Expr(spread) = bound.parent_of_expr(e)
             && matches!(hir[spread].kind, ExprKind::Spread(_))
-            && let Parent::Expr(call) = bound.expr_parent[spread.idx()]
+            && let Parent::Expr(call) = bound.parent_of_expr(spread)
             && matches!(
                 hir[call].kind,
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::ImportCall { .. }
@@ -3622,7 +3625,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut child = e;
         loop {
-            let parent = match bound.expr_parent[child.idx()] {
+            let parent = match bound.parent_of_expr(child) {
                 Parent::Expr(parent) if parent.is_some() => parent,
                 Parent::Prop(prop) => bound.prop_owner[prop.idx()],
                 _ => return None,
@@ -3975,7 +3978,7 @@ impl<'p, 's> Checker<'p, 's> {
         // finds a signature, and the parameters as `assignNonContextualParameterTypes` left them.
         let is_argument_of_untyped_call = contextual_signature.is_none()
             && self.untyped_call_resolved_again.is_some_and(|(of, call)| {
-                of == file && self.bound(file).expr_parent[e.idx()] == Parent::Expr(call)
+                of == file && self.bound(file).parent_of_expr(e) == Parent::Expr(call)
             });
         // What follows from the incomplete type of a loop stays too (`taint_from`): nothing resets
         // the flag or `links.resolvedType` of a parameter when the loop is complete.
@@ -4975,7 +4978,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let mut at = e;
         loop {
-            at = match bound.expr_parent[at.idx()] {
+            at = match bound.parent_of_expr(at) {
                 Parent::VarInit(d) if hir[d].ty.is_none() => return binding(hir[d].pat),
                 Parent::ParamDefault(p) if hir[p].ty.is_none() => return binding(hir[p].pat),
                 Parent::PatPropDefault(p) => return binding(hir[p].value),
@@ -5022,7 +5025,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = e;
         while at.is_some() {
-            at = match bound.expr_parent[at.idx()] {
+            at = match bound.parent_of_expr(at) {
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Assign { .. } => {
                         return self.stack.contains(&Query::Expr(file, parent));
@@ -5350,7 +5353,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !passed.contains(CheckMode::TYPE_ONLY) {
                 return false;
             }
-            node = match bound.expr_parent[node.idx()] {
+            node = match bound.parent_of_expr(node) {
                 Parent::Expr(parent) => parent,
                 Parent::Prop(p) => bound.prop_owner[p.idx()],
                 _ => return false,

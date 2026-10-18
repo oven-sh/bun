@@ -1230,7 +1230,7 @@ impl File<'_> {
         if self.hir.jsx.is_empty() {
             return false;
         }
-        let Some(&bun_sema::bind::Parent::Prop(prop)) = self.bound.expr_parent.get(id.idx()) else {
+        let bun_sema::bind::Parent::Prop(prop) = self.bound.parent_of_expr(id) else {
             return false;
         };
         let is_attribute =
@@ -1256,7 +1256,7 @@ impl File<'_> {
         {
             return false;
         }
-        let Some(&bun_sema::bind::Parent::Expr(parent)) = self.bound.expr_parent.get(id.idx())
+        let bun_sema::bind::Parent::Expr(parent) = self.bound.parent_of_expr(id)
         else {
             return false;
         };

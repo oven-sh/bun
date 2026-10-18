@@ -254,9 +254,9 @@ impl Checker<'_, '_> {
             }
             // `checkVariableLikeDeclaration` only validates the alias that `const x = require("m")` declares. It does not check the
             // initializer, so it does not resolve the callee.
-            if let Parent::Expr(call) = bound.expr_parent[i]
+            if let Parent::Expr(call) = bound.parent_of_expr(ExprId(i as u32))
                 && call.is_some()
-                && let Parent::VarInit(d) = bound.expr_parent[call.idx()]
+                && let Parent::VarInit(d) = bound.parent_of_expr(call)
                 && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
                 && bound.required_by(hir, hir[d].pat).is_some()
             {
@@ -354,7 +354,7 @@ impl Checker<'_, '_> {
             let ImportEqualsTarget::Entity(names) = import.target else {
                 continue;
             };
-            if matches!(bound.stmt_parent[import.stmt.idx()], Parent::None) {
+            if matches!(bound.parent_of_stmt(import.stmt), Parent::None) {
                 continue;
             }
             let scope = bound.import_equals_scope[i];
@@ -458,7 +458,7 @@ impl Checker<'_, '_> {
         for (stmt, name, flags, created) in enums.chain(namespaces) {
             // `isExportOfNamespace`: `N.x || (N.x = {})`
             let is_export_of_namespace = flags.contains(Flags::EXPORT)
-                && matches!(bound.stmt_parent[stmt.idx()], Parent::Module(_));
+                && matches!(bound.parent_of_stmt(stmt), Parent::Module(_));
             if !is_export_of_namespace && created.is_some() && !hir.is_ambient(hir.node(stmt)) {
                 u.note_name(bound.scopes[created.idx()].parent, name, meaning, VALUE);
             }
@@ -486,7 +486,7 @@ impl Checker<'_, '_> {
             let is_in_such_a_function =
                 || (self.get_containing_function(file, e)).is_some_and(has_inferred_return_type);
             // `isConstContext(e)`
-            let is_tested = match bound.expr_parent[e.idx()] {
+            let is_tested = match bound.parent_of_expr(e) {
                 // `checkExpressionForMutableLocation`, `checkAssertion`,
                 // `checkAndAggregateYieldOperandTypes`
                 Parent::Expr(parent) => match hir[parent].kind {
@@ -524,7 +524,7 @@ impl Checker<'_, '_> {
         }
         // `checkTemplateExpression`
         for &e in index.of(ExprTag::Template) {
-            let is_tagged = matches!(bound.expr_parent[e.idx()], Parent::Expr(parent)
+            let is_tagged = matches!(bound.parent_of_expr(e), Parent::Expr(parent)
                 if matches!(hir[parent].kind, ExprKind::TaggedTemplate(call) if hir[call].template == e));
             if !is_tagged && is_checked(u, e) {
                 self.note_evaluated(file, u, e, Location::Expr(file, e));
@@ -832,7 +832,7 @@ impl Checker<'_, '_> {
                 is_await,
                 ..
             } = s.kind
-                && !matches!(bound.stmt_parent[i], Parent::None)
+                && !matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::None)
                 && !u.is_never_checked(s.start)
                 && let StmtKind::Expr(target) = hir[left].kind
                 && matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
@@ -1343,14 +1343,14 @@ impl Unused<'_, '_> {
             }
         }
         for (i, s) in hir.stmts.iter().enumerate() {
-            if matches!(bound.stmt_parent[i], Parent::None) {
+            if matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::None) {
                 continue;
             }
             // `export { a }` references `a` with any meaning, past
             // `checkGrammarModuleElementContext`.
             if let StmtKind::ExportNamed(id) = s.kind
                 && !hir[id].has_module_specifier
-                && matches!(bound.stmt_parent[i], Parent::File | Parent::Module(_))
+                && matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::File | Parent::Module(_))
             {
                 let scope = bound.export_scope[id.idx()];
                 for item in hir[id].items.iter() {
@@ -1360,7 +1360,7 @@ impl Unused<'_, '_> {
         }
         // `export default I`, `export = I`: a type is accepted too.
         for &(e, scope) in &bound.free_idents {
-            if let Parent::Stmt(s) = bound.expr_parent[e.idx()]
+            if let Parent::Stmt(s) = bound.parent_of_expr(e)
                 && matches!(
                     hir[s].kind,
                     StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
@@ -1442,7 +1442,7 @@ impl Unused<'_, '_> {
                 owns_trailing_comments,
             })
         };
-        let is_checked = |i: usize| !matches!(bound.stmt_parent[i], Parent::None);
+        let is_checked = |i: usize| !matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::None);
         let mut statements = hir.stmts.iter().enumerate();
         if let Some((i, s)) = statements.find(|&(i, s)| follows(s.loc, s.start) && is_checked(i)) {
             let is_host = match s.kind {
@@ -1450,7 +1450,7 @@ impl Unused<'_, '_> {
                 // `ParenthesizedExpression` alone, which `checkSourceElement` never visits.
                 StmtKind::Expr(_) => hir.text.get(s.start as usize) != Some(&b'('),
                 // `checkTryStatement` and `checkCatchClause` call `checkBlock` themselves.
-                StmtKind::Block(_) => !matches!(bound.stmt_parent[i], Parent::Stmt(outer)
+                StmtKind::Block(_) => !matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::Stmt(outer)
                     if outer.is_some() && matches!(hir[outer].kind, StmtKind::Try { .. })),
                 _ => true,
             };
@@ -1910,7 +1910,7 @@ impl Unused<'_, '_> {
     fn start_of_next(&self, s: StmtId) -> (u32, bool) {
         let (hir, bound) = (self.hir, self.bound);
         let next_in = |list: IdList<StmtId>| hir.ids(list).skip_while(|&other| other != s).nth(1);
-        let next = match bound.stmt_parent[s.idx()] {
+        let next = match bound.parent_of_stmt(s) {
             Parent::File => next_in(hir.body),
             Parent::Module(m) => next_in(hir[m].body),
             Parent::FnBody(f) => match hir[f].body {
@@ -2042,7 +2042,7 @@ impl Unused<'_, '_> {
             PatParent::Var(d) => {
                 let stmt = bound.var_stmt[d.idx()];
                 let heads_a_loop = stmt.is_some()
-                    && matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(outer) if outer.is_some()
+                    && matches!(bound.parent_of_stmt(stmt), Parent::Stmt(outer) if outer.is_some()
                         && matches!(hir[outer].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == stmt));
                 heads_a_loop || matches!(hir[d].kind, VarKind::Using | VarKind::AwaitUsing)
             }

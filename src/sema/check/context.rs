@@ -74,7 +74,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getContainingFunctionOrClassStaticBlock`
     #[inline]
     pub fn enclosing_fn_of_expr(&self, file: FileId, e: ExprId) -> Option<FnId> {
-        self.enclosing_fn(file, self.bound(file).expr_parent[e.idx()])
+        self.enclosing_fn(file, self.bound(file).parent_of_expr(e))
     }
 
     /// The same for a direct child of `parent`.
@@ -83,8 +83,8 @@ impl<'p, 's> Checker<'p, 's> {
         loop {
             parent = match parent {
                 // FOR SPEED: most steps are these two.
-                Parent::Expr(e) if e.is_some() => bound.expr_parent[e.idx()],
-                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
+                Parent::Expr(e) if e.is_some() => bound.parent_of_expr(e),
+                Parent::Stmt(s) if s.is_some() => bound.parent_of_stmt(s),
                 Parent::FnBody(f) => return Some(f),
                 Parent::ParamDefault(p) => return Some(bound.param_fn[p.idx()]),
                 Parent::None | Parent::File => return None,
@@ -108,13 +108,13 @@ impl<'p, 's> Checker<'p, 's> {
         let bound = self.bound(file);
         if self.prepared_exprs.0 != file {
             if self.task.file != Some(file) {
-                return self.prepare_parent(file, bound.expr_parent[e.idx()]);
+                return self.prepare_parent(file, bound.parent_of_expr(e));
             }
-            self.prepared_exprs = (file, vec![false; bound.expr_parent.len()]);
+            self.prepared_exprs = (file, vec![false; self.hir(file).exprs.len()]);
         }
         let mut at = e;
         while !std::mem::replace(&mut self.prepared_exprs.1[at.idx()], true) {
-            at = match bound.expr_parent[at.idx()] {
+            at = match bound.parent_of_expr(at) {
                 Parent::Expr(parent) => parent,
                 Parent::Prop(p) => bound.prop_owner[p.idx()],
                 parent => return self.prepare_parent(file, parent),
@@ -158,7 +158,7 @@ impl<'p, 's> Checker<'p, 's> {
         let bound = self.bound(file);
         let mut at = e;
         for _ in 0..64 {
-            match bound.expr_parent[at.idx()] {
+            match bound.parent_of_expr(at) {
                 Parent::Expr(parent) => match hir[parent].kind {
                     ExprKind::Call(c) | ExprKind::New(c) => {
                         if hir[c].callee != at
@@ -668,6 +668,12 @@ impl<'p, 's> Checker<'p, 's> {
         (ty != TypeId::UNRESOLVED).then_some(ty)
     }
 
+    /// `getContextualTypeForDecorator`
+    fn type_of_decorator(&mut self, file: FileId, decorated: DecoratorOwner) -> Option<TypeId> {
+        let sig = self.decorator_call_signature(file, decorated)?;
+        Some(self.type_of_signature(sig, false))
+    }
+
     fn contextual_type_from_parent(
         &mut self,
         file: FileId,
@@ -681,7 +687,7 @@ impl<'p, 's> Checker<'p, 's> {
         if bound.is_in_type_query(e) {
             return None;
         }
-        match bound.expr_parent[e.idx()] {
+        match bound.parent_of_expr(e) {
             Parent::VarInit(d) => {
                 let decl = &hir[d];
                 if decl.ty.is_some() {
@@ -800,11 +806,9 @@ impl<'p, 's> Checker<'p, 's> {
                 )
             }
             Parent::Expr(parent) => self.contextual_type_in_expr(file, e, parent, context_flags),
-            // `getContextualTypeForDecorator`
-            Parent::Decorator(_, owner) => {
-                let sig = self.decorator_call_signature(file, owner)?;
-                Some(self.type_of_signature(sig, false))
-            }
+            Parent::ClassDecorator(c) => self.type_of_decorator(file, DecoratorOwner::Class(c)),
+            Parent::MemberDecorator(m) => self.type_of_decorator(file, DecoratorOwner::Member(m)),
+            Parent::ParamDecorator(p) => self.type_of_decorator(file, DecoratorOwner::Param(p)),
             Parent::PatPropDefault(p) => {
                 self.contextual_type_for_default_of_element(file, hir[p].value, context_flags)
             }
@@ -1858,7 +1862,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // An expression spread into an array or an argument list has no contextual type. A
             // spread child of an element is a `JsxExpression`.
-            ExprKind::Spread(_) => match self.bound(file).expr_parent[parent.idx()] {
+            ExprKind::Spread(_) => match self.bound(file).parent_of_expr(parent) {
                 Parent::Expr(element) if matches!(hir[element].kind, ExprKind::Jsx(_)) => {
                     self.contextual_type(file, parent, context_flags)
                 }
@@ -1897,7 +1901,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return None;
                 }
                 // `{ a = e }` is a `ShorthandPropertyAssignment`: `getContextualTypeForObjectLiteralElement`.
-                if matches!(self.bound(file).expr_parent[parent.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
+                if matches!(self.bound(file).parent_of_expr(parent), Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
                 {
                     return self.contextual_type(file, parent, context_flags);
                 }
@@ -2548,7 +2552,7 @@ impl<'p, 's> Checker<'p, 's> {
         let FnOwner::Expr(e) = bound.fns[func.idx()].owner else {
             return None;
         };
-        let Parent::Expr(call) = bound.expr_parent[e.idx()] else {
+        let Parent::Expr(call) = bound.parent_of_expr(e) else {
             return None;
         };
         if !matches!(hir[call].kind, ExprKind::Call(c) if hir[c].callee == e) {

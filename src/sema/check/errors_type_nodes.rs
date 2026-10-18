@@ -513,7 +513,7 @@ impl Checker<'_, '_> {
             }
             // Parentheses are not stored, so its direct parent is the result of
             // `WalkUpParenthesizedExpressions`.
-            if matches!(bound.expr_parent[i], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Binary { op: BinOp::Instanceof, right, .. } if right.idx() == i))
+            if matches!(bound.parent_of_expr(ExprId(i as u32)), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Binary { op: BinOp::Instanceof, right, .. } if right.idx() == i))
             {
                 let end = self.end_inside_parentheses(file, ExprId(i as u32));
                 self.error_at((file, self.start_of(file, expr), end), 2848, &[]);
@@ -550,7 +550,7 @@ impl Checker<'_, '_> {
             // `a instanceof B < c` is a comparison. Within its own parentheses, the name would not
             // be the only content.
             let is_in_parentheses = is_parenthesized(hir, right);
-            let is_compared = matches!(bound.expr_parent[i], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Binary { op: BinOp::Lt, left, .. } if left.idx() == i));
+            let is_compared = matches!(bound.parent_of_expr(ExprId(i as u32)), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Binary { op: BinOp::Lt, left, .. } if left.idx() == i));
             if is_in_parentheses || !is_compared {
                 let start = self.start_inside_parentheses(file, right);
                 let end =

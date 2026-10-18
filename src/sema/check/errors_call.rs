@@ -68,7 +68,7 @@ impl Checker<'_, '_> {
             return;
         }
         // `checkVariableLikeDeclaration` returns after `checkAliasSymbol` for `const x = require("m")`, so it never checks the call.
-        if let Parent::VarInit(d) = bound.expr_parent[i]
+        if let Parent::VarInit(d) = bound.parent_of_expr(ExprId(i as u32))
             && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
             && self.external_module_require_argument(file, d).is_some()
         {
@@ -472,7 +472,7 @@ impl Checker<'_, '_> {
         let data = hir[c];
         let Some(sig) = sig else { return };
         if data.chain == Chain::Start
-            || !matches!(self.bound(file).expr_parent[e.idx()], Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::Expr(_)))
+            || !matches!(self.bound(file).parent_of_expr(e), Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::Expr(_)))
             || is_parenthesized(hir, e)
         {
             return;
@@ -560,7 +560,7 @@ impl Checker<'_, '_> {
         if call_sigs.is_empty() {
             // If it is parenthesized, the parenthesized expression is the array element.
             let is_element = !is_parenthesized(hir, e)
-                && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_)));
+                && matches!(self.bound(file).parent_of_expr(e), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_)));
             let at = self.span_of_callee(file, data.callee);
             if is_element {
                 self.error_at(at, 2796, &[]);
@@ -1325,7 +1325,7 @@ impl Checker<'_, '_> {
         let FnOwner::Expr(function) = bound.fns[bound.param_fn[p.idx()].idx()].owner else {
             return false;
         };
-        let Parent::Expr(parent) = bound.expr_parent[function.idx()] else {
+        let Parent::Expr(parent) = bound.parent_of_expr(function) else {
             return false;
         };
         let ExprKind::New(outer) = hir[parent].kind else {

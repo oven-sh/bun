@@ -366,12 +366,12 @@ impl Checker<'_, '_> {
                 // `checkObjectLiteral` checks every computed name at once.
                 Parent::MethodKey(p) => Parent::Expr(bound.prop_owner[p.idx()]),
                 Parent::FnBody(f) => self.emit_helpers_out_of_fn(file, f, false, &mut deferred)?,
-                Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
+                Parent::ParamDefault(p) | Parent::ParamDecorator(p) => {
                     self.emit_helpers_out_of_fn(file, bound.param_fn[p.idx()], true, &mut deferred)?
                 }
                 Parent::MemberInit(m)
                 | Parent::MemberKey(m)
-                | Parent::Decorator(_, DecoratorOwner::Member(m)) => {
+                | Parent::MemberDecorator(m) => {
                     if hir[m].flags.contains(Flags::AMBIENT) {
                         return None;
                     }
@@ -399,7 +399,7 @@ impl Checker<'_, '_> {
                     return None;
                 }
                 Parent::ClassExtends(class)
-                | Parent::Decorator(class, DecoratorOwner::Class(_)) => {
+                | Parent::ClassDecorator(class) => {
                     if hir[class].flags.contains(Flags::AMBIENT) {
                         return None;
                     }
@@ -413,7 +413,7 @@ impl Checker<'_, '_> {
                         ExprKind::Jsx(element) if hir[element].tag.is_some() => 1,
                         _ => 0,
                     };
-                    bound.expr_parent[e.idx()]
+                    bound.parent_of_expr(e)
                 }
                 Parent::Stmt(s) if s.is_none() => return None,
                 other => self.parent_of_node(file, other),
@@ -521,7 +521,7 @@ impl Checker<'_, '_> {
                 && self
                     .containing_generator(file, e)
                     .is_some_and(|f| hir[f].flags.contains(Flags::ASYNC))
-                && let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()])
+                && let Some(deferred) = self.emit_helpers_span(file, bound.parent_of_expr(e))
             {
                 let start = self.error_start_inside_parentheses(file, e);
                 requests.push(Request {
@@ -551,7 +551,7 @@ impl Checker<'_, '_> {
             ResolutionMode::None => files.options.module == ModuleKind::CommonJs,
         };
         for (i, stmt) in hir.stmts.iter().enumerate() {
-            let (s, around) = (StmtId(i as u32), bound.stmt_parent[i]);
+            let (s, around) = (StmtId(i as u32), bound.parent_of_stmt(StmtId(i as u32)));
             // `checkGrammarModuleElementContext`, `checkExternalImportOrExportDeclaration`:
             // elsewhere a module can only be referenced in an ambient context.
             let is_module_element = is_commonjs && around == Parent::File;
@@ -765,7 +765,7 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()]) else {
+            let Some(deferred) = self.emit_helpers_span(file, bound.parent_of_expr(e)) else {
                 continue;
             };
             let dots_end = self.end_of_token_before(file, self.start_of(file, last.value));
@@ -789,7 +789,7 @@ impl Checker<'_, '_> {
             if is_parenthesized(self.hir(file), node) {
                 return false;
             }
-            match bound.expr_parent[node.idx()] {
+            match bound.parent_of_expr(node) {
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Assign {
                         op: None, target, ..
@@ -809,7 +809,7 @@ impl Checker<'_, '_> {
                 }
                 // `for ({ ...rest } of list)`
                 Parent::Stmt(s) if s.is_some() => {
-                    return matches!(bound.stmt_parent[s.idx()], Parent::Stmt(l) if l.is_some()
+                    return matches!(bound.parent_of_stmt(s), Parent::Stmt(l) if l.is_some()
                         && matches!(hir[l].kind, StmtKind::ForOf { left, .. } if left == s));
                 }
                 _ => return false,
@@ -842,7 +842,7 @@ impl Checker<'_, '_> {
             if bound.refused_decorators.contains(&e) {
                 continue;
             }
-            let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()]) else {
+            let Some(deferred) = self.emit_helpers_span(file, bound.parent_of_expr(e)) else {
                 continue;
             };
             let mut helpers = 0;
@@ -1157,7 +1157,7 @@ impl Checker<'_, '_> {
             }
             // `walkUpOuterExpressions`
             let mut node = e;
-            while let Parent::Expr(outer) = bound.expr_parent[node.idx()]
+            while let Parent::Expr(outer) = bound.parent_of_expr(node)
                 && outer.is_some()
                 && matches!(
                     hir[outer].kind,
@@ -1172,7 +1172,7 @@ impl Checker<'_, '_> {
             }
             // `IsNamedEvaluationSource`, and whether the name source is a property with a computed
             // name.
-            let has_computed_name = match bound.expr_parent[node.idx()] {
+            let has_computed_name = match bound.parent_of_expr(node) {
                 Parent::Prop(p) => {
                     let (prop, owner) = (hir[p], bound.prop_owner[p.idx()]);
                     let is_computed = is_computed_name_at(prop.pos);
@@ -1223,7 +1223,7 @@ impl Checker<'_, '_> {
                 }
                 _ => continue,
             };
-            let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()]) else {
+            let Some(deferred) = self.emit_helpers_span(file, bound.parent_of_expr(e)) else {
                 continue;
             };
             let id = ClassId(i as u32);
@@ -1278,7 +1278,7 @@ impl Checker<'_, '_> {
             if !is_private_name_at(hir, name_pos) {
                 continue;
             }
-            let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()]) else {
+            let Some(deferred) = self.emit_helpers_span(file, bound.parent_of_expr(e)) else {
                 continue;
             };
             let start = self.start_inside_parentheses(file, e);
@@ -1306,7 +1306,7 @@ impl Checker<'_, '_> {
             let start = hir[left].pos;
             if matches!(hir[left].kind, ExprKind::PrivateIdentifier(_))
                 && !is_parenthesized(self.hir(file), left)
-                && let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()])
+                && let Some(deferred) = self.emit_helpers_span(file, bound.parent_of_expr(e))
             {
                 requests.push(Request {
                     order: order_of_expression((file, left), (deferred, start), checked),

@@ -139,8 +139,8 @@ slices! {
     /// The same for the side tables of a `bind::Bound`.
     Bound of bind::BoundIn {
         ids: u32,
-        expr_parent: bind::Parent,
-        stmt_parent: bind::Parent,
+        expr_parent: bind::PackedParent,
+        stmt_parent: bind::PackedParent,
         type_scope: bind::ScopeId,
         pat_parent: bind::PatParent,
         prop_owner: hir::ExprId,
@@ -157,6 +157,22 @@ slices! {
         expr_kinds: u8,
         expr_kind_counts: u32,
         kind_counts: u32,
+    }
+}
+
+impl Bound<'_> {
+    /// `Parent::None` for what is not an expression of the file.
+    #[inline]
+    pub(crate) fn parent_of_expr(&self, e: hir::ExprId) -> bind::Parent {
+        let parent = self.expr_parent.get(e.idx()).copied();
+        parent.unwrap_or_default().get()
+    }
+
+    /// The same for a statement.
+    #[inline]
+    pub(crate) fn parent_of_stmt(&self, s: hir::StmtId) -> bind::Parent {
+        let parent = self.stmt_parent.get(s.idx()).copied();
+        parent.unwrap_or_default().get()
     }
 }
 
@@ -694,8 +710,8 @@ impl<'a> File<'a> {
         if !self.hides_casts {
             return None;
         }
-        match self.bound.expr_parent.get(id.idx()) {
-            Some(&bind::Parent::Expr(parent)) if self.jsdoc_cast_operand(parent) == Some(id) => {
+        match self.bound.parent_of_expr(id) {
+            bind::Parent::Expr(parent) if self.jsdoc_cast_operand(parent) == Some(id) => {
                 Some(parent)
             }
             _ => None,
@@ -756,7 +772,7 @@ impl<'a> File<'a> {
             let is_jsx = |e: hir::ExprId| matches!(self.hir.exprs.get(e.idx()), Some(hir::Expr { kind: hir::ExprKind::Jsx(_), .. }));
             let names = self.hir.jsx.iter().flat_map(|it| [it.tag, it.close_tag]);
             let mut tags: Vec<(u32, u32)> = names
-                .filter(|it| matches!(self.bound.expr_parent.get(it.idx()), Some(&bind::Parent::Expr(parent)) if is_jsx(parent)))
+                .filter(|it| matches!(self.bound.parent_of_expr(*it), bind::Parent::Expr(parent) if is_jsx(parent)))
                 .filter_map(|it| self.hir.exprs.get(it.idx()))
                 .filter(|it| matches!(it.kind, hir::ExprKind::Dot { .. }))
                 .map(|it| (it.pos, it.end))

@@ -3550,7 +3550,7 @@ impl<'p, 's> Checker<'p, 's> {
         // The statement is the `try` for a catch variable, and the head of the loop for a loop variable.
         let stmt = self.bound(file).var_stmt[d.idx()];
         let around = if stmt.is_some() {
-            self.bound(file).stmt_parent[stmt.idx()]
+            self.bound(file).parent_of_stmt(stmt)
         } else {
             Parent::None
         };
@@ -4286,7 +4286,7 @@ impl<'p, 's> Checker<'p, 's> {
         let bound = self.bound(file);
         match bound.fns[func.idx()].owner {
             FnOwner::Member(m) => Some(Decl::Member(m)),
-            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+            FnOwner::Expr(e) => match bound.parent_of_expr(e) {
                 Parent::Prop(p) => Some(Decl::Property(p)),
                 _ => None,
             },

@@ -855,8 +855,8 @@ impl<'a> Checks<'a, '_> {
                     .iter()
                     .any(is_export);
             let is_nested = !matches!(
-                bound.stmt_parent.get(i),
-                None | Some(Parent::None | Parent::File)
+                bound.parent_of_stmt(hir::StmtId(i as u32)),
+                Parent::None | Parent::File
             );
             if is_module_syntax && is_nested && !self.file.is_in_jsdoc(raw.start) {
                 self.fail(

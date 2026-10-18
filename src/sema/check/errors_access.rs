@@ -215,7 +215,7 @@ impl<'p> Checker<'p, '_> {
                     ExprKind::Dot { name_pos, .. } => name_pos,
                     _ => hir[e].pos,
                 };
-                (pos, !matches!(bound.expr_parent[e.idx()], Parent::None))
+                (pos, !matches!(bound.parent_of_expr(e), Parent::None))
             });
         let members = (hir.members.iter().zip(bound.member_owner.iter()))
             .map(|(member, owner)| (member.name_pos, !matches!(owner, MemberOwner::None)));
@@ -263,7 +263,7 @@ impl<'p> Checker<'p, '_> {
         }
         let index = self.exprs_by_kind(file);
         for &e in index.of(ExprTag::PrivateIdentifier) {
-            let (parent, pos) = (bound.expr_parent[e.idx()], hir[e].pos);
+            let (parent, pos) = (bound.parent_of_expr(e), hir[e].pos);
             if bound.is_unchecked(e.idx()) {
                 continue;
             }
@@ -282,7 +282,7 @@ impl<'p> Checker<'p, '_> {
                     Parent::Stmt(s) if s.is_some() => match hir[s].kind {
                         StmtKind::ForIn { .. } => true,
                         StmtKind::Expr(_) => {
-                            matches!(bound.stmt_parent[s.idx()], Parent::Stmt(outer)
+                            matches!(bound.parent_of_stmt(s), Parent::Stmt(outer)
                                     if outer.is_some() && matches!(hir[outer].kind, StmtKind::ForIn { left, .. } if left == s))
                         }
                         _ => false,

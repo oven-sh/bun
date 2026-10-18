@@ -620,7 +620,7 @@ impl<'p, 's> Checker<'p, 's> {
         let FnOwner::Expr(e) = bound.fns[func.idx()].owner else {
             return None;
         };
-        let Parent::Expr(parent) = bound.expr_parent[e.idx()] else {
+        let Parent::Expr(parent) = bound.parent_of_expr(e) else {
             return None;
         };
         let ExprKind::Call(c) = hir[parent].kind else {
@@ -2285,7 +2285,7 @@ impl<'p, 's> Checker<'p, 's> {
                 });
                 (
                     SigSymbol::Function(symbol),
-                    SigParent::Block(file, bound.stmt_parent[stmt.idx()]),
+                    SigParent::Block(file, bound.parent_of_stmt(stmt)),
                 )
             }
             FnOwner::Member(member) => {
@@ -2713,7 +2713,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(this_arg) = this_arg else {
             return TypeId::VOID;
         };
-        let chain = match self.bound(file).expr_parent[this_arg.idx()] {
+        let chain = match self.bound(file).parent_of_expr(this_arg) {
             Parent::Expr(access) => match self.hir(file)[access].kind {
                 ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain,
                 _ => Chain::No,

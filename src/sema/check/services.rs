@@ -24,7 +24,7 @@ pub use vocabulary::ObjectFlags;
 pub use vocabulary::*;
 
 use super::*;
-use crate::bind::{Decl, ScopeId, SymbolId};
+use crate::bind::{Decl, Parent, ScopeId, SymbolId};
 use crate::node::{Kind, Node, NodeData};
 use smallvec::SmallVec;
 use std::cell::OnceCell;
@@ -815,7 +815,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// the type that a pattern implies is made of all its properties. Whether something has been pushed.
     fn push_contextual_type_of_literal_around(&mut self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        let literal = match bound.expr_parent[e.idx()] {
+        let literal = match bound.parent_of_expr(e) {
             crate::bind::Parent::Prop(p) => bound.prop_owner[p.idx()],
             crate::bind::Parent::Expr(outer) => outer,
             _ => return false,
@@ -895,8 +895,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 ..
             }
         ) || matches!(
-            self.c.bound(call.file).expr_parent.get(e.idx()),
-            Some(crate::bind::Parent::Decorator(..))
+            self.c.bound(call.file).parent_of_expr(e),
+            Parent::ClassDecorator(_) | Parent::MemberDecorator(_) | Parent::ParamDecorator(_)
         );
         if !is_call_like {
             return None;

@@ -619,7 +619,7 @@ impl Checker<'_, '_> {
         });
         let is_checked = match statement {
             Some(s) => {
-                matches!(bound.stmt_parent[s.idx()], Parent::File)
+                matches!(bound.parent_of_stmt(s), Parent::File)
                     && hir.import_attributes.is_empty()
                     && !has_phase_modifier
             }
@@ -763,7 +763,7 @@ impl Checker<'_, '_> {
         let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
         let reports_grammar_errors = cx.grammar && !cx.text.is_empty();
         for (i, statement) in hir.stmts.iter().enumerate() {
-            if matches!(bound.stmt_parent[i], Parent::None) {
+            if matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::None) {
                 continue;
             }
             // `checkClassDeclaration`: only `export default class` may omit the name.
@@ -777,7 +777,7 @@ impl Checker<'_, '_> {
                 let start = hir[c].start;
                 self.error_at((cx.file, start, 0), 1211, &[]);
             }
-            if matches!(bound.stmt_parent[i], Parent::File | Parent::Module(_)) {
+            if matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::File | Parent::Module(_)) {
                 continue;
             }
             if !matches!(
@@ -817,7 +817,7 @@ impl Checker<'_, '_> {
         };
         // `checkGrammarModuleElementContext` stops the check of any other.
         let is_checked = |s: StmtId| is_in_appropriate_context(bound, s);
-        bound.expr_symbol.iter().zip(&bound.expr_parent).zip(hir.exprs.iter()).any(|((&s, parent), e)| s.is_some() && files.sym(cx.file, s) == sym && !matches!(parent, Parent::None) && !self.is_never_checked(e.pos))
+        bound.expr_symbol.iter().zip(0..).zip(hir.exprs.iter()).any(|((&s, id), e)| s.is_some() && files.sym(cx.file, s) == sym && !matches!(bound.parent_of_expr(ExprId(id)), Parent::None) && !self.is_never_checked(e.pos))
             || hir.types.iter().enumerate().any(|(t, node)| match node.kind {
                 TypeNodeKind::Ref { name, .. } | TypeNodeKind::Typeof { name, .. } => !name.is_empty() && !self.is_never_checked(node.pos) && means_it(bound.type_scope[t], hir[name.at(0)].text),
                 _ => false,
@@ -1794,8 +1794,7 @@ fn statement_of_alias_declaration(hir: &hir::File, decl: Decl) -> Option<StmtId>
 
 /// `isInAppropriateContext` of `checkGrammarModuleElementContext` for the statement `s`.
 fn is_in_appropriate_context(bound: &Bound, s: StmtId) -> bool {
-    let parent = bound.stmt_parent.get(s.idx());
-    matches!(parent, Some(Parent::File | Parent::Module(_)))
+    matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_))
 }
 
 // ───────────────────────────── message arguments ─────────────────────────────

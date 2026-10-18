@@ -231,7 +231,7 @@ impl Checker<'_, '_> {
         let ExprKind::Ident(name) = hir[e].kind else {
             return None;
         };
-        let crate::bind::Parent::Stmt(stmt) = bound.expr_parent[e.idx()] else {
+        let crate::bind::Parent::Stmt(stmt) = bound.parent_of_expr(e) else {
             return None;
         };
         if stmt.is_none()

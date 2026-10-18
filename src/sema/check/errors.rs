@@ -592,7 +592,7 @@ impl Checker<'_, '_> {
                 }
                 // `bindVariableDeclarationOrBindingElement`: the name, or each identifier directly in the binding pattern, is an alias,
                 // whatever `require` resolves to.
-                let declares_alias = match bound.expr_parent[call.idx()] {
+                let declares_alias = match bound.parent_of_expr(call) {
                     Parent::None => continue,
                     Parent::VarInit(decl)
                         if self.external_module_require_argument(file, decl).is_some() =>
@@ -1040,7 +1040,7 @@ impl Checker<'_, '_> {
     /// Whether `stmt` declares the variable of a `for`-`in` or a `for`-`of`.
     pub(super) fn declares_loop_variable(&self, file: FileId, stmt: StmtId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(owner)
+        matches!(bound.parent_of_stmt(stmt), Parent::Stmt(owner)
             if matches!(hir[owner].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == stmt))
     }
 
@@ -1061,7 +1061,7 @@ impl Checker<'_, '_> {
             return true;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let parent = bound.expr_parent[e.idx()];
+        let parent = bound.parent_of_expr(e);
         if hir.kind == FileKind::Declaration || matches!(parent, Parent::None) {
             return true;
         }
@@ -1099,7 +1099,7 @@ impl Checker<'_, '_> {
         }
         // `isOuterVariable`, which uses the flow container before it is moved out of function
         // expressions.
-        let declared_in = bound.stmt_parent[stmt.idx()];
+        let declared_in = bound.parent_of_stmt(stmt);
         if self.get_control_flow_container(file, parent)
             == self.get_control_flow_container(file, declared_in)
         {
@@ -1135,7 +1135,7 @@ impl Checker<'_, '_> {
             // `IsGlobalSourceFile`
             && !(stmt.is_some()
                 && matches!(hir[stmt].kind, StmtKind::Var(_))
-                && matches!(bound.stmt_parent[stmt.idx()], Parent::File)
+                && matches!(bound.parent_of_stmt(stmt), Parent::File)
                 && !self.files().module(file).is_module())
     }
 
@@ -1289,11 +1289,11 @@ impl Checker<'_, '_> {
         match parent {
             Parent::None | Parent::File => Parent::None,
             Parent::Expr(x) if x.is_none() => Parent::None,
-            Parent::Expr(x) => bound.expr_parent[x.idx()],
+            Parent::Expr(x) => bound.parent_of_expr(x),
             Parent::Stmt(s) if s.is_none() => Parent::None,
-            Parent::Stmt(s) => bound.stmt_parent[s.idx()],
+            Parent::Stmt(s) => bound.parent_of_stmt(s),
             Parent::VarInit(d) => Parent::Stmt(bound.var_stmt[d.idx()]),
-            Parent::Prop(p) | Parent::PropKey(_, p) => Parent::Expr(bound.prop_owner[p.idx()]),
+            Parent::Prop(p) | Parent::PropKey(p) => Parent::Expr(bound.prop_owner[p.idx()]),
             Parent::Case(c) => Parent::Stmt(bound.case_stmt[c.idx()]),
             Parent::FnBody(f) => of_fn(f),
             Parent::ParamDefault(p) => of_fn(bound.param_fn[p.idx()]),
@@ -1305,15 +1305,15 @@ impl Checker<'_, '_> {
                 ExprKind::Fn(f) => Parent::FnBody(f),
                 _ => Parent::None,
             },
-            Parent::MemberKey(m) | Parent::Decorator(_, DecoratorOwner::Member(m)) => {
+            Parent::MemberKey(m) | Parent::MemberDecorator(m) => {
                 if hir[m].func.is_some() {
                     Parent::FnBody(hir[m].func)
                 } else {
                     Parent::MemberInit(m)
                 }
             }
-            Parent::Decorator(_, DecoratorOwner::Param(p)) => Parent::ParamDefault(p),
-            Parent::ClassExtends(c) | Parent::Decorator(c, DecoratorOwner::Class(_)) => of_class(c),
+            Parent::ParamDecorator(p) => Parent::ParamDefault(p),
+            Parent::ClassExtends(c) | Parent::ClassDecorator(c) => of_class(c),
             Parent::EnumInit(m) => Parent::Stmt(hir[bound.enum_member_owner[m.idx()]].stmt),
             Parent::Module(m) => Parent::Stmt(hir[m].stmt),
         }
@@ -1332,7 +1332,7 @@ impl Checker<'_, '_> {
             (FnKind::Expr | FnKind::Arrow, FnOwner::Expr(e))
                 if self.is_immediately_invoked(file, f) =>
             {
-                Some(bound.expr_parent[e.idx()])
+                Some(bound.parent_of_expr(e))
             }
             _ => None,
         }
@@ -1402,7 +1402,7 @@ impl Checker<'_, '_> {
         }
         let other = SymFlags::TYPE | SymFlags::NAMESPACE;
         let is_resolved_by_check = !bound.is_unchecked(e.idx())
-            && match bound.expr_parent[e.idx()] {
+            && match bound.parent_of_expr(e) {
                 // `checkExportAssignment`: `export = A` and `export default A` resolve `A` with any
                 // meaning, `(A)` is checked as an expression. In a namespace they are invalid, and
                 // neither is checked.
@@ -1410,7 +1410,7 @@ impl Checker<'_, '_> {
                     if matches!(
                         hir[s].kind,
                         StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)
-                    ) && (matches!(bound.stmt_parent[s.idx()], Parent::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)))
+                    ) && (matches!(bound.parent_of_stmt(s), Parent::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)))
                         || !is_parenthesized(hir, e)
                             && self
                                 .files()
@@ -1539,7 +1539,7 @@ impl Checker<'_, '_> {
             // `export default A` in a file or a namespace.
             let is_exported = hir.kind(parent) == Kind::ExportAssignment
                 && hir.find_ancestor(hir.parent(parent), |n| !is_namespace(n)) == Node::FILE;
-            if matches!(bound.expr_parent[e.idx()], Parent::None)
+            if matches!(bound.parent_of_expr(e), Parent::None)
                 || hir.is_ambient(location)
                 || !(hir.is_expression_node(location)
                     || hir.kind(parent) == Kind::ShorthandPropertyAssignment
@@ -1584,7 +1584,7 @@ impl Checker<'_, '_> {
             };
             // `NodeFlagsAmbient`
             let is_ambient = import.flags.contains(Flags::AMBIENT)
-                || matches!(bound.stmt_parent[import.stmt.idx()], Parent::Module(m) if hir[m].flags.contains(Flags::AMBIENT));
+                || matches!(bound.parent_of_stmt(import.stmt), Parent::Module(m) if hir[m].flags.contains(Flags::AMBIENT));
             if !import.flags.contains(Flags::EXPORT) || names.len() != 1 || is_ambient {
                 continue;
             }
@@ -2016,7 +2016,7 @@ impl Checker<'_, '_> {
             {
                 return None;
             }
-            match bound.expr_parent[node.idx()] {
+            match bound.parent_of_expr(node) {
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Dot { .. } => node = parent,
                     ExprKind::Instantiation { .. } => break,
@@ -2801,7 +2801,7 @@ impl Checker<'_, '_> {
     ) {
         // `evaluateEnumMember` reports errors of its own.
         let rhs_eval = self.constant_value(file, right);
-        let is_error = matches!(self.bound(file).expr_parent[e.idx()], Parent::EnumInit(_));
+        let is_error = matches!(self.bound(file).parent_of_expr(e), Parent::EnumInit(_));
         if (is_error || self.captures_suggestions())
             && let Some(EnumValue::Number(bits)) = rhs_eval
             && f64::from_bits(bits).abs() >= 32.0
@@ -3229,7 +3229,7 @@ impl Checker<'_, '_> {
                 && matches!(hir[obj].kind, ExprKind::This)
                 && !is_parenthesized(hir, obj)
                 && let Container::Fn(ctor) =
-                    self.get_control_flow_container(file, bound.expr_parent[expr.idx()])
+                    self.get_control_flow_container(file, bound.parent_of_expr(expr))
                 && hir[ctor].kind == FnKind::Constructor
                 && let FnOwner::Member(constructor) = bound.fns[ctor.idx()].owner
                 && let Some((declared_in, value_declaration)) = files.value_declaration(property)

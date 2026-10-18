@@ -2134,7 +2134,7 @@ pub struct OwnStore<'s> {
     first_request: Cell<FirstRequest>,
     sharing: Sharing,
     /// `Sharing::Publishes`, by kind: the ids that the task has reserved and not used.
-    ids: [Cell<Placeholders<'s>>; 5],
+    ids: [Cell<Placeholders<'s>>; ID_POOLS],
     /// .. and how many it has used.
     published: [Cell<u32>; 5],
     jitter: Jitter,
@@ -2422,7 +2422,7 @@ pub struct TypeStore<'s> {
     /// published atoms, which a rank is made of.
     texts: Option<Interner<'s>>,
     /// `reserve_ids`: what tasks have given back, by kind. The lock is also held while ids are reserved.
-    spare_ids: Guarded<[Vec<Placeholders<'s>>; 5]>,
+    spare_ids: Guarded<[Vec<Placeholders<'s>>; ID_POOLS]>,
 }
 
 /// See `Types::first_new_type_id`: how many types the task had created, its own and published ones.
@@ -2699,16 +2699,18 @@ impl<'s> TypeStore<'s> {
         *self.spare_ids.get_mut() = Default::default();
     }
 
-    /// The id of the next record of the kind `kind` that the task of `own` publishes.
+    /// The id of the next record of the kind `kind` that the task of `own` publishes. `class`: see `class_of_type`. 0 for a
+    /// record that is no type.
     #[inline]
-    fn next_id(&self, kind: Kind, own: &OwnStore<'s>) -> Placeholder<'s> {
-        let mut ids = own.ids[kind as usize].take();
+    fn next_id(&self, kind: Kind, class: usize, own: &OwnStore<'s>) -> Placeholder<'s> {
+        let pool = kind as usize + class;
+        let mut ids = own.ids[pool].take();
         if ids.is_empty() {
-            ids = self.reserve_ids(kind);
+            ids = self.reserve_ids(kind, pool);
             own.wait_at(Place::IdsTaken);
         }
         let next = ids.take_first();
-        own.ids[kind as usize].set(ids);
+        own.ids[pool].set(ids);
         let published = &own.published[kind as usize];
         published.set(published.get() + 1);
         next.expect("more than none are reserved at a time")
@@ -2717,13 +2719,22 @@ impl<'s> TypeStore<'s> {
     /// Ids that no other task has: what a task has given back, or new ones.
     #[cold]
     #[inline(never)]
-    fn reserve_ids(&self, kind: Kind) -> Placeholders<'s> {
+    fn reserve_ids(&self, kind: Kind, pool: usize) -> Placeholders<'s> {
         let mut spare = self.spare_ids.lock();
-        if let Some(ids) = spare[kind as usize].pop() {
+        if let Some(ids) = spare[pool].pop() {
             return ids;
         }
-        // Under the lock, so that the ids are consecutive, and a type and its summary have one index.
+        let next = match kind {
+            Kind::Atom => return Placeholders::default(),
+            Kind::Components => self.components.items.len(),
+            Kind::Mapper => self.mappers.items.len(),
+            Kind::Sig => self.sigs.items.len(),
+            Kind::Type => self.types.items.len(),
+        };
+        // Under the lock, so that the ids are consecutive, and a type and its summary have one index. The first block is
+        // short, so that every other one begins at a multiple of its length.
         let count = IDS_RESERVED_AT_A_TIME[kind as usize];
+        let count = count - next % count;
         match kind {
             Kind::Atom => Placeholders::default(),
             Kind::Components => self.components.reserve(count),
@@ -2756,6 +2767,29 @@ impl<'s> TypeStore<'s> {
 
 /// `TypeStore::reserve_ids`, in the order of `KINDS`. Atoms are numbered one by one: a task creates few.
 const IDS_RESERVED_AT_A_TIME: [u32; 5] = [0, 32, 512, 256, 1024];
+
+/// How many ranges of ids a task has at a time: one for each kind, and for the types, which are the last kind, one for each
+/// class.
+const ID_POOLS: usize = KINDS.len() + 6;
+
+/// Most tables that are keyed by a type have entries for types of one sort only: type parameters, unions, intersections,
+/// references. A block of ids is as long as a page of such a table has cells. So the types of a block are of one
+/// sort, and a table touches the pages of the sorts that it is about.
+#[inline]
+fn class_of_type(data: &TypeData) -> usize {
+    match data {
+        TypeData::TypeParam(..) | TypeData::ThisParam(_) => 1,
+        TypeData::Union(_) => 2,
+        TypeData::Intersection(_) => 3,
+        TypeData::Ref { .. } | TypeData::Tuple { .. } => 4,
+        TypeData::Anon { .. }
+        | TypeData::Fns { .. }
+        | TypeData::Synth(_)
+        | TypeData::ReverseMapped { .. } => 5,
+        TypeData::Cond { .. } | TypeData::IndexedAccess { .. } | TypeData::Keyof(_) => 6,
+        _ => 0,
+    }
+}
 
 impl<'p, 's> Types<'p, 's> {
     #[inline(always)]
@@ -2967,19 +3001,20 @@ impl<'p, 's> Types<'p, 's> {
         self.add_facts(id, fact::KNOWS_HAS_GENERIC_ARGUMENTS | value);
     }
 
-    /// Where a record of the kind `kind` goes that the task is about to create.
+    /// Where a record of the kind `kind` goes that the task is about to create. `class`: as for `TypeStore::next_id`.
     #[inline]
-    fn home_of(&self, kind: Kind, is_bound: bool) -> Home<'s> {
+    fn home_of(&self, kind: Kind, class: usize, is_bound: bool) -> Home<'s> {
         match is_bound || self.own.sharing != Sharing::Publishes {
             true => Home::Own { is_bound },
-            false => Home::Published(self.published.next_id(kind, self.own)),
+            false => Home::Published(self.published.next_id(kind, class, self.own)),
         }
     }
 
     /// `new_record` for a type that `intern_record` creates, and where it goes. `own_id`: its id if that is to the task's
     /// own. Its summary is stored here: whoever finds the type may ask for that at once.
     fn new_record_of_task(&self, created: Made<'s>, own_id: u32) -> (TypeRecord<'s>, Home<'s>) {
-        let home = self.home_of(Kind::Type, created.is_bound(self.own));
+        let class = class_of_type(&created.0);
+        let home = self.home_of(Kind::Type, class, created.is_bound(self.own));
         let record = self.new_record(created, home.id(own_id));
         let summary = record.summary(|member| self.member_flags_and_more(member));
         let is_unresolved_name = matches!(record.created.0, TypeData::UnresolvedName { .. });
@@ -3834,7 +3869,7 @@ impl<'p, 's> Types<'p, 's> {
             |data| SKIPS_LOOKUPS_OF_OWN_KEYS && data.mentions_own(),
             |record, data| record == data,
             |data, _| {
-                let home = self.home_of(Kind::Sig, data.is_bound(self.own));
+                let home = self.home_of(Kind::Sig, 0, data.is_bound(self.own));
                 (data, home)
             },
         ))
@@ -3858,7 +3893,7 @@ impl<'p, 's> Types<'p, 's> {
             |record, list| **record == **list,
             |list, _| {
                 let list = self.list(list);
-                let home = self.home_of(Kind::Components, list.is_bound(self.own));
+                let home = self.home_of(Kind::Components, 0, list.is_bound(self.own));
                 (list, home)
             },
         ))
@@ -3902,7 +3937,7 @@ impl<'p, 's> Types<'p, 's> {
                 let flags =
                     (pairs.iter()).fold(ObjectFlags::empty(), |f, p| f | self.object_flags(p.1));
                 let pairs = Mapping::copy_from_slice_in(pairs, self.own.arena);
-                let home = self.home_of(Kind::Mapper, pairs.is_bound(self.own));
+                let home = self.home_of(Kind::Mapper, 0, pairs.is_bound(self.own));
                 ((pairs, flags), home)
             },
         ))

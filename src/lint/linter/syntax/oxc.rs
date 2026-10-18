@@ -103,7 +103,7 @@ fn misplaced_suspensions<'a>(file: &'a File<'a>, noted: &[Diagnostic]) -> Vec<Sy
 
 /// The statement in whose head the list of declarations `statement` is: a `for`, a `for-in` or a `for-of`.
 pub(super) fn loop_with_head<'a>(file: &'a File<'a>, statement: usize) -> Option<StmtKind> {
-    let Some(&Parent::Stmt(parent)) = file.bound.stmt_parent.get(statement) else {
+    let Parent::Stmt(parent) = file.bound.parent_of_stmt(StmtId(statement as u32)) else {
         return None;
     };
     let kind = file.hir.stmts.get(parent.idx())?.kind;
@@ -339,7 +339,7 @@ fn declare_in_ambient_context<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     };
     let declared = hir.stmts.iter().enumerate().filter_map(|(i, raw)| {
         let first = hir.modifiers.get(raw.modifiers.range())?.first()?;
-        let is_in_tree = !matches!(file.bound.stmt_parent.get(i), None | Some(Parent::None));
+        let is_in_tree = !matches!(file.bound.parent_of_stmt(StmtId(i as u32)), Parent::None);
         let statement = Node::Stmt(Stmt::from_raw(file, i as u32));
         (is_keyword(first, Flags::AMBIENT) && is_in_tree && statement.ancestors().any(is_ambient))
             .then_some(first.pos)

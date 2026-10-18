@@ -3772,7 +3772,7 @@ impl<'p, 's> Checker<'p, 's> {
                         if decl.kind == VarKind::Const
                             && stmt.is_some()
                             && matches!(hir[stmt].kind, StmtKind::Var(_))
-                            && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(parent) if parent.is_some() && matches!(hir[parent].kind, StmtKind::For { init, .. } if init == stmt)) =>
+                            && !matches!(bound.parent_of_stmt(stmt), Parent::Stmt(parent) if parent.is_some() && matches!(hir[parent].kind, StmtKind::For { init, .. } if init == stmt)) =>
                     {
                         self.unique_symbol_of_variable(file, decl.pat, name)
                     }

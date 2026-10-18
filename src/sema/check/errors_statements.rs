@@ -261,7 +261,7 @@ impl Checker<'_, '_> {
                 }
                 _ => continue,
             };
-            if !matches!(bound.stmt_parent[i], Parent::None) {
+            if !matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::None) {
                 self.error_at((file, s.start, 0), code, &[]);
             }
         }
@@ -547,7 +547,7 @@ impl Checker<'_, '_> {
         };
         let start = self.start_after_modifiers(file, s);
         let at = (file, start, end);
-        let around = match bound.stmt_parent[s.idx()] {
+        let around = match bound.parent_of_stmt(s) {
             Parent::Stmt(p) if p.is_some() => Some(hir[p].kind),
             _ => None,
         };
@@ -606,12 +606,12 @@ impl Checker<'_, '_> {
     /// `containerAllowsBlockScopedVariable(node.Parent)` for the statement `s`.
     pub(super) fn container_allows_block_scoped_variable(&self, file: FileId, s: StmtId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut parent = bound.stmt_parent[s.idx()];
+        let mut parent = bound.parent_of_stmt(s);
         while let Parent::Stmt(p) = parent
             && p.is_some()
         {
             match hir[p].kind {
-                StmtKind::Labeled { .. } => parent = bound.stmt_parent[p.idx()],
+                StmtKind::Labeled { .. } => parent = bound.parent_of_stmt(p),
                 StmtKind::If { .. }
                 | StmtKind::While { .. }
                 | StmtKind::DoWhile { .. }
@@ -938,7 +938,7 @@ impl Checker<'_, '_> {
                 // `parsePropertyName` restores it, and to the parser `{ await }` is only a property
                 // name.
                 if matches!(hir[e].kind, ExprKind::Ident(n) if n == name)
-                    && !matches!(bound.expr_parent[e.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
+                    && !matches!(bound.parent_of_expr(e), Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
                     && let Some(s) = self.statement_noting_await(file, e)
                 {
                     noted.push((s, false));

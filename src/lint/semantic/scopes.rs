@@ -751,7 +751,7 @@ impl<'f, 'a> Collector<'f, 'a> {
                 | StmtKind::Try { .. }
                 | StmtKind::ExportAsNamespace(_)
         );
-        if !is_scope || matches!(bound.stmt_parent.get(i), None | Some(Parent::None)) {
+        if !is_scope || matches!(bound.parent_of_stmt(hir::StmtId(i as u32)), Parent::None) {
             return;
         }
         let declares_lexically = |head: hir::StmtId| {
@@ -1000,8 +1000,8 @@ impl<'f, 'a> Collector<'f, 'a> {
     fn declaration(&mut self, kind: ScopeKind, s: hir::StmtId, name_pos: u32) {
         if let Some(stmt) = self.file.hir.stmts.get(s.idx())
             && !matches!(
-                self.file.bound.stmt_parent.get(s.idx()),
-                None | Some(Parent::None)
+                self.file.bound.parent_of_stmt(s),
+                Parent::None
             )
             && !self.is_synthetic(name_pos)
         {

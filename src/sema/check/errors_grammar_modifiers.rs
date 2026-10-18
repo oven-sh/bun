@@ -100,7 +100,7 @@ impl Checker<'_, '_> {
         }
         // `checkImportDeclaration`, `checkExportDeclaration`, `checkExportAssignment`: these accept
         // no modifiers.
-        let takes_none = match (statement.kind, bound.stmt_parent[s.idx()]) {
+        let takes_none = match (statement.kind, bound.parent_of_stmt(s)) {
             (StmtKind::Import(_), Parent::File | Parent::Module(_)) => 1191,
             (
                 StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. },
@@ -323,7 +323,7 @@ impl Checker<'_, '_> {
             Kind::Unknown
         };
         let parent = match node {
-            NodeData::Stmt(s) => bound.stmt_parent[s.idx()],
+            NodeData::Stmt(s) => bound.parent_of_stmt(s),
             _ => Parent::None,
         };
         // `IsClassLike(node.Parent)`

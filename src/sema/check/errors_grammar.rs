@@ -392,7 +392,7 @@ impl Checker<'_, '_> {
                 continue;
             };
             // The binder visits every node of the tree, whether or not the checker does.
-            if matches!(bound.expr_parent[id.idx()], Parent::None) {
+            if matches!(bound.parent_of_expr(id), Parent::None) {
                 continue;
             }
             match hir[operand].kind {

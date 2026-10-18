@@ -106,8 +106,8 @@ impl File<'_> {
         let raw = self.hir.exprs.get(id.idx())?;
         let attributes = self.hir.import_attributes;
         let is_node = !matches!(
-            self.bound.expr_parent.get(id.idx()),
-            None | Some(Parent::None)
+            self.bound.parent_of_expr(id),
+            Parent::None
         ) && !matches!(raw.kind, hir::ExprKind::Missing)
             && self.is_written::<MAY_BE_SYNTHETIC>(raw.pos)
             && (!MAY_BE_SYNTHETIC || self.jsdoc_cast_operand(id).is_none())
@@ -122,8 +122,8 @@ impl File<'_> {
         let id = hir::StmtId(i);
         let raw = self.hir.stmts.get(id.idx())?;
         let is_node = !matches!(
-            self.bound.stmt_parent.get(id.idx()),
-            None | Some(Parent::None)
+            self.bound.parent_of_stmt(id),
+            Parent::None
         ) && self.is_written::<MAY_BE_SYNTHETIC>(raw.start)
             && self.wrapped_in(id).is_none()
             && !self.is_nested_namespace(id);
@@ -183,8 +183,8 @@ impl File<'_> {
                 };
                 self.hir.modules.get(m.idx()).is_some_and(is_name)
                     && matches!(
-                        self.bound.stmt_parent.get(id.idx()),
-                        Some(Parent::Module(_))
+                        self.bound.parent_of_stmt(id),
+                        Parent::Module(_)
                     )
             }
             _ => false,

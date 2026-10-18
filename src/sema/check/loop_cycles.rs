@@ -104,7 +104,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let stmt = bound.var_stmt[d.idx()];
         stmt.is_some()
-            && matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(parent)
+            && matches!(bound.parent_of_stmt(stmt), Parent::Stmt(parent)
                 if matches!(hir[parent].kind,
                     StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == stmt))
     }

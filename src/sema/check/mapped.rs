@@ -1059,7 +1059,7 @@ impl<'p, 's> Checker<'p, 's> {
         if is_readonly
             && let Some((file, e)) = access_expression
             && (self.is_assignment_target(file, e)
-                || matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p)
+                || matches!(self.bound(file).parent_of_expr(e), Parent::Expr(p)
                     if matches!(self.hir(file)[p].kind, ExprKind::Unary { op: UnOp::Delete, .. })))
         {
             self.error_at(

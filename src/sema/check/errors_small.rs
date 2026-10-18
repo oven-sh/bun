@@ -134,7 +134,7 @@ impl<'p> Checker<'p, '_> {
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         // Walks up out of the chain it is part of.
-        let mut parent = bound.expr_parent[e.idx()];
+        let mut parent = bound.parent_of_expr(e);
         while let Parent::Expr(p) = parent
             && matches!(
                 hir[p].kind,
@@ -144,7 +144,7 @@ impl<'p> Checker<'p, '_> {
                 }
             )
         {
-            parent = bound.expr_parent[p.idx()];
+            parent = bound.parent_of_expr(p);
         }
         let body = match parent {
             Parent::Stmt(s) if s.is_some() => match hir[s].kind {

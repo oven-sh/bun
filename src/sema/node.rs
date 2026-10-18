@@ -320,11 +320,19 @@ macro_rules! node_vectors {
         #[derive(Copy, Clone, Default, Debug)]
         pub struct NodeBases([u32; VECTORS + 1]);
 
+        impl<S: Storage> FileIn<S> {
+            /// Whether a handle has room for every node, and `ROW_BITS` bits for every id.
+            pub(crate) fn has_room_for_handles(&self) -> bool {
+                let rows = 1 $(+ self.$field.len())*;
+                rows + self.fns.len() + self.classes.len() + self.modules.len() < 1 << ROW_BITS
+            }
+        }
+
         impl File<'_> {
             fn node_bases(&self) -> NodeBases {
+                assert!(self.has_room_for_handles());
                 let mut bases = [1u32; VECTORS + 1];
                 $(bases[$index + 1] = bases[$index] + self.$field.len() as u32;)*
-                assert!(bases[VECTORS] < 1 << ROW_BITS);
                 NodeBases(bases)
             }
 
@@ -587,20 +595,20 @@ impl ToNode for Parent {
             Parent::Expr(e) => file.node(e),
             Parent::Stmt(s) => file.node(s),
             Parent::VarInit(d) => file.node(d),
-            Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
+            Parent::ParamDefault(p) | Parent::ParamDecorator(p) => {
                 file.node(p)
             }
             Parent::PatPropDefault(p) => file.node(p),
             Parent::PatElemDefault(e) => file.node(e),
             Parent::Prop(p) => file.node(p),
-            Parent::PropKey(_, p) | Parent::MethodKey(p) => file.node(p).with(Part::Name),
+            Parent::PropKey(p) | Parent::MethodKey(p) => file.node(p).with(Part::Name),
             Parent::PatKey(p) => file.node(p).with(Part::PropertyName),
             Parent::MemberKey(m) => file.node(m).with(Part::Name),
-            Parent::MemberInit(m) | Parent::Decorator(_, DecoratorOwner::Member(m)) => file.node(m),
+            Parent::MemberInit(m) | Parent::MemberDecorator(m) => file.node(m),
             Parent::FnBody(f) => file.node(f),
             Parent::EnumInit(m) => file.node(m),
             Parent::Case(c) => file.node(c),
-            Parent::ClassExtends(c) | Parent::Decorator(_, DecoratorOwner::Class(c)) => {
+            Parent::ClassExtends(c) | Parent::ClassDecorator(c) => {
                 file.node(c)
             }
             Parent::Module(m) => file.node(m),

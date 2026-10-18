@@ -25,6 +25,12 @@ The files in `../conformance` run them all and compare byte for byte. CI limits 
 
 typescript-go also has `.js.map` and `.sourcemap.txt` baselines. They aren't in the bundle.
 
+`bun check` reports TS2875 where TypeScript 7.1 does: at the first tag in the text of the file, and not where a checker
+first asks. Four tests show the difference: `commentsOnJSXExpressionsArePreserved`,
+`jsxJsxsCjsTransformKeyPropCustomImport`, `jsxJsxsCjsTransformKeyPropCustomImportPragma` and
+`tsxSpreadChildrenInvalidType`. Their eleven `.errors.txt` with that error are those of typescript-go
+89d5d5b2849a0db0957065889ca58536fa6d2e4a. A sync with an older version brings the old ones back.
+
 ```sh
 bun bd test test/cli/check/conformance
 # One test, or all whose path contains the text

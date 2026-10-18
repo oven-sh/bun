@@ -581,12 +581,12 @@ impl Checker<'_, '_> {
             (Query::Expr(file, e), _) if is_return_type_from_body => {
                 let hir = self.hir(file);
                 is_parenthesized(hir, e)
-                    || !matches!(self.bound(file).expr_parent[e.idx()],
+                    || !matches!(self.bound(file).parent_of_expr(e),
                         Parent::Stmt(s) if matches!(hir[s].kind, StmtKind::Return(_)))
             }
             (Query::Expr(file, e), Some(Query::Expr(..) | Query::LiteralProp(..))) => {
                 let hir = self.hir(file);
-                match self.bound(file).expr_parent[e.idx()] {
+                match self.bound(file).parent_of_expr(e) {
                     Parent::Expr(parent) if parent.is_some() => {
                         matches!(hir[parent].kind, ExprKind::Assign { value, .. } if value == e)
                     }
@@ -607,7 +607,7 @@ impl Checker<'_, '_> {
     fn is_part_of(&self, part: Query, whole: Query) -> bool {
         use crate::bind::Parent;
         let (file, mut parent) = match part {
-            Query::Expr(file, e) => (file, self.bound(file).expr_parent[e.idx()]),
+            Query::Expr(file, e) => (file, self.bound(file).parent_of_expr(e)),
             Query::LiteralProp(file, p) => {
                 (file, Parent::Expr(self.bound(file).prop_owner[p.idx()]))
             }
@@ -620,7 +620,7 @@ impl Checker<'_, '_> {
                     if whole == Query::Expr(file, e) {
                         return true;
                     }
-                    bound.expr_parent[e.idx()]
+                    bound.parent_of_expr(e)
                 }
                 Parent::Prop(p) => {
                     if whole == Query::LiteralProp(file, p) {
@@ -644,7 +644,7 @@ impl Checker<'_, '_> {
             if e.is_none() || matches!(hir[e].kind, ExprKind::Jsx(_)) {
                 return false;
             }
-            e = match bound.expr_parent[e.idx()] {
+            e = match bound.parent_of_expr(e) {
                 Parent::FnBody(_) => return true,
                 Parent::Stmt(s) => {
                     return match hir[s].kind {

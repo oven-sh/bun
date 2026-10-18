@@ -2541,10 +2541,10 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     /// `checkExportAssignment` of the statement `stmt`, limited to its side effects on aliases.
     fn check_export_assignment(&self, file: FileId, stmt: StmtId) {
         // `checkGrammarModuleElementContext`, and 1063 or 1319 in a namespace.
-        let is_checked = match self.bound(file).stmt_parent.get(stmt.idx()) {
-            Some(bind::Parent::File) => true,
-            Some(bind::Parent::Module(m)) => {
-                !matches!(self.hir(file)[*m].name, ModuleName::Ident(_))
+        let is_checked = match self.bound(file).parent_of_stmt(stmt) {
+            bind::Parent::File => true,
+            bind::Parent::Module(m) => {
+                !matches!(self.hir(file)[m].name, ModuleName::Ident(_))
             }
             _ => false,
         };
@@ -6788,9 +6788,7 @@ impl<'s> Files<'s> {
             && bound.global_augmentations.is_empty()
             && bound.ambient_modules.is_empty()
             && bound.pattern_ambient_modules.is_empty()
-            && bound.umd_globals.is_empty()
-            // `make_module_clones`: it adds a symbol to the file of what it imports.
-            && !(hir.imports.iter()).any(|import| import.namespace.is_some());
+            && bound.umd_globals.is_empty();
         let (type_resolutions_trace, resolutions_trace) =
             (types_tracer.into_traces(), tracer.into_traces());
         let parse = parsed.unwrap_or_else(|parse| Parse {
@@ -8879,13 +8877,13 @@ impl<'s> Files<'s> {
     pub fn is_external_module_augmentation(&self, file: FileId, m: ModuleId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_ambient_module = |it: ModuleId| !matches!(hir[it].name, ModuleName::Ident(_));
-        let parent = |it: ModuleId| bound.stmt_parent.get(hir[it].stmt.idx());
+        let parent = |it: ModuleId| bound.parent_of_stmt(hir[it].stmt);
         is_ambient_module(m)
             && match parent(m) {
-                Some(bind::Parent::File) => hir.has_module_syntax,
-                Some(&bind::Parent::Module(around)) => {
+                bind::Parent::File => hir.has_module_syntax,
+                bind::Parent::Module(around) => {
                     is_ambient_module(around)
-                        && matches!(parent(around), Some(bind::Parent::File))
+                        && matches!(parent(around), bind::Parent::File)
                         && !hir.has_module_syntax
                 }
                 _ => false,
@@ -8953,6 +8951,11 @@ impl<'s> Files<'s> {
         nested.retain(|&module| self.canonical(module) == module);
         nested.shared_sort_unstable();
         nested.dedup();
+        // One of them can be the symbol made for an `import * as ns`, which is a symbol of the importing file. The check of
+        // any file with two `export *` reads its declarations.
+        for module in &nested {
+            self.modules[module.file.idx()].is_leaf = false;
+        }
         self.modules_with_nested_export_collisions = slice_in(&nested, self.arena);
         let refused = self.refused_merges.iter();
         let parts = refused.flat_map(|it| it.target_parts.iter().chain(it.source_parts.iter()));

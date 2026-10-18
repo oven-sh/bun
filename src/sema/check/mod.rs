@@ -2866,7 +2866,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_checked_by_check_expression_cached(&self, file: FileId, e: ExprId) -> bool {
         use crate::bind::Parent;
         let hir = self.hir(file);
-        match self.bound(file).expr_parent[e.idx()] {
+        match self.bound(file).parent_of_expr(e) {
             Parent::VarInit(_) | Parent::ParamDefault(_) => true,
             Parent::MemberInit(m) => hir[m].init == e,
             Parent::Stmt(s) => s.is_some() && matches!(hir[s].kind, StmtKind::Return(_)),

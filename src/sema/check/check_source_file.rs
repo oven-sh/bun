@@ -470,12 +470,12 @@ impl<'s> Checker<'_, 's> {
                 if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
                     if !self.check_grammar_function_like_declaration(file, func)
                         && !self.check_grammar_accessor(file, func)
-                        && let Parent::Prop(p) = self.bound(file).expr_parent[e.idx()]
+                        && let Parent::Prop(p) = self.bound(file).parent_of_expr(e)
                     {
                         self.check_grammar_computed_property_name(file, hir[p].key);
                     }
                     self.check_signature_declaration(file, func);
-                    if let Parent::Prop(p) = self.bound(file).expr_parent[e.idx()]
+                    if let Parent::Prop(p) = self.bound(file).parent_of_expr(e)
                         && !hir.prop_modifiers(p).is_empty()
                     {
                         self.check_accessor_pair(file, Decl::Property(p));
@@ -484,7 +484,7 @@ impl<'s> Checker<'_, 's> {
                 self.check_getter_returns_a_value(file, func);
                 if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
                     // `checkAccessorDeclaration`: `getTypeOfAccessors` of the symbol, whose getter comes first.
-                    if let Parent::Prop(p) = self.bound(file).expr_parent[e.idx()] {
+                    if let Parent::Prop(p) = self.bound(file).parent_of_expr(e) {
                         let getter = match hir[p].kind {
                             PropKind::Setter => self.accessor_of_literal(file, p, PropKind::Getter),
                             _ => None,
@@ -1295,7 +1295,7 @@ impl<'s> Checker<'_, 's> {
         let hir = self.hir(file);
         matches!(hir[e].kind, ExprKind::Binary { op: BinOp::In, .. })
             && !is_parenthesized(hir, e)
-            && matches!(self.bound(file).expr_parent[e.idx()], Parent::MemberKey(m)
+            && matches!(self.bound(file).parent_of_expr(e), Parent::MemberKey(m)
                 if !matches!(hir[m].kind, MemberKind::Getter | MemberKind::Setter))
     }
 
@@ -1626,7 +1626,7 @@ impl<'s> Checker<'_, 's> {
             }
             // `checkExportAssignment`: misplaced, or in a namespace, it is not checked.
             StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
-                let is_visited = match bound.stmt_parent[s.idx()] {
+                let is_visited = match bound.parent_of_stmt(s) {
                     Parent::File => true,
                     Parent::Module(m) => !matches!(hir[m].name, ModuleName::Ident(_)),
                     _ => false,
@@ -1640,7 +1640,7 @@ impl<'s> Checker<'_, 's> {
                     self.never_check(self.start_of(file, e), hir[s].loc.end);
                 }
                 if matches!(hir[s].kind, StmtKind::ExportAssign(_))
-                    && matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_))
+                    && matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_))
                     && self.should_check_erasable_syntax(file)
                     && !hir.is_ambient(hir.node(s))
                 {
@@ -1669,7 +1669,7 @@ impl<'s> Checker<'_, 's> {
             // name in it. Reported on the first. After `checkGrammarModuleElementContext`. For an
             // import: `check_grammar_import_clause`.
             StmtKind::ExportNamed(x) if hir[x].type_only => {
-                if matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_))
+                if matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_))
                     && let Some(item) = hir[x].items.iter().find(|&item| hir[item].type_only)
                 {
                     self.grammar_error_at((file, hir[item].start, 0), 2207, &[]);
@@ -1677,7 +1677,7 @@ impl<'s> Checker<'_, 's> {
             }
             // `checkImportEqualsDeclaration`, past `checkGrammarModuleElementContext`
             StmtKind::ImportEquals(_) => {
-                if matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_))
+                if matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_))
                     && self.should_check_erasable_syntax(file)
                     && !hir.is_ambient(hir.node(s))
                 {
@@ -1873,7 +1873,7 @@ impl<'s> Checker<'_, 's> {
             StmtKind::Module(module) => {
                 self.check_function_or_module_block(file, hir[module].body);
                 // `checkGrammarModuleElementContext`
-                if matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_)) {
+                if matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_)) {
                     if let ModuleName::Ident(name) = hir[module].name {
                         self.check_collisions_for_declaration_name(file, s, name);
                     }
@@ -2178,11 +2178,11 @@ impl<'s> Checker<'_, 's> {
         e: ExprId,
     ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let Some(&Parent::Expr(assignment)) = bound.expr_parent.get(e.idx()) else {
+        let Parent::Expr(assignment) = bound.parent_of_expr(e) else {
             return false;
         };
         matches!(hir[assignment].kind, ExprKind::Assign { op: None, target, .. } if target == e)
-            && matches!(bound.expr_parent[assignment.idx()], Parent::Prop(p)
+            && matches!(bound.parent_of_expr(assignment), Parent::Prop(p)
                 if hir[p].kind == PropKind::Shorthand
                     && bound.get_assignment_target(hir, bound.prop_owner[p.idx()]).is_none())
     }

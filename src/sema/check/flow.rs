@@ -2503,7 +2503,7 @@ impl<'p, 's> Checker<'p, 's> {
             (
                 FnKind::Expr | FnKind::Arrow | FnKind::Method | FnKind::Getter | FnKind::Setter,
                 FnOwner::Expr(x),
-            ) => Some(bound.expr_parent[x.idx()]),
+            ) => Some(bound.parent_of_expr(x)),
             (FnKind::Method | FnKind::Getter | FnKind::Setter, FnOwner::Member(m)) => {
                 match bound.member_owner[m.idx()] {
                     MemberOwner::Class(c) => match bound.class_owner[c.idx()] {
@@ -2523,7 +2523,7 @@ impl<'p, 's> Checker<'p, 's> {
         let declared_in = match self.root_declaration(file, symbol) {
             PatParent::Param(p) => Parent::ParamDefault(p),
             PatParent::Var(d) if bound.var_stmt[d.idx()].is_some() => {
-                bound.stmt_parent[bound.var_stmt[d.idx()].idx()]
+                bound.parent_of_stmt(bound.var_stmt[d.idx()])
             }
             _ => return None,
         };
@@ -2537,7 +2537,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(declaration_container) = self.declaration_container(file, symbol) else {
             return true;
         };
-        let parent = self.bound(file).expr_parent[e.idx()];
+        let parent = self.bound(file).parent_of_expr(e);
         let flow_container = self.get_control_flow_container(file, parent);
         flow_container != declaration_container
             && matches!(flow_container, Container::Fn(f)
@@ -2556,7 +2556,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !matches!(declaration_container, Container::Fn(f) if around(f).is_some()) {
             return u32::MAX;
         }
-        let mut flow_container = self.get_control_flow_container(file, bound.expr_parent[e.idx()]);
+        let mut flow_container = self.get_control_flow_container(file, bound.parent_of_expr(e));
         let mut times = 0;
         while flow_container != declaration_container {
             let parent = match flow_container {
@@ -2991,7 +2991,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         // The `a` of `a?.b`, `a ?? b` and `a ??= b` is tested for being non-nullish, not for
         // truthiness.
-        if let Parent::Expr(parent) = self.bound(file).expr_parent[e.idx()] {
+        if let Parent::Expr(parent) = self.bound(file).parent_of_expr(e) {
             let is_tested_for_presence = match hir[parent].kind {
                 ExprKind::Dot {
                     obj,
@@ -4728,7 +4728,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// parenthesized expression.
     fn is_constraint_position(&mut self, file: FileId, e: ExprId, ty: TypeId) -> bool {
         let hir = self.hir(file);
-        let Parent::Expr(parent) = self.bound(file).expr_parent[e.idx()] else {
+        let Parent::Expr(parent) = self.bound(file).parent_of_expr(e) else {
             return false;
         };
         if is_parenthesized(hir, e) {
@@ -4957,7 +4957,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let container_of =
-            |x: ExprId| self.get_control_flow_container(file, bound.expr_parent[x.idx()]);
+            |x: ExprId| self.get_control_flow_container(file, bound.parent_of_expr(x));
         // `prop.ValueDeclaration`, if it is an assignment.
         let (of, assignment) = match self.value_declaration_of_prop(prop) {
             Some((of, Decl::Member(m))) => {
@@ -5019,7 +5019,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether `e` is the `x` of `x!`. Not of `(x)!`: only the direct syntactic parent counts.
     fn is_operand_of_non_null(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
-        matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::NonNull(_)))
+        matches!(self.bound(file).parent_of_expr(e), Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::NonNull(_)))
             && !is_parenthesized(hir, e)
     }
 
@@ -5136,7 +5136,7 @@ impl<'p, 's> Checker<'p, 's> {
                 } => {
                     let stmt = bound.var_stmt[d.idx()];
                     let is_of_for_in = stmt.is_some()
-                        && matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(owner)
+                        && matches!(bound.parent_of_stmt(stmt), Parent::Stmt(owner)
                             if matches!(hir[owner].kind, StmtKind::ForIn { .. }));
                     u32::from(is_of_for_in)
                 }
@@ -5182,7 +5182,7 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                         let stmt = bound.var_stmt[d.idx()];
                         if stmt.is_some()
-                            && let Parent::Stmt(owner) = bound.stmt_parent[stmt.idx()]
+                            && let Parent::Stmt(owner) = bound.parent_of_stmt(stmt)
                             && let StmtKind::ForIn { left, expr, .. } = hir[owner].kind
                             && left == stmt
                         {
@@ -5570,7 +5570,7 @@ impl<'p, 's> Checker<'p, 's> {
                         && hir[d].init.is_some()
                         && e.0 > hir[d].init.0
                         && stmt.is_some()
-                        && match bound.stmt_parent[stmt.idx()] {
+                        && match bound.parent_of_stmt(stmt) {
                             Parent::Stmt(owner) => matches!(hir[owner].kind, StmtKind::Block(_)),
                             Parent::FnBody(_) | Parent::File | Parent::Module(_) => true,
                             _ => false,
@@ -5923,7 +5923,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !names.is_empty() && is_parenthesized(hir, at) {
                 return declared;
             }
-            let name = match bound.expr_parent[at.idx()] {
+            let name = match bound.parent_of_expr(at) {
                 Parent::Prop(p) if hir[p].kind != PropKind::Spread => {
                     at = bound.prop_owner[p.idx()];
                     self.literal_property_name_text(file, hir[p].key, hir[p].pos)
@@ -6542,7 +6542,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getReferenceRoot`: `(x = [], x).push(v)`
         let mut root = e;
         let parent = loop {
-            let Parent::Expr(parent) = bound.expr_parent[root.idx()] else {
+            let Parent::Expr(parent) = bound.parent_of_expr(root) else {
                 return false;
             };
             match hir[parent].kind {
@@ -6565,10 +6565,10 @@ impl<'p, 's> Checker<'p, 's> {
                     || (name == known::push || name == known::unshift)
                         && !is_parenthesized(hir, parent)
                         // A call that contains it, even as an argument.
-                        && matches!(bound.expr_parent[parent.idx()], Parent::Expr(call) if matches!(hir[call].kind, ExprKind::Call(_)))
+                        && matches!(bound.parent_of_expr(parent), Parent::Expr(call) if matches!(hir[call].kind, ExprKind::Call(_)))
             }
             ExprKind::Index { obj, index, .. } if obj == root => {
-                let Parent::Expr(assign) = bound.expr_parent[parent.idx()] else {
+                let Parent::Expr(assign) = bound.parent_of_expr(parent) else {
                     return false;
                 };
                 if is_parenthesized(hir, parent)
@@ -7217,7 +7217,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `isEmptyArrayAssignment`
             let value = match target {
                 FlowTarget::Var(d) => hir[d].init,
-                FlowTarget::Expr(e) => match bound.expr_parent[e.idx()] {
+                FlowTarget::Expr(e) => match bound.parent_of_expr(e) {
                     Parent::Expr(parent) => match hir[parent].kind {
                         // `{ x = [] }` is a `ShorthandPropertyAssignment`, not a `BinaryExpression`.
                         ExprKind::Assign { value, .. }
@@ -7375,7 +7375,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// in progress.
     fn get_assigned_type(&mut self, file: FileId, node: ExprId, in_loop: bool) -> TypeId {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        match bound.expr_parent[node.idx()] {
+        match bound.parent_of_expr(node) {
             Parent::Stmt(head) => {
                 // `checkRightHandSideOfForOf`, behind the barrier of `type_of_assigned_value`.
                 if in_loop {
@@ -7392,7 +7392,7 @@ impl<'p, 's> Checker<'p, 's> {
             Parent::Expr(parent) => match hir[parent].kind {
                 // `{ x = d }` is a `ShorthandPropertyAssignment` with an
                 // `ObjectAssignmentInitializer`.
-                ExprKind::Assign { value, .. } => match bound.expr_parent[parent.idx()] {
+                ExprKind::Assign { value, .. } => match bound.parent_of_expr(parent) {
                     Parent::Prop(prop) if hir[prop].kind == PropKind::Shorthand => {
                         let ty = self.get_assigned_type_of_property_assignment(file, prop, in_loop);
                         self.get_type_with_default(file, ty, value, in_loop)
@@ -7414,7 +7414,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 // `getAssignedTypeOfSpreadExpression`
-                ExprKind::Spread(_) => match bound.expr_parent[parent.idx()] {
+                ExprKind::Spread(_) => match bound.parent_of_expr(parent) {
                     Parent::Expr(list) => {
                         let ty = self.get_assigned_type(file, list, in_loop);
                         self.get_type_of_destructured_spread_expression(ty)
@@ -7446,7 +7446,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::ERROR;
         };
         let is_destructuring_default_assignment = !is_parenthesized(hir, node)
-            && match bound.expr_parent[node.idx()] {
+            && match bound.parent_of_expr(node) {
                 Parent::Expr(parent) => {
                     matches!(hir[parent].kind, ExprKind::Array(_))
                         && self.is_destructuring_assignment_target(file, parent)
@@ -7571,13 +7571,13 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_destructuring_assignment_target(&self, file: FileId, parent: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         !is_parenthesized(hir, parent)
-            && match bound.expr_parent[parent.idx()] {
+            && match bound.parent_of_expr(parent) {
                 Parent::Expr(above) => matches!(
                     hir[above].kind,
                     ExprKind::Assign { target: left, .. } | ExprKind::Binary { left, .. }
                         if left == parent
                 ),
-                Parent::Stmt(head) => matches!(bound.stmt_parent[head.idx()], Parent::Stmt(owner)
+                Parent::Stmt(head) => matches!(bound.parent_of_stmt(head), Parent::Stmt(owner)
                     if matches!(hir[owner].kind, StmtKind::ForOf { left, .. } if left == head)),
                 _ => false,
             }
@@ -7605,7 +7605,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// head of `for (x in o)` or `for (x of xs)`.
     fn initial_type_of_for_head(&mut self, file: FileId, left: StmtId) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let Parent::Stmt(owner) = bound.stmt_parent[left.some()?.idx()] else {
+        let Parent::Stmt(owner) = bound.parent_of_stmt(left.some()?) else {
             return None;
         };
         match hir[owner.some()?].kind {
@@ -7636,7 +7636,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(reference.file), self.bound(reference.file));
         let stmt = bound.var_stmt[d.idx()];
         if stmt.is_some()
-            && let Parent::Stmt(owner) = bound.stmt_parent[stmt.idx()]
+            && let Parent::Stmt(owner) = bound.parent_of_stmt(stmt)
             && let StmtKind::ForIn { left, expr, .. } = hir[owner].kind
             && left == stmt
         {
@@ -7883,7 +7883,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             let stmt = bound.var_stmt[d.idx()];
             if stmt.is_some()
-                && let Parent::Stmt(owner) = bound.stmt_parent[stmt.idx()]
+                && let Parent::Stmt(owner) = bound.parent_of_stmt(stmt)
                 && let StmtKind::ForOf {
                     left,
                     expr,

@@ -317,7 +317,7 @@ impl Checker<'_, '_> {
 
     /// `getNameOfSymbolAsWritten` for the `__object` symbol of an object literal: the name of the variable it initializes, else `__object`.
     pub(super) fn name_of_object_literal(&self, file: FileId, e: ExprId) -> Vec<u8> {
-        match self.bound(file).expr_parent[e.idx()] {
+        match self.bound(file).parent_of_expr(e) {
             Parent::VarInit(declaration) if !is_parenthesized(self.hir(file), e) => {
                 self.declaration_name_of_variable(file, self.hir(file)[declaration].pat)
             }
@@ -1444,7 +1444,7 @@ impl Checker<'_, '_> {
     ) -> Option<Sym> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let name = match first_declaration {
-            Decl::ObjectLiteral(e) => match bound.expr_parent[e.idx()] {
+            Decl::ObjectLiteral(e) => match bound.parent_of_expr(e) {
                 Parent::VarInit(declaration) if !is_parenthesized(hir, e) => hir[declaration].pat,
                 _ => return None,
             },
@@ -2976,7 +2976,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     let method = self.c.symbol_of_member(file, member);
                     return Some(self.symbol_to_type_node(method, false, Vec::new()));
                 }
-                FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+                FnOwner::Expr(e) => match bound.parent_of_expr(e) {
                     Parent::Prop(p) if hir[p].kind == PropKind::Method => {
                         match bound.property_symbol.get(&Decl::Property(p)) {
                             Some(&method) => method,
@@ -3631,7 +3631,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                         let bound = self.c.bound(file);
                         match bound.fns[f.idx()].owner {
                             FnOwner::Stmt(statement) => matches!(
-                                bound.stmt_parent[statement.idx()],
+                                bound.parent_of_stmt(statement),
                                 Parent::File | Parent::Module(_)
                             ),
                             _ => false,
@@ -3698,14 +3698,14 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let FnOwner::Expr(e) = bound.fns[func.idx()].owner else {
             return None;
         };
-        let Parent::VarInit(declaration) = bound.expr_parent[e.idx()] else {
+        let Parent::VarInit(declaration) = bound.parent_of_expr(e) else {
             return None;
         };
         let statement = bound.var_stmt[declaration.idx()];
         if is_parenthesized(hir, e)
             || statement.is_none()
             || !matches!(
-                bound.stmt_parent[statement.idx()],
+                bound.parent_of_stmt(statement),
                 Parent::File | Parent::Module(_)
             )
         {
@@ -5027,7 +5027,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                         Some((file, func, _)) => {
                             let declaration = match self.c.bound(file).fns[func.idx()].owner {
                                 FnOwner::Member(m) => self.c.hir(file).node(m),
-                                FnOwner::Expr(e) => match self.c.bound(file).expr_parent[e.idx()] {
+                                FnOwner::Expr(e) => match self.c.bound(file).parent_of_expr(e) {
                                     Parent::Prop(p) => self.c.hir(file).node(p),
                                     _ => hir::Node::NONE,
                                 },
@@ -5807,7 +5807,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         };
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         loop {
-            at = match bound.expr_parent[at.idx()] {
+            at = match bound.parent_of_expr(at) {
                 Parent::Prop(p) if bound.prop_owner[p.idx()].is_some() => bound.prop_owner[p.idx()],
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Call(call) | ExprKind::New(call) if hir[call].callee != at => {

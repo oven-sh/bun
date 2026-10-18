@@ -635,8 +635,8 @@ impl Checker<'_, '_> {
     /// `isTopLevelInExternalModuleAugmentation`
     fn is_top_level_in_external_module_augmentation(&self, file: FileId, decl: Decl) -> bool {
         let statement = self.files().statement_of_declaration(file, decl);
-        statement.is_some_and(|s| match self.bound(file).stmt_parent.get(s.idx()) {
-            Some(&Parent::Module(m)) => self.is_external_module_augmentation(file, m),
+        statement.is_some_and(|s| match self.bound(file).parent_of_stmt(s) {
+            Parent::Module(m) => self.is_external_module_augmentation(file, m),
             _ => false,
         })
     }

@@ -73,7 +73,7 @@ impl Checker<'_, '_> {
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `parent.Statements()`
-        let statements = match bound.stmt_parent[s.idx()] {
+        let statements = match bound.parent_of_stmt(s) {
             Parent::File => Some(hir.body),
             Parent::Module(m) => Some(hir[m].body),
             Parent::FnBody(f) => match hir[f].body {
@@ -175,7 +175,7 @@ impl Checker<'_, '_> {
                 let symbol = self.symbol_of_member(file, m);
                 Some(self.type_of_symbol(symbol))
             }
-            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+            FnOwner::Expr(e) => match bound.parent_of_expr(e) {
                 Parent::Prop(p) => Some(self.type_of_literal_prop(file, p)),
                 _ => None,
             },

@@ -3282,7 +3282,7 @@ impl<'p, 's> Checker<'p, 's> {
         else {
             return false;
         };
-        bound.stmt_parent[before.idx()] == bound.stmt_parent[s.idx()]
+        bound.parent_of_stmt(before) == bound.parent_of_stmt(s)
             && (hir[s].loc.pos == hir[before].loc.end
                 || hir[previous].flags.contains(Flags::REPARSED))
     }
@@ -6863,7 +6863,7 @@ impl<'p, 's> Checker<'p, 's> {
         call: ExprId,
     ) -> TypeId {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        match bound.expr_parent[call.idx()] {
+        match bound.parent_of_expr(call) {
             Parent::VarInit(d) => {
                 let decl = &hir[d];
                 let stmt = bound.var_stmt[d.idx()];
@@ -6873,7 +6873,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if decl.kind != VarKind::Const
                     || stmt.is_none()
                     || !matches!(hir[stmt].kind, StmtKind::Var(_))
-                    || matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(parent) if parent.is_some() && matches!(hir[parent].kind, StmtKind::For { init, .. } if init == stmt))
+                    || matches!(bound.parent_of_stmt(stmt), Parent::Stmt(parent) if parent.is_some() && matches!(hir[parent].kind, StmtKind::For { init, .. } if init == stmt))
                 {
                     return TypeId::SYMBOL;
                 }

@@ -100,7 +100,7 @@ impl Checker<'_, '_> {
             return 0;
         }
         // The head of a `for` is in that statement.
-        if let Parent::Stmt(around) = bound.stmt_parent[statement.idx()]
+        if let Parent::Stmt(around) = bound.parent_of_stmt(statement)
             && matches!(
                 hir[around].kind,
                 StmtKind::For { .. } | StmtKind::ForIn { .. } | StmtKind::ForOf { .. }

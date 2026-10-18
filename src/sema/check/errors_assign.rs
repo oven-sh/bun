@@ -127,7 +127,7 @@ impl Checker<'_, '_> {
         }
         // `{ a = 1 }` that is not an assignment target (1312): `checkObjectLiteral` checks the
         // initializer and not the name.
-        let parent = bound.expr_parent[assignment.idx()];
+        let parent = bound.parent_of_expr(assignment);
         if matches!(parent, Parent::Prop(p) if hir[p].kind == PropKind::Shorthand) {
             return;
         }
@@ -181,10 +181,10 @@ impl Checker<'_, '_> {
                 return false;
             }
             let is_pattern = node != e;
-            node = match bound.expr_parent[node.idx()] {
+            node = match bound.parent_of_expr(node) {
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Array(_) => parent,
-                    ExprKind::Spread(_) if is_pattern => match bound.expr_parent[parent.idx()] {
+                    ExprKind::Spread(_) if is_pattern => match bound.parent_of_expr(parent) {
                         Parent::Expr(array)
                             if array.is_some() && matches!(hir[array].kind, ExprKind::Array(_)) =>
                         {
@@ -211,7 +211,7 @@ impl Checker<'_, '_> {
                 }
                 // `checkForOfStatement`
                 Parent::Stmt(head) if is_pattern && head.is_some() => {
-                    return matches!(bound.stmt_parent[head.idx()], Parent::Stmt(owner) if owner.is_some()
+                    return matches!(bound.parent_of_stmt(head), Parent::Stmt(owner) if owner.is_some()
                         && matches!(hir[owner].kind, StmtKind::ForOf { left, .. } if left == head));
                 }
                 _ => return false,
@@ -261,7 +261,7 @@ impl Checker<'_, '_> {
         // initializer, except in a `for`-`of`, where it is the type of the elements.
         if decl.ty.is_none()
             && !is_quick_type_of_signature
-            && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(p) if p.is_some() && matches!(hir[p].kind, StmtKind::ForOf { left, .. } if left == stmt))
+            && !matches!(bound.parent_of_stmt(stmt), Parent::Stmt(p) if p.is_some() && matches!(hir[p].kind, StmtKind::ForOf { left, .. } if left == stmt))
         {
             return;
         }
@@ -281,7 +281,7 @@ impl Checker<'_, '_> {
             PatKind::Ident(name)
                 if decl.kind == VarKind::Const
                     && matches!(hir[stmt].kind, StmtKind::Var(_))
-                    && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(p) if p.is_some() && matches!(hir[p].kind, StmtKind::For { init, .. } if init == stmt))
+                    && !matches!(bound.parent_of_stmt(stmt), Parent::Stmt(p) if p.is_some() && matches!(hir[p].kind, StmtKind::For { init, .. } if init == stmt))
                     && self.is_symbol_or_symbol_for_call(file, decl.init) =>
             {
                 self.unique_symbol_of_variable(file, decl.pat, name)

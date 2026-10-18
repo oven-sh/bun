@@ -235,24 +235,6 @@ impl Checker<'_, '_> {
             && !module.is_from_external_library
     }
 
-    /// `markJsxAliasReferenced`, as `MarkLinkedReferencesRecursively` calls it for every tag of the
-    /// file, a node before its children: `getJsxNamespaceContainerForImplicitImport` reports a
-    /// module that is missing at the first one, which is returned.
-    pub(super) fn first_jsx_alias_referenced(&mut self, file: FileId) -> Option<ExprId> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // `importElisionEnabled`
-        if !self.emits_first()
-            || !self.emits_js_file(file)
-            || self.p.files.options.verbatim_module_syntax
-        {
-            return None;
-        }
-        let index = self.exprs_by_kind(file);
-        let tags = index.of(ExprTag::Jsx).iter().copied();
-        tags.filter(|e| !bound.is_unchecked(e.idx()))
-            .min_by_key(|&e| hir[e].pos)
-    }
-
     /// `markPropertyAliasReferenced`, as `MarkLinkedReferencesRecursively` calls it for every `a.b`
     /// of the file: `checkExpressionCached(a)`, before `ConstEnumInliningTransformer` checks any
     /// access.
@@ -369,7 +351,7 @@ impl Checker<'_, '_> {
         accesses.shared_sort_by_key(|&e| (self.start_of(file, e), std::cmp::Reverse(e)));
         for e in accesses {
             let is_computed_name = matches!(
-                bound.expr_parent[e.idx()],
+                bound.parent_of_expr(e),
                 Parent::PropKey(..)
                     | Parent::PatKey(_)
                     | Parent::MemberKey(_)
@@ -815,7 +797,7 @@ impl Checker<'_, '_> {
                 continue;
             };
             // `checkExportAssignment`: a name that is not a value is not checked as an expression.
-            let is_checked = match bound.expr_parent[e.idx()] {
+            let is_checked = match bound.parent_of_expr(e) {
                 Parent::None => false,
                 Parent::Stmt(s) if s.is_some() => {
                     is_parenthesized(hir, e)

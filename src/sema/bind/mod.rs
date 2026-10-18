@@ -578,41 +578,125 @@ pub enum AssignmentKind {
     Compound,
 }
 
-/// The direct parent of an expression or a statement.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Parent {
-    None,
-    Expr(ExprId),
-    Stmt(StmtId),
-    VarInit(VarDeclId),
-    ParamDefault(ParamId),
-    PatPropDefault(PatPropId),
-    PatElemDefault(PatElemId),
-    /// The value of a property of an object literal or of a JSX attribute.
-    Prop(PropId),
-    /// The computed name of a property of the object literal that is neither a method nor an
-    /// accessor.
-    PropKey(ExprId, PropId),
-    /// The computed name of a binding element.
-    PatKey(PatPropId),
-    /// The computed name of a member of a class, an interface or a type literal: for control flow,
-    /// it is inside the member.
-    MemberKey(MemberId),
-    /// The computed name of a method or an accessor of an object literal: the same.
-    MethodKey(PropId),
-    /// The initializer of a member. Also the operand of a `typeof` in the type or the initializer of a property of a class, if
-    /// there is no function in between.
-    MemberInit(MemberId),
-    /// The expression body of an arrow function, or a statement of a body.
-    FnBody(FnId),
-    EnumInit(EnumMemberId),
-    Case(CaseId),
-    ClassExtends(ClassId),
-    /// A decorator of the class, of one of its members or of a parameter of a member: evaluated at
-    /// the position of the class.
-    Decorator(ClassId, DecoratorOwner),
-    Module(ModuleId),
-    File,
+/// Declares an enum whose variants have one id or nothing, and the same in 32 bits. The first variant is all zeros.
+///
+/// An id has 27 of the bits. A file has fewer than 2^26 nodes (`File::node_bases`), and `NONE` stays `NONE`.
+macro_rules! packed {
+    (
+        $(#[$doc:meta])* $name:ident, $(#[$packed_doc:meta])* $packed:ident {
+            $none:ident,
+            $($(#[$unit_doc:meta])* $unit:ident,)*
+            ;
+            $($(#[$variant_doc:meta])* $variant:ident($id:ident),)*
+        }
+    ) => {
+        $(#[$doc])*
+        #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+        pub enum $name {
+            $none,
+            $($(#[$unit_doc])* $unit,)*
+            $($(#[$variant_doc])* $variant($id),)*
+        }
+
+        $(#[$packed_doc])*
+        #[derive(Copy, Clone, PartialEq, Eq, Default)]
+        pub struct $packed(u32);
+
+        const _: () = {
+            #[repr(u32)]
+            enum Tag { $none, $($unit,)* $($variant,)* }
+            const TAG_BITS: u32 = 5;
+            const _: () = assert!([Tag::$none, $(Tag::$unit,)* $(Tag::$variant,)*].len() <= 1 << TAG_BITS);
+
+            impl From<$name> for $packed {
+                #[inline]
+                fn from(it: $name) -> $packed {
+                    match it {
+                        $name::$none => $packed(Tag::$none as u32),
+                        $($name::$unit => $packed(Tag::$unit as u32),)*
+                        $($name::$variant(id) => $packed(id.0 << TAG_BITS | Tag::$variant as u32),)*
+                    }
+                }
+            }
+
+            impl $packed {
+                #[inline]
+                pub fn get(self) -> $name {
+                    let tag = self.0 & ((1 << TAG_BITS) - 1);
+                    // The sign is copied into the upper bits.
+                    let id = (self.0.cast_signed() >> TAG_BITS).cast_unsigned();
+                    $(if tag == Tag::$variant as u32 {
+                        return $name::$variant($id(id));
+                    })*
+                    $(if tag == Tag::$unit as u32 {
+                        return $name::$unit;
+                    })*
+                    $name::$none
+                }
+            }
+        };
+
+        impl std::fmt::Debug for $packed {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.get().fmt(f)
+            }
+        }
+    };
+}
+
+packed! {
+    /// The direct parent of an expression or a statement.
+    Parent,
+    /// A `Parent` in a list.
+    PackedParent {
+        None,
+        File,
+        ;
+        Expr(ExprId),
+        Stmt(StmtId),
+        VarInit(VarDeclId),
+        ParamDefault(ParamId),
+        PatPropDefault(PatPropId),
+        PatElemDefault(PatElemId),
+        /// The value of a property of an object literal or of a JSX attribute.
+        Prop(PropId),
+        /// The computed name of a property of an object literal that is neither a method nor an
+        /// accessor.
+        PropKey(PropId),
+        /// The computed name of a binding element.
+        PatKey(PatPropId),
+        /// The computed name of a member of a class, an interface or a type literal: for control flow,
+        /// it is inside the member.
+        MemberKey(MemberId),
+        /// The computed name of a method or an accessor of an object literal: the same.
+        MethodKey(PropId),
+        /// The initializer of a member. Also the operand of a `typeof` in the type or the initializer of a property of a class, if
+        /// there is no function in between.
+        MemberInit(MemberId),
+        /// The expression body of an arrow function, or a statement of a body.
+        FnBody(FnId),
+        EnumInit(EnumMemberId),
+        Case(CaseId),
+        ClassExtends(ClassId),
+        /// A decorator of the class: evaluated at the position of the class, as are the next two.
+        ClassDecorator(ClassId),
+        /// A decorator of a member of a class.
+        MemberDecorator(MemberId),
+        /// A decorator of a parameter of a member of a class.
+        ParamDecorator(ParamId),
+        Module(ModuleId),
+    }
+}
+
+impl From<DecoratorOwner> for Parent {
+    #[inline]
+    fn from(decorated: DecoratorOwner) -> Parent {
+        match decorated {
+            DecoratorOwner::Class(c) => Parent::ClassDecorator(c),
+            DecoratorOwner::Member(m) => Parent::MemberDecorator(m),
+            DecoratorOwner::Param(p) => Parent::ParamDecorator(p),
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1179,12 +1263,12 @@ pub struct BoundIn<S: Storage> {
     /// `node.Symbol` of a `Decl::Expando` and of an object literal, where `NONE` means that it has
     /// not been created: see `symbol_of_expando_initializer`.
     pub expr_symbol: S::List<SymbolId>,
-    pub expr_parent: S::List<Parent>,
+    pub expr_parent: S::List<PackedParent>,
     /// The flow node at a name, a `this`, a `super`, and a narrowable `a.b` or `a[b]`
     /// (`isNarrowableReference`).
     /// `UNREACHABLE` for everything else.
     pub expr_flow: S::List<FlowId>,
-    pub stmt_parent: S::List<Parent>,
+    pub stmt_parent: S::List<PackedParent>,
     /// The enclosing scope of a statement.
     pub stmt_scope: S::List<ScopeId>,
     /// The enclosing scope of a type.
@@ -1411,6 +1495,37 @@ impl<S: Storage> BoundIn<S> {
         }
     }
 
+    /// `Parent::None` for what is not an expression of the file.
+    #[inline]
+    pub fn parent_of_expr(&self, e: ExprId) -> Parent {
+        let parent = self.expr_parent.get(e.idx()).copied();
+        parent.unwrap_or_default().get()
+    }
+
+    /// The same for a statement.
+    #[inline]
+    pub fn parent_of_stmt(&self, s: StmtId) -> Parent {
+        let parent = self.stmt_parent.get(s.idx()).copied();
+        parent.unwrap_or_default().get()
+    }
+
+    /// The class at whose position the decorator with this parent is evaluated.
+    pub fn class_of_decorator(&self, parent: Parent) -> ClassId {
+        let member = match parent {
+            Parent::ClassDecorator(class) => return class,
+            Parent::MemberDecorator(member) => member,
+            Parent::ParamDecorator(p) => match self.fns[self.param_fn[p.idx()].idx()].owner {
+                FnOwner::Member(member) => member,
+                _ => return ClassId::NONE,
+            },
+            _ => return ClassId::NONE,
+        };
+        match self.member_owner[member.idx()] {
+            MemberOwner::Class(class) => class,
+            _ => ClassId::NONE,
+        }
+    }
+
     /// The nearest scope that is more than a block: `container`, where `scope` is `blockScopeContainer`.
     pub fn container_scope(&self, mut scope: ScopeId) -> ScopeId {
         loop {
@@ -1441,7 +1556,7 @@ impl<S: Storage> BoundIn<S> {
     /// Whether the assignment `e` is what `{ name = value }` is stored as: a
     /// `ShorthandPropertyAssignment` with an `ObjectAssignmentInitializer`.
     pub fn is_shorthand_property_assignment(&self, hir: &File, e: ExprId) -> bool {
-        matches!(self.expr_parent[e.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
+        matches!(self.parent_of_expr(e), Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
     }
 
     /// `GetAssignmentTarget` and `accessKind` walk up the parents the same way, except that the
@@ -1453,7 +1568,7 @@ impl<S: Storage> BoundIn<S> {
         sees_through_spread: bool,
     ) -> Option<AssignmentTarget> {
         loop {
-            match self.expr_parent[e.idx()] {
+            match self.parent_of_expr(e) {
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Assign { target, .. } if target != e => return None,
                     // `{ name = value }` is a `ShorthandPropertyAssignment`.
@@ -1488,7 +1603,7 @@ impl<S: Storage> BoundIn<S> {
                     e = owner;
                 }
                 Parent::Stmt(s) if s.is_some() => {
-                    return target_of_for_in_or_of(hir, &self.stmt_parent, s);
+                    return target_of_for_in_or_of(hir, self.parent_of_stmt(s), s);
                 }
                 _ => return None,
             }
@@ -1612,14 +1727,10 @@ impl<S: Storage> BoundIn<S> {
     }
 }
 
-/// The end of `GetAssignmentTarget`: `s`, an expression statement, is what the head of a `for`-`in`
-/// or a `for`-`of` assigns to.
-fn target_of_for_in_or_of(
-    hir: &File,
-    stmt_parent: &[Parent],
-    s: StmtId,
-) -> Option<AssignmentTarget> {
-    matches!(stmt_parent[s.idx()], Parent::Stmt(l) if l.is_some()
+/// The end of `GetAssignmentTarget`: `s`, an expression statement in `parent`, is what the head of a
+/// `for`-`in` or a `for`-`of` assigns to.
+fn target_of_for_in_or_of(hir: &File, parent: Parent, s: StmtId) -> Option<AssignmentTarget> {
+    matches!(parent, Parent::Stmt(l) if l.is_some()
         && matches!(hir[l].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == s))
     .then_some(AssignmentTarget::ForInOrOf)
 }
@@ -1762,7 +1873,7 @@ impl Bound<'_> {
     ) -> Option<CallId> {
         if let FnOwner::Expr(e) = self.fns[f.idx()].owner
             && matches!(hir[f].kind, FnKind::Expr | FnKind::Arrow)
-            && let Parent::Expr(parent) = self.expr_parent[e.idx()]
+            && let Parent::Expr(parent) = self.parent_of_expr(e)
             && parent.is_some()
             && let ExprKind::Call(call) = hir[parent].kind
             && hir[call].callee == e
@@ -1777,7 +1888,7 @@ impl Bound<'_> {
         if is_parenthesized(hir, e) {
             return None;
         }
-        match self.expr_parent[e.idx()] {
+        match self.parent_of_expr(e) {
             // Not the attribute of a JSX element.
             Parent::Prop(p) if hir[p].kind == PropKind::Init => {
                 let owner = self.prop_owner[p.idx()];
@@ -1822,7 +1933,7 @@ impl Bound<'_> {
     /// Whether `checkSourceFile` never reaches the expression: it is unreferenced, or it is one of
     /// `unchecked_exprs`. A pass over all expressions of a file must skip it.
     pub fn is_unchecked(&self, e: usize) -> bool {
-        matches!(self.expr_parent[e], Parent::None)
+        matches!(self.parent_of_expr(ExprId(e as u32)), Parent::None)
             || self
                 .unchecked_exprs
                 .binary_search(&ExprId(e as u32))

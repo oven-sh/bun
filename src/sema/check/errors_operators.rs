@@ -274,7 +274,7 @@ pub(super) fn has_empty_object_intersection(c: &mut Checker<'_, '_>, ty: TypeId)
 /// `expressionResultIsUnused`
 fn is_result_unused(hir: &File, bound: &Bound, mut e: ExprId) -> bool {
     loop {
-        match bound.expr_parent[e.idx()] {
+        match bound.parent_of_expr(e) {
             Parent::Stmt(s) if s.is_some() => {
                 return match hir[s].kind {
                     StmtKind::Expr(_) => true,
@@ -328,7 +328,7 @@ pub(super) fn check_yield_result(c: &mut Checker<'_, '_>, file: FileId, e: ExprI
     }
     // `getContextualTypeForArgumentAtIndex`: the argument of `import()` has the contextual type
     // string.
-    if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::ImportCall { .. }))
+    if matches!(bound.parent_of_expr(e), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::ImportCall { .. }))
     {
         return;
     }

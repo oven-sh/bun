@@ -101,7 +101,7 @@ impl Checker<'_, '_> {
         }
         let (start, end) = match bound.fns[f.idx()].owner {
             FnOwner::Member(m) => (hir[m].name_pos, self.end_of_member_name(file, m)),
-            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+            FnOwner::Expr(e) => match bound.parent_of_expr(e) {
                 Parent::Prop(p) => (hir[p].pos, self.end_of_prop_name(file, p)),
                 _ => return,
             },

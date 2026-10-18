@@ -96,8 +96,8 @@ impl Moves<'_, '_> {
         let (Some(expr), Some(ty)) = (hir.exprs.get(expr.idx()), hir.types.get(ty.idx())) else {
             return;
         };
-        let is_target = match bound.expr_parent.get(id.idx()) {
-            Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
+        let is_target = match bound.parent_of_expr(id) {
+            Parent::Expr(parent) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
                 Some(ExprKind::Assign { target, .. }) => target == id,
                 Some(ExprKind::Unary { op, .. }) => matches!(
                     op,

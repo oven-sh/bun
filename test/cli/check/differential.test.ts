@@ -375,26 +375,82 @@ function modulesOfComponents(n: number) {
   return files;
 }
 
-// Without the types of react, a file gets one TS2875, or one TS2879 if it has a fragment: at the tag that its check comes
-// to first. What the check of another file has evaluated in it before does not move the error.
-for (const [jsx, code] of [
-  ["react-jsx", "TS2875"],
-  ["react", "TS2879"],
-]) {
-  test.concurrent.skipIf(!tsc)(`${code} is at the first tag that is checked, on any number of threads`, async () => {
-    using dir = tempDir("bun-check-differential", {
-      "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx } }),
-      ...modulesOfComponents(isDebug || isASAN ? 28 : 56),
-    });
-    const root = String(dir);
-    const [theirs, ...ours] = await Promise.all([
-      linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
-      ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
-    ]);
-    expect(theirs.join("\n")).toContain(code);
-    for (const lines of ours) expect(lines).toEqual(theirs);
+// Without React in scope, a file with a fragment gets one TS2879: at the fragment that its check comes to first. What the
+// check of another file has evaluated in it before does not move the error.
+test.concurrent.skipIf(!tsc)("TS2879 is at the first fragment that is checked, on any number of threads", async () => {
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "react" } }),
+    ...modulesOfComponents(isDebug || isASAN ? 28 : 56),
   });
-}
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  expect(theirs.join("\n")).toContain("TS2879");
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
+// Without the types of react, a file gets one TS2875. TypeScript 7.0 has it at the tag that a checker comes to first, which
+// depends on what else that checker has checked. TypeScript 7.1 has it at the first tag in the text, and so does
+// `bun check`. These are the places that TypeScript 7.1 reports for `modulesOfComponents(56)`, module by module.
+const firstTags = `
+  c0.tsx(1,21) c1.tsx(2,21) c2.tsx(2,21) c3.tsx(2,34) c4.tsx(3,22) c5.tsx(3,41) c6.tsx(4,13)
+  c7.tsx(5,13) c8.tsx(3,61) c9.tsx(4,30) c10.tsx(4,26) c11.tsx(4,34) c12.tsx(6,10) c13.tsx(5,13)
+  c14.tsx(4,21) c15.tsx(4,21) c16.tsx(4,21) c17.tsx(4,34) c18.tsx(5,22) c19.tsx(4,41) c20.tsx(5,13)
+  c21.tsx(6,13) c22.tsx(4,61) c23.tsx(5,30) c24.tsx(5,26) c25.tsx(4,34) c26.tsx(6,10) c27.tsx(5,13)
+  c28.tsx(4,21) c29.tsx(4,21) c30.tsx(4,21) c31.tsx(4,34) c32.tsx(5,22) c33.tsx(4,41) c34.tsx(5,13)
+  c35.tsx(6,13) c36.tsx(4,61) c37.tsx(5,30) c38.tsx(5,26) c39.tsx(4,34) c40.tsx(6,10) c41.tsx(5,13)
+  c42.tsx(4,21) c43.tsx(4,21) c44.tsx(4,21) c45.tsx(4,34) c46.tsx(5,22) c47.tsx(4,41) c48.tsx(5,13)
+  c49.tsx(6,13) c50.tsx(4,61) c51.tsx(5,30) c52.tsx(5,26) c53.tsx(4,34) c54.tsx(6,10) c55.tsx(5,13)
+`
+  .trim()
+  .split(/\s+/);
+const isAboutTheRuntime = (line: string) => line.includes("error TS2875:");
+const placesOfTheRuntimeError = (lines: string[]) => lines.filter(isAboutTheRuntime).map(line => line.split(":")[0]);
+
+test.concurrent.skipIf(!tsc)("TS2875 is at the first tag of the file, on any number of threads", async () => {
+  const modules = isDebug || isASAN ? 28 : 56;
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "react-jsx" } }),
+    ...modulesOfComponents(modules),
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  for (const lines of ours) {
+    expect(placesOfTheRuntimeError(lines).sort()).toEqual(firstTags.slice(0, modules).sort());
+    expect(lines.filter(line => !isAboutTheRuntime(line))).toEqual(theirs.filter(line => !isAboutTheRuntime(line)));
+  }
+});
+
+// The first tag counts even if nothing checks it: the second class in `extends`, the body of `with`. A file in which
+// no tag is checked has no error. The places are those of TypeScript 7.1.
+test.concurrent("TS2875 is at the first tag of the file, checked or not", async () => {
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "react-jsx" } }),
+    "deferred.tsx": `const later = () => <b />;\nexport function f() { return <i />; }\n`,
+    "fragment.tsx": `const later = () => <><b /></>;\nexport function f() { return <i />; }\n`,
+    "extends.tsx": `class A extends Object, (<a />) {}\nexport const x = <b />;\n`,
+    "extends-only.tsx": `export class A extends Object, (<a />) {}\n`,
+    "with.tsx": `declare const o: any;\nwith (o) { <a />; }\nconst x = <b />;\n`,
+    "with-only.tsx": `declare const o: any;\nwith (o) { <a />; }\n`,
+  });
+  const root = String(dir);
+  const ours = await Promise.all(
+    [1, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  );
+  for (const lines of ours) {
+    expect(placesOfTheRuntimeError(lines)).toEqual([
+      "deferred.tsx(1,21)",
+      "extends.tsx(1,26)",
+      "fragment.tsx(1,21)",
+      "with.tsx(2,12)",
+    ]);
+  }
+});
 
 // Likewise TS2354, where `tslib` is missing: here the first syntax that needs a helper is `this.#x`, which the `return`
 // in the first line leads to. The modules that import `first` ask for the same.

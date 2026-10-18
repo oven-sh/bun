@@ -294,7 +294,7 @@ impl Checker<'_, '_> {
             FnOwner::Expr(e) => e,
             _ => return None,
         };
-        match bound.expr_parent[e.idx()] {
+        match bound.parent_of_expr(e) {
             // A method or an accessor of an object literal, with a computed name.
             Parent::Prop(p)
                 if matches!(
@@ -337,7 +337,7 @@ impl Checker<'_, '_> {
             // they declare.
             if let FnOwner::Expr(e) = fn_owner {
                 // `symbolToString`: the name of the first declaration of the symbol.
-                let symbol = match bound.expr_parent[e.idx()] {
+                let symbol = match bound.parent_of_expr(e) {
                     Parent::Prop(p) => {
                         let first = self.first_declaration_of_literal_member(file, p);
                         Some(hir[first].pos)

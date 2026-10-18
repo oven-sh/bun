@@ -219,9 +219,9 @@ fn error(code: u16, at: Span, message: &str, stage: Stage) -> SyntaxError {
 fn modules<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
     let (hir, bound) = (&file.hir, &file.bound);
     for raw in hir.modules {
-        let parent = match bound.stmt_parent.get(raw.stmt.idx()) {
-            None | Some(Parent::None) => continue,
-            Some(&parent) => parent,
+        let parent = match bound.parent_of_stmt(raw.stmt) {
+            Parent::None => continue,
+            parent => parent,
         };
         let is_ambient = raw.flags.contains(Flags::AMBIENT);
         let whole = || Stmt::new(file, raw.stmt).span_without_export();
@@ -426,7 +426,7 @@ fn loop_heads<'a>(file: &'a File<'a>, has_scopes: bool, all: &mut Vec<SyntaxErro
         let Some(name) = hir.pats.get(only.pat.idx()) else {
             continue;
         };
-        if matches!(file.bound.stmt_parent.get(i), None | Some(Parent::None)) {
+        if matches!(file.bound.parent_of_stmt(hir::StmtId(i as u32)), Parent::None) {
             continue;
         }
         if only.init.is_some() {
@@ -525,8 +525,8 @@ fn nested_module_syntax<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
             },
         };
         if matches!(
-            file.bound.stmt_parent.get(i),
-            None | Some(Parent::None | Parent::File)
+            file.bound.parent_of_stmt(hir::StmtId(i as u32)),
+            Parent::None | Parent::File
         ) {
             continue;
         }

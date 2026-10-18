@@ -428,7 +428,7 @@ impl Checker<'_, '_> {
             // `ast.IsModuleBlock(n.Parent) && ast.IsGlobalScopeAugmentation(n.Parent.Parent)`
             let is_in_global_augmentation = !matches!(decl, Decl::Var(_) | Decl::Require(_))
                 && statement.is_some_and(|s| {
-                    matches!(bound.stmt_parent[s.idx()], Parent::Module(m) if hir[m].name == ModuleName::Global)
+                    matches!(bound.parent_of_stmt(s), Parent::Module(m) if hir[m].name == ModuleName::Global)
                 });
             // `getEnclosingContainer`, which starts at `n.Parent`: the container the statement is
             // in, not the scope a namespace creates.

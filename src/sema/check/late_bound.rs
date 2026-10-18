@@ -327,6 +327,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `lateBindMember`. `late_symbols` is its `lateSymbols` table: name to index in `late`.
         let mut late: Vec<LateBoundSymbol> = Vec::new();
         let mut late_symbols: Vec<(Atom, usize)> = Vec::new();
+        let mut places = crate::util::LaterPlaces::default();
         // `links.lateSymbol` of the declarations that aren't in `symbol.Declarations`.
         let mut unlisted: Vec<((FileId, Decl), u32)> = Vec::new();
         let mut bound_by_another_call = Vec::new();
@@ -347,7 +348,8 @@ impl<'p, 's> Checker<'p, 's> {
                 bound_by_another_call.push((file, declaration));
                 continue;
             }
-            let mut index = match late_symbols.iter().find(|it| it.0 == name) {
+            let known = places.find(&mut late_symbols, |it| it.0, name, computed.len());
+            let mut index = match known {
                 Some(it) => it.1,
                 None => {
                     late_symbols.push((name, late.len()));

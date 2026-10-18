@@ -432,13 +432,15 @@ test.concurrent("a throw from a 'readable' listener is an uncaughtException, inc
   proc.stdin.write("hello");
   await proc.stdin.end();
 
+  // node's order. The 'readable' for EOF is emitted from the read callback, so
+  // its throw is reported there, before the tick that emits 'end'.
   expect(await stdioResult(proc)).toEqual({
     stdout:
       JSON.stringify([
         "readable:hello",
         "uncaughtException:readable-throw-1",
-        "end",
         "uncaughtException:readable-throw-2",
+        "end",
       ]) + "\n",
     exitCode: 0,
   });

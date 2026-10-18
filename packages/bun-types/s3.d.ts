@@ -1496,7 +1496,8 @@ declare module "bun" {
      * @param name The bucket name. Defaults to the bucket of the client.
      * @param options Additional S3 options to override defaults
      * @returns A promise that resolves to `true` when the bucket exists and `false` when it does not.
-     * It rejects on any other answer, with the S3 error code, for example `AccessDenied` for the bucket of another account.
+     * It rejects on any other answer. That answer has no body, so it carries no S3 error code:
+     * the `code` is `AccessDenied` for a 403, `PermanentRedirect` for a 301, and `UnknownError` for every other status.
      *
      * @example
      * ```ts
@@ -1526,8 +1527,10 @@ declare module "bun" {
      *
      * The `region` of the request (from `options`, the client, or the
      * environment) is sent as the `LocationConstraint` of the new bucket, as
-     * the AWS SDK does. No constraint is sent for `us-east-1`, which S3
-     * refuses as a constraint, or for an endpoint that is not S3.
+     * the AWS SDK does, also to an endpoint that is not S3. No constraint is
+     * sent for `us-east-1`, which S3 refuses as a constraint, or for `auto`.
+     * When no region is set anywhere, the region comes from the endpoint: it
+     * is `auto` for an endpoint that is not S3.
      *
      * @param name The bucket name. Defaults to the bucket of the client.
      * @param options The S3 options of the request and the settings of the new bucket

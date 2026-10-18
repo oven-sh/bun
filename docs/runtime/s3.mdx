@@ -576,9 +576,13 @@ if (!(await client.bucketExists("tenant-42"))) {
 await client.deleteBucket("tenant-42");
 ```
 
-`bucketExists` resolves to `true` on success and `false` when the bucket does not exist. It rejects on any other answer, with the S3 error code, for example `AccessDenied` for the bucket of another account.
+`bucketExists` resolves to `true` on success and `false` when the bucket does not exist. It rejects on any other answer. The answer to this request has no body, so S3 cannot send an error code with it. The `code` of the error is `AccessDenied` for a 403 (for example the bucket of another account), `PermanentRedirect` for a 301 (the bucket is in another region), and `UnknownError` for every other status.
 
-`createBucket` sends the `region` of the request as the `LocationConstraint` of the new bucket, as the AWS SDK does. It sends no constraint for `us-east-1`, which S3 refuses as a constraint, or for an endpoint that is not S3. The `acl` option is sent only when the call sets it: the ACL of the client is for its objects. With `virtualHostedStyle` and an `endpoint`, the bucket is the hostname, so a `name` for another bucket throws. A name with a slash throws too.
+`createBucket` sends the `region` of the request as the `LocationConstraint` of the new bucket, as the AWS SDK does. The region is the one of the call, the client, or the environment (`S3_REGION`, `AWS_REGION`). The endpoint does not change that: an endpoint that is not S3 receives the constraint too. Bun sends no constraint when the region is `us-east-1`, which S3 refuses as a constraint, or `auto`. When no region is set anywhere, Bun takes it from the endpoint, and that is `auto` for an endpoint that is not S3.
+
+The `acl` option is sent only when the call sets it: the ACL of the client is for its objects. With `virtualHostedStyle` and an `endpoint`, the bucket is the hostname, so a `name` for another bucket throws. A name with a slash throws too.
+
+If the connection is lost before the answer arrives, Bun can send the request again. A `createBucket` or `deleteBucket` that did its work on the first request can then reject, with `BucketAlreadyOwnedByYou` or `NoSuchBucket`.
 
 The static forms take the credentials as the second argument: `S3Client.bucketExists(name, credentials)`, `S3Client.createBucket(name, credentials)`, and `S3Client.deleteBucket(name, credentials)`.
 

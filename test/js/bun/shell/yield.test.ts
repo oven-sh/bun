@@ -334,7 +334,8 @@ describe("yield", async () => {
         // after `kill(pid, 0)` stops finding the process.
         const pidFile = join(String(dir), "pid");
         const writePid = `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 100_000)`;
-        const waitForPid = `while (!require("fs").existsSync(${JSON.stringify(pidFile)})) Bun.sleepSync(5); process.stdout.write("--version")`;
+        // For its content: the file is there before the pid is in it.
+        const waitForPid = `const pid = () => { try { return require("fs").readFileSync(${JSON.stringify(pidFile)}, "utf8"); } catch { return ""; } }; while (!pid()) Bun.sleepSync(5); process.stdout.write("--version")`;
         expect(
           await rejectionOf(
             $`${bun} -e ${writePid} | ${bun} $(${bun} -e ${waitForPid}) > ${new Response("r")}`.quiet(),

@@ -81,7 +81,6 @@ impl OutputFile {
 #[derive(Default, Clone, Copy)]
 pub struct BakeExtra {
     pub route: BakeRouteKind,
-    pub bake_is_runtime: bool,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]

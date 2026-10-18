@@ -170,7 +170,8 @@ pub(crate) fn convert_stmts_for_chunk(
 
                     // Is this export star evaluated at run time?
                     if !record.source_index.is_valid()
-                        && c.options.output_format.keep_es6_import_export_syntax()
+                        && c.output_format_for_target(ast.target)
+                            .keep_es6_import_export_syntax()
                     {
                         if is_module_exports_of_wrapped_file {
                             stmts.append(
@@ -210,7 +211,7 @@ pub(crate) fn convert_stmts_for_chunk(
                             );
 
                             // Prefix this module with "__reExport(exports, ns, module.exports)"
-                            let export_star_ref = c.runtime_function(b"__reExport");
+                            let export_star_ref = c.runtime_function(source_index, b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
                             let mut args: Vec<Expr> = Vec::with_capacity(args_len);
                             args.push(Expr::init(
@@ -350,7 +351,7 @@ pub(crate) fn convert_stmts_for_chunk(
                             };
 
                             // Prefix this module with "__reExport(exports, require(path), module.exports)"
-                            let export_star_ref = c.runtime_function(b"__reExport");
+                            let export_star_ref = c.runtime_function(source_index, b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
                             let mut args: Vec<Expr> = Vec::with_capacity(args_len);
                             args.push(Expr::init(

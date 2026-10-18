@@ -54,7 +54,10 @@ fn module_preload_registration(
     {
         return Ok(code);
     }
-    let chunks_ref = c.graph.symbols.follow(c.chunks_runtime_ref);
+    let chunks_ref = c
+        .graph
+        .symbols
+        .follow(c.runtime_refs(chunk.entry_point.source_index()).chunks);
 
     // `reached[i]` gets local index `i`; sites and `seen` use the stable `id()`.
     let reached = Chunk::reachable_chunks(
@@ -133,9 +136,11 @@ pub(crate) fn post_process_js_chunk(
     let mut cross_chunk_prefix: PrintResult;
     let mut cross_chunk_suffix: PrintResult;
 
-    let runtime_input_file =
-        c.graph.files.items_input_file()[Index::RUNTIME.value() as usize].get() as usize;
-    let runtime_scope: &mut Scope = &mut c.graph.ast.items_module_scope_mut()[runtime_input_file];
+    let entry_source_index = chunk.entry_point.source_index();
+    let runtime_index = c.graph.runtime_index(entry_source_index);
+    let entry_output_format = c.output_format_for(entry_source_index);
+    let runtime_scope: &mut Scope =
+        &mut c.graph.ast.items_module_scope_mut()[runtime_index.value() as usize];
     let runtime_members = &mut runtime_scope.members;
     let to_common_js_ref = c
         .graph
@@ -145,7 +150,7 @@ pub(crate) fn post_process_js_chunk(
         .graph
         .symbols
         .follow(runtime_members.get(&b"__toESM"[..]).unwrap().ref_);
-    let runtime_require_ref = if c.options.output_format == options::OutputFormat::Cjs {
+    let runtime_require_ref = if entry_output_format == options::OutputFormat::Cjs {
         None
     } else {
         Some(
@@ -491,12 +496,12 @@ pub(crate) fn post_process_js_chunk(
     // Right after the runtime (which declares `__chunks`) if it is in this chunk, else first.
     let preload_registration_index = compile_results
         .iter()
-        .take_while(|r| r.source_index() == Index::RUNTIME.value())
+        .take_while(|r| c.graph.is_runtime(r.source_index()))
         .count();
     if c.options.output_format == options::OutputFormat::InternalBakeDev {
         for compile_result in compile_results.iter() {
             let source_index = compile_result.source_index();
-            if source_index != Index::RUNTIME.value() {
+            if !c.graph.is_runtime(source_index) {
                 break;
             }
             line_offset.advance(compile_result.code());
@@ -540,7 +545,7 @@ pub(crate) fn post_process_js_chunk(
     }
 
     // Concatenate the generated JavaScript chunks together
-    let mut prev_filename_comment: IndexInt = 0;
+    let mut prev_filename_comment: IndexInt = Index::INVALID.value();
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
         MultiArrayList::default();
@@ -555,7 +560,7 @@ pub(crate) fn post_process_js_chunk(
     let targets: &[options::Target] = c.parse_graph().ast.items_target();
     for (compile_result_index, compile_result) in compile_results.iter().enumerate() {
         let source_index = compile_result.source_index();
-        let is_runtime = source_index == Index::RUNTIME.value();
+        let is_runtime = c.graph.is_runtime(source_index);
 
         if compile_result_index == preload_registration_index && !preload_registration.is_empty() {
             newline_before_comment = true;
@@ -565,8 +570,10 @@ pub(crate) fn post_process_js_chunk(
 
         // TODO: extracated legal comments
 
-        // Add a comment with the file path before the file contents
+        // Add a comment with the file path before the file contents. The
+        // runtime helpers get none.
         if show_comments
+            && !is_runtime
             && source_index != prev_filename_comment
             && !compile_result.code().is_empty()
         {

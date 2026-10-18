@@ -71,7 +71,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // - one part range per file
     if c.options.output_format == OutputFormat::InternalBakeDev {
         'brk: {
-            if part_range.source_index.is_runtime() {
+            if c.graph.is_runtime(part_range.source_index.get()) {
                 debug_assert!(c.dev_server.is_none());
                 break 'brk; // this is from `bun build --format=internal_bake_dev`
             }
@@ -608,7 +608,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     E::Call {
                         target: Expr::init(
                             E::Identifier {
-                                ref_: c.cjs_runtime_ref,
+                                ref_: c.runtime_refs(part_range.source_index.get()).cjs,
                                 ..Default::default()
                             },
                             bun_ast::Loc::EMPTY,
@@ -875,7 +875,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     // "var init_foo = __esm(...);"
                     let value = Expr::init(
                         E::Call {
-                            target: Expr::init_identifier(c.esm_runtime_ref, bun_ast::Loc::EMPTY),
+                            target: Expr::init_identifier(
+                                c.runtime_refs(part_range.source_index.get()).esm,
+                                bun_ast::Loc::EMPTY,
+                            ),
                             args: Vec::move_from_list(esm_args),
                             ..Default::default()
                         },

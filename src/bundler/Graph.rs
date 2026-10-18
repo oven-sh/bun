@@ -91,6 +91,14 @@ pub struct Graph<'a> {
     ///
     /// Helps skip a loop.
     pub(crate) has_any_secondary_paths: bool,
+
+    /// The `bun:runtime` module of the browser side of a server-side build
+    /// (HTML imports, server components). `Index::INVALID` when the build has
+    /// no browser side. The main runtime at `Index::RUNTIME` is the variant for
+    /// `transpiler.options.target`; browser code needs the browser variant (the
+    /// guarded `__require` shim, `__using` without native `Symbol.dispose`,
+    /// `__preload`).
+    pub(crate) browser_runtime: Index,
 }
 
 #[derive(Default)]
@@ -179,6 +187,7 @@ impl<'a> Graph<'a> {
             kit_referenced_server_data: false,
             kit_referenced_client_data: false,
             has_any_secondary_paths: false,
+            browser_runtime: Index::INVALID,
         }
     }
 }

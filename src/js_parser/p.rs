@@ -897,12 +897,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) const ALLOW_MACROS: bool = !cfg!(target_family = "wasm");
 
-    /// use this instead of checking p.source.index
-    /// because when not bundling, p.source.index is `0`
+    /// Whether this source is a `bun:runtime` module. Do not check
+    /// `p.source.index`: when not bundling it is `0`, and a server-side build
+    /// with a browser side has a second runtime at a later index. The bundler
+    /// clears `allow_runtime` for exactly the runtime sources.
     #[inline]
     pub(crate) fn is_source_runtime(&self) -> bool {
-        // Index 0 is the synthetic runtime chunk.
-        self.options.bundle && self.source.index.0 == 0
+        self.options.bundle && !self.options.features.allow_runtime
     }
 
     /// Extracts a matchable "shape" from a dynamic import argument.

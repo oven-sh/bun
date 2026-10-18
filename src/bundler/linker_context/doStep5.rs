@@ -693,11 +693,14 @@ impl LinkerContext<'_> {
         let mut export_ref = Ref::NONE;
         if !properties.is_empty() {
             let is_lifted = lifted_setter_param.is_valid();
-            export_ref = self.runtime_function(if is_lifted {
-                b"__exportCjs"
-            } else {
-                self.export_runtime_function()
-            });
+            export_ref = self.runtime_function(
+                id,
+                if is_lifted {
+                    b"__exportCjs"
+                } else {
+                    self.export_runtime_function()
+                },
+            );
             // `bumpalo::Vec` → `Vec` via the global heap;
             // `G::PropertyList` is `Vec<Property>` and currently has no
             // arena-backed `move_from_list`, so re-own.
@@ -749,11 +752,12 @@ impl LinkerContext<'_> {
                 loc,
             ));
             // Make sure this file depends on the "__export" symbol
-            let parts = self.top_level_symbols_to_parts_for_runtime(export_ref);
+            let runtime = self.graph.runtime_index(id);
+            let parts = self.top_level_symbols_to_parts_for_runtime(runtime, export_ref);
             ns_export_dependencies.ensure_unused_capacity(parts.len());
             for &part_index in parts {
                 ns_export_dependencies.append_assume_capacity(Dependency {
-                    source_index: bun_ast::Index::RUNTIME,
+                    source_index: runtime,
                     part_index,
                 });
             }
@@ -770,7 +774,7 @@ impl LinkerContext<'_> {
         // This stays the last statement of the part: `generate_code_for_file_in_chunk_js`
         // drops it when another entry point's chunk prints this file.
         if force_include_exports_for_entry_point {
-            let to_common_js_ref = self.runtime_function(b"__toCommonJS");
+            let to_common_js_ref = self.runtime_function(id, b"__toCommonJS");
             emit_export_stmt!(Stmt::assign(
                 Expr::allocate(
                     arena,

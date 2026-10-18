@@ -1351,12 +1351,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             break 'brk BakeExtra::default();
                         }
 
-                        let mut extra = BakeExtra {
-                            bake_is_runtime: chunk
-                                .files_with_parts_in_chunk
-                                .contains(&Index::RUNTIME.get()),
-                            ..Default::default()
-                        };
+                        let mut extra = BakeExtra::default();
                         if output_kind == options::OutputKind::EntryPoint
                             && side == options::Side::Server
                         {

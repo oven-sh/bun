@@ -318,7 +318,8 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         .preload_entries
                         .is_set(chunk.entry_point.source_index() as usize)
                 {
-                    let chunks_ref = symbols.follow(ctx.chunks_runtime_ref);
+                    let chunks_ref =
+                        symbols.follow(ctx.runtime_refs(chunk.entry_point.source_index()).chunks);
                     let _ = chunk_meta.imports.put(chunks_ref, ()); // OOM-only Result
                 }
 

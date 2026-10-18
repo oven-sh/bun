@@ -234,6 +234,9 @@ pub struct LinkerGraph<'a> {
 
     pub(crate) code_splitting: bool,
 
+    /// See `Graph::browser_runtime`. Copied from the parse graph in `link`.
+    pub(crate) browser_runtime: Index,
+
     // This is an alias from Graph
     // it is not a clone!
     pub(crate) ast: MultiArrayList<JSAst<'a>>,
@@ -312,6 +315,7 @@ impl Default for LinkerGraph<'_> {
             // dangling sentinel (never read before assignment).
             bump: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
             code_splitting: false,
+            browser_runtime: Index::INVALID,
             ast: MultiArrayList::default(),
             meta: MultiArrayList::default(),
             reachable_files: Vec::new(),
@@ -334,8 +338,12 @@ impl Default for LinkerGraph<'_> {
 // thin forwarders for call sites that don't have a split in hand.
 // ──────────────────────────────────────────────────────────────────────────
 
-fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
-    named_exports[Index::RUNTIME.get() as usize]
+fn runtime_function(
+    named_exports: &[bundled_ast::NamedExports],
+    runtime: Index,
+    name: &[u8],
+) -> Ref {
+    named_exports[runtime.get() as usize]
         .get(name)
         .expect("runtime function must be a named export of the runtime module")
         .ref_
@@ -518,8 +526,50 @@ pub(crate) fn generate_symbol_import_and_use(
 }
 
 impl<'a> LinkerGraph<'a> {
-    pub(crate) fn runtime_function(&self, name: &[u8]) -> Ref {
-        runtime_function(self.ast.items_named_exports(), name)
+    /// Whether `source_index` is one of the `bun:runtime` modules.
+    #[inline]
+    pub(crate) fn is_runtime(&self, source_index: index::Int) -> bool {
+        source_index == Index::RUNTIME.get()
+            || (self.browser_runtime.is_valid() && source_index == self.browser_runtime.get())
+    }
+
+    /// Every `bun:runtime` module in the graph, the main one first.
+    #[inline]
+    pub(crate) fn runtimes(&self) -> impl Iterator<Item = index::Int> {
+        core::iter::once(Index::RUNTIME.get()).chain(
+            self.browser_runtime
+                .is_valid()
+                .then(|| self.browser_runtime.get()),
+        )
+    }
+
+    /// The `bun:runtime` module that the code generated for `source_index`
+    /// links against: the browser runtime for a browser-side file of a
+    /// server-side build, the main runtime otherwise. Mirrors
+    /// `BundleV2::runtime_source_index`, which resolved the file's own
+    /// `bun:wrap` import records.
+    #[inline]
+    pub(crate) fn runtime_index(&self, source_index: index::Int) -> Index {
+        self.runtime_index_for_target(self.ast.items_target()[source_index as usize])
+    }
+
+    /// See [`Self::runtime_index`].
+    #[inline]
+    pub(crate) fn runtime_index_for_target(&self, target: bun_ast::Target) -> Index {
+        if self.browser_runtime.is_valid() && target == bun_ast::Target::Browser {
+            self.browser_runtime
+        } else {
+            Index::RUNTIME
+        }
+    }
+
+    /// The symbol for the runtime export `name` that `source_index` links against.
+    pub(crate) fn runtime_function(&self, source_index: index::Int, name: &[u8]) -> Ref {
+        runtime_function(
+            self.ast.items_named_exports(),
+            self.runtime_index(source_index),
+            name,
+        )
     }
 
     /// Shared-ref view of a symbol that is known to exist (the `Ref` was
@@ -592,13 +642,14 @@ impl<'a> LinkerGraph<'a> {
             source_index
         );
 
-        let ref_ = self.runtime_function(name);
+        let runtime = self.runtime_index(source_index);
+        let ref_ = runtime_function(self.ast.items_named_exports(), runtime, name);
         self.generate_symbol_import_and_use(
             source_index,
             entry_point_part_index.get(),
             ref_,
             count,
-            Index::RUNTIME,
+            runtime,
         )
     }
 

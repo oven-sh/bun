@@ -170,6 +170,8 @@ describe("transpiler cache", () => {
     expect(!killing).toBeTrue();
 
     remover.kill(9);
+    // Its working directory is temp_dir, which Windows does not let the next test remove while it is alive.
+    await remover.exited;
 
     for (const proc of processes) {
       expect(proc.exitCode).toBe(0);

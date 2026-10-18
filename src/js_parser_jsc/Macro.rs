@@ -446,8 +446,8 @@ impl Macro {
             // build thread reads it while this thread parses. This VM's transpiler
             // loads `.env` files into its loader, so it gets a copy, owned by the VM.
             // SAFETY: `env` comes from `MacroContext.env`, the transpiler's loader,
-            // which is live for the whole build. Only readers touch it during
-            // parsing.
+            // which is live for the whole build. The bundler does not write it
+            // while parse tasks run.
             let owned_env_loader = match unsafe { env.as_ref() } {
                 Some(env) => Some(Box::new(env.clone_loaded()?)),
                 None => None,

@@ -657,12 +657,10 @@ describe("the macro VM's env loader is its own", () => {
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { stderr: stderr.replace(/\[macro\] call value\n/g, ""), exitCode, stdout };
+        return { stderr, exitCode };
       }),
     );
-    expect(results.map(r => ({ stderr: r.stderr, exitCode: r.exitCode }))).toEqual(
-      results.map(() => ({ stderr: "", exitCode: 0 })),
-    );
+    expect(results).toEqual(results.map(() => ({ stderr: "", exitCode: 0 })));
     for (let i = 0; i < builds; i++) {
       const out = await Bun.file(path.join(String(dir), `out${i}`, "entry.js")).text();
       for (let m = 0; m < macroModules; m++) {

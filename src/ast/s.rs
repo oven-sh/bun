@@ -6,7 +6,7 @@
 //! `crate::StoreSlice` doc).
 
 use crate::g as G;
-use crate::symbol::Symbol;
+use crate::symbol::{self, Symbol};
 use crate::{
     Case, Catch, ClauseItem, EnumValue, ExprNodeIndex, Finally, LocRef, Ref, StmtData,
     StmtNodeIndex, StmtNodeList, StmtOrExpr,
@@ -272,9 +272,10 @@ impl Local {
 
     /// Whether the linker may print `decl` as `var x = value` above the `__esm`
     /// wrapper of its module, so the store runs when the chunk loads and not at
-    /// the statement. No program can tell for `let`, `const` or `class`: a read
-    /// before the statement throws. A `var` and a lifted `exports.x = value`
-    /// read `undefined` there, so their store keeps its place.
+    /// the statement. No program can tell for `let`, `const`, `class` or the
+    /// value of `export default`: a read before the statement throws. A `var`
+    /// and a lifted `exports.x = value` read `undefined` there, so their store
+    /// keeps its place.
     ///
     /// `symbol_of` gives `None` when the file cannot get an `__esm` wrapper.
     pub fn value_can_leave_esm_wrapper<'s>(
@@ -287,7 +288,9 @@ impl Local {
             return false;
         };
         !self.origin.is_commonjs_export()
-            && !symbol_of(id.get().r#ref).is_some_and(|symbol| symbol.kind.is_hoisted_or_function())
+            // The kind of a `var` only, not of a function's name: the linker turns
+            // `export default (function f() {})` into a local that binds `f`.
+            && symbol_of(id.get().r#ref).is_none_or(|bound| bound.kind != symbol::Kind::Hoisted)
             && decl.value.is_some_and(|value| value.can_be_moved())
     }
 }

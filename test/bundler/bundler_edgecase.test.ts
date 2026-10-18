@@ -2951,7 +2951,7 @@ describe("bundler", () => {
   // A `var` reads `undefined` before its statement and can be declared twice,
   // so its store has a place in the module. For a module wrapped in `__esm`
   // only the name goes outside the closure. Each expected output below is
-  // what node prints for the source files.
+  // what node prints for the same modules.
   {
     const modules = {
       "/twice.mjs": `var mode = "dev"; console.log("twice", mode); var mode = "prod"; console.log("twice", mode); export { mode };`,
@@ -3003,6 +3003,7 @@ describe("bundler", () => {
         require("./twice.mjs");
         require("./loops.mjs");
         require("./folded.mjs");
+        require("./block.mjs");
       `,
       "/assign.mjs": `x = 5; var x = 1; console.log("assign", x); export { x };`,
       "/setup.mjs": `
@@ -3035,13 +3036,77 @@ describe("bundler", () => {
         var label = "a" + "b";
         export { cached, limit, label };
       `,
+      "/block.mjs": `
+        if (globalThis) { var mode = "block"; }
+        var mode = "top";
+        console.log("block", mode, read());
+        function read() { return mode; }
+        export { mode };
+      `,
     },
     minifySyntax: true,
     run: {
       stdout:
-        "assign 1\nsetup false\nfunction a b\narrow a b\nclass a b\nfirst0 first1 second0 second1\nfolded undefined undefined undefined",
+        "assign 1\nsetup false\nfunction a b\narrow a b\nclass a b\nfirst0 first1 second0 second1\nfolded undefined undefined undefined\nblock top top",
     },
   });
+  // The earlier store can also sit in a body without braces, and the `var` in
+  // a `for` head without an initializer. Each value is what node gives. The
+  // first test of each pair reads the variable in the module body.
+  {
+    const cases: Record<string, [body: string, value: string]> = {
+      ifBody: [`if (globalThis) var x = 1; var x = 2;`, `x`],
+      elseBody: [`if (!globalThis) {} else var x = 1; var x = 2;`, `x`],
+      whileBody: [`var n = 1; while (n--) var x = 1; var x = 2;`, `x`],
+      doBody: [`do var x = 1; while (0); var x = 2;`, `x`],
+      exported: [`if (globalThis) var x = 1; export var x = 2;`, `x`],
+      twoNames: [`if (globalThis) var x = 1; var x = 2, y = 3; var y = 4;`, `[x, y]`],
+      forHead: [`for (var i; !i;) i = 1; var i = 0;`, `i`],
+      readFirst: [`globalThis.seen = typeof x; var x = 2; if (globalThis) var x = 1;`, `globalThis.seen`],
+    };
+    const stdout = JSON.stringify({
+      ifBody: 2,
+      elseBody: 2,
+      whileBody: 2,
+      doBody: 2,
+      exported: 2,
+      twoNames: [2, 4],
+      forHead: 0,
+      readFirst: "undefined",
+    });
+    const files = (read: "inBody" | "read()") => ({
+      "/entry.mjs":
+        "const out = {};\n" +
+        Object.keys(cases)
+          .map(name => `out.${name} = (await import("./${name}.mjs")).${read};`)
+          .join("\n") +
+        "\nconsole.log(JSON.stringify(out));",
+      ...Object.fromEntries(
+        Object.entries(cases).map(([name, [body, value]]) => [
+          `/${name}.mjs`,
+          `${body} export const inBody = ${value}; export function read() { return ${value}; }`,
+        ]),
+      ),
+    });
+    for (const minifySyntax of [false, true]) {
+      const suffix = minifySyntax ? "MinifySyntax" : "";
+      itBundled(`edgecase/EsmWrapVarStoreAfterBracelessBody${suffix}`, {
+        files: files("inBody"),
+        minifySyntax,
+        run: { stdout },
+      });
+      // The second test reads it from outside. It is a todo until #45705: a `var`
+      // in a body without braces is a second variable inside the closure, and the
+      // stores inside the closure write that one. `read()` then gives `undefined`
+      // for each `x` and `i`.
+      itBundled(`edgecase/EsmWrapVarStoreAfterBracelessBodyReadFromOutside${suffix}`, {
+        todo: true,
+        files: files("read()"),
+        minifySyntax,
+        run: { stdout },
+      });
+    }
+  }
   itBundled("edgecase/EsmWrapVarReadThroughCycle", {
     files: {
       "/entry.cjs": `
@@ -3127,20 +3192,26 @@ describe("bundler", () => {
     },
     run: { stdout: "lib undefined\nmid 1" },
   });
-  // A script: here a function and a `var` can share a name.
+  // A script: here a function and a `var` can share a name, in either order.
   itBundled("edgecase/EsmWrapVarMergedWithFunction", {
     files: {
-      "/entry.cjs": `require("./script.js");`,
-      "/script.js": `
+      "/entry.cjs": `require("./function-first.js"); require("./var-first.js");`,
+      "/function-first.js": `
         console.log("before", typeof f);
         function f() { return 1; }
         var f = 2;
         console.log("after", typeof f);
       `,
+      "/var-first.js": `
+        console.log("before", typeof f);
+        var f = 2;
+        function f() { return 1; }
+        console.log("after", typeof f);
+      `,
     },
     format: "cjs",
     outfile: "/out.cjs",
-    run: { stdout: "before function\nafter number" },
+    run: { stdout: "before function\nafter number\nbefore function\nafter number" },
   });
   // A read of `let`, `const` or `class` before its statement throws in the
   // source, so those values still leave the closure, and a module that holds
@@ -3159,6 +3230,37 @@ describe("bundler", () => {
       `,
     },
     run: { stdout: "123 123 123 123" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("init_");
+    },
+  });
+  // The binding of `export default` is not a `var` either, whichever symbol
+  // holds it: a named function expression binds its own name.
+  itBundled("edgecase/EsmWrapDefaultExportValueNeedsNoWrapper", {
+    files: {
+      "/entry.js": `
+        const fn = await import("./fn.js");
+        const asyncFn = await import("./async-fn.js");
+        const generator = await import("./generator.js");
+        const cls = await import("./class.js");
+        const arrow = await import("./arrow.js");
+        console.log(
+          fn.default(),
+          await asyncFn.default(),
+          generator.default().next().value,
+          new cls.default().name(),
+          arrow.default(),
+          require("./required.js").default(),
+        );
+      `,
+      "/fn.js": `export default (function foo() { return "fn"; });`,
+      "/async-fn.js": `export default (async function foo() { return "asyncFn"; });`,
+      "/generator.js": `export default (function* foo() { yield "generator"; });`,
+      "/class.js": `export default (class Foo { name() { return "class"; } });`,
+      "/arrow.js": `export default () => "arrow";`,
+      "/required.js": `export default (function foo() { return "required"; });`,
+    },
+    run: { stdout: "fn asyncFn generator class arrow required" },
     onAfterBundle(api) {
       api.expectFile("/out.js").not.toContain("init_");
     },

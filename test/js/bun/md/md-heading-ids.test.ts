@@ -91,6 +91,102 @@ describe("autolinkHeadings option", () => {
     expect(result).toBe('<h2 id="hello-world"><a href="#hello-world">Hello <strong>World</strong></a></h2>\n');
   });
 
+  // HTML has no link in a link. The heading keeps its id, and its content is what `headings: { ids: true }` gives.
+  test.each([
+    [
+      "an inline link",
+      "## See [the docs](https://example.com/a)\n",
+      '<h2 id="see-the-docs">See <a href="https://example.com/a">the docs</a></h2>\n',
+    ],
+    [
+      "a reference link",
+      "## See [the docs][d]\n\n[d]: https://example.com/a\n",
+      '<h2 id="see-the-docs">See <a href="https://example.com/a">the docs</a></h2>\n',
+    ],
+    [
+      "an autolink",
+      "## See <https://example.com/a>\n",
+      '<h2 id="see-httpsexamplecoma">See <a href="https://example.com/a">https://example.com/a</a></h2>\n',
+    ],
+    [
+      "a www autolink",
+      "## Visit www.example.com now\n",
+      '<h2 id="visit-wwwexamplecom-now">Visit <a href="http://www.example.com">www.example.com</a> now</h2>\n',
+    ],
+    [
+      "an email autolink",
+      "## Mail me@example.com\n",
+      '<h2 id="mail-meexamplecom">Mail <a href="mailto:me@example.com">me@example.com</a></h2>\n',
+    ],
+    [
+      "an <a> tag",
+      '## See <a href="https://example.com/a">the docs</a>\n',
+      '<h2 id="see-the-docs">See <a href="https://example.com/a">the docs</a></h2>\n',
+    ],
+    [
+      "an <A> tag on two lines",
+      'See <A\nHREF="https://example.com/a">the docs</A>\n===\n',
+      '<h1 id="see-the-docs">See <A\nHREF="https://example.com/a">the docs</A></h1>\n',
+    ],
+    [
+      "a link in emphasis",
+      "## **bold [link](https://example.com/a) more** tail\n",
+      '<h2 id="bold-link-more-tail"><strong>bold <a href="https://example.com/a">link</a> more</strong> tail</h2>\n',
+    ],
+    [
+      "a link and nothing else",
+      "## [the docs](https://example.com/a)\n",
+      '<h2 id="the-docs"><a href="https://example.com/a">the docs</a></h2>\n',
+    ],
+    [
+      "a linked image",
+      "## [![alt](a.png)](https://example.com/a)\n",
+      '<h2 id="alt"><a href="https://example.com/a"><img src="a.png" alt="alt" /></a></h2>\n',
+    ],
+    [
+      "a link, in a setext heading",
+      "See [the docs](https://example.com/a)\n===\n",
+      '<h1 id="see-the-docs">See <a href="https://example.com/a">the docs</a></h1>\n',
+    ],
+  ])("a heading with %s gets no link to itself", (_, md, html) => {
+    expect(Markdown.html(md, { headings: true, autolinks: true })).toBe(html);
+  });
+
+  test.each([
+    [
+      "an image",
+      "## ![alt](a.png) pic\n",
+      '<h2 id="alt-pic"><a href="#alt-pic"><img src="a.png" alt="alt" /> pic</a></h2>\n',
+    ],
+    [
+      "a link in the text of an image",
+      "## ![a [b](https://example.com/a) c](i.png)\n",
+      '<h2 id="a-b-c"><a href="#a-b-c"><img src="i.png" alt="a b c" /></a></h2>\n',
+    ],
+    [
+      "a wiki link",
+      "## See [[Page]]\n",
+      '<h2 id="see-page"><a href="#see-page">See <x-wikilink data-target="Page">Page</x-wikilink></a></h2>\n',
+    ],
+    [
+      "an <abbr> tag",
+      '## The <abbr title="x">API</abbr>\n',
+      '<h2 id="the-api"><a href="#the-api">The <abbr title="x">API</abbr></a></h2>\n',
+    ],
+    [
+      "a link before it",
+      "[x](https://example.com/a)\n\n## Title\n",
+      '<p><a href="https://example.com/a">x</a></p>\n<h2 id="title"><a href="#title">Title</a></h2>\n',
+    ],
+    [
+      "a heading with a link before it",
+      "## [a](https://example.com/a)\n\n## b\n",
+      '<h2 id="a"><a href="https://example.com/a">a</a></h2>\n<h2 id="b"><a href="#b">b</a></h2>\n',
+    ],
+  ])("a heading with %s keeps the link to itself", (_, md, html) => {
+    expect(Markdown.html(md, { headings: true, wikiLinks: true })).toBe(html);
+  });
+
   test("autolink with deduplication", () => {
     const md = "## Foo\n\n## Foo\n";
     const result = Markdown.html(md, { headings: true });

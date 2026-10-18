@@ -25,6 +25,8 @@ pub(crate) struct HtmlRenderer<'src> {
     pub saved_img_title: Box<[u8]>,
     pub tag_filter: bool,
     pub autolink_headings: bool,
+    /// The heading in `heading_buf` has a link of its own. HTML has no link in a link.
+    pub heading_has_link: bool,
     pub heading_buf: Vec<u8>,
     pub heading_tracker: helpers::HeadingIdTracker,
 }
@@ -41,6 +43,7 @@ impl<'src> HtmlRenderer<'src> {
             saved_img_title: Box::default(),
             tag_filter: render_opts.tag_filter,
             autolink_headings: render_opts.autolink_headings,
+            heading_has_link: false,
             heading_buf: Vec::new(),
             heading_tracker: helpers::HeadingIdTracker::init(render_opts.heading_ids),
         }
@@ -197,14 +200,15 @@ impl<'src> HtmlRenderer<'src> {
                     self.out.write(b" id=\"");
                     self.out.write(slug);
                     self.out.write(b"\">");
-                    if self.autolink_headings {
+                    let autolink = self.autolink_headings && !self.heading_has_link;
+                    if autolink {
                         self.out.write(b"<a href=\"#");
                         self.out.write(slug);
                         self.out.write(b"\">");
                     }
                     // Flush buffered heading content
                     self.out.write(self.heading_buf.as_slice());
-                    if self.autolink_headings {
+                    if autolink {
                         self.out.write(b"</a>");
                     }
                     self.out.write(match data {
@@ -216,6 +220,7 @@ impl<'src> HtmlRenderer<'src> {
                         _ => b"</h6>\n",
                     });
                     self.heading_buf.clear();
+                    self.heading_has_link = false;
                     self.heading_tracker.clear_after_heading();
                 } else {
                     let tag: &[u8] = match data {
@@ -264,6 +269,7 @@ impl<'src> HtmlRenderer<'src> {
             SpanType::Latexmath => self.write(b"<x-equation>"),
             SpanType::LatexmathDisplay => self.write(b"<x-equation type=\"display\">"),
             SpanType::A => {
+                self.heading_has_link |= self.heading_tracker.in_heading;
                 self.write(b"<a href=\"");
                 if detail.permissive_autolink {
                     // Permissive autolinks use HTML-escaping for href
@@ -371,6 +377,9 @@ impl<'src> HtmlRenderer<'src> {
                 }
             }
             TextType::Html => {
+                self.heading_has_link |= self.heading_tracker.in_heading
+                    && content.first() == Some(&b'<')
+                    && match_tag_name_ci(content, 1, b"a");
                 if self.tag_filter {
                     self.write_html_with_tag_filter(content);
                 } else {

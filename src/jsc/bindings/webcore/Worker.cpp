@@ -29,6 +29,7 @@
 
 #include "InternalModuleRegistry.h"
 #include "ErrorCode.h"
+#include "NodeURLHelpers.h"
 #include "ErrorEvent.h"
 #include "Event.h"
 #include "EventNames.h"
@@ -71,10 +72,11 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
 
     String url = urlInit;
     if (url.startsWith("file://"_s)) {
-        WTF::URL urlObject { url };
-        if (!urlObject.isValid())
+        // Empty for a URL that is not valid, and for a path that does not percent-decode to UTF-8.
+        auto path = Bun::fileSystemPath(WTF::URL { url });
+        if (!path)
             return Exception { TypeError, makeString("Invalid file URL: \""_s, urlInit, '"') };
-        url = urlObject.fileSystemPath();
+        url = WTF::move(*path);
     }
 
     auto worker = adoptRef(*new Worker(context, WTF::move(options)));

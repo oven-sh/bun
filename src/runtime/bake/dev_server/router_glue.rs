@@ -48,7 +48,37 @@ impl ClientPageFiles {
     }
 }
 
+/// The server matches its own routes first, so it never serves this page.
+fn report_hidden_page(route_path: &[u8], rel_path: &[u8]) {
+    Output::err_generic(
+        "The server has a route \"{}\", which hides the page {}",
+        (bstr::BStr::new(route_path), bstr::BStr::new(rel_path)),
+    );
+    Output::flush();
+}
+
 impl DevServer {
+    /// Reports each page that a route of the server hides: a route with the same path as a page
+    /// that has no parameter.
+    pub(super) fn report_pages_hidden_by_server_routes(&self) {
+        let Some(server) = self.server else { return };
+        let keys = self.server_graph.bundled_files.keys();
+        for (route_path, route_index) in self.router.static_routes.iter() {
+            if !server.has_route(route_path) {
+                continue;
+            }
+            let Some(page) = self.router.route_ptr(*route_index).file_page else {
+                continue;
+            };
+            let mut buf = paths::path_buffer_pool::get();
+            let rel_path = self.relative_path(
+                &mut *buf,
+                &keys[from_opaque_file_id::<{ bake::Side::Server }>(page).get() as usize],
+            );
+            report_hidden_page(route_path, rel_path);
+        }
+    }
+
     pub(super) fn client_page_files(&self, route_index: router::RouteIndex) -> ClientPageFiles {
         let mut route = self.router.route_ptr(route_index);
         if !self.router.type_ptr_const(route.r#type).client_pages {
@@ -154,6 +184,16 @@ impl router::InsertionHandler for DevServer {
         file_kind: router::FileKind,
     ) -> Result<(), AllocError> {
         DevServer::on_router_collision_error(self, rel_path, other_id, file_kind)
+    }
+
+    fn on_static_page(&mut self, route_path: &[u8], rel_path: &[u8]) -> Result<(), AllocError> {
+        if self
+            .server
+            .is_some_and(|server| server.has_route(route_path))
+        {
+            report_hidden_page(route_path, rel_path);
+        }
+        Ok(())
     }
 }
 

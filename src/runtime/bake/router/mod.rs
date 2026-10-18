@@ -518,6 +518,11 @@ pub(crate) trait InsertionHandler {
         other_id: OpaqueFileId,
         file_kind: FileKind,
     ) -> Result<(), AllocError>;
+
+    /// A page with no parameter was added at `route_path` (`/` for the root).
+    fn on_static_page(&mut self, _route_path: &[u8], _rel_path: &[u8]) -> Result<(), AllocError> {
+        Ok(())
+    }
 }
 
 /// Hash context (wyhash final4, seed 0) for the `zig_hash_map` rebuild below.
@@ -741,6 +746,7 @@ impl FrameworkRouter {
                             }
                         };
 
+                        let mut static_route_path: Option<bun_ptr::RawSlice<u8>> = None;
                         let result = if param_count > 0 {
                             let pattern = EncodedPattern::init_from_parts(
                                 parsed.parts,
@@ -774,6 +780,7 @@ impl FrameworkRouter {
                                 }
                             }
                             debug_assert!(pos == allocation.len());
+                            static_route_path = Some(bun_ptr::RawSlice::new(allocation));
                             let pattern = StaticPattern {
                                 route_path: bun_ptr::RawSlice::new(allocation),
                             };
@@ -788,7 +795,17 @@ impl FrameworkRouter {
                         };
 
                         match result {
-                            Ok(()) => {}
+                            Ok(()) => {
+                                if file_kind == FileKind::Page {
+                                    if let Some(path) = static_route_path {
+                                        let path = path.slice();
+                                        ctx.on_static_page(
+                                            if path.is_empty() { b"/" } else { path },
+                                            full_rel_path,
+                                        )?;
+                                    }
+                                }
+                            }
                             Err(InsertError::OutOfMemory) => return Err(AllocError),
                             Err(InsertError::RouteCollision) => {
                                 ctx.on_router_collision_error(

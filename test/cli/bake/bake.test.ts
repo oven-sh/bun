@@ -1139,6 +1139,25 @@ test.concurrent("a framework with clientPages puts the pages of a route in its b
   expect(bundle).not.toContain("about-page-module");
 });
 
+test.concurrent("bun bake reports a page that a route of app/server.ts hides", async () => {
+  using dir = tempDir("bake-command-hidden-page", {
+    "app/pages/index.ts": `export default () => "page-index";`,
+    "app/pages/about.ts": `export default () => "page-about";`,
+    "render/server.ts": `export function render(request, meta) { return new Response(meta.pageModule.default()); }`,
+    "bake.config.ts": `export default { plugins: [{ name: "fw", framework: { fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./render/server.ts", extensions: [".ts"] }] } }] };`,
+    "app/server.ts": `export default { routes: { "/about": () => new Response("route-about") } };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  await output.waitFor(/The server has a route "\/about", which hides the page app\/pages\/about\.ts/);
+
+  // It keeps serving: the route answers, and the other page too.
+  expect(await get(url, "/about")).toBe("200 route-about");
+  expect(await get(url, "/")).toBe("200 page-index");
+});
+
 test.concurrent("bun bake reports two pages with the same URL pattern, and keeps serving", async () => {
   using dir = tempDir("bake-command-aliased", {
     "app/pages/[a].tsx": `export default () => "a";`,

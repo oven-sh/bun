@@ -12,15 +12,17 @@
 //! | [`SubPath`] | relative, holds no `..`: joined to a directory it stays below it |
 //! | [`Component`] | one name |
 //!
-//! `Component` derefs to `SubPath`, that to `RelPath`, and that and `AbsPath` to `Path`.
+//! `Component` derefs to `SubPath`, that to `RelPath`, and that and `AbsPath` to `Path`. [`Z<V>`](Z)
+//! is a `V` with a terminator after it, for a syscall, and derefs to `V`.
 //!
 //! What a `PathBuf` takes says where the units came from. A view is copied. Text out of a file, an
-//! argument or a variable goes through [`PathBuf::join`] or [`PathBuf::join_below`], the only parser.
+//! argument or a variable goes through [`join`](PathBuf::join), [`join_below`](PathBuf::join_below)
+//! or [`push_names`](PathBuf::push_names), which share the only parser.
 
 use core::fmt;
 use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
-use core::ops::Deref;
+use core::ops::{Deref, DerefMut};
 
 use bun_core::PathByte as _;
 
@@ -28,25 +30,87 @@ use crate::SEP;
 use crate::path::PathUnit;
 use crate::resolve_path::{Platform, PlatformT};
 
+// ── units ────────────────────────────────────────────────────────────────────────────────────────
+
+/// Units of a path that can be written from units of `D`.
+pub trait FromUnit<D: PathUnit>: PathUnit {
+    /// The most units that `from` can become.
+    fn bound(from: &[D]) -> usize;
+    /// Returns the units written.
+    ///
+    /// # Safety
+    /// `to` is valid for writes of `bound(from)` units and does not overlap `from`.
+    unsafe fn transcode(from: &[D], to: *mut Self) -> usize;
+}
+impl<C: PathUnit> FromUnit<C> for C {
+    #[inline(always)]
+    fn bound(from: &[C]) -> usize {
+        from.len()
+    }
+    #[inline(always)]
+    unsafe fn transcode(from: &[C], to: *mut C) -> usize {
+        // SAFETY: the caller's.
+        unsafe { core::ptr::copy_nonoverlapping(from.as_ptr(), to, from.len()) };
+        from.len()
+    }
+}
+macro_rules! transcodes {
+    ($from:ty => $to:ty, at most $times:literal) => {
+        impl FromUnit<$from> for $to {
+            #[inline]
+            fn bound(from: &[$from]) -> usize {
+                from.len() * $times
+            }
+            #[inline]
+            unsafe fn transcode(from: &[$from], to: *mut $to) -> usize {
+                // SAFETY: the caller's. Storage of the other width is pooled, so initialized.
+                let to = unsafe { core::slice::from_raw_parts_mut(to, Self::bound(from)) };
+                <$to as PathUnit>::convert_from_other(to, from)
+            }
+        }
+    };
+}
+transcodes!(u8 => u16, at most 1);
+transcodes!(u16 => u8, at most 3);
+
+/// `u8` or `u16`.
+pub trait Unit: PathUnit + FromUnit<u8> + FromUnit<u16> {}
+impl Unit for u8 {}
+impl Unit for u16 {}
+
 // ── views ────────────────────────────────────────────────────────────────────────────────────────
 
-/// A borrowed path type that a [`PathBuf`] can build.
-pub trait View {
-    type Unit: PathUnit;
-    const ABSOLUTE: Absolute;
-    /// Whether it may start with `..` components.
-    const CLIMBS: bool;
-    #[doc(hidden)]
-    fn wrap(units: &[Self::Unit]) -> &Self;
+/// Any of the five views.
+pub trait Units {
+    type Unit: Unit;
     fn units(&self) -> &[Self::Unit];
 }
 
+/// What `..` does to a path that has no name left to remove.
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum Absolute {
-    Always,
-    Never,
-    Maybe,
+pub enum AtFence {
+    /// A root stays.
+    Stay,
+    /// A relative path gets a `..`.
+    Climb,
+    Fail,
+    /// Fails, and the path cannot be replaced either: a [`Scope`] is open.
+    Scoped,
 }
+
+/// A view that a [`PathBuf`] can build.
+pub trait View: Units {
+    #[doc(hidden)]
+    const MAY_BE_ABSOLUTE: bool;
+    #[doc(hidden)]
+    const WHEN_RELATIVE: AtFence;
+    #[doc(hidden)]
+    fn wrap(units: &[Self::Unit]) -> &Self;
+}
+/// A view that can hold an absolute path.
+pub trait HoldsAbs: View {}
+/// A view that can be empty.
+pub trait HoldsEmpty: View {}
 
 macro_rules! view {
     ($(#[$meta:meta])* $name:ident) => {
@@ -80,6 +144,13 @@ macro_rules! view {
                 &self.0
             }
         }
+        impl<C: Unit> Units for $name<C> {
+            type Unit = C;
+            #[inline(always)]
+            fn units(&self) -> &[C] {
+                &self.0
+            }
+        }
         impl fmt::Debug for $name<u8> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 fmt::Debug::fmt(bstr::BStr::new(&self.0), f)
@@ -88,6 +159,14 @@ macro_rules! view {
         impl fmt::Display for $name<u8> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 fmt::Display::fmt(bstr::BStr::new(&self.0), f)
+            }
+        }
+        impl<C: Copy> From<&$name<C>> for Box<$name<C>> {
+            /// For a path that outlives the buffer it was built in.
+            fn from(path: &$name<C>) -> Self {
+                let units: Box<[C]> = Box::from(&path.0);
+                // SAFETY: `repr(transparent)` over `[C]`.
+                unsafe { Box::from_raw(Box::into_raw(units) as *mut $name<C>) }
             }
         }
     };
@@ -104,20 +183,16 @@ macro_rules! derefs_to {
     };
 }
 macro_rules! buildable {
-    ($name:ident, $absolute:ident, climbs: $climbs:literal) => {
-        impl<C: PathUnit> View for $name<C> {
-            type Unit = C;
-            const ABSOLUTE: Absolute = Absolute::$absolute;
-            const CLIMBS: bool = $climbs;
+    ($name:ident, may be absolute: $abs:literal, when relative: $at:ident $(, $marker:ident)*) => {
+        impl<C: Unit> View for $name<C> {
+            const MAY_BE_ABSOLUTE: bool = $abs;
+            const WHEN_RELATIVE: AtFence = AtFence::$at;
             #[inline(always)]
             fn wrap(units: &[C]) -> &Self {
                 Self::wrap_units(units)
             }
-            #[inline(always)]
-            fn units(&self) -> &[C] {
-                &self.0
-            }
         }
+        $(impl<C: Unit> $marker for $name<C> {})*
     };
 }
 
@@ -145,10 +220,48 @@ derefs_to!(Component => SubPath);
 derefs_to!(SubPath => RelPath);
 derefs_to!(RelPath => Path);
 derefs_to!(AbsPath => Path);
-buildable!(Path, Maybe, climbs: true);
-buildable!(AbsPath, Always, climbs: false);
-buildable!(RelPath, Never, climbs: true);
-buildable!(SubPath, Never, climbs: false);
+buildable!(Path, may be absolute: true, when relative: Climb, HoldsAbs, HoldsEmpty);
+buildable!(AbsPath, may be absolute: true, when relative: Fail, HoldsAbs);
+buildable!(RelPath, may be absolute: false, when relative: Climb, HoldsEmpty);
+buildable!(SubPath, may be absolute: false, when relative: Fail, HoldsEmpty);
+
+/// A `V` with a terminator after its last unit.
+#[repr(transparent)]
+#[derive(PartialEq, Eq, Hash)]
+pub struct Z<V: ?Sized>(V);
+impl<V: Units + ?Sized> Z<V> {
+    /// # Safety
+    /// The unit after the last one of `view` is readable for as long as `view`, and is 0.
+    #[inline(always)]
+    const unsafe fn wrap(view: &V) -> &Self {
+        // SAFETY: `repr(transparent)` over `V`.
+        unsafe { &*(core::ptr::from_ref(view) as *const Self) }
+    }
+    /// For a syscall.
+    #[inline(always)]
+    pub fn z(&self) -> &<V::Unit as PathUnit>::ZSlice {
+        let units = self.0.units();
+        // SAFETY: `wrap`'s.
+        unsafe { V::Unit::zslice_from_raw(units.as_ptr(), units.len()) }
+    }
+}
+impl<V: ?Sized> Deref for Z<V> {
+    type Target = V;
+    #[inline(always)]
+    fn deref(&self) -> &V {
+        &self.0
+    }
+}
+impl<V: fmt::Debug + ?Sized> fmt::Debug for Z<V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl<V: fmt::Display + ?Sized> fmt::Display for Z<V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 pub enum Classified<'a, C> {
     Abs(&'a AbsPath<C>),
@@ -258,6 +371,7 @@ impl<C: PathUnit> AbsPath<C> {
     #[inline]
     pub fn from_os(units: &[C]) -> &Self {
         let root = root_len(units);
+        assert!(root > 0);
         let mut end = units.len();
         while end > root && is_native_sep(units[end - 1]) {
             end -= 1;
@@ -355,69 +469,76 @@ impl<C: PathUnit> Component<C> {
     }
 }
 
-impl SubPath<u8> {
-    /// For [`sub_path!`]. Fails to compile on text that is not in the form the views hold.
-    #[doc(hidden)]
-    pub const fn from_literal(native: &'static [u8]) -> &'static Self {
-        let mut start = 0;
-        let mut i = 0;
-        while i <= native.len() {
-            if i == native.len() || native[i] == SEP {
-                let len = i - start;
-                assert!(len > 0, "empty component");
-                assert!(!(len == 1 && native[start] == b'.'), "`.` component");
-                assert!(
-                    !(len == 2 && native[start] == b'.' && native[start + 1] == b'.'),
-                    "`..` component"
-                );
-                start = i + 1;
-            } else {
-                assert!(native[i] != 0 && native[i] != b'/' && native[i] != b'\\');
-            }
-            i += 1;
-        }
-        Self::wrap_units(native)
-    }
-}
-impl Component<u8> {
-    #[doc(hidden)]
-    pub const fn from_literal(name: &'static [u8]) -> &'static Self {
-        let mut i = 0;
-        while i < name.len() {
-            assert!(name[i] != SEP, "a component holds no separator");
-            i += 1;
-        }
-        Self::wrap_units(SubPath::from_literal(name).as_bytes())
-    }
-}
-
+/// For [`sub_path!`] and [`component!`]: `text` with native separators and a terminator.
 #[doc(hidden)]
 pub const fn native_literal<const N: usize>(text: &[u8]) -> [u8; N] {
+    assert!(N == text.len() + 1);
     let mut out = [0; N];
     let mut i = 0;
-    while i < N {
+    while i < text.len() {
         out[i] = if text[i] == b'/' { SEP } else { text[i] };
         i += 1;
     }
     out
 }
+const fn check_literal(terminated: &'static [u8], one_name: bool) -> &'static [u8] {
+    let native = terminated.split_at(terminated.len() - 1).0;
+    let mut start = 0;
+    let mut i = 0;
+    while i <= native.len() {
+        if i == native.len() || native[i] == SEP {
+            let len = i - start;
+            assert!(
+                i == native.len() || !one_name,
+                "a component holds no separator"
+            );
+            assert!(len > 0, "empty component");
+            assert!(!(len == 1 && native[start] == b'.'), "`.` component");
+            assert!(
+                !(len == 2 && native[start] == b'.' && native[start + 1] == b'.'),
+                "`..` component"
+            );
+            start = i + 1;
+        } else {
+            assert!(native[i] != 0 && native[i] != b'/' && native[i] != b'\\');
+        }
+        i += 1;
+    }
+    native
+}
+impl SubPath<u8> {
+    #[doc(hidden)]
+    pub const fn from_literal(terminated: &'static [u8]) -> &'static Z<Self> {
+        // SAFETY: `check_literal` cuts the terminator off.
+        unsafe { Z::wrap(Self::wrap_units(check_literal(terminated, false))) }
+    }
+}
+impl Component<u8> {
+    #[doc(hidden)]
+    pub const fn from_literal(terminated: &'static [u8]) -> &'static Z<Self> {
+        // SAFETY: `check_literal` cuts the terminator off.
+        unsafe { Z::wrap(Self::wrap_units(check_literal(terminated, true))) }
+    }
+}
 
-/// `&'static SubPath` from a literal written with `/`. Checked, and given native separators, at
-/// compile time.
+/// `&'static Z<SubPath>` from constant text written with `/`. Checked, and given native separators,
+/// at compile time.
 #[macro_export]
 macro_rules! sub_path {
-    ($text:literal) => {{
-        const NATIVE: [u8; $text.len()] = $crate::typed::native_literal($text.as_bytes());
-        const PATH: &$crate::typed::SubPath = $crate::typed::SubPath::from_literal(&NATIVE);
+    ($text:expr) => {{
+        const NATIVE: [u8; $text.len() + 1] = $crate::typed::native_literal($text.as_bytes());
+        const PATH: &$crate::typed::Z<$crate::typed::SubPath> =
+            $crate::typed::SubPath::from_literal(&NATIVE);
         PATH
     }};
 }
-/// `&'static Component` from a literal, checked at compile time.
+/// `&'static Z<Component>` from constant text, checked at compile time.
 #[macro_export]
 macro_rules! component {
-    ($text:literal) => {{
-        const NAME: &$crate::typed::Component =
-            $crate::typed::Component::from_literal($text.as_bytes());
+    ($text:expr) => {{
+        const NATIVE: [u8; $text.len() + 1] = $crate::typed::native_literal($text.as_bytes());
+        const NAME: &$crate::typed::Z<$crate::typed::Component> =
+            $crate::typed::Component::from_literal(&NATIVE);
         NAME
     }};
 }
@@ -570,34 +691,58 @@ unsafe impl<C> Storage<C> for Vec<C> {
     }
 }
 
+/// Lets the OS write text into `mem`: the target of a link, say. `fill` returns the units it wrote.
+/// What comes back is text, which only `join` and its kin take.
+#[inline]
+pub fn text_from_os<C: PathUnit, S: Storage<C>, E>(
+    mem: &mut S,
+    fill: impl FnOnce(&mut [MaybeUninit<C>]) -> Result<usize, E>,
+) -> Result<&[C], E> {
+    let capacity = mem.capacity();
+    // SAFETY: `Storage`'s.
+    let room = unsafe { core::slice::from_raw_parts_mut(mem.ptr_mut().cast(), capacity) };
+    let len = fill(room)?;
+    assert!(len <= capacity);
+    // SAFETY: `fill` wrote `len` units.
+    Ok(unsafe { core::slice::from_raw_parts(mem.ptr(), len) })
+}
+
 // ── the builder ──────────────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PathError {
     /// It does not fit the storage.
     TooLong,
-    /// `..` led above the directory that `join_below` started in.
+    /// `..` led above the root of a `join_below`, out of a [`Scope`] or out of a `SubPath`, or the
+    /// path was to be replaced inside a `Scope`.
     Escapes,
-    /// Absolute text where only relative text can go.
+    /// Absolute where only a relative path can go.
     Absolute,
-    /// A name holds a NUL, or a unit that separates on this host and did not in the text.
+    /// Relative where only an absolute path can go.
+    Relative,
+    /// Not a name: empty, `.` or `..` where names are wanted, or it holds a NUL or a unit that
+    /// separates on this host and did not in the text.
     BadName,
 }
 
-/// A length to come back to. See [`PathBuf::mark`].
 #[derive(Copy, Clone)]
-pub struct Mark {
+struct Saved {
     len: usize,
     err: Option<PathError>,
+    fence: usize,
+    at_fence: AtFence,
 }
 
 /// Builds a `V` in `S`.
 ///
-/// A step that fails leaves the path as it was and is remembered: [`get`](Self::get) and
-/// [`z`](Self::z), the only ways to the path, return the error from then on.
+/// The first step that fails is remembered, and [`get`](Self::get), the only way to the path,
+/// returns it from then on.
 pub struct PathBuf<V: View + ?Sized, S: Storage<V::Unit>> {
     mem: S,
     len: usize,
+    /// `..` removes nothing below this length.
+    fence: usize,
+    at_fence: AtFence,
     err: Option<PathError>,
     view: PhantomData<fn(&V)>,
 }
@@ -607,36 +752,128 @@ pub type SubPathBuf<S, C = u8> = PathBuf<SubPath<C>, S>;
 pub type AnyPathBuf<S, C = u8> = PathBuf<Path<C>, S>;
 
 impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
+    #[inline(always)]
+    fn blank(mem: S) -> Self {
+        Self {
+            mem,
+            len: 0,
+            fence: 0,
+            at_fence: V::WHEN_RELATIVE,
+            err: None,
+            view: PhantomData,
+        }
+    }
+
     /// Holds a copy of `path`.
     #[inline]
     pub fn from_in(mem: S, path: &V) -> Self {
-        let mut this = Self {
-            mem,
-            len: 0,
-            err: None,
-            view: PhantomData,
-        };
+        let mut this = Self::blank(mem);
         this.set(path);
+        this
+    }
+
+    /// Empty: the base itself.
+    #[inline(always)]
+    pub fn new_in(mem: S) -> Self
+    where
+        V: HoldsEmpty,
+    {
+        let mut this = Self::blank(mem);
+        this.write::<V::Unit>(0, false, &[]);
         this
     }
 
     /// Replaces the whole path, and forgets an earlier failure.
     #[inline]
     pub fn set(&mut self, path: &V) -> &mut Self {
-        self.len = 0;
+        self.replace(path.units())
+    }
+
+    /// [`set`](Self::set) to an absolute path.
+    #[inline]
+    pub fn set_abs(&mut self, path: &AbsPath<V::Unit>) -> &mut Self
+    where
+        V: HoldsAbs,
+    {
+        self.replace(path.units())
+    }
+
+    #[inline(always)]
+    fn replace(&mut self, clean: &[V::Unit]) -> &mut Self {
+        if self.is_scoped() {
+            return self;
+        }
         self.err = None;
-        self.write(0, false, path.units());
+        self.len = 0;
+        self.write(0, false, clean);
+        self.fence_at_root();
         self
     }
 
-    /// [`set`](Self::set) to an absolute path. Not for a view that is never absolute.
-    #[inline]
-    pub fn set_abs(&mut self, path: &AbsPath<V::Unit>) -> &mut Self {
-        const { assert!(!matches!(V::ABSOLUTE, Absolute::Never)) };
-        self.len = 0;
+    /// Whether a [`Scope`] is open, which what replaces the path fails in.
+    #[inline(always)]
+    fn is_scoped(&mut self) -> bool {
+        let scoped = self.at_fence == AtFence::Scoped;
+        if scoped {
+            self.poison(PathError::Escapes);
+        }
+        scoped
+    }
+
+    #[inline(always)]
+    fn fence_at_root(&mut self) {
+        self.fence = if V::MAY_BE_ABSOLUTE {
+            root_len(self.written())
+        } else {
+            0
+        };
+        self.at_fence = if self.fence > 0 {
+            AtFence::Stay
+        } else {
+            V::WHEN_RELATIVE
+        };
+    }
+
+    /// Replaces the whole path with an absolute one that the OS writes: `getcwd`, `realpath`, the
+    /// path of an fd. `fill` gets all of the storage and returns the units it wrote, without a
+    /// terminator.
+    pub fn set_from_os<E>(
+        &mut self,
+        fill: impl FnOnce(&mut [MaybeUninit<V::Unit>]) -> Result<usize, E>,
+    ) -> Result<&mut Self, E>
+    where
+        V: HoldsAbs,
+    {
+        if self.is_scoped() {
+            return Ok(self);
+        }
         self.err = None;
-        self.write(0, false, path.units());
-        self
+        self.len = 0;
+        // Storage that cannot grow lends what it has, and the OS says whether that is enough.
+        self.mem.reserve(0, V::Unit::MAX_PATH);
+        let capacity = self.mem.capacity();
+        // SAFETY: `Storage`'s.
+        let room = unsafe { core::slice::from_raw_parts_mut(self.mem.ptr_mut().cast(), capacity) };
+        let len = fill(room)?;
+        // No room left for the terminator also means the OS may have cut the path short.
+        if len >= capacity {
+            self.poison(PathError::TooLong);
+            return Ok(self);
+        }
+        self.len = len;
+        let root = root_len(self.written());
+        if root == 0 {
+            self.len = 0;
+            self.poison(PathError::Relative);
+            return Ok(self);
+        }
+        let mut end = len;
+        while end > root && is_native_sep(self.written()[end - 1]) {
+            end -= 1;
+        }
+        self.truncate(end);
+        self.fence_at_root();
+        Ok(self)
     }
 
     #[inline(always)]
@@ -645,25 +882,33 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         unsafe { core::slice::from_raw_parts(self.mem.ptr(), self.len) }
     }
 
+    #[inline(always)]
+    fn poison(&mut self, err: PathError) {
+        if self.err.is_none() {
+            self.err = Some(err);
+        }
+    }
+
     /// Writes an optional separator and `units` at `at`, then the terminator.
     #[inline(always)]
-    fn write(&mut self, at: usize, sep: bool, units: &[V::Unit]) {
-        let total = at + usize::from(sep) + units.len();
-        if !self.mem.reserve(at, total + 1) {
-            self.err = Some(PathError::TooLong);
+    fn write<D: PathUnit>(&mut self, at: usize, sep: bool, units: &[D])
+    where
+        V::Unit: FromUnit<D>,
+    {
+        let start = at + usize::from(sep);
+        if !self.mem.reserve(at, start + V::Unit::bound(units) + 1) {
+            self.poison(PathError::TooLong);
             return;
         }
-        // SAFETY: `reserve` made room for `total + 1` units, and `units` is not in `mem`, which
-        // `self` borrows mutably or owns.
+        // SAFETY: `reserve` made the room, and `units` is not in `mem`, which `self` borrows
+        // mutably or owns.
         unsafe {
-            let to = self.mem.ptr_mut().add(at);
+            let base = self.mem.ptr_mut();
             // Overwritten by `units` or the terminator when there is no separator to write.
-            to.write(V::Unit::from_u8(SEP));
-            let to = to.add(usize::from(sep));
-            core::ptr::copy_nonoverlapping(units.as_ptr(), to, units.len());
-            to.add(units.len()).write(V::Unit::from_u8(0));
+            base.add(at).write(V::Unit::from_u8(SEP));
+            self.len = start + V::Unit::transcode(units, base.add(start));
+            base.add(self.len).write(V::Unit::from_u8(0));
         }
-        self.len = total;
     }
 
     #[inline(always)]
@@ -681,89 +926,66 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
 
     /// The path, or the first failure since it was last set.
     #[inline(always)]
-    pub fn get(&self) -> Result<&V, PathError> {
+    pub fn get(&self) -> Result<&Z<V>, PathError> {
         match self.err {
-            None => Ok(V::wrap(self.written())),
+            // SAFETY: every write puts a terminator at `len`.
+            None => Ok(unsafe { Z::wrap(V::wrap(self.written())) }),
             Some(err) => Err(err),
         }
     }
 
-    /// The path with its terminator, for a syscall.
+    /// The first failure since the path was last set.
     #[inline(always)]
-    pub fn z(&self) -> Result<&<V::Unit as PathUnit>::ZSlice, PathError> {
-        match self.err {
-            // SAFETY: every write puts a terminator at `len`.
-            None => Ok(unsafe { V::Unit::zslice_from_raw(self.mem.ptr(), self.len) }),
-            Some(err) => Err(err),
-        }
+    pub fn error(&self) -> Option<PathError> {
+        self.err
+    }
+
+    /// What is written, failed or not. For a message.
+    #[inline(always)]
+    pub fn shown(&self) -> &[V::Unit] {
+        self.written()
+    }
+
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        self.len
     }
 
     /// Appends names that are known to be names. One copy.
     #[inline(always)]
-    pub fn push(&mut self, below: &SubPath<V::Unit>) -> &mut Self {
+    pub fn push<D: PathUnit>(&mut self, below: &SubPath<D>) -> &mut Self
+    where
+        V::Unit: FromUnit<D>,
+    {
         if !below.is_empty() {
             self.write(self.len, self.needs_sep(), below.units());
         }
         self
     }
 
-    /// [`push`](Self::push) for several at once: one length check and one terminator for all.
-    #[inline(always)]
-    pub fn push_all<const N: usize>(&mut self, parts: [&SubPath<V::Unit>; N]) -> &mut Self {
-        let mut sep = self.needs_sep();
-        let mut total = self.len;
-        for part in parts {
-            total += part.len() + usize::from(sep && !part.is_empty());
-            sep |= !part.is_empty();
-        }
-        if !self.mem.reserve(self.len, total + 1) {
-            self.err = Some(PathError::TooLong);
-            return self;
-        }
-        let mut sep = self.needs_sep();
-        // SAFETY: `reserve` made room for `total + 1` units, which is what the loop writes.
-        unsafe {
-            let mut to = self.mem.ptr_mut().add(self.len);
-            for part in parts {
-                to.write(V::Unit::from_u8(SEP));
-                to = to.add(usize::from(sep && !part.is_empty()));
-                core::ptr::copy_nonoverlapping(part.units().as_ptr(), to, part.len());
-                to = to.add(part.len());
-                sep |= !part.is_empty();
-            }
-            to.write(V::Unit::from_u8(0));
-        }
-        self.len = total;
-        self
-    }
-
     /// Appends one name written by `args`, in place.
-    pub fn push_fmt(&mut self, args: fmt::Arguments<'_>) -> &mut Self
-    where
-        V: View<Unit = u8>,
-    {
-        struct Tail<'a, S: Storage<u8>> {
+    pub fn push_fmt(&mut self, args: fmt::Arguments<'_>) -> &mut Self {
+        struct Tail<'a, C, S> {
             mem: &'a mut S,
             len: usize,
+            unit: PhantomData<C>,
         }
-        impl<S: Storage<u8>> fmt::Write for Tail<'_, S> {
+        impl<C: Unit, S: Storage<C>> fmt::Write for Tail<'_, C, S> {
             fn write_str(&mut self, text: &str) -> fmt::Result {
-                let total = self.len + text.len();
-                if !self.mem.reserve(self.len, total + 1) {
+                let text = text.as_bytes();
+                if !self
+                    .mem
+                    .reserve(self.len, self.len + <C as FromUnit<u8>>::bound(text) + 1)
+                {
                     return Err(fmt::Error);
                 }
                 // SAFETY: `reserve` made the room.
-                unsafe {
-                    let to = self.mem.ptr_mut().add(self.len);
-                    core::ptr::copy_nonoverlapping(text.as_ptr(), to, text.len());
-                }
-                self.len = total;
+                self.len += unsafe { C::transcode(text, self.mem.ptr_mut().add(self.len)) };
                 Ok(())
             }
         }
         let before = self.len;
-        let sep = self.needs_sep();
-        self.write(before, sep, &[]);
+        self.write::<V::Unit>(before, self.needs_sep(), &[]);
         if self.err.is_some() {
             return self;
         }
@@ -771,6 +993,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         let mut tail = Tail {
             mem: &mut self.mem,
             len: start,
+            unit: PhantomData,
         };
         let wrote = fmt::Write::write_fmt(&mut tail, args);
         let end = tail.len;
@@ -781,66 +1004,212 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
             Ok(()) if Component::new(name).is_none() => Some(PathError::BadName),
             Ok(()) => None,
         };
+        self.len = end;
         match failure {
-            None => {
-                self.len = end;
-                self.truncate(end);
-            }
+            None => self.truncate(end),
             Some(err) => {
                 self.truncate(before);
-                self.err = Some(err);
+                self.poison(err);
             }
         }
         self
     }
 
-    /// Length of the part that `..` cannot remove.
-    #[inline(always)]
-    fn root(&self) -> usize {
-        match V::ABSOLUTE {
-            Absolute::Never => 0,
-            _ => root_len(self.written()),
-        }
-    }
-
-    /// Removes the last name, as `..` does: a root stays, and a relative path with nothing left to
-    /// remove gets a `..`, or fails if it is a `SubPath`.
+    /// Removes the last name, as `..` does. With no name left above the fence: a root stays, a
+    /// relative path gets a `..`, and a `SubPath`, or a path in a [`Scope`], fails.
     #[inline]
     pub fn up(&mut self) -> &mut Self {
-        self.up_to(self.root());
+        let below = &self.written()[self.fence..];
+        let last = last_sep(below).map_or(0, |i| i + 1);
+        if !below.is_empty() && !is_dot_dot(&below[last..]) {
+            self.truncate(self.fence + last.saturating_sub(1));
+            return self;
+        }
+        match self.at_fence {
+            AtFence::Stay => {}
+            AtFence::Climb => {
+                let dots = [V::Unit::from_u8(b'.'); 2];
+                self.write(self.len, self.needs_sep(), &dots);
+            }
+            AtFence::Fail | AtFence::Scoped => self.poison(PathError::Escapes),
+        }
         self
+    }
+
+    #[inline(always)]
+    fn raise_fence(&mut self, at_fence: AtFence) -> Saved {
+        let saved = Saved {
+            len: self.len,
+            err: self.err,
+            fence: self.fence,
+            at_fence: self.at_fence,
+        };
+        self.fence = self.len;
+        self.at_fence = at_fence;
+        saved
+    }
+
+    /// Lends the path for changes that end with the [`Scope`].
+    #[inline(always)]
+    pub fn scope(&mut self) -> Scope<'_, V, S> {
+        let saved = self.raise_fence(AtFence::Scoped);
+        Scope { buf: self, saved }
+    }
+
+    /// Hands `f` the first `len` units of the path with a terminator after them, with no copy: the
+    /// unit there is put back afterwards. `len` is the length of an ancestor.
+    #[inline]
+    pub fn with_ancestor<R>(
+        &mut self,
+        len: usize,
+        f: impl FnOnce(&Z<V>) -> R,
+    ) -> Result<R, PathError> {
+        if let Some(err) = self.err {
+            return Err(err);
+        }
+        let units = self.written();
+        let is_boundary = len == units.len()
+            || (len < units.len()
+                && (is_native_sep(units[len]) || (len > 0 && len == root_len(units))));
+        if !is_boundary {
+            return Err(PathError::BadName);
+        }
+        // SAFETY: `len` is at most the written length, where a unit or the terminator is.
+        unsafe {
+            let at = self.mem.ptr_mut().add(len);
+            let saved = at.read();
+            at.write(V::Unit::from_u8(0));
+            let result = f(Z::wrap(V::wrap(core::slice::from_raw_parts(
+                self.mem.ptr(),
+                len,
+            ))));
+            self.mem.ptr_mut().add(len).write(saved);
+            Ok(result)
+        }
+    }
+
+    /// Hands `f` the path with `count` times `..` after it, for the OS to resolve once it has
+    /// followed the links in the path. No view holds that, so it is text for a syscall.
+    pub fn with_os_parents<R>(
+        &mut self,
+        count: usize,
+        f: impl FnOnce(&<V::Unit as PathUnit>::ZSlice) -> R,
+    ) -> Result<R, PathError> {
+        let mut scope = self.scope();
+        let dots = [V::Unit::from_u8(b'.'); 2];
+        for _ in 0..count {
+            let (len, sep) = (scope.len, scope.needs_sep());
+            scope.write(len, sep, &dots);
+        }
+        if let Some(err) = scope.err {
+            return Err(err);
+        }
+        // SAFETY: every write puts a terminator at `len`.
+        Ok(f(unsafe {
+            V::Unit::zslice_from_raw(scope.mem.ptr(), scope.len)
+        }))
+    }
+
+    /// Resolves `text`, read by the rules of `P`, against the path. `..` removes names down to the
+    /// root. Absolute text replaces the path where the view can hold it, outside a [`Scope`].
+    pub fn join<P: PlatformT>(&mut self, text: &[u8]) -> &mut Self {
+        if self.err.is_some() {
+            return self;
+        }
+        let root = text_root_len::<P>(text);
+        if root > 0 {
+            if !V::MAY_BE_ABSOLUTE || self.at_fence == AtFence::Scoped {
+                self.poison(PathError::Absolute);
+                return self;
+            }
+            self.write_text_root(&text[..root]);
+            self.fence_at_root();
+        }
+        self.parse::<P, false>(&text[root..]);
+        self
+    }
+
+    /// Resolves `text`, read by the rules of `P`, against the path, and fails if that would lead
+    /// out of the directory the path names now. The check is the join.
+    pub fn join_below<P: PlatformT>(&mut self, text: &[u8]) -> &mut Self {
+        self.below::<P, false>(text)
+    }
+
+    /// Appends `text`, read by the rules of `P`, which has to be one name or more and nothing else:
+    /// no `.`, no `..`, no empty component.
+    pub fn push_names<P: PlatformT>(&mut self, text: &[u8]) -> &mut Self {
+        if text.is_empty() {
+            self.poison(PathError::BadName);
+        }
+        self.below::<P, true>(text)
     }
 
     #[inline]
-    fn up_to(&mut self, floor: usize) {
-        let below = &self.written()[floor..];
-        let last = last_sep(below).map_or(0, |i| i + 1);
-        if !below.is_empty() && !is_dot_dot(&below[last..]) {
-            self.truncate(floor + last.saturating_sub(1));
-        } else if floor == 0 && V::CLIMBS {
-            let dots = [V::Unit::from_u8(b'.'); 2];
-            self.write(self.len, self.needs_sep(), &dots);
-        } else if floor == 0 {
-            self.err = Some(PathError::Escapes);
+    fn below<P: PlatformT, const NAMES_ONLY: bool>(&mut self, text: &[u8]) -> &mut Self {
+        if self.err.is_some() {
+            return self;
         }
-    }
-
-    /// Remembers the path as it is now, for [`back_to`](Self::back_to).
-    #[inline(always)]
-    pub fn mark(&self) -> Mark {
-        Mark {
-            len: self.len,
-            err: self.err,
+        if text_root_len::<P>(text) > 0 || has_drive::<P>(text) {
+            self.poison(PathError::Absolute);
+            return self;
         }
-    }
-
-    /// Cuts the path back to a mark taken when it was a prefix of what it is now.
-    #[inline(always)]
-    pub fn back_to(&mut self, mark: Mark) -> &mut Self {
-        assert!(mark.len <= self.len);
-        self.truncate(mark.len);
-        self.err = mark.err;
+        let saved = self.raise_fence(AtFence::Fail);
+        self.parse::<P, NAMES_ONLY>(text);
+        if self.err.is_some() {
+            self.truncate(saved.len);
+        }
+        self.fence = saved.fence;
+        self.at_fence = saved.at_fence;
         self
+    }
+
+    /// The only parser. Stops at the first failure.
+    fn parse<P: PlatformT, const NAMES_ONLY: bool>(&mut self, text: &[u8]) {
+        let mut rest = text;
+        while !rest.is_empty() && self.err.is_none() {
+            let mut end = 0;
+            let mut forbidden = false;
+            while end < rest.len() && !P::P.is_separator(rest[end]) {
+                forbidden |= is_forbidden_in_name(rest[end]);
+                end += 1;
+            }
+            let name = &rest[..end];
+            let ends_in_sep = end + 1 == rest.len();
+            rest = rest.get(end + 1..).unwrap_or_default();
+            match name {
+                b"" | b"." | b".." if NAMES_ONLY => self.poison(PathError::BadName),
+                _ if NAMES_ONLY && ends_in_sep => self.poison(PathError::BadName),
+                b"" | b"." => {}
+                b".." => {
+                    self.up();
+                }
+                _ if forbidden => self.poison(PathError::BadName),
+                _ => self.write(self.len, self.needs_sep(), name),
+            }
+        }
+    }
+
+    fn write_text_root(&mut self, root: &[u8]) {
+        self.len = 0;
+        #[cfg(not(windows))]
+        {
+            // A drive has no meaning here.
+            if root.len() > 1 {
+                self.poison(PathError::BadName);
+            }
+            self.write(0, false, b"/".as_slice());
+        }
+        #[cfg(windows)]
+        {
+            self.write(0, false, root);
+            // SAFETY: `write` wrote `len` units.
+            let written = unsafe { core::slice::from_raw_parts_mut(self.mem.ptr_mut(), self.len) };
+            for unit in written {
+                if is_forbidden_in_name(*unit) {
+                    *unit = V::Unit::from_u8(SEP);
+                }
+            }
+        }
     }
 
     /// Gives the storage back.
@@ -850,33 +1219,20 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
     }
 }
 
-impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
-    /// Empty: the base itself. Not for `AbsPath`, which has no empty value.
-    #[inline(always)]
-    pub fn new_in(mem: S) -> Self {
-        const { assert!(!matches!(V::ABSOLUTE, Absolute::Always)) };
-        let mut this = Self {
-            mem,
-            len: 0,
-            err: None,
-            view: PhantomData,
-        };
-        this.write(0, false, &[]);
-        this
-    }
-}
-
-impl<C: PathUnit, S: Storage<C>> PathBuf<AbsPath<C>, S> {
-    /// Moves the path from `from`, or below it, to the same place below `to`, in place. False, and
-    /// no change, if it is neither `from` nor below it.
+impl<C: Unit, S: Storage<C>> PathBuf<AbsPath<C>, S> {
+    /// Moves the path from `from`, or below it, to the same place below `to`, in place. False,
+    /// and no change, if it is neither `from` nor below it.
     pub fn rebase(&mut self, from: &AbsPath<C>, to: &AbsPath<C>) -> bool {
+        if self.is_scoped() {
+            return true;
+        }
         let Some(below) = AbsPath::wrap_units(self.written()).strip_prefix(from) else {
             return false;
         };
         let below = below.len();
         let start = to.len() + usize::from(below > 0 && !to.is_root());
         if !self.mem.reserve(self.len, start + below + 1) {
-            self.err = Some(PathError::TooLong);
+            self.poison(PathError::TooLong);
             return true;
         }
         // SAFETY: `reserve` made room for `start + below + 1` units, the last `below` written units
@@ -890,96 +1246,47 @@ impl<C: PathUnit, S: Storage<C>> PathBuf<AbsPath<C>, S> {
             core::ptr::copy_nonoverlapping(to.units().as_ptr(), base, to.len());
         }
         self.len = start + below;
+        self.fence_at_root();
         true
     }
 }
 
-impl<V: View<Unit = u8> + ?Sized, S: Storage<u8>> PathBuf<V, S> {
-    /// Resolves `text`, read by the rules of `P`, against the path. `..` removes names down to the
-    /// root. Absolute text replaces the path, or fails on a `RelPath`.
-    pub fn join<P: PlatformT>(&mut self, text: &[u8]) -> Result<(), PathError> {
-        let text = match text_root_len::<P>(text) {
-            0 => text,
-            root => {
-                if matches!(V::ABSOLUTE, Absolute::Never) {
-                    return self.fail(self.len, PathError::Absolute);
-                }
-                self.len = 0;
-                self.write_text_root::<P>(&text[..root]);
-                &text[root..]
-            }
-        };
-        let floor = self.root();
-        self.join_names::<P, false>(text, floor)
-    }
-
-    /// Resolves `text`, read by the rules of `P`, against the path, and fails if that would lead
-    /// out of the directory the path names now. The check is the join.
-    pub fn join_below<P: PlatformT>(&mut self, text: &[u8]) -> Result<(), PathError> {
-        if text_root_len::<P>(text) > 0 || has_drive::<P>(text) {
-            return self.fail(self.len, PathError::Absolute);
+/// A [`PathBuf`] that goes back to what it was, failures included, when this is dropped. Until then
+/// nothing removes or replaces what was there.
+pub struct Scope<'a, V: View + ?Sized, S: Storage<V::Unit>> {
+    buf: &'a mut PathBuf<V, S>,
+    saved: Saved,
+}
+impl<V: View + ?Sized, S: Storage<V::Unit>> Scope<'_, V, S> {
+    /// The path as it was when the scope began, which it still starts with.
+    #[inline]
+    pub fn base(&self) -> Result<&V, PathError> {
+        match self.saved.err {
+            None => Ok(V::wrap(&self.buf.written()[..self.saved.len])),
+            Some(err) => Err(err),
         }
-        self.join_names::<P, true>(text, self.len)
     }
-
-    #[cold]
-    fn fail(&mut self, back_to: usize, err: PathError) -> Result<(), PathError> {
-        self.truncate(back_to);
-        self.err = Some(err);
-        Err(err)
+}
+impl<V: View + ?Sized, S: Storage<V::Unit>> Deref for Scope<'_, V, S> {
+    type Target = PathBuf<V, S>;
+    #[inline(always)]
+    fn deref(&self) -> &PathBuf<V, S> {
+        self.buf
     }
-
-    fn join_names<P: PlatformT, const BELOW: bool>(
-        &mut self,
-        text: &[u8],
-        floor: usize,
-    ) -> Result<(), PathError> {
-        let start = self.len;
-        let mut rest = text;
-        while !rest.is_empty() {
-            let mut end = 0;
-            let mut forbidden = false;
-            while end < rest.len() && !P::P.is_separator(rest[end]) {
-                forbidden |= is_forbidden_in_name(rest[end]);
-                end += 1;
-            }
-            let name = &rest[..end];
-            rest = rest.get(end + 1..).unwrap_or_default();
-            match name {
-                b"" | b"." => {}
-                b".." => {
-                    if BELOW && self.len == floor {
-                        return self.fail(start, PathError::Escapes);
-                    }
-                    self.up_to(floor);
-                }
-                _ => {
-                    if forbidden {
-                        return self.fail(start.min(self.len), PathError::BadName);
-                    }
-                    self.write(self.len, self.needs_sep(), name);
-                }
-            }
-            if let Some(err) = self.err {
-                return self.fail(start.min(self.len), err);
-            }
-        }
-        Ok(())
+}
+impl<V: View + ?Sized, S: Storage<V::Unit>> DerefMut for Scope<'_, V, S> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut PathBuf<V, S> {
+        self.buf
     }
-
-    fn write_text_root<P: PlatformT>(&mut self, root: &[u8]) {
-        #[cfg(not(windows))]
-        {
-            let _ = root;
-            self.write(0, false, b"/");
-        }
-        #[cfg(windows)]
-        {
-            self.write(0, false, root);
-            // SAFETY: `write` wrote `len` units.
-            let written = unsafe { core::slice::from_raw_parts_mut(self.mem.ptr_mut(), self.len) };
-            crate::resolve_path::slashes_to_windows_in_place(written);
-        }
+}
+impl<V: View + ?Sized, S: Storage<V::Unit>> Drop for Scope<'_, V, S> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        self.buf.truncate(self.saved.len);
+        self.buf.err = self.saved.err;
+        self.buf.fence = self.saved.fence;
+        self.buf.at_fence = self.saved.at_fence;
     }
 }
 
@@ -996,10 +1303,11 @@ fn text_root_len<P: PlatformT>(text: &[u8]) -> usize {
     }
 }
 
-/// `C:name`: relative to the current directory of a drive, so not below anything.
+/// `C:name`: relative to the current directory of a drive, so not below anything. Elsewhere than on
+/// Windows a `:` is part of a name.
 #[inline]
 fn has_drive<P: PlatformT>(text: &[u8]) -> bool {
-    !matches!(P::P, Platform::Posix)
+    (cfg!(windows) || matches!(P::P, Platform::Windows))
         && text
             .split(|&c| P::P.is_separator(c))
             .next()
@@ -1007,7 +1315,7 @@ fn has_drive<P: PlatformT>(text: &[u8]) -> bool {
 }
 
 /// The way from the directory `from` to `to`.
-pub fn relative_in<C: PathUnit, S: Storage<C>>(
+pub fn relative_in<C: Unit, S: Storage<C>>(
     mem: S,
     from: &AbsPath<C>,
     to: &AbsPath<C>,
@@ -1020,8 +1328,9 @@ pub fn relative_in<C: PathUnit, S: Storage<C>>(
         }
         match common.parent() {
             Some(parent) => common = parent,
+            // Two drives.
             None => {
-                out.err = Some(PathError::Absolute);
+                out.poison(PathError::Absolute);
                 return out;
             }
         }
@@ -1030,24 +1339,6 @@ pub fn relative_in<C: PathUnit, S: Storage<C>>(
     out.push(below);
     out
 }
-
-macro_rules! boxed {
-    ($name:ident) => {
-        impl<C: Copy> From<&$name<C>> for Box<$name<C>> {
-            /// For a path that outlives the buffer it was built in.
-            fn from(path: &$name<C>) -> Self {
-                let units: Box<[C]> = Box::from(&path.0);
-                // SAFETY: `repr(transparent)` over `[C]`.
-                unsafe { Box::from_raw(Box::into_raw(units) as *mut $name<C>) }
-            }
-        }
-    };
-}
-boxed!(Path);
-boxed!(AbsPath);
-boxed!(RelPath);
-boxed!(SubPath);
-boxed!(Component);
 
 /// The project's directory.
 #[inline]

@@ -36,7 +36,7 @@ import {
 } from "node:net";
 import os from "node:os";
 import { join } from "node:path";
-import { TLSSocket } from "node:tls";
+import { connect as tlsConnect, TLSSocket } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -3625,6 +3625,68 @@ describe("connect through the handle", () => {
     }
   });
 
+  it("a TLS socket's handle dials through connect() too", async () => {
+    const socket = tlsConnect({ host: "127.0.0.1", port: 1, ca: tlsCert.cert });
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<{ thisValue: unknown; req: any; args: unknown[] }>();
+      socket.on("error", reject);
+      socket.once("connectionAttempt", () => {
+        socket._handle.connect = function (req, ...args) {
+          resolve({ thisValue: this, req, args });
+        };
+      });
+      const { thisValue, req, args } = await promise;
+      expect(thisValue).toBe(socket._handle);
+      expect(args).toEqual(["127.0.0.1", 1]);
+      expect(req.tls).toBeDefined();
+      expect(socket.connecting).toBe(true);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it("every autoSelectFamily attempt dials through the handle it made", async () => {
+    const socket = new Socket();
+    try {
+      const attempts: { handle: unknown; req: any; args: unknown[] }[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      socket.on("error", reject);
+      socket.on("connectionAttempt", () => {
+        socket._handle.connect = socket._handle.connect6 = function (req, ...args) {
+          attempts.push({ handle: this, req, args });
+          // The first attempt never completes: it times out and the next address is tried.
+          if (attempts.length === 2) resolve();
+        };
+      });
+      socket.connect({
+        host: "localhost",
+        port: 1,
+        autoSelectFamily: true,
+        autoSelectFamilyAttemptTimeout: 10,
+        lookup: (_host, _options, callback) =>
+          callback(null, [
+            { address: "::1", family: 6 },
+            { address: "127.0.0.1", family: 4 },
+          ]),
+      });
+      await promise;
+      expect(attempts.map(attempt => attempt.args)).toEqual([
+        ["::1", 1],
+        ["127.0.0.1", 1],
+      ]);
+      expect(attempts[0].handle).not.toBe(attempts[1].handle);
+      expect(attempts[1].handle).toBe(socket._handle);
+
+      const connected = once(socket, "connect");
+      const { req } = attempts[1];
+      req.oncomplete(0, socket._handle, req, true, true);
+      await connected;
+      expect(socket.connecting).toBe(false);
+    } finally {
+      socket.destroy();
+    }
+  });
+
   it("a replacement that forwards to the handle's own connect dials for real", async () => {
     const server = createServer(connection => connection.end("hello")).listen(0, "127.0.0.1");
     await once(server, "listening");
@@ -3740,7 +3802,11 @@ describe("connect through the handle", () => {
           };
         });
         socket.on("error", error => console.log("error:", error.code));
-        socket.connect({ host: "127.0.0.1", port: 1 });
+        // A port that was just released: nothing listens on it.
+        const server = net.createServer().listen(0, "127.0.0.1", () => {
+          const { port } = server.address();
+          server.close(() => socket.connect({ host: "127.0.0.1", port }));
+        });
         `,
       ],
       env: bunEnv,

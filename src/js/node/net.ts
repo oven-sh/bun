@@ -1176,7 +1176,7 @@ const ServerHandlers = {
     if (typeof cb !== "function") return false;
     const wire = Buffer.isBuffer(protocolsWire) ? protocolsWire : Buffer.from(protocolsWire);
     const protocols: string[] = [];
-    for (let i = 0; i + 1 <= wire.length;) {
+    for (let i = 0; i + 1 <= wire.length; ) {
       const n = wire[i];
       protocols.push(wire.toString("latin1", i + 1, i + 1 + n));
       i += 1 + n;
@@ -1900,8 +1900,9 @@ function kConnectTcp(self, addressType, req, address, port) {
   let err;
   try {
     err = addressType === 6 ? handle.connect6(req, address, port) : handle.connect(req, address, port);
-  } finally {
-    req.dispatching = false;
+  } catch (e) {
+    dialThrew(self, req, address, port);
+    throw e;
   }
   return endDial(req, err);
 }
@@ -1913,10 +1914,17 @@ function kConnectPipe(self, req, address) {
   let err;
   try {
     err = handle.connect(req, address);
-  } finally {
-    req.dispatching = false;
+  } catch (e) {
+    dialThrew(self, req, address, undefined);
+    throw e;
   }
   return endDial(req, err);
+}
+
+// A replacement threw. Its exception goes up; a syscall failure it hid still destroys the socket.
+function dialThrew(self, req, address, port) {
+  const errno = endDial(req, undefined);
+  if (errno) self.destroy(new ExceptionWithHostPort(errno, "connect", address, port));
 }
 
 function beginDial(self, req) {
@@ -1925,11 +1933,13 @@ function beginDial(self, req) {
   req.socket = self[khandlers];
   req.data = { self, req };
   // A syscall failure fires connectError inside the call; it stashes req.errno while this is set.
+  // endDial clears it on every exit.
   req.dispatching = true;
 }
 
 // `err` is the handle's return: 0 from Bun's connect, an errno or undefined from a replacement.
 function endDial(req, err) {
+  req.dispatching = false;
   const errno = req.errno;
   if (errno !== undefined) {
     req.errno = undefined;

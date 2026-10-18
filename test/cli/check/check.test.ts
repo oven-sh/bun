@@ -5410,6 +5410,47 @@ order_b.ts(12,14): error TS2322: Type 'string' is not assignable to type 'number
       },
     );
 
+    // The method parameters swap the two sides, so `T1<any, "x">` and `T1<any, string>` are compared in both directions. That
+    // isn't infinite recursion, so the comparison has to run to the end.
+    test.each([1, 8])(
+      "reports an error between generic types that are compared in both directions, on %d threads",
+      async threads => {
+        using dir = project({
+          "a.ts": `type T1<H, P> = { e0(x: T0<any, P>): void; e2: (x: T2<any, P>) => void; };
+type T2<H, P> = (x: { __p?: P; e1: (x: T1<any, P>) => void; }) => void;
+type T0<H, P> = (x: { r: Partial<Record<P & string, boolean>>; e1(x: T1<any, P>): void; }) => void;
+declare let s1: T1<1, string>, l1: T1<1, "x">;
+s1 = l1;
+export {};
+`,
+        });
+        const { stdout, exitCode } = await check(dir, ["--threads", String(threads)]);
+        expect(stdout).toBe(
+          `
+a.ts(5,1): error TS2322: Type 'T1<1, "x">' is not assignable to type 'T1<1, string>'.
+  Types of property 'e0' are incompatible.
+    Type '(x: T0<any, "x">) => void' is not assignable to type '(x: T0<any, string>) => void'.
+      Types of parameters 'x' and 'x' are incompatible.
+        Types of parameters 'x' and 'x' are incompatible.
+          Type '{ r: Partial<Record<"x", boolean>>; e1(x: T1<any, "x">): void; }' is not assignable to type '{ r: Partial<Record<string, boolean>>; e1(x: T1<any, string>): void; }'.
+            Types of property 'e1' are incompatible.
+              Type '(x: T1<any, "x">) => void' is not assignable to type '(x: T1<any, string>) => void'.
+                Types of parameters 'x' and 'x' are incompatible.
+                  Type 'T1<any, string>' is not assignable to type 'T1<any, "x">'.
+                    Types of property 'e2' are incompatible.
+                      Type '(x: T2<any, string>) => void' is not assignable to type '(x: T2<any, "x">) => void'.
+                        Types of parameters 'x' and 'x' are incompatible.
+                          Types of parameters 'x' and 'x' are incompatible.
+                            Type '{ __p?: string | undefined; e1: (x: T1<any, string>) => void; }' is not assignable to type '{ __p?: "x" | undefined; e1: (x: T1<any, "x">) => void; }'.
+                              Types of property '__p' are incompatible.
+                                Type 'string | undefined' is not assignable to type '"x" | undefined'.
+                                  Type 'string' is not assignable to type '"x"'.
+`.slice(1, -1),
+        );
+        expect(exitCode).toBe(1);
+      },
+    );
+
     test("an intersection with a conditional type whose constraint is any", async () => {
       using dir = project({
         "a.ts": `

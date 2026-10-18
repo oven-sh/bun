@@ -4290,7 +4290,12 @@ impl<'p, 's> Checker<'p, 's> {
             r.source_stack.push(source);
             if r.expanding & REC_SOURCE == 0
                 && r.source_stack.len() >= 3
-                && self.is_last_deeply_nested(&r.source_stack, &mut r.source_identities, 3)
+                && self.is_last_deeply_nested(
+                    [&r.source_stack, &r.target_stack],
+                    true,
+                    &mut r.source_identities,
+                    3,
+                )
             {
                 r.expanding |= REC_SOURCE;
             }
@@ -4299,7 +4304,12 @@ impl<'p, 's> Checker<'p, 's> {
             r.target_stack.push(target);
             if r.expanding & REC_TARGET == 0
                 && r.target_stack.len() >= 3
-                && self.is_last_deeply_nested(&r.target_stack, &mut r.target_identities, 3)
+                && self.is_last_deeply_nested(
+                    [&r.source_stack, &r.target_stack],
+                    false,
+                    &mut r.target_identities,
+                    3,
+                )
             {
                 r.expanding |= REC_TARGET;
             }
@@ -4469,13 +4479,16 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isDeeplyNestedType`: `stack` contains `max_depth` instantiations of the declaration that
     /// `t` is an instantiation of, each created later than the previous one. A homomorphic mapped
-    /// type is as deeply nested as the type it is applied to.
+    /// type is as deeply nested as the type it is applied to. `stacks`: the source stack and the
+    /// target stack. `stack` is the source stack if `is_source`.
     pub(super) fn is_deeply_nested_type(
         &mut self,
         t: TypeId,
-        stack: &[TypeId],
+        stacks: [&[TypeId]; 2],
+        is_source: bool,
         max_depth: usize,
     ) -> bool {
+        let stack = stacks[usize::from(!is_source)];
         if stack.len() < max_depth {
             return false;
         }
@@ -4483,7 +4496,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let TypeData::Intersection(parts) = data
             && parts
                 .iter()
-                .any(|&p| self.is_deeply_nested_type(p, stack, max_depth))
+                .any(|&p| self.is_deeply_nested_type(p, stacks, is_source, max_depth))
         {
             return true;
         }
@@ -4492,8 +4505,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut last = None;
         for &on_stack in stack {
             if self.has_matching_recursion_identity(on_stack, identity) {
-                // `t.id >= lastTypeId`
-                if last.is_none_or(|last| self.types().is_created_no_earlier(on_stack, last)) {
+                if last.is_none_or(|last| self.is_created_no_earlier(on_stack, last, stacks)) {
                     count += 1;
                     if count >= max_depth {
                         return true;
@@ -4505,14 +4517,32 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
+    /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`. Height doesn't order two instantiations with the
+    /// same height. Counting each as newer than the other would cut off a comparison that only swaps the same two
+    /// types between the source stack and the target stack. tsgo creates an instantiation when a comparison first
+    /// reaches it, and the target's before the source's, so the type that was pushed first is the older one.
+    fn is_created_no_earlier(&self, t: TypeId, last: TypeId, stacks: [&[TypeId]; 2]) -> bool {
+        let reached = |t: TypeId| {
+            let [source, target] = stacks.map(|stack| stack.iter().position(|&it| it == t));
+            let (source, target) = (source.map(|at| 2 * at + 1), target.map(|at| 2 * at));
+            source.into_iter().chain(target).min()
+        };
+        t == last
+            || (self.types().nesting_order(t, last))
+                .then_with(|| reached(t).cmp(&reached(last)))
+                .is_ge()
+    }
+
     /// `is_deeply_nested_type` of the last entry of `stack`. `identities`: for a prefix of the
     /// stack as of the previous call, the type and its `plain_recursion_identity`.
     fn is_last_deeply_nested(
         &mut self,
-        stack: &[TypeId],
+        stacks: [&[TypeId]; 2],
+        is_source: bool,
         identities: &mut Vec<(TypeId, RecursionId)>,
         max_depth: usize,
     ) -> bool {
+        let stack = stacks[usize::from(!is_source)];
         if stack.len() < max_depth {
             return false;
         }
@@ -4527,7 +4557,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         };
         if kept == NOT_PLAIN {
-            return self.is_deeply_nested_type(t, stack, max_depth);
+            return self.is_deeply_nested_type(t, stacks, is_source, max_depth);
         }
         let identity = self.recursion_identity_by_now(t, kept);
         let mut count = 0;
@@ -4540,8 +4570,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && self.recursion_identity_by_now(on_stack, kept) == identity
             };
             if matches {
-                // `t.id >= lastTypeId`
-                if last.is_none_or(|last| self.types().is_created_no_earlier(on_stack, last)) {
+                if last.is_none_or(|last| self.is_created_no_earlier(on_stack, last, stacks)) {
                     count += 1;
                     if count >= max_depth {
                         return true;
@@ -5334,7 +5363,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             TypeData::Cond { file, node, .. } => {
-                if self.is_deeply_nested_type(target, &r.target_stack, 10) {
+                if self.is_deeply_nested_type(target, [&r.source_stack, &r.target_stack], false, 10)
+                {
                     return Ternary::MAYBE;
                 }
                 // Only without `infer`, when the result does not depend on distribution, and when
@@ -5554,7 +5584,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             TypeData::Cond { .. } => {
-                if self.is_deeply_nested_type(source, &r.source_stack, 10) {
+                if self.is_deeply_nested_type(source, [&r.source_stack, &r.target_stack], true, 10)
+                {
                     return Ternary::MAYBE;
                 }
                 if matches!(self.data(target), TypeData::Cond { .. }) {

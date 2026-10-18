@@ -3612,15 +3612,15 @@ impl<'p, 's> Types<'p, 's> {
         a.0.cmp(&b.0)
     }
 
-    /// `a.id >= b.id` in `isDeeplyNestedType`, which treats a higher id as a sign of a newer instantiation, one caused
-    /// by recursion. Under `content_order` only the heights are compared. The instantiations of a recursion that steps
-    /// from one literal type to the next all have the same height, and comparing their hashes would count only about
-    /// half of them.
+    /// Compares `a.id` with `b.id` for `isDeeplyNestedType`, which treats a higher id as a sign of a newer instantiation,
+    /// one caused by recursion. Under `content_order` only the heights are compared. The instantiations of a recursion
+    /// that steps from one literal type to the next all have the same height, and comparing their hashes would count
+    /// only about half of them. The caller orders two types with the same height.
     #[inline]
-    pub fn is_created_no_earlier(&self, a: TypeId, b: TypeId) -> bool {
+    pub fn nesting_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         match self.published.orders_by_content() {
-            true => self.rank(a).height >= self.rank(b).height,
-            false => self.creation_order(a, b).is_ge(),
+            true => self.rank(a).height.cmp(&self.rank(b).height),
+            false => self.creation_order(a, b),
         }
     }
 
@@ -5465,12 +5465,11 @@ mod tests {
         ] {
             assert!(types.creation_order(part, whole).is_lt());
             assert!(types.creation_order(whole, part).is_gt());
-            assert!(types.is_created_no_earlier(whole, part));
-            assert!(!types.is_created_no_earlier(part, whole));
+            assert!(types.nesting_order(whole, part).is_gt());
+            assert!(types.nesting_order(part, whole).is_lt());
         }
         // Same height.
-        assert!(types.is_created_no_earlier(of_string, of_number));
-        assert!(types.is_created_no_earlier(of_number, of_string));
+        assert!(types.nesting_order(of_string, of_number).is_eq());
         assert!(types.creation_order(outer, outer).is_eq());
     }
 

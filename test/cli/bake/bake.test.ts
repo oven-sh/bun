@@ -693,6 +693,53 @@ test.concurrent("bun bake runs the SIGTERM handlers before it starts again for b
   await output.waitFor(/SIGTERM before restart/);
 });
 
+// On a terminal, `bun bake` adds its own SIGTERM listener, which exits. Bun.spawn's `terminal` is
+// POSIX only.
+test.concurrent.skipIf(isWindows)(
+  "on a terminal, bun bake runs every SIGTERM listener before it starts again for bake.config.ts",
+  async () => {
+    const server = (version: string) => `
+      process.on("SIGTERM", () => console.log("SIGTERM listener of ${version}"));
+      export default { fetch: () => new Response("${version}") };
+    `;
+    using dir = tempDir("bake-command-config-sigterm-tty", {
+      "bake.config.ts": `export default { plugins: [] };`,
+      "app/server.ts": server("v1"),
+    });
+
+    let text = "";
+    let changed = Promise.withResolvers<void>();
+    const decoder = new TextDecoder();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "bake", "--port=0"],
+      env,
+      cwd: String(dir),
+      terminal: {
+        cols: 200,
+        rows: 50,
+        data(_terminal, chunk) {
+          text += decoder.decode(chunk, { stream: true });
+          changed.resolve();
+          changed = Promise.withResolvers<void>();
+        },
+      },
+    });
+    const waitFor = async (pattern: RegExp) => {
+      while (!pattern.test(text)) await changed.promise;
+      return text.match(pattern)!;
+    };
+
+    const [, url] = await waitFor(/url: (http:\/\/\S+)/);
+    // A reload in place adds the listener of v2 after the one of `bun bake`.
+    await Bun.write(join(String(dir), "app/server.ts"), server("v2"));
+    let body = await get(url, "/");
+    while (!body.includes("v2")) body = await get(url, "/");
+
+    await Bun.write(join(String(dir), "bake.config.ts"), `export default { plugins: [] }; // changed`);
+    await waitFor(/SIGTERM listener of v2/);
+  },
+);
+
 test.concurrent("bun bake exits when a start for a bake.config.ts change finds a page it cannot serve", async () => {
   using dir = tempDir("bake-command-config-restart-error", {
     "bake.config.ts": `export default { plugins: [] };`,

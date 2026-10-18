@@ -62,3 +62,11 @@ pub(crate) fn restart_process(global: &JSGlobalObject, _frame: &CallFrame) -> Js
     bun_core::Output::flush();
     bun_core::Global::exit(1);
 }
+
+/// `isRestarting()`: whether a restart is running the kill signal listeners. The process is then
+/// about to start again, so a listener must not end it.
+pub(crate) fn is_restarting(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    Ok(JSValue::from(
+        bun_jsc::posix_signal_handle::is_emitting_watch_kill_signal(),
+    ))
+}

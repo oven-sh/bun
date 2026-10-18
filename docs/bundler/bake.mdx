@@ -1,6 +1,6 @@
 ---
 title: "bun bake"
-description: "Serve an app from the pages in app/pages and an optional app/server.ts, with hot reloading"
+description: "Serve an app from the pages in app/pages, an optional app/server.ts and optional build plugins, with hot reloading"
 ---
 
 <Warning>
@@ -8,10 +8,11 @@ description: "Serve an app from the pages in app/pages and an optional app/serve
   `BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE=1`.
 </Warning>
 
-`bun bake` serves the app in the working directory with Bun's dev server. It reads two places:
+`bun bake` serves the app in the working directory with Bun's dev server. It reads three places:
 
 - `app/pages/`: the HTML pages.
 - `app/server.ts`: your server code. This file is optional.
+- `bake.config.ts`: build plugins. This file is optional.
 
 ```txt File Tree icon="folder-tree"
 app/
@@ -22,6 +23,7 @@ app/
       index.html        → /docs
       install.html      → /docs/install
   server.ts
+bake.config.ts
 ```
 
 ```bash terminal icon="terminal"
@@ -43,11 +45,12 @@ A page cannot have `[`, `]`, `:`, `*`, `?`, `#` or `%` in its path, because its 
 
 ## Server code
 
-The default export of `app/server.ts` can have three options of [`Bun.serve()`](/runtime/http/server):
+The default export of `app/server.ts` holds options of [`Bun.serve()`](/runtime/http/server), the same as `export default` in a file that `bun` runs. A [Hono](https://hono.dev) app works: `export default app`.
 
 - `routes`: more routes. A route cannot have the URL of a page.
 - `fetch`: handles each request that no page and no route matched.
-- `websocket`: the WebSocket handlers.
+- `websocket`, `error`, `tls` and the other options of `Bun.serve()`.
+- `port`, `hostname` and `unix`: where to listen. `--port` and `--host` take precedence.
 
 ```ts title="app/server.ts" icon="/icons/typescript.svg"
 export default {
@@ -61,6 +64,23 @@ export default {
 ```
 
 `bun bake` starts the server. Do not call `Bun.serve()` in `app/server.ts`. The program is `bun bake` itself, so `app/server.ts` is not the entry module: `import.meta.main` is `false`, `Bun.main` is an empty string, and `process.argv` holds the path of `bun` followed by the arguments of `bun bake`. Without a `fetch`, a request that no page and no route matched gets a 404.
+
+## Plugins
+
+The default export of `bake.config.ts` lists build plugins. They are [Bun plugins](/bundler/plugins), and `bun bake` runs them on the pages and the files that the pages import.
+
+```ts title="bake.config.ts" icon="/icons/typescript.svg"
+import { defineConfig } from "bun:bake";
+import tailwind from "bun-plugin-tailwind";
+
+export default defineConfig({
+  plugins: [tailwind],
+});
+```
+
+The default export can also be a function. It gets `{ mode }`, which is `"development"` in `bun bake`. The plugins in `[serve.static] plugins` of `bunfig.toml` also apply, before the plugins of `bake.config.ts`.
+
+After you change `bake.config.ts`, restart `bun bake`, or run it with `--watch`.
 
 ## Options
 

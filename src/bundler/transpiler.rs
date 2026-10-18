@@ -1478,6 +1478,7 @@ impl<'a> Transpiler<'a> {
                     module_type: to_parser_module_type(this_parse.module_type),
                     jsc_builtin_syntax: false,
                     output_format: p_opts::Format::Esm,
+                    transform_only: self.options.transform_only,
                     import_meta_main_value: None,
                     lower_import_meta_main_for_node_js: false,
                     framework: None,

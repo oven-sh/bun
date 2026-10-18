@@ -754,6 +754,9 @@ impl VMHolder {
     }
 }
 
+#[thread_local]
+pub static IS_MAIN_THREAD_VM: Cell<bool> = Cell::new(false);
+
 static IS_SMOL_MODE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 #[inline]
@@ -2082,6 +2085,12 @@ impl VirtualMachine {
 
     pub fn is_watcher_enabled(&self) -> bool {
         !self.bun_watcher.is_null()
+    }
+
+    /// Thin setter so callers don't need `.with` plumbing on the thread-local.
+    #[inline]
+    pub fn set_is_main_thread_vm(value: bool) {
+        IS_MAIN_THREAD_VM.set(value);
     }
 
     /// The body lives in `bun_runtime` (it constructs `bun.api.Debugger`), so

@@ -2,6 +2,8 @@
 pub enum Error {
     #[error("ModuleNotFound")]
     ModuleNotFound,
+    #[error("ParserError")]
+    ParserError,
     #[error("StaleCache")]
     StaleCache,
     #[error("InvalidModuleType")]
@@ -79,6 +81,7 @@ impl Error {
     pub fn name(&self) -> &'static str {
         match self {
             Self::ModuleNotFound => "ModuleNotFound",
+            Self::ParserError => "ParserError",
             Self::StaleCache => "StaleCache",
             Self::InvalidModuleType => "InvalidModuleType",
             Self::UnknownEncoding => "UnknownEncoding",

@@ -136,6 +136,8 @@ pub struct Options<'a> {
     pub jsc_builtin_syntax: bool,
     pub output_format: options::Format,
 
+    pub transform_only: bool,
+
     /// Used for inlining the state of import.meta.main during visiting
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
@@ -184,6 +186,7 @@ impl<'a> Default for Options<'a> {
             module_type: options::ModuleType::Unknown,
             jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
+            transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
             framework: None,
@@ -270,6 +273,7 @@ impl<'a> Options<'a> {
             module_type: self.module_type,
             jsc_builtin_syntax: self.jsc_builtin_syntax,
             output_format: self.output_format,
+            transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
             framework: self.framework,
@@ -343,6 +347,7 @@ impl<'a> Options<'a> {
             module_type: options::ModuleType::Unknown,
             jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
+            transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
             framework: None,

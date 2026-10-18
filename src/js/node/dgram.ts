@@ -60,6 +60,9 @@ const EventEmitter = require("node:events");
 
 const { deprecate } = require("internal/util/deprecate");
 
+// Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back 'listening'.
+const nextTick = process.nextTick;
+
 const SymbolDispose = Symbol.dispose;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const ObjectDefineProperty = Object.defineProperty;
@@ -777,6 +780,7 @@ function startBunSocket(self, state, createOptions, sharedHandle?) {
     };
     // Private name: a cluster-shared descriptor is read one datagram at a time so workers share the load.
     if (sharedHandle) $putByIdDirectPrivate(udpOptions, "sharedFd", true);
+    // Events via nextTick: emitted from the reaction itself (a microtask), a listener's microtasks would run before its nextTicks.
     Bun.udpSocket(udpOptions).$then(
       socket => {
         if (!state.handle) {
@@ -798,16 +802,16 @@ function startBunSocket(self, state, createOptions, sharedHandle?) {
           if (recvBufferSize) bufferSize(self, recvBufferSize, RECV_BUFFER);
           if (sendBufferSize) bufferSize(self, sendBufferSize, SEND_BUFFER);
         } catch (err) {
-          self.emit("error", err);
+          nextTick(() => self.emit("error", err));
           return;
         }
 
-        self.emit("listening");
+        nextTick(() => self.emit("listening"));
       },
       err => {
         state.bindState = BIND_STATE_UNBOUND;
         if (sharedHandle) releaseSharedHandle(state, sharedHandle);
-        self.emit("error", err);
+        nextTick(() => self.emit("error", err));
       },
     );
   } catch (err) {

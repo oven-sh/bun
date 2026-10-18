@@ -373,3 +373,32 @@ describe.concurrent.skipIf(isWindows)(
     );
   },
 );
+
+test.concurrent.each(["stdout", "stderr"])(
+  "a tick queued in the callback of a write to a piped process.%s runs before a microtask queued in it",
+  async name => {
+    const other = name === "stdout" ? "stderr" : "stdout";
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.nextTick(() => {});
+        setImmediate(() =>
+          process.${name}.write(Buffer.alloc(8 << 20, "a"), () => {
+            const order = [];
+            Promise.resolve().then(() => order.push("microtask"));
+            process.nextTick(() => order.push("tick"));
+            setImmediate(() => process.${other}.write(order.join()));
+          }),
+        );`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [written, order, exitCode] = await Promise.all([proc[name].bytes(), proc[other].text(), proc.exited]);
+    expect(order).toBe("tick,microtask");
+    expect(written.length).toBe(8 << 20);
+    expect(exitCode).toBe(0);
+  },
+);

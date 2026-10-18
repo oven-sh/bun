@@ -1230,6 +1230,459 @@ describe("a request without a body over https", () => {
   });
 });
 
+// nodejs/node#65732: at 'finish' of a response the server ends a complete request that nothing read with read(0),
+// and a clean destroy of a message calls back with no tick. Node.js has it since v26.9.0 and v24.22.0. The versions
+// before resume the request, and their 'close' is two ticks behind 'end'. The "fast-forward" rows are the output of
+// Node.js v26.11.1 and do not run on the older versions. The other rows are the same in v26.3.0 and v26.11.1.
+describe("the end of a message, tick for tick", () => {
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  const isBun = typeof Bun !== "undefined";
+  const fastForwards = isBun || major > 26 || (major === 26 && minor >= 9) || (major === 24 && minor >= 22);
+  // nodejs/node#65952 (v26.10.0, v24.22.0): the client drops the destroy() of a request whose response is complete.
+  const clientDropsLateDestroy =
+    !isBun && (major > 26 || (major === 26 && minor >= 10) || (major === 24 && minor >= 22));
+
+  type Log = (line: string) => void;
+  type Arrange = (req: http.IncomingMessage, res: http.ServerResponse, log: Log) => void;
+  const get = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+  const emptyPost = "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
+  const post = "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 11\r\n\r\nhello world";
+  const halfPost = "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 11\r\n\r\nhello";
+  const state = (message: http.IncomingMessage) =>
+    `ended=${message.readableEnded} destroyed=${message.destroyed} closed=${message.closed} flowing=${message.readableFlowing}`;
+  // One tick for each name. An event between two of them is that many ticks behind the start.
+  const ticks = (log: Log, names: string[]) => {
+    const [name, ...rest] = names;
+    process.nextTick(() => {
+      log(name);
+      if (rest.length > 0) ticks(log, rest);
+    });
+  };
+  const endAndClose = (req: http.IncomingMessage, log: Log) => {
+    req.on("end", () => log("end"));
+    req.on("close", () => log("close"));
+  };
+  const abortedAndClose = (req: http.IncomingMessage, log: Log) => {
+    req.on("aborted", () => log("aborted"));
+    req.on("end", () => log("end"));
+    req.on("close", () => log(`close ended=${req.readableEnded} aborted=${req.aborted}`));
+  };
+  // "fast-forward": not on a Node.js without nodejs/node#65732. "fallback": the JS parser of emit('connection') in
+  // Bun still ends this request after its abort, on main as well.
+  type Tag = "fast-forward" | "fallback";
+  const rows: [name: string, payload: string, arrange: Arrange, expected: string[], tag?: Tag][] = [
+    [
+      "a GET that nothing reads has closed one tick after 'finish'",
+      get,
+      (req, res, log) => {
+        res.on("finish", () => process.nextTick(() => log(state(req))));
+        res.end("ok");
+      },
+      ["ended=true destroyed=true closed=true flowing=null"],
+      "fast-forward",
+    ],
+    [
+      "an empty POST that nothing reads has closed one tick after 'finish'",
+      emptyPost,
+      (req, res, log) => {
+        res.on("finish", () => process.nextTick(() => log(state(req))));
+        res.end("ok");
+      },
+      ["ended=true destroyed=true closed=true flowing=null"],
+      "fast-forward",
+    ],
+    [
+      "a GET that nothing reads does not flow and emits no 'resume'",
+      get,
+      (req, res, log) => {
+        req.on("resume", () => log("resume"));
+        req.on("end", () => log(`end ${state(req)}`));
+        req.on("close", () => log(`close ${state(req)}`));
+        res.end("ok");
+      },
+      [
+        "end ended=true destroyed=false closed=false flowing=null",
+        "close ended=true destroyed=true closed=true flowing=null",
+      ],
+      "fast-forward",
+    ],
+    [
+      "a GET that nothing reads: 'end' is before the first tick of a 'finish' listener, 'close' before the second",
+      get,
+      (req, res, log) => {
+        res.on("finish", () => {
+          log("finish");
+          ticks(log, ["A", "B", "C", "D"]);
+        });
+        endAndClose(req, log);
+        res.end("ok");
+      },
+      ["finish", "end", "A", "close", "B", "C", "D"],
+      "fast-forward",
+    ],
+    [
+      "a GET that nothing reads: 'close' is one tick behind 'end'",
+      get,
+      (req, res, log) => {
+        req.on("end", () => {
+          log("end");
+          ticks(log, ["A", "B", "C"]);
+        });
+        req.on("close", () => log("close"));
+        res.end("ok");
+      },
+      ["end", "A", "close", "B", "C"],
+      "fast-forward",
+    ],
+    [
+      "a POST that its listener read: 'close' is one tick behind 'end'",
+      post,
+      (req, res, log) => {
+        req.on("data", () => {});
+        req.on("end", () => {
+          log("end");
+          ticks(log, ["A", "B", "C"]);
+          res.end("ok");
+        });
+        req.on("close", () => log("close"));
+      },
+      ["end", "A", "close", "B", "C"],
+      "fast-forward",
+    ],
+    [
+      "a 'readable' listener that comes in 'finish' is behind 'end', and gets nothing",
+      get,
+      (req, res, log) => {
+        res.on("finish", () => {
+          req.on("readable", () => log(`readable ${req.read()}`));
+          endAndClose(req, log);
+        });
+        res.end("ok");
+      },
+      ["end", "close"],
+      "fast-forward",
+    ],
+    [
+      "ticks and a promise job of a 'finish' listener are behind 'end' and the destroy",
+      get,
+      (req, res, log) => {
+        res.on("finish", () => {
+          queueMicrotask(() => log(`job ${state(req)}`));
+          process.nextTick(() => {
+            log(`tick ${state(req)}`);
+            process.nextTick(() => log(`tick ${state(req)}`));
+          });
+        });
+        res.end("ok");
+      },
+      [
+        "tick ended=true destroyed=true closed=true flowing=null",
+        "tick ended=true destroyed=true closed=true flowing=null",
+        "job ended=true destroyed=true closed=true flowing=null",
+      ],
+      "fast-forward",
+    ],
+    [
+      "destroy() one tick behind 'finish' comes after 'end': no abort",
+      get,
+      (req, res, log) => {
+        req.on("aborted", () => log("aborted"));
+        endAndClose(req, log);
+        res.on("finish", () =>
+          process.nextTick(() => {
+            req.destroy();
+            log(`destroyed=${req.destroyed} aborted=${req.aborted}`);
+          }),
+        );
+        res.end("ok");
+      },
+      ["end", "destroyed=true aborted=false", "close"],
+      "fast-forward",
+    ],
+    [
+      "a POST with a body that nothing reads is resumed",
+      post,
+      (req, res, log) => {
+        res.on("finish", () => process.nextTick(() => log(state(req))));
+        req.on("resume", () => log("resume"));
+        req.on("end", () => log(`end ${state(req)}`));
+        req.on("close", () => log("close"));
+        setImmediate(() => res.end("ok"));
+      },
+      [
+        "resume",
+        "ended=false destroyed=false closed=false flowing=true",
+        "end ended=true destroyed=false closed=false flowing=true",
+        "close",
+      ],
+    ],
+    // Listeners and readers that come in a 'finish' listener, behind the dump. The request still ends for them.
+    [
+      "'end' and 'close' listeners that come in 'finish'",
+      get,
+      (req, res, log) => {
+        res.on("finish", () => endAndClose(req, log));
+        res.end("ok");
+      },
+      ["end", "close"],
+    ],
+    [
+      "a 'data' listener that comes in 'finish'",
+      get,
+      (req, res, log) => {
+        res.on("finish", () => {
+          req.on("data", () => log("data"));
+          endAndClose(req, log);
+        });
+        res.end("ok");
+      },
+      ["end", "close"],
+    ],
+    [
+      "resume() in 'finish'",
+      get,
+      (req, res, log) => {
+        res.on("finish", () => {
+          endAndClose(req, log);
+          req.resume();
+        });
+        res.end("ok");
+      },
+      ["end", "close"],
+    ],
+    [
+      "read() in 'finish'",
+      get,
+      (req, res, log) => {
+        res.on("finish", () => {
+          endAndClose(req, log);
+          log(`read ${req.read()}`);
+        });
+        res.end("ok");
+      },
+      ["read null", "end", "close"],
+    ],
+    [
+      "destroy() in 'finish' is an abort, and 'end' is already on its way",
+      get,
+      (req, res, log) => {
+        res.on("finish", () => {
+          req.on("aborted", () => log("aborted"));
+          endAndClose(req, log);
+          req.destroy();
+          log(`destroyed=${req.destroyed} aborted=${req.aborted}`);
+        });
+        res.end("ok");
+      },
+      ["aborted", "destroyed=true aborted=true", "end", "close"],
+    ],
+    [
+      "stream.finished() in 'finish'",
+      get,
+      (req, res, log) => {
+        res.on("finish", () => finished(req, err => log(`finished ${code(err)}`)));
+        res.end("ok");
+      },
+      ["finished no error"],
+    ],
+    [
+      "for await in 'finish'",
+      get,
+      (req, res, log) => {
+        res.on("finish", async () => {
+          let length = 0;
+          for await (const chunk of req) length += chunk.length;
+          log(`read ${length} bytes`);
+        });
+        res.end("ok");
+      },
+      ["read 0 bytes"],
+    ],
+    // A request that is destroyed before the response dumps it is not ended by the dump.
+    [
+      "destroy() in a 'finish' listener that runs before the dump: an abort, and no 'end'",
+      get,
+      (req, res, log) => {
+        abortedAndClose(req, log);
+        res.prependListener("finish", () => req.destroy());
+        res.end("ok");
+      },
+      ["aborted", "close ended=false aborted=true"],
+      "fallback",
+    ],
+    [
+      "res.end() and then req.destroy(): an abort, and no 'end'",
+      get,
+      (req, res, log) => {
+        abortedAndClose(req, log);
+        res.end("ok");
+        req.destroy();
+      },
+      ["aborted", "close ended=false aborted=true"],
+      "fallback",
+    ],
+    // The half of _destroy() that keeps its tick.
+    [
+      "destroy(err) in 'end' keeps its tick: an 'error' listener that comes after it gets the error",
+      post,
+      (req, res, log) => {
+        req.on("data", () => {});
+        req.on("end", () => {
+          log("end");
+          req.destroy(new Error("boom"));
+          log(`closed=${req.closed} aborted=${req.aborted}`);
+          req.on("error", err => log(`error ${err.message}`));
+          ticks(log, ["A", "B", "C"]);
+          res.end("ok");
+        });
+        req.on("close", () => log("close"));
+      },
+      ["end", "closed=false aborted=false", "A", "error boom", "close", "B", "C"],
+    ],
+    [
+      "destroy() of a request that has not ended, behind the destroy of its socket, is an abort and keeps its tick",
+      halfPost,
+      (req, res, log) => {
+        req.on("aborted", () => log("aborted"));
+        req.on("close", () => log("close"));
+        req.socket.destroy();
+        req.destroy();
+        log(`closed=${req.closed} aborted=${req.aborted}`);
+        ticks(log, ["A", "B", "C"]);
+      },
+      ["aborted", "closed=false aborted=true", "A", "close", "B", "C"],
+    ],
+  ];
+  for (const path of paths) {
+    describe(path, () => {
+      for (const [name, payload, arrange, expected, tag] of rows) {
+        const run =
+          tag === "fast-forward" && !fastForwards
+            ? test.skip
+            : tag === "fallback" && isBun && path === paths[1]
+              ? test.todo
+              : test;
+        run(name, async () => {
+          const events: string[] = [];
+          const { promise: closed, resolve: onClose, reject } = Promise.withResolvers<void>();
+          const server = http.createServer((req, res) => {
+            // Every tick and promise job that the row queues has run before this immediate.
+            req.on("close", () => setImmediate(onClose));
+            arrange(req, res, line => events.push(line));
+          });
+          await withPath(path, server, async port => {
+            const socket = send(port, payload, reject);
+            // The client of the row that destroys its socket sees a reset.
+            socket.removeListener("error", reject);
+            socket.on("error", () => {});
+            await closed;
+            socket.destroy();
+          });
+          assert.deepStrictEqual(events, expected);
+        });
+      }
+
+      // With 'close' of the request ahead of 'close' of the response, this destroy() comes to a response that has finished.
+      test("res.destroy() in 'close' of a request keeps the connection for the next request", async () => {
+        const { promise: answered, resolve: onAnswered, reject } = Promise.withResolvers<string>();
+        const server = http.createServer((req, res) => {
+          req.on("data", () => {});
+          req.on("end", () => res.end(`answer ${req.url}`));
+          req.on("close", () => res.destroy());
+        });
+        await withPath(path, server, async port => {
+          const request = (url: string) => `POST ${url} HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello`;
+          const socket = send(port, request("/1"), reject);
+          let received = "";
+          let sentSecond = false;
+          socket.on("close", () => onAnswered(`closed after ${JSON.stringify(received)}`));
+          socket.on("data", chunk => {
+            received += chunk;
+            if (!sentSecond && received.includes("answer /1")) {
+              sentSecond = true;
+              // Two immediates are behind every tick of the first exchange.
+              setImmediate(() => setImmediate(() => socket.write(request("/2"))));
+            } else if (received.includes("answer /2")) {
+              onAnswered("answered");
+            }
+          });
+          try {
+            assert.strictEqual(await answered, "answered");
+          } finally {
+            socket.destroy();
+          }
+        });
+      });
+    });
+  }
+
+  (fastForwards ? test : test.skip)(
+    "a response of the client that its listener read: 'close' is one tick behind 'end'",
+    async () => {
+      const events: string[] = [];
+      const { promise: closed, resolve: onClose, reject } = Promise.withResolvers<void>();
+      const server = http.createServer((req, res) => void res.end("ok"));
+      await withServer(server, async port => {
+        const request = http.get({ port, host: "127.0.0.1", agent: false }, res => {
+          res.on("data", () => {});
+          res.on("end", () => {
+            events.push("end");
+            ticks(line => events.push(line), ["A", "B", "C"]);
+          });
+          res.on("close", () => {
+            events.push("close");
+            setImmediate(onClose);
+          });
+        });
+        request.on("error", reject);
+        await closed;
+      });
+      assert.deepStrictEqual(events, ["end", "A", "close", "B", "C"]);
+    },
+  );
+
+  // The client does not take the read(0) of the server: it would put 'end' of the response, which gives the socket
+  // back to the agent, ahead of the error of the socket (nodejs/node#65938).
+  for (const [how, destroy, expected] of [
+    ["destroy(err)", (request: http.ClientRequest) => request.destroy(new Error("boom")), "boom"],
+    ["an AbortSignal", (request: http.ClientRequest, controller: AbortController) => controller.abort(), "AbortError"],
+  ] as const) {
+    for (const [response, status, headers] of [
+      ["a 204", 204, {}],
+      ["an empty 200", 200, { "Content-Length": "0" }],
+    ] as const) {
+      (clientDropsLateDestroy ? test.skip : test)(
+        `${how} of a keep-alive request of the client, behind ${response} that nothing read: the request gets the error`,
+        async () => {
+          const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+          const uncaught: unknown[] = [];
+          const onUncaught = (err: unknown) => uncaught.push(err);
+          process.on("uncaughtException", onUncaught);
+          const server = http.createServer((req, res) => void res.writeHead(status, headers).end());
+          const agent = new http.Agent({ keepAlive: true });
+          const seen: string[] = [];
+          try {
+            await withServer(server, async port => {
+              const controller = new AbortController();
+              const request = http.get({ port, host: "127.0.0.1", agent, signal: controller.signal }, () => {
+                setImmediate(() => destroy(request, controller));
+              });
+              request.on("error", err => seen.push(err.name === "AbortError" ? err.name : err.message));
+              // The error of a socket that has no listener left is an uncaught exception on a later tick.
+              request.on("close", () => setImmediate(() => setImmediate(onClose)));
+              await closed;
+            });
+          } finally {
+            agent.destroy();
+            process.removeListener("uncaughtException", onUncaught);
+          }
+          assert.deepStrictEqual({ seen, uncaught }, { seen: [expected], uncaught: [] });
+        },
+      );
+    }
+  }
+});
+
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
   const { expect } = await import("bun:test");

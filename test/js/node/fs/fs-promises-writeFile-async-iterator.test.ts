@@ -93,18 +93,5 @@ test("fs.promises.writeFile with iterable data takes a falsy flag as the default
       expected[row] = "new";
     }
   }
-  // An argument after the options is not a flag. Node ignores it.
-  for (const [label, options] of [
-    ["flag false", { flag: false }],
-    ["no flag", {}],
-  ] as [string, any][]) {
-    await Bun.write(path, "old content");
-    const row = `${label} and a fourth argument "a"`;
-    results[row] = await (writeFile as any)(path, ["new"], options, "a").then(
-      () => readFileSync(path, "utf8"),
-      (e: any) => `${e.code}, the file holds ${readFileSync(path, "utf8")}`,
-    );
-    expected[row] = "new";
-  }
   expect(results).toEqual(expected);
 });

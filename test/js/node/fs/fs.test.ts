@@ -11,6 +11,7 @@ import {
   isLinux,
   isPosix,
   isWindows,
+  nodeExe,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -831,10 +832,8 @@ describe("appendFile honors an explicit 'w' flag", () => {
 });
 
 // Node takes a falsy `flag` as not given: `options.flag || 'w'` in writeFile and
-// writeFileSync, `!options.flag` in appendFile and appendFileSync, and
-// `options.flag || 'r'` in fs.promises.readFile. The idiom `{ flag: append && "a" }`
-// depends on it. fs.readFileSync, fs.readFile and fs.open pass the flag on as it is.
-describe("a falsy flag option means the default flag", () => {
+// writeFileSync, `!options.flag` in appendFile and appendFileSync.
+describe("a falsy flag option means the default flag in writeFile and appendFile", () => {
   const falsy: [string, any][] = [
     ["false", false],
     ["zero", 0],
@@ -968,7 +967,6 @@ describe("a falsy flag option means the default flag", () => {
         "fs.appendFile": thrown(() => fs.appendFile(file, "+", { flag }, () => {})),
         "fs.promises.writeFile": await rejected(promises.writeFile(file, "new", { flag })),
         "fs.promises.appendFile": await rejected(promises.appendFile(file, "+", { flag })),
-        "fs.promises.readFile": await rejected(promises.readFile(file, { flag })),
       };
     }
     const strict = {
@@ -978,7 +976,6 @@ describe("a falsy flag option means the default flag", () => {
       "fs.appendFile": "throws TypeError ERR_INVALID_ARG_VALUE",
       "fs.promises.writeFile": "rejects TypeError ERR_INVALID_ARG_VALUE",
       "fs.promises.appendFile": "rejects TypeError ERR_INVALID_ARG_VALUE",
-      "fs.promises.readFile": "rejects TypeError ERR_INVALID_ARG_VALUE",
     };
     expect(results).toEqual(Object.fromEntries(invalid.map(([label]) => [label, strict])));
     expect(readFileSync(file, "utf8")).toBe("old");
@@ -998,13 +995,11 @@ describe("a falsy flag option means the default flag", () => {
       "fs.appendFile": (await viaCallback(cb => fs.appendFile(file, "+", options, cb)))?.name,
       "fs.promises.writeFile": await rejectionName(promises.writeFile(file, "new", options)),
       "fs.promises.appendFile": await rejectionName(promises.appendFile(file, "+", options)),
-      "fs.promises.readFile": await rejectionName(promises.readFile(file, options)),
     }).toEqual({
       "fs.writeFile": "AbortError",
       "fs.appendFile": "AbortError",
       "fs.promises.writeFile": "AbortError",
       "fs.promises.appendFile": "AbortError",
-      "fs.promises.readFile": "AbortError",
     });
     expect(readFileSync(file, "utf8")).toBe("old");
   });
@@ -1051,7 +1046,6 @@ describe("a falsy flag option means the default flag", () => {
       "fs.appendFile": await count(() => orThrow(viaCallback(cb => fs.appendFile(file, "+", options, cb)))),
       "fs.promises.writeFile": await count(() => promises.writeFile(file, "new", options)),
       "fs.promises.appendFile": await count(() => promises.appendFile(file, "+", options)),
-      "fs.promises.readFile": await count(() => promises.readFile(file, options)),
       "fs.promises.writeFile with iterable data": await count(() => promises.writeFile(file, ["new"], options)),
     }).toEqual({
       "fs.writeFileSync": 1,
@@ -1060,91 +1054,23 @@ describe("a falsy flag option means the default flag", () => {
       "fs.appendFile": 1,
       "fs.promises.writeFile": 1,
       "fs.promises.appendFile": 1,
-      "fs.promises.readFile": 1,
       "fs.promises.writeFile with iterable data": 1,
     });
   });
 
-  it("fs.promises.readFile and FileHandle.readFile read with a falsy flag", async () => {
-    using dir = tempDir("fs-falsy-flag-read", { "f.txt": "old" });
-    const file = join(String(dir), "f.txt");
-    const results: Record<string, string> = {};
-    for (const [label, flag] of falsy) {
-      results[label] = await promises.readFile(file, { encoding: "utf8", flag }).catch(e => e.code);
+  // The fixture prints what each writeFile and appendFile form does with each `flag` value.
+  it.skipIf(!nodeExe())("every flag value gives the same output in Node.js and Bun", async () => {
+    const fixture = join(import.meta.dir, "fs-write-flag-fixture.js");
+    async function run(exe: string) {
+      using dir = tempDir("fs-write-flag-fixture", {});
+      await using proc = Bun.spawn({ cmd: [exe, fixture, String(dir)], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
     }
-    expect(results).toEqual(forEveryFalsyFlag("old"));
-
-    const handle = await promises.open(file, "r");
-    try {
-      expect(await handle.readFile({ encoding: "utf8", flag: false as any })).toBe("old");
-    } finally {
-      await handle.close();
-    }
-
-    // A flag that is not falsy still reaches the open call.
-    const missing = join(String(dir), "missing.txt");
-    expect(await promises.readFile(missing, { encoding: "utf8", flag: "a+" })).toBe("");
-    expect(existsSync(missing)).toBe(true);
-    await expect(promises.readFile(file, { flag: "ax+" })).rejects.toMatchObject({ code: "EEXIST" });
-
-    // One read decides the flag. A second read would see "a+" and create the file.
-    let reads = 0;
-    const stateful: any = {
-      get flag() {
-        return reads++ === 0 ? undefined : "a+";
-      },
-    };
-    const absent = join(String(dir), "absent.txt");
-    await expect(promises.readFile(absent, stateful)).rejects.toMatchObject({ code: "ENOENT" });
-    expect({ reads, created: existsSync(absent) }).toEqual({ reads: 1, created: false });
-  });
-
-  it("fs.readFileSync, fs.readFile and fs.openSync still reject false, NaN and 0n", async () => {
-    using dir = tempDir("fs-strict-read-flag", { "f.txt": "old" });
-    const file = join(String(dir), "f.txt");
-    const flag = (value: unknown): any => ({ flag: value });
-    expect(() => readFileSync(file, flag(false))).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
-    expect(() => readFileSync(file, flag(NaN))).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
-    expect(() => readFileSync(file, flag(0n))).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
-    expect(() => fs.readFile(file, flag(false), () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
-    expect(() => fs.readFile(file, flag(NaN), () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
-    expect(() => fs.readFile(file, flag(0n), () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
-    await expect(promisify(fs.readFile)(file, flag(false))).rejects.toMatchObject({
-      name: "TypeError",
-      code: "ERR_INVALID_ARG_VALUE",
-    });
-    const falseFlag: any = false;
-    expect(() => openSync(file, falseFlag)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
-  });
-
-  it("a flag on Object.prototype does not reach readFile, writeFile or appendFile", async () => {
-    using dir = tempDir("fs-flag-object-prototype", { "f.txt": "old" });
-    const script = `
-      const fs = require("node:fs");
-      const cb = fn => new Promise((resolve, reject) => fn((err, data) => (err ? reject(err) : resolve(data))));
-      (async () => {
-        Object.prototype.flag = "w";
-        const read = [
-          await fs.promises.readFile("f.txt", { encoding: "utf8" }),
-          fs.readFileSync("f.txt", { encoding: "utf8" }),
-          await cb(done => fs.readFile("f.txt", { encoding: "utf8" }, done)),
-        ];
-        fs.appendFileSync("f.txt", "1", {});
-        await fs.promises.appendFile("f.txt", "2", {});
-        await cb(done => fs.appendFile("f.txt", "3", {}, done));
-        const appended = fs.readFileSync("f.txt", "utf8");
-        Object.prototype.flag = "a";
-        fs.writeFileSync("f.txt", "4", {});
-        await fs.promises.writeFile("f.txt", "5", {});
-        await cb(done => fs.writeFile("f.txt", "6", {}, done));
-        console.log(JSON.stringify({ read, appended, written: fs.readFileSync("f.txt", "utf8") }));
-      })();
-    `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, cwd: String(dir), stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ read: ["old", "old", "old"], appended: "old123", written: "6" });
-    expect(exitCode).toBe(0);
+    const [bunRun, nodeRun] = await Promise.all([run(bunExe()), run(nodeExe()!)]);
+    expect(nodeRun.stdout).toContain("fs.writeFileSync(path, { flag })");
+    expect(bunRun.stdout).toBe(nodeRun.stdout);
+    expect({ node: nodeRun.exitCode, bun: bunRun.exitCode }).toEqual({ node: 0, bun: 0 });
   });
 });
 

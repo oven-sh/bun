@@ -1449,7 +1449,7 @@ describe("parallel", () => {
         },
       },
       async server => {
-        for (let i = 0; i < count; ) {
+        for (let i = 0; i < count;) {
           let responses = await Promise.all([
             fetch(server.url.origin),
             fetch(server.url.origin),
@@ -1475,7 +1475,7 @@ describe("parallel", () => {
         },
       },
       async server => {
-        for (let i = 0; i < count; ) {
+        for (let i = 0; i < count;) {
           let responses = await Promise.all([
             fetch(server.url.origin),
             fetch(server.url.origin),
@@ -2939,7 +2939,7 @@ it("should support promise returned from error", async () => {
   {
     const resp = await fetch(new URL("async-fulfilled", url));
     expect(resp.status).toBe(200);
-    expect(resp.text()).resolves.toBe("Async fulfilled");
+    await expect(resp.text()).resolves.toBe("Async fulfilled");
   }
 
   {
@@ -2950,7 +2950,7 @@ it("should support promise returned from error", async () => {
   {
     const resp = await fetch(new URL("async-pending", url));
     expect(resp.status).toBe(200);
-    expect(resp.text()).resolves.toBe("Async pending");
+    await expect(resp.text()).resolves.toBe("Async pending");
   }
 
   {
@@ -3076,7 +3076,7 @@ it.concurrent("should work with dispose keyword", async () => {
     url = server.url;
     expect((await fetch(url)).status).toBe(200);
   }
-  expect(fetch(url)).rejects.toThrow();
+  await expect(fetch(url)).rejects.toThrow();
 });
 
 // Fixture serves a >1 MB file (the sendfile threshold). Each iteration reads
@@ -3315,6 +3315,42 @@ it.concurrent("we should always send date", async () => {
   }
 });
 
+it.concurrent.each([
+  ["never answers the close_notify", 1],
+  ["stopped reading the response", 64 * 1024 * 1024],
+])(
+  "idle timeout closes a tls connection whose client %s",
+  async (_name, size) => {
+    const aborted = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      tls,
+      idleTimeout: 1,
+      async fetch(req) {
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        if (size > 1) return new Response(Buffer.alloc(size, "x"));
+        await aborted.promise;
+        return new Response();
+      },
+    });
+    const client = nodeTls.connect({
+      port: server.port,
+      host: "127.0.0.1",
+      ca: tls.cert,
+      allowHalfOpen: true,
+    } as nodeTls.ConnectionOptions);
+    client.on("error", aborted.reject);
+    try {
+      await once(client, "secureConnect");
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await aborted.promise;
+    } finally {
+      client.destroy();
+    }
+  },
+  15_000,
+);
+
 it.concurrent(
   "should allow use of custom timeout",
   async () => {
@@ -3345,9 +3381,9 @@ it.concurrent(
       const res = await fetch(new URL(pathname, server.url.origin));
       expect(res.status).toBe(200);
       if (success) {
-        expect(res.text()).resolves.toBe("Hello, World!");
+        await expect(res.text()).resolves.toBe("Hello, World!");
       } else {
-        expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
+        await expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
       }
     }
     await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);
@@ -3443,7 +3479,7 @@ it.concurrent(
     expect(server.timeout).toBeFunction();
     const res = await fetch(new URL("/long-timeout", server.url.origin));
     expect(res.status).toBe(200);
-    expect(res.text()).resolves.toBe("Hello, World!");
+    await expect(res.text()).resolves.toBe("Hello, World!");
   },
   20_000,
 );
@@ -4987,7 +5023,7 @@ it("serves a TLS connection whose handshake completes after a graceful stop()", 
     raw.on("close", () => wire.push(null));
     const c = (client = nodeTls.connect({ socket: wire, rejectUnauthorized: false }));
     c.on("error", () => {});
-    for (const t = Date.now(); held.length === 0 && Date.now() - t < 10_000; ) await Bun.sleep(5);
+    for (const t = Date.now(); held.length === 0 && Date.now() - t < 10_000;) await Bun.sleep(5);
     expect(held.length).toBeGreaterThan(0);
 
     const stopped = server.stop();
@@ -5605,9 +5641,13 @@ describe.skipIf(!isPosix)("server.adopt(fd)", () => {
       port,
       // Resolves once a connection is waiting, so accept() never blocks.
       pending: async () => {
-        while (libc.poll(ptr(pfd), 1, 0) === 0) await Bun.sleep(0);
+        for (let n = 0; (n = libc.poll(ptr(pfd), 1, 0)) !== 1; ) {
+          if (n < 0) throw new Error("poll() failed");
+          await Bun.sleep(0);
+        }
       },
       accept: () => libc.accept(lfd, null, null),
+      close: (fd: number) => libc.close(fd),
       [Symbol.dispose]: () => libc.close(lfd),
     };
   }
@@ -5642,19 +5682,33 @@ describe.skipIf(!isPosix)("server.adopt(fd)", () => {
   });
 
   it("returns false once the server has stopped", async () => {
+    using raw = rawAccept();
     const server = serve({ port: 0, fetch: () => new Response("") });
     server.stop(true);
     expect(server.adopt(1_000_000)).toBe(false);
+    // A valid descriptor is closed too: the server owned it once adopt() was called.
+    const client = connect(raw.port, "127.0.0.1");
+    try {
+      await raw.pending();
+      const fd = raw.accept();
+      expect(fd).toBeGreaterThan(0);
+      expect(server.adopt(fd)).toBe(false);
+      expect(raw.close(fd)).toBe(-1); // EBADF
+    } finally {
+      client.destroy();
+    }
   });
 
-  it.each([
+  describe.each([
     [NaN, "ERR_OUT_OF_RANGE"],
     [1.5, "ERR_OUT_OF_RANGE"],
     [-1, "ERR_OUT_OF_RANGE"],
     [2 ** 31, "ERR_OUT_OF_RANGE"],
     ["3", "ERR_INVALID_ARG_TYPE"],
-  ])("rejects fd %p with %s", (fd, code) => {
-    using server = serve({ port: 0, fetch: () => new Response("") });
-    expect(() => server.adopt(fd as any)).toThrow(expect.objectContaining({ code }));
+  ])("fd %p", (fd, code) => {
+    it(`is rejected with ${code}`, () => {
+      using server = serve({ port: 0, fetch: () => new Response("") });
+      expect(() => server.adopt(fd as any)).toThrow(expect.objectContaining({ code }));
+    });
   });
 });

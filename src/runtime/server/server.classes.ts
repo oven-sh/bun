@@ -108,6 +108,7 @@ function generate(name) {
       "wsOnError",
       "wsOnPing",
       "wsOnPong",
+      "wsPackageHandlers",
     ],
   });
 }
@@ -183,6 +184,10 @@ export default [
       },
       takeRawHeaders: {
         fn: "takeRawHeaders",
+        length: 1,
+      },
+      headersObject: {
+        fn: "headersObject",
         length: 0,
       },
       writeHeadAndEnd: {
@@ -291,6 +296,17 @@ export default [
       getBufferedAmount: {
         fn: "getBufferedAmount",
         length: 0,
+      },
+      pause: {
+        fn: "pause",
+        length: 0,
+      },
+      resume: {
+        fn: "resume",
+        length: 0,
+      },
+      isPaused: {
+        getter: "getIsPaused",
       },
       binaryType: {
         getter: "getBinaryType",

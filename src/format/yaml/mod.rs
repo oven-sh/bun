@@ -1,0 +1,214 @@
+//! YAML: Prettier's `language-yaml` and the tree of `yaml-unist-parser`, which is made of what Bun's parser reads.
+
+mod ast;
+mod printer;
+mod scalar;
+
+use crate::css::doc::{self, Doc, Elements};
+use crate::options::{QuoteStyle, TrailingCommas};
+use crate::range::Offsets;
+use crate::stack::Stack;
+use crate::syntax_error::{Message, SyntaxError};
+use crate::text::{BOM, has_pragma_in_hash_comment as has_pragma};
+use crate::{FormatError, FormatOptions};
+use bun_parsers::yaml::{ParseError, YAML};
+use std::borrow::Cow;
+
+/// What can be used again for the next file.
+#[derive(Default)]
+pub struct Scratch {
+    elements: Elements,
+}
+
+/// Whether Prettier takes the file at `path` for YAML.
+pub fn is_yaml_path(path: &[u8]) -> bool {
+    let name = bun_lint::paths::file_name(path);
+    const EXTENSIONS: [&[u8]; 10] = [
+        b".yml",
+        b".mir",
+        b".reek",
+        b".rviz",
+        b".sublime-syntax",
+        b".syntax",
+        b".yaml",
+        b".yaml-tmlanguage",
+        b".yaml.sed",
+        b".yml.mysql",
+    ];
+    const NAMES: [&[u8]; 10] = [
+        b".clang-format",
+        b".clang-tidy",
+        b".clangd",
+        b".gemrc",
+        b"CITATION.cff",
+        b"glide.lock",
+        b"pixi.lock",
+        b".prettierrc",
+        b".stylelintrc",
+        b".lintstagedrc",
+    ];
+    // Prettier's `getLanguageByFileName` compares the name in lower case.
+    let name = name.to_ascii_lowercase();
+    NAMES.iter().any(|it| it.eq_ignore_ascii_case(&name))
+        || EXTENSIONS.iter().any(|extension| name.ends_with(extension))
+}
+
+/// The document for `text`, whose line breaks are `\n`, as a tree.
+pub(crate) fn document(text: &[u8], options: &FormatOptions) -> Result<Doc<'static>, FormatError> {
+    let mut elements = Elements::default();
+    write_document(text, options, &mut elements)?;
+    elements.to_tree()
+}
+
+/// What Bun's parser refuses at the byte `at`.
+#[cold]
+fn refusal(error: ParseError, at: usize) -> FormatError {
+    let message = match error {
+        ParseError::StackOverflow => return FormatError::NestedTooDeeply,
+        ParseError::OutOfMemory => Message::TooLarge,
+        ParseError::UnexpectedEof => Message::UnexpectedEnd,
+        ParseError::UnexpectedCharacter => Message::UnexpectedCharacter,
+        ParseError::TabIndentation => Message::TabAsIndentation,
+        ParseError::InvalidDirective | ParseError::MultipleYamlDirectives => {
+            Message::InvalidDirective
+        }
+        ParseError::UnresolvedTagHandle => Message::InvalidTag,
+        ParseError::MultilineImplicitKey => Message::KeyOverSeveralLines,
+        ParseError::MultipleAnchors | ParseError::MultipleTags => Message::RepeatedProperty,
+        ParseError::UnexpectedDocumentStart | ParseError::UnexpectedDocumentEnd => {
+            Message::UnclosedString
+        }
+        _ => Message::UnexpectedToken,
+    };
+    FormatError::SyntaxErrorAt(SyntaxError(message, at as u32))
+}
+
+/// Writes the document for `text`, whose line breaks are `\n`, to `out`, which is empty.
+fn write_document(
+    text: &[u8],
+    options: &FormatOptions,
+    out: &mut Elements,
+) -> Result<(), FormatError> {
+    // Whatever else is said to be wrong where the stack has run out.
+    let because_of = |stack: &Stack, error: SyntaxError| match stack.ran_out() {
+        true => FormatError::NestedTooDeeply,
+        false => FormatError::SyntaxErrorAt(error),
+    };
+    let stack = Stack::new();
+    // For `yaml`, U+0000 is a character like another.
+    let without_nul: Cow<'_, [u8]> = match bun_core::strings::contains_char(text, 0) {
+        true => text.iter().map(|&byte| byte.max(1)).collect(),
+        false => Cow::Borrowed(text),
+    };
+    let tree = YAML::parse_as_written(&without_nul, |documents, tokens| {
+        ast::build(text, documents, tokens, &stack)
+    })
+    .map_err(|(error, at)| refusal(error, at.min(text.len())))?
+    .map_err(|error| because_of(&stack, error))?;
+    let mut printer = printer::Printer {
+        tree: &tree,
+        text,
+        prose_wrap: options.prose_wrap,
+        single_quote: matches!(options.quote_style, QuoteStyle::Single),
+        bracket_spacing: options.bracket_spacing.value(),
+        trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
+        // Without indentation there is no structure, so for oxfmt there is some.
+        tab_width: (options.indent_width.value()).max(u32::from(options.flavor.is_oxfmt())),
+        is_oxfmt: options.flavor.is_oxfmt(),
+        is_last_document: true,
+        is_first_item_ignored: false,
+        comment_in_brackets: None,
+        printed_empty_lines: vec![false; text.len() + 1],
+        last_group_id: 0,
+        key_depth: 0,
+        start_of_content: (text.len() - text.trim_ascii_start().len()) as u32,
+        out,
+        stack: &stack,
+    };
+    printer.print(tree.root, true);
+    match stack.ran_out() {
+        true => Err(FormatError::NestedTooDeeply),
+        false => Ok(()),
+    }
+}
+
+/// `/(?:[/\\]|^)\.(?:prettier|stylelint|lintstaged)rc$/`: a file that Prettier first tries to format as JSON.
+fn can_be_json(path: &[u8]) -> bool {
+    let name = bun_lint::paths::file_name(path);
+    matches!(name, b".prettierrc" | b".stylelintrc" | b".lintstagedrc")
+}
+
+/// Appends the formatted `text` to `out`. `options.filepath` says whether it can be JSON.
+pub fn format(
+    text: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), FormatError> {
+    let original = text;
+    let (has_bom, text) = match text.strip_prefix(BOM) {
+        Some(rest) => (true, rest),
+        None => (false, text),
+    };
+    let in_original = |error: FormatError| error.before_normalizing_end_of_line(text);
+    // Prettier's `normalizeInputAndOptions`: the offsets count UTF-16 code units of `original`.
+    let first = original.len() - text.len();
+    let range = Offsets::new(original, first, options);
+    let mut text: Cow<'_, [u8]> = bun_core::strings::crlf_as_lf(text);
+    if (range.start >= range.end && !text.is_empty())
+        || (options.require_pragma && !has_pragma(&text, [b"format", b"prettier"]))
+        || (options.check_ignore_pragma && has_pragma(&text, [b"noformat", b"noprettier"]))
+    {
+        out.extend_from_slice(original);
+        return Ok(());
+    }
+    // Nothing in YAML is something that Prettier formats on its own.
+    let is_range = range.start > first || range.end < original.len();
+    if options.insert_pragma
+        && !options.require_pragma
+        && !is_range
+        && !has_pragma(&text, [b"format", b"prettier"])
+    {
+        text = Cow::Owned([b"# @format\n\n", &text[..]].concat());
+    }
+    let start = out.len();
+    if has_bom {
+        out.extend_from_slice(BOM);
+    }
+    // Prettier goes by what is white space in JavaScript, and makes nothing of a no-break space.
+    if text.trim_ascii().is_empty() {
+        return Ok(());
+    }
+    // It has to be YAML in any case.
+    let document = &mut scratch.elements;
+    document.clear();
+    write_document(&text, options, document)
+        .inspect_err(|_| out.truncate(start))
+        .map_err(in_original)?;
+    if is_range {
+        return doc::print(
+            doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(&text)),
+            options,
+            original,
+            out,
+        );
+    }
+    if options.filepath.as_deref().is_some_and(can_be_json) {
+        let end = out.len();
+        if crate::json::format(
+            &text,
+            crate::json::Parser::Json,
+            options,
+            &mut Default::default(),
+            out,
+        )
+        .is_ok()
+        {
+            return Ok(());
+        }
+        out.truncate(end);
+    }
+    let mut printer = doc::Printer::new(options, original, out);
+    printer.print(document, 0, 0);
+    printer.result()
+}

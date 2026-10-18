@@ -223,15 +223,20 @@ describe("css tests", () => {
     minify_test(`a { transition-duration: clamp(1s, 500ms, 2s) }`, `a{transition-duration:1s}`);
     minify_test(`a { width: calc(clamp(1px, 2px, 3px) + 1px) }`, `a{width:3px}`);
   });
-  describe("math functions fold to the same value on every host", () => {
-    // The f32 functions of the host libm do not agree on the last bit. Apple's atan2f(), acosf(),
-    // asinf() and atanf() return pi and pi/2 rounded toward zero. glibc, musl and the Windows CRT
-    // round them to nearest.
+  describe("math that is compiled into Bun gives the same value on every host", () => {
+    // `asin()`, `acos()`, `atan()`, `atan2()`, `hypot()`, `log()` with a base, and the cube root and the hue of a
+    // color conversion come from `src/css/values/math.rs`. The same functions of the C library differ in the last
+    // bit between hosts.
+    //
+    // With Apple's libm, atan2f(0, -1) and acosf(-1) are one ulp below the `f32` nearest to pi, and asinf(1) and
+    // atanf(infinity) are one ulp below the one nearest to pi/2. So are acosf(-1) and atanf(infinity) of musl.
+    // These rows printed `3.14159rad` and `1.5708rad` there.
     minify_test(`a { transform: rotate(atan2(0px, -1px)) }`, `a{transform:rotate(180deg)}`);
     minify_test(`a { transform: rotate(atan2(0, -1)) }`, `a{transform:rotate(180deg)}`);
     minify_test(`a { transform: rotate(atan2(0deg, -1deg)) }`, `a{transform:rotate(180deg)}`);
     minify_test(`a { transform: rotate(atan2(0%, -1%)) }`, `a{transform:rotate(180deg)}`);
     minify_test(`a { transform: rotate(atan2(0s, -1s)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(atan2(0, sign(-1px))) }`, `a{transform:rotate(180deg)}`);
     minify_test(`a { transform: rotate(acos(-1)) }`, `a{transform:rotate(180deg)}`);
     minify_test(`a { transform: rotate(asin(1)) }`, `a{transform:rotate(90deg)}`);
     minify_test(`a { transform: rotate(atan(infinity)) }`, `a{transform:rotate(90deg)}`);
@@ -239,97 +244,94 @@ describe("css tests", () => {
     minify_test(`a { transform: rotate(atan2(1px, -1px)) }`, `a{transform:rotate(135deg)}`);
     minify_test(`a { transform: rotate(atan2(1px, 1px)) }`, `a{transform:rotate(45deg)}`);
 
-    // A difference prints as zero only when every bit of the two f32 values is the same.
-    minify_test(`a { transform: rotate(calc(atan2(0, -1) - 3.1415927rad)) }`, `a{transform:rotate(0)}`);
-    minify_test(`a { transform: rotate(calc(acos(-1) - 3.1415927rad)) }`, `a{transform:rotate(0)}`);
-    minify_test(`a { transform: rotate(calc(asin(1) - 1.5707964rad)) }`, `a{transform:rotate(0)}`);
-    minify_test(`a { transform: rotate(calc(atan(infinity) - 1.5707964rad)) }`, `a{transform:rotate(0)}`);
-    minify_test(`a { transform: rotate(calc(atan2(1, 0) - 1.5707964rad)) }`, `a{transform:rotate(0)}`);
-    minify_test(`a { transform: rotate(calc(atan2(1, -1) - 2.3561945rad)) }`, `a{transform:rotate(0)}`);
-    minify_test(`a { transform: rotate(calc(atan2(1, 1) - 0.78539816rad)) }`, `a{transform:rotate(0)}`);
+    // A later step reads the bits of a fold. With musl and with Apple's libm, the two angles were `none` and the
+    // color was `red`.
+    minify_test(`a { rotate: round(down, acos(-1), 180deg) }`, `a{rotate:180deg}`);
+    minify_test(`a { rotate: round(down, atan(infinity), 90deg) }`, `a{rotate:90deg}`);
+    minify_test(`a { color: hsl(round(down, acos(-1), 180deg) 100% 50%) }`, `a{color:#0ff}`);
+    // The hue of a color is an arc tangent.
+    minify_test(`a { color: lch(from lab(50% -20 0) l c round(down, h, 180)) }`, `a{color:lch(50% 20 180)}`);
+    minify_test(`a { color: oklch(from oklab(50% 0 0.2) l c calc(h - 90)) }`, `a{color:oklch(50% .2 0)}`);
+    // `f32::log` divides two `f32` logarithms. These were 14 and `#e00` on every host.
+    minify_test(`a { line-height: round(down, log(32768, 2), 1) }`, `a{line-height:15}`);
+    minify_test(`a { color: rgb(calc(17 * round(down, log(32768, 2), 1)) 0 0) }`, `a{color:red}`);
 
-    // Each fold is the f64 function rounded once to f32.
-    const f32 = Math.fround;
-    const literal = (value: number) => f32(value).toPrecision(9);
-    const difference = {
-      number: (call: string, want: number) =>
-        minify_test_with_options(`a { line-height: calc(${call} - ${literal(want)}) }`, ""),
-      angle: (call: string, want: number) =>
-        minify_test_with_options(`a { transform: rotate(calc(${call} - ${literal(want)}rad)) }`, ""),
-    };
-    const zero = { number: "a{line-height:0}", angle: "a{transform:rotate(0)}" };
-    const inRange = (value: number) => Number.isFinite(value) && Math.abs(value) > 1e-5 && Math.abs(value) < 1e7;
+    // Whole degrees. A change to the `f32` constant in `Angle::to_degrees` moves these.
+    minify_test(`a { rotate: acos(0.5) }`, `a{rotate:60deg}`);
+    minify_test(`a { rotate: round(up, acos(0.5), 60deg) }`, `a{rotate:60deg}`);
+    minify_test(`a { rotate: round(up, asin(0.5), 30deg) }`, `a{rotate:30deg}`);
+    minify_test(`a { rotate: round(up, acos(-0.5), 120deg) }`, `a{rotate:120deg}`);
+    // The acosf of musl gave `1.00423rad`. So did the one of the Windows C runtime for a processor without FMA3.
+    minify_test(`a { rotate: acos(0.53674) }`, `a{rotate:57.538deg}`);
 
-    const unary: [name: string, fn: (x: number) => number, kind: "number" | "angle", step: number][] = [
-      ["sin", Math.sin, "number", 0.0137],
-      ["cos", Math.cos, "number", 0.0137],
-      ["tan", Math.tan, "number", 0.0137],
-      ["exp", Math.exp, "number", 0.0137],
-      ["log", Math.log, "number", 0.0137],
-      ["sqrt", Math.sqrt, "number", 0.0137],
-      // asin() and acos() take [-1, 1].
-      ["asin", Math.asin, "angle", 0.0017],
-      ["acos", Math.acos, "angle", 0.0017],
-      ["atan", Math.atan, "angle", 0.0137],
-    ];
-    test.each(unary)("%s()", (name, fn, kind, step) => {
-      const wrong: string[] = [];
-      let count = 0;
-      for (let i = 1; i <= 500; i++) {
-        const x = Number((i * step).toFixed(4));
-        const want = f32(fn(f32(x)));
-        if (!inRange(want)) continue;
-        count++;
-        const call = `${name}(${x})`;
-        const got = difference[kind](call, want);
-        if (got !== zero[kind]) wrong.push(`${call} - ${literal(want)} => ${got}`);
-      }
-      expect({ count, wrong: wrong.length, examples: wrong.slice(0, 8) }).toEqual({ count, wrong: 0, examples: [] });
-    });
+    // Special values. A NaN is not an angle, so the function stays. An infinity prints as the largest `f32`.
+    minify_test(`a { transform: rotate(acos(2)) }`, `a{transform:rotate(acos(2))}`);
+    minify_test(`a { transform: rotate(asin(0)) }`, `a{transform:rotate(0)}`);
+    minify_test(`a { transform: rotate(atan2(0, 0)) }`, `a{transform:rotate(0)}`);
+    minify_test(`a { transform: rotate(atan2(1, infinity)) }`, `a{transform:rotate(0)}`);
+    minify_test(`a { transform: rotate(atan2(1, -infinity)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(atan2(infinity, infinity)) }`, `a{transform:rotate(45deg)}`);
+    minify_test(`a { transform: rotate(atan2(infinity, -infinity)) }`, `a{transform:rotate(135deg)}`);
+    minify_test(`a { transform: rotate(atan2(infinity, 1)) }`, `a{transform:rotate(90deg)}`);
+    minify_test(`a { line-height: hypot(3, 4) }`, `a{line-height:5}`);
+    minify_test(`a { width: hypot(3px, 4px) }`, `a{width:5px}`);
+    minify_test(`a { line-height: calc(hypot(3e30, 4e30) / 1e30) }`, `a{line-height:5}`);
+    minify_test(`a { line-height: hypot(infinity, NaN) }`, `a{line-height:3.40282e38}`);
+    minify_test(`a { line-height: hypot(NaN, infinity) }`, `a{line-height:3.40282e38}`);
+    minify_test(`a { line-height: log(0.125, 0.5) }`, `a{line-height:3}`);
+    minify_test(`a { line-height: log(infinity, 2) }`, `a{line-height:3.40282e38}`);
+    minify_test(`a { line-height: log(0, 2) }`, `a{line-height:-3.40282e38}`);
+    // The cube root of zero, and of a subnormal.
+    minify_test(`a { color: oklab(from black l a b) }`, `a{color:oklab(0% 0 0)}`);
+    minify_test(
+      `a { color: oklab(from color(xyz 1e-40 1e-40 1e-40) l a b) }`,
+      `a{color:oklab(4.65664e-12% 1.24172e-15 6.89946e-16)}`,
+    );
 
-    const binary: [name: string, fn: (a: number, b: number) => number, kind: "number" | "angle"][] = [
-      ["atan2", Math.atan2, "angle"],
-      ["pow", Math.pow, "number"],
-      ["hypot", Math.hypot, "number"],
-      ["log", (a, b) => Math.log(a) / Math.log(b), "number"],
-    ];
-    test.each(binary)("%s() with two arguments", (name, fn, kind) => {
-      const wrong: string[] = [];
-      let count = 0;
-      for (let i = 0; i < 500; i++) {
-        const a = Number((((i * 7919) % 1000) * 0.0173 + 0.01).toFixed(4));
-        const b = Number((((i * 104729) % 997) * 0.0091 + 0.02).toFixed(4));
-        const want = f32(fn(f32(a), f32(b)));
-        if (!inRange(want)) continue;
-        count++;
-        const call = `${name}(${a}, ${b})`;
-        const got = difference[kind](call, want);
-        if (got !== zero[kind]) wrong.push(`${call} - ${literal(want)} => ${got}`);
-      }
-      expect({ count, wrong: wrong.length, examples: wrong.slice(0, 8) }).toEqual({ count, wrong: 0, examples: [] });
-    });
-
-    // The color conversions call the host powf(), cbrtf(), atan2f(), sinf() and cosf() too.
-    test("color conversions", () => {
-      const rows: string[] = [];
-      const hex = (i: number) =>
-        "#" + [(i * 37) % 256, (i * 91) % 256, (i * 53) % 256].map(c => c.toString(16).padStart(2, "0")).join("");
-      for (let i = 1; i <= 200; i++) {
-        for (const value of [
-          `lch(from ${hex(i)} l c h)`,
-          `oklch(from ${hex(i)} l c h)`,
-          `color(from ${hex(i)} xyz x y z)`,
-          `color(from ${hex(i)} prophoto-rgb r g b)`,
-          `color(from ${hex(i)} rec2020 r g b)`,
-          `color-mix(in oklab, ${hex(i)}, ${hex(i + 7)})`,
-        ]) {
-          rows.push(minify_test_with_options(`a { color: ${value} }`, ""));
-        }
-      }
-      const digest = Bun.hash(rows.join("\n")).toString(16);
-      if (digest !== "f9f2f9f94b64c9d1") console.log(rows.join("\n"));
-      expect(digest).toBe("f9f2f9f94b64c9d1");
-    });
+    // Every bit of a fold. `literal` is the `f64` function, rounded once to `f32`. The output is only this when
+    // the fold has every bit of `literal`: a NaN angle prints `0rad`, and a NaN number gives 0.
+    const angle = (call: string, literal: string) =>
+      minify_test(`a { transform: rotate(calc(${call} - ${literal}rad)) }`, `a{transform:rotate(0)}`);
+    const number = (call: string, literal: string) =>
+      minify_test(`a { line-height: calc(1 + sign(${call} - ${literal})) }`, `a{line-height:1}`);
+    angle("atan2(0, -1)", "3.1415927");
+    angle("atan2(-0, -1)", "-3.1415927");
+    angle("acos(-1)", "3.1415927");
+    angle("asin(1)", "1.5707964");
+    angle("atan(infinity)", "1.5707964");
+    angle("atan(-infinity)", "-1.5707964");
+    angle("atan2(1, 0)", "1.5707964");
+    angle("atan2(-infinity, 1)", "-1.5707964");
+    angle("atan2(1, -1)", "2.3561945");
+    angle("atan2(1, 1)", "0.78539816");
+    // In CI, the C library of at least one host gave another `f32` for each of these folds, or for the same inputs
+    // with another sign or unit.
+    angle("asin(0.5151)", "0.541124344");
+    angle("asin(0.0612)", "0.0612382665");
+    angle("asin(0.0459)", "0.0459161326");
+    angle("asin(0.5032)", "0.527297795");
+    angle("asin(-0.5151)", "-0.541124344");
+    angle("acos(0.5474)", "0.991542041");
+    angle("acos(0.0374)", "1.53338766");
+    angle("acos(0.1666)", "1.40341580");
+    angle("acos(-0.5474)", "2.15005064");
+    angle("atan(1.3289)", "0.925695837");
+    angle("atan(0.0959)", "0.0956076160");
+    angle("atan(0.5891)", "0.532366216");
+    angle("atan(-1.3289)", "-0.925695837");
+    angle("atan2(8.9541, 8.1645)", "0.831490755");
+    angle("atan2(8.9541px, 8.1645px)", "0.831490755");
+    angle("atan2(7.5009, 2.8228)", "1.21086168");
+    angle("atan2(0.1138, 2.4315)", "0.0467682555");
+    angle("atan2(-8.9541, 8.1645)", "-0.831490755");
+    angle("atan2(8.9541, -8.1645)", "2.31010199");
+    number("hypot(0.5463, 1.4942)", "1.59093595");
+    number("hypot(-16.445, 1.8946)", "16.5537758");
+    // Every host in CI gave another `f32` for these two.
+    number("log(10.3035, 2.022)", "3.31277680");
+    number("log(13.5905, 6.026)", "1.45281172");
+    // The exact value is less than one `f64` ulp below the middle of two `f32`.
+    angle("atan2(910.131836, -0.0220102575)", "1.57082045");
   });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128

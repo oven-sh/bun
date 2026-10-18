@@ -528,8 +528,7 @@ describe("css string output parses back to the same color", () => {
     });
   });
 
-  // The forward direction is exact, so the inverse is the broken one. It goes
-  // through cbrt, so the last f32 digit varies by platform; compare numerically.
+  // The forward direction is exact, so the inverse is the broken one.
   test.each([
     ["#ff0000", [54.29, 80.8, 69.89]],
     ["#00ff00", [87.82, -79.27, 80.99]],
@@ -540,6 +539,26 @@ describe("css string output parses back to the same color", () => {
     for (let i = 0; i < 3; i++) {
       expect(components[i]).toBeCloseTo((reference as number[])[i], 1);
     }
+  });
+
+  // A channel of 0 or 1 is exact in linear light, so the cube root alone decides the last digit. Bun computes it
+  // with its own code. With the cube root of the C library, Windows and macOS on arm64 printed `69.891` in the
+  // first row.
+  test.each([
+    ["#ff0000", "lab(54.290546% 80.80492 69.89099)"],
+    ["#00ff00", "lab(87.81854% -79.27111 80.994606)"],
+    ["#0000ff", "lab(29.5683% 68.287384 -112.02972)"],
+  ])("lab of %s is %s on every host", (input, expected) => {
+    expect(color(input, "lab")).toBe(expected);
+  });
+
+  // A math function in a color is folded by the CSS parser. The quotient of two f32 logarithms made the first
+  // `#ee0000` on every host. The acosf of musl and of macOS, one ulp below pi, made the second `#ff0000`.
+  test.each([
+    ["rgb(calc(17 * round(down, log(32768, 2), 1)) 0 0)", "#ff0000"],
+    ["hsl(round(down, acos(-1), 180deg) 100% 50%)", "#00ffff"],
+  ])("%s is %s on every host", (input, expected) => {
+    expect(color(input, "hex")).toBe(expected);
   });
 
   // A `none` component is a zero value outside of interpolation, and `NaN` is not
@@ -706,8 +725,9 @@ describe("conversions between color spaces", () => {
     }
   };
 
-  // Transcendental functions differ in the last f32 digit between platforms,
-  // so the polar conversions are compared numerically.
+  // The sine and the cosine of the C library differ in the last f32 digit
+  // between platforms, so the conversions from a polar space are compared
+  // numerically.
   test.each([
     ["lch(50% 30 0)", [50, 30, 0]],
     ["lch(50% 30 90)", [50, 0, 30]],

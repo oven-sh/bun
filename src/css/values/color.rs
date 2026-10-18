@@ -11,6 +11,7 @@ use crate::printer::Printer;
 use crate::targets;
 use crate::values::angle::Angle;
 use crate::values::calc::Calc;
+use crate::values::math;
 use crate::values::number::CSSNumberFns;
 use crate::values::percentage::Percentage;
 use bun_alloc::Arena;
@@ -2542,7 +2543,7 @@ struct LchComponents {
 fn rectangular_to_polar(l: f32, a: f32, b: f32) -> LchComponents {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L375
 
-    let mut h = b.atan2(a) * 180.0 / core::f32::consts::PI;
+    let mut h = math::atan2(b, a) * 180.0 / core::f32::consts::PI;
     if h < 0.0 {
         h += 360.0;
     }
@@ -3215,17 +3216,17 @@ impl From<XYZd50> for LAB {
 
         // now compute f
         let f0 = if x > E {
-            x.cbrt()
+            math::cbrt(x)
         } else {
             (K * x + 16.0) / 116.0
         };
         let f1 = if y > E {
-            y.cbrt()
+            math::cbrt(y)
         } else {
             (K * y + 16.0) / 116.0
         };
         let f2 = if z > E {
-            z.cbrt()
+            math::cbrt(z)
         } else {
             (K * z + 16.0) / 116.0
         };
@@ -3468,7 +3469,12 @@ impl From<XYZd65> for OKLAB {
 
         let xyz = xyz_.resolve_missing();
         let (a1, b1, c1) = multiply_matrix(&XYZ_TO_LMS, xyz.x, xyz.y, xyz.z);
-        let (l, a, b) = multiply_matrix(&LMS_TO_OKLAB, a1.cbrt(), b1.cbrt(), c1.cbrt());
+        let (l, a, b) = multiply_matrix(
+            &LMS_TO_OKLAB,
+            math::cbrt(a1),
+            math::cbrt(b1),
+            math::cbrt(c1),
+        );
 
         OKLAB {
             l,

@@ -144,7 +144,6 @@ pub(crate) fn line_indentation(text: &[u8], total_indent: u32, off_start: OFF) -
 }
 
 /// Where `indent` columns of white space before `beg` start, and the columns left of a tab that is split there.
-/// The line of `beg` starts at `floor` or behind it: the walk to the start of the line ends there.
 #[inline]
 pub fn indentation_start(text: &[u8], beg: OFF, indent: u32, floor: OFF) -> (OFF, u32) {
     if indent == 0 {
@@ -169,6 +168,7 @@ fn indentation_start_by_columns(text: &[u8], beg: OFF, indent: u32, floor: OFF) 
         })
     };
     let end = (beg as usize).min(text.len());
+    // The line of `beg` starts at `floor` or behind it: the walk to the start of the line ends there.
     let floor = (floor as usize).min(end);
     let mut offset = end;
     while offset > floor && is_blank(text[offset - 1]) {

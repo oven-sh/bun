@@ -84,8 +84,7 @@ pub trait RendererImpl {
     fn leave_span(&mut self, span_type: SpanType) -> JsResult<()>;
     fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()>;
 
-    /// Whether the white space that a line of code or HTML starts with comes as one `text` of one space for each
-    /// column that it spans in the source, and not as it is written. Asked once, before parsing.
+    /// Whether the indentation of a line of code or HTML comes as one `text` of one space for each of its columns.
     fn wants_indentation_as_spaces(&self) -> bool {
         false
     }

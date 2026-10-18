@@ -2831,8 +2831,7 @@ impl RendererImpl for AnsiRenderer<'_> {
         AnsiRenderer::text(self, text_type, content);
         Ok(())
     }
-    // A terminal puts a tab at a multiple of 8 columns from its left edge, wherever the line is drawn. And
-    // `write_wrapped` makes one space of a run of spaces in one text.
+    // A terminal has its own tab stops, and `write_wrapped` makes one space of a run of spaces in one text.
     fn wants_indentation_as_spaces(&self) -> bool {
         true
     }

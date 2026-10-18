@@ -8,7 +8,7 @@ if [ -n "$(git status --porcelain -- src packages)" ]; then echo "dirty tree" >>
 bun scripts/build.ts --profile=release --buildDir=build/rel-h2 > $OUT/final/rel-head.log 2>&1
 echo "head build exit $? $(date)" >> $OUT/final/measure.log
 rm -rf $OUT/rel-head && mkdir -p $OUT/rel-head && cp build/rel-h2/bun build/rel-h2/bun-profile $OUT/rel-head/
-git checkout --no-overlay origin/main -- src/ packages/
+git checkout --no-overlay $(git merge-base HEAD origin/main) -- src/ packages/
 echo "main src: $(git status --porcelain -- src packages | wc -l) files differ from HEAD" >> $OUT/final/measure.log
 bun scripts/build.ts --profile=release --buildDir=build/rel-h2 > $OUT/final/rel-main.log 2>&1
 echo "main build exit $? $(date)" >> $OUT/final/measure.log

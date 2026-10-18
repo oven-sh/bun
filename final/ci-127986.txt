@@ -1,0 +1,61 @@
+$ bun scripts/find-build.ts --errors "https://buildkite.com/bun/bun/builds/127986"
+build #127986  https://buildkite.com/bun/bun/builds/127986
+
+
+== step-failed-outside-runner == [new]
+-- step failed outside runner - exit 1 on :darwin: any aarch64 - test-bun
+see the job log for output
+
+== vendor/elysia/test/response/stream.test.ts == [flaky]
+-- vendor/elysia/test/response/stream.test.ts - code 1 on :debian: 13 x64-asan (1 retry) (not in test/flaky-tests.txt)
+bun test v1.4.4-canary.1 (f3cca1e32)
+.
+
+90 | 				})
+91 |
+92 | 				return promise
+93 | 			})
+94 |
+95 | 		expect(expected).toHaveLength(0)
+                        ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 0
+Received length: 1
+
+      at <anonymous> (/var/lib/buildkite-agent/build/vendor/elysia/test/response/stream.test.ts:95:20)
+
+✗ Stream > stop stream on canceled request [20.53ms]
+........................
+
+25 pass
+1 fail
+66 expect() calls
+Ran 26 tests across 1 file. [691.00ms]
+
+== test/js/bun/webview/webview-chrome.test.ts == [flaky]
+-- test/js/bun/webview/webview-chrome.test.ts - code 1 on :debian: 13 x64-asan (1 retry)
+bun test v1.4.4-canary.1 (f3cca1e32)
+......................................
+
+931 |       \`),
+932 |   );
+933 |   // Stable-for-2-frames check — the click lands after the animation stops.
+934 |   await view.click("#mover");
+935 |   const left = Number(await view.evaluate("String(__hit)"));
+936 |   expect(left).toBe(100);
+                     ^
+error: expect(received).toBe(expected)
+
+Expected: 100
+Received: 20.828125
+
+      at <anonymous> (/var/lib/buildkite-agent/build/test/js/bun/webview/webview-chrome.test.ts:936:16)
+
+✗ chrome: click(selector) waits for animation to stop [99.47ms]
+...................
+
+57 pass
+1 fail
+132 expect() calls
+Ran 58 tests across 1 file. [12.39s]

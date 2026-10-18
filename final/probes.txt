@@ -1,0 +1,34 @@
+flight N=150 node: {"runtime":"node v26.3.0","N":150,"L":10,"handlers":10,"rst":{"7":140},"goaway":[],"pingAck":true}
+flight N=150 bun: {"runtime":"bun 367d939d9","N":150,"L":10,"handlers":10,"rst":{"7":99},"goaway":[[219,11],[219,11]],"pingAck":false,"sessionError":"ERR_HTTP2_SESSION_ERROR"}
+flight N=150 /tmp/h2repro/rel-head/bun: {"runtime":"bun f3cca1e32","N":150,"L":10,"handlers":10,"rst":{"7":140},"goaway":[],"pingAck":true}
+flight N=1011 node: {"runtime":"node v26.3.0","N":1011,"L":10,"handlers":10,"rst":{"7":1001},"goaway":[],"pingAck":true}
+flight N=1011 bun: {"runtime":"bun 367d939d9","N":1011,"L":10,"handlers":10,"rst":{"7":99},"goaway":[[219,11],[219,11]],"pingAck":false,"sessionError":"ERR_HTTP2_SESSION_ERROR"}
+flight N=1011 /tmp/h2repro/rel-head/bun: {"runtime":"bun f3cca1e32","N":1011,"L":10,"handlers":10,"rst":{"7":1001},"goaway":[],"pingAck":true}
+flight N=1012 node: {"runtime":"node v26.3.0","N":1012,"L":10,"handlers":10,"rst":{"7":1002},"goaway":[],"pingAck":false,"sessionError":"ERR_HTTP2_TOO_MANY_INVALID_FRAMES"}
+flight N=1012 bun: {"runtime":"bun 367d939d9","N":1012,"L":10,"handlers":10,"rst":{"7":99},"goaway":[[219,11],[219,11]],"pingAck":false,"sessionError":"ERR_HTTP2_SESSION_ERROR"}
+flight N=1012 /tmp/h2repro/rel-head/bun: {"runtime":"bun f3cca1e32","N":1012,"L":10,"handlers":10,"rst":{"7":1002},"goaway":[[19,2]],"pingAck":false,"sessionError":"ERR_HTTP2_TOO_MANY_INVALID_FRAMES"}
+sync3 node: {"runtime":"node v26.3.0","N":3,"L":1,"handlers":[1],"answered":[1],"rst":[[3,7],[5,7]]}
+sync3 bun: {"runtime":"bun 367d939d9","N":3,"L":1,"handlers":[1,3,5],"answered":[1,3,5],"rst":[]}
+sync3 /tmp/h2repro/rel-head/bun: {"runtime":"bun f3cca1e32","N":3,"L":1,"handlers":[1,3,5],"answered":[1,3,5],"rst":[]}
+pub bun-client 150 hold, server node: {"client":"bun","N":150,"ok":10,"refused":140,"other":0} {"handlers":10} 
+pub node-client 300 hold, server node: {"client":"node","N":300,"ok":210,"refused":90,"other":0} {"handlers":210} 
+pub node-client 300 sync, server node: {"client":"node","N":300,"ok":210,"refused":90,"other":0} {"handlers":210} 
+pub bun-client 150 hold, server bun: {"client":"bun","N":150,"ok":0,"refused":139,"other":11} {"handlers":10} 
+pub node-client 300 hold, server bun: {"client":"node","N":300,"ok":210,"refused":90,"other":0} {"handlers":210} 
+pub node-client 300 sync, server bun: {"client":"node","N":300,"ok":300,"refused":0,"other":0} {"handlers":300} 
+pub bun-client 150 hold, server /tmp/h2repro/rel-head/bun: {"client":"bun","N":150,"ok":10,"refused":140,"other":0} {"handlers":10} 
+pub node-client 300 hold, server /tmp/h2repro/rel-head/bun: {"client":"node","N":300,"ok":210,"refused":90,"other":0} {"handlers":210} 
+pub node-client 300 sync, server /tmp/h2repro/rel-head/bun: {"client":"node","N":300,"ok":300,"refused":0,"other":0} {"handlers":300} 
+refused-frames same node: {"handlers":["1 GET"],"frames":["RST(3,7)"]}
+refused-frames same bun: {"handlers":["1 GET"],"frames":["RST(3,7)"]}
+refused-frames same /tmp/h2repro/rel-head/bun: {"handlers":["1 GET"],"frames":["RST(3,7)"]}
+refused-frames later node: {"handlers":["1 GET"],"frames":["RST(3,7)"]}
+refused-frames later bun: {"handlers":["1 GET"],"frames":["RST(3,7)","RST(3,5)","RST(3,5)"]}
+refused-frames later /tmp/h2repro/rel-head/bun: {"handlers":["1 GET"],"frames":["RST(3,7)"]}
+refused-frames trailers-same node: {"handlers":["1 GET"],"frames":["RST(3,7)"]}
+refused-frames trailers-same bun: {"handlers":["1 GET"],"frames":["RST(3,7)"]}
+refused-frames trailers-same /tmp/h2repro/rel-head/bun: {"handlers":["1 GET"],"frames":["RST(3,7)"]}
+refused-frames trailers node: {"handlers":["1 GET"],"frames":["RST(3,7)"]}
+refused-frames trailers bun: {"handlers":["1 GET"],"frames":["RST(3,7)","RST(3,7)","RST(3,1)"]}
+refused-frames trailers /tmp/h2repro/rel-head/bun: {"handlers":["1 GET"],"frames":["RST(3,7)"]}
+DONE

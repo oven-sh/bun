@@ -17,7 +17,7 @@
 
 ### Downsides
 - These refusals use `maxSessionInvalidFrames` (default 1000), not `maxSessionRejectedStreams` (default 100). A server that set either option sees another count.
-- Cost: +24 bytes per session, 4 bytes per refused stream (4 KB at the default budget). The `.text` size and the instruction counts of this head are being measured.
+- Cost: +24 bytes per session, 4 bytes per refused stream (4 KB at the default budget), +512 bytes of `.text`, +58 instructions per request.
 
 <details><summary>Notes</summary>
 
@@ -84,7 +84,7 @@ A client on nghttp2 holds its first flight to 100 streams, so it gets at most 10
 
 **The count.** `open_peer_streams` goes up where `handle_received_stream_id` makes the `Stream` of a request that the engine admitted. `Stream::release_peer_slot` takes the bit and goes down, so a second call does nothing. It is called from `free_resources` and from `close_unsent`, and from nowhere else. It never reads `Stream.state`: a local half-close can write over CLOSED after a reset. `assert_peer_slots` checks in builds with debug assertions, once per read, that the count is the number of streams with the bit and that no CLOSED stream has it.
 
-**The refused ids.** A refused stream has no engine entry, so a later frame on its id finds nothing. On 1.4.3 the entry of a refused stream is still there until the read ends, and the frames that follow in the same write get no answer. Node gives them no answer in any read. One of the pins holds that, and without a record of the refused ids this PR fails it (DATA gets RST_STREAM(STREAM_CLOSED), a trailer block is refused a second time). `refused_ids` is that record: a sorted `Vec<u32>` with one entry for each refused stream. `handle_headers` and the two DATA paths read it, and the first test is one compare with the last id.
+**The refused ids.** A refused stream has no engine entry, so a later frame on its id finds nothing. On 1.4.3 the engine still has the entry of a refused stream for the rest of the read, so the frames that follow in the same write get no answer. Node gives them no answer in any read. One of the pins holds that, and without a record of the refused ids this PR fails it (DATA gets RST_STREAM(STREAM_CLOSED), a trailer block is refused a second time). `refused_ids` is that record: a sorted `Vec<u32>` with one entry for each refused stream. `handle_headers` and the two DATA paths read it, and the first test is one compare with the last id.
 
 A review asked for the commit of #37985 in place of the list. That commit reads every client id at or below the highest id, with no entry, as a closed stream. I did not take it. Jarred's note on #31359 ([r3295037991](https://github.com/oven-sh/bun/pull/31359#discussion_r3295037991)) says why that rule needs care: Bun's own client can write stream ids out of order (#37568 is the client half). #45801 leaves that rule out for the same reason. The list is exact for the ids that this server refused and says nothing about any other id. When #37985 and #45801 land, the list can go.
 
@@ -96,28 +96,76 @@ A review asked for the commit of #37985 in place of the list. That commit reads 
 - A CI job for the Rust tests of `connection.rs`. CI type-checks them and runs none of them, as for the other tests of that file. I ran them with the engine sources in a standalone crate: 28 pass.
 - To delete the rewritten test of `node-http2-rejected-streams.test.ts` in place of the rewrite.
 
-**Suites on a debug build of this head**, with a 60 s test timeout: the 261 `test-http2-*` files of `test/js/node/test` all exit 0. All 13 files of `test/js/node/http2/` pass (`node-http2.test.js` 405 pass and 6 skip, `h2-conformance.test.ts` 84, `node-http2-client-close.test.ts` 69, `node-http2-max-concurrent-streams.test.ts` 60, `node-http2-rejected-streams.test.ts` 16). Of the 29 grpc-js files, 27 pass. `test-client` (3 tests) and `test-resolver` (5 tests) fail in this container: they need DNS, or they have a 100 ms deadline that a debug build misses.
+**Suites on a debug build of this head**, with a 60 s test timeout: the 261 `test-http2-*` files of `test/js/node/test` all exit 0. All 13 files of `test/js/node/http2/` pass (`node-http2.test.js` 405 pass and 6 skip, `h2-conformance.test.ts` 84, `node-http2-client-close.test.ts` 69, `node-http2-max-concurrent-streams.test.ts` 60, `node-http2-rejected-streams.test.ts` 16). Of the 29 grpc-js files, 27 pass. `test-client` (3 tests) and `test-resolver` (5 tests) fail in this container: they need DNS, or they have a 100 ms deadline that a debug build misses. On release builds of `main` and of this head the same number of their tests fail (2, and 5 or 6).
 
-**Measurements.** The release builds of `main` and of this head are running. The sizes and the instruction counts come with them. This PR stays a draft until they are here.
-
-What is known for this head:
+**Measurements.** Release builds of `main` (d0831bc9fe) and of this PR on that commit, same toolchain and build directory:
 
 | | `main` | this PR |
 |---|---|---|
+| `.text` (`size -A`) | 81,316,949 | 81,317,461 (+512) |
+| `.rodata` | 22,590,412 | 22,590,412 |
+| `.bun_builtins` (the JS modules) | 2,697,031 | 2,696,083 (-948) |
+| file | 106,858,208 | 106,858,208 |
 | `size_of` `H2FrameParser` (it holds the `Connection`) | 1496 | 1520 |
 | `size_of` `Connection` | 448 | 472 |
 | `size_of` legacy `Stream` | 104 | 104 |
 
-Per refused stream (gdb breakpoint hit counts on debug builds, first flight at limit 10, measured at an earlier head with the same refusal path):
+The three `size_of` rows are from debug builds (gdb). Host functions +0, codegen entries +0.
 
-| Per refused stream | before | this PR |
+Instructions that each function executes for one request that is admitted, callees not counted. The same release builds, gdb single-step, the same count on every repeat.
+
+| Server, one GET request, no limit set | `main` | this PR |
+|---|---|---|
+| `Connection::receive` (the read with the HEADERS frame) | 297 | 309 |
+| `Connection::finish_header_block` | 1487 | 1517 |
+| `handle_received_stream_id` (2 calls) | 189 + 39 | 199 + 40 |
+| `Stream::free_resources` | 161 | 166 |
+| `rewrite_read` | 192 | 192 |
+| sum | 2365 | 2423 (+58) |
+
+| Client, one `http2.connect()` request | `main` | this PR |
+|---|---|---|
+| `Connection::receive` (the read with the response) | 486 | 474 |
+| `Connection::finish_header_block` | 723 | 739 |
+| `handle_received_stream_id` (3 calls) | 159 + 39 + 39 | 167 + 40 + 40 |
+| `Stream::free_resources` | 104 | 108 |
+| `rewrite_read` | 161 | 161 |
+| sum | 1711 | 1729 (+18) |
+
+No line is new on the admitted path of `finish_header_block`. Its +30 and +16 come with the two new match arms: the compiler lays the function out in another way. A DATA frame pays one more test (`refused_ids` is empty, or the id is above its last entry). The server loses the JS count for each stream: 3 `% 2` tests, 4 private-field reads, 2 writes and 1 call of the `stream.id` getter.
+
+The numbers below are from 9ee2fe9f4e, an earlier head of this PR with the same refusal path, against its base of that time.
+
+Debug builds, gdb breakpoint hit counts, first flight at limit 10:
+
+| Per refused stream | base | this PR |
 |---|---|---|
 | `Box<Stream>` | 1 | 0 |
 | engine stream map inserts | 1 | 0 |
 | JS calls | 3 | 0 |
 | header blocks made into JS objects | 1 | 0 |
 
-Per admitted stream nothing changes: 1 `Box<Stream>`, 1 map insert, the same JS calls. Host functions +0, codegen entries +0.
+Per admitted stream nothing changes: 1 `Box<Stream>`, 1 map insert, the same JS calls.
+
+`sendto` calls of the server for a first flight of 150 at limit 10 (`maxSessionRejectedStreams` raised so that the base session stays open): 153 on base, 13 with this PR.
+
+The engine alone, 200,000 refused requests in reads of 20,000 (the engine sources in a scratch crate, release profile): 244 ns per refusal, 5.1 hash slots examined per refusal in read 1 and in read 10, 0 inserts. The same engine driven as 1.4.3 drives it (open, then refuse from the embedder): 840 ns per refusal in read 1 and 61,000 ns in read 10.
+
+Server CPU from `process.cpuUsage()`, N requests in one write at limit 100, the handler holds its stream. Each cell is the median of 5 sessions. Two server processes per build, run in turns:
+
+| N | base | this PR |
+|---|---|---|
+| 4,000 | 28 and 26 ms | 7 and 6 ms |
+| 8,000 | 62 and 52 ms | 7 and 7 ms |
+| 16,000 | 104 and 103 ms | 8 and 11 ms |
+| 32,000 | 204 and 210 ms | 13 and 11 ms |
+| 64,000 | 290 and 356 ms | 17 and 17 ms |
+
+That is about 6 us per refused stream on base and about 0.2 us with this PR.
+
+A server with no limit, 20,000 requests in one write, handler `respond()` then `end()`, the same method: base 323, 315 and 263 ms. This PR 293, 296 and 350 ms. The difference is inside the noise.
+
+`perf_event_open` is not permitted in the build container, and `valgrind`, `strace` and `bloaty` are not installed. So there is no whole-process instruction count.
 
 **Left for later.**
 - Bun's `node:http2` client does not hold its first flight to 100 streams before the SETTINGS of the server arrive (`peerMaxConcurrentStreams`). For that client the session still ends, at refusal 1002. `ClientHttp2Session.request()` reads `#remoteSettings?.maxConcurrentStreams`, which is undefined until then.

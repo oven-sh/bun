@@ -4326,6 +4326,61 @@ export type Shape = { kind: "circle"; on: (r: number) => string } | { kind: "squ
       );
     });
 
+    // What is kept for the nodes of a file that is not being checked is in pages of 64 nodes, and 64 pages have a list, by
+    // the number of a node among those of all files. So no page begins where a file does. Once the file is being checked, it
+    // is in a row of the file's own. Every declaration here is asked for, and a wrong neighbour would be a wrong type.
+    test("the declarations of another file, and of the files of a ring, one by one", async () => {
+      const lines = (from: number, to: number, line: (i: number) => string) =>
+        Array.from({ length: to - from }, (_, i) => `${line(from + i)}\n`).join("");
+      const shared = lines(
+        0,
+        4200,
+        i =>
+          [
+            `export const c${i} = ${i};`,
+            `export function c${i}() { return ${i} as const; }`,
+            `export interface C${i} { p: ${i} }`,
+          ][i % 3],
+      );
+      // `wrong`: those that are said to be one more than they are.
+      const user = (from: number, to: number, wrong: number[]) =>
+        `import * as s from "./shared";\n` +
+        lines(from, to, i => {
+          const value = [`s.c${i}`, `s.c${i}()`, `(null! as s.C${i}).p`][i % 3];
+          return `const u${i}: ${wrong.includes(i) ? i + 1 : i} = ${value};`;
+        });
+      // Each file takes its constants from the next, the last has them, and its functions go on to the first.
+      const ring = (k: number) =>
+        `import * as next from "./ring${(k + 1) % 4}";\n` +
+        lines(0, 150, i =>
+          [
+            `export const v${i} = ${k === 3 ? i : `next.v${i}`};`,
+            `export function f${i}() { return next.${k === 3 ? `w${i}` : `f${i}()`}; }`,
+            `export const w${i} = \`${k}-${i}\` as const;`,
+          ].join("\n"),
+        ) +
+        lines(0, 150, i => `const a${i}: ${i === 63 + k ? i + 1 : i} = v${i};`) +
+        `const b: never = f${64 + k}();\n`;
+      using dir = project({
+        "shared.ts": shared,
+        "user0.ts": user(0, 2100, [63, 64, 65]),
+        "user1.ts": user(2100, 4200, [4095, 4096, 4097]),
+        ...Object.fromEntries([0, 1, 2, 3].map(k => [`ring${k}.ts`, ring(k)])),
+      });
+      const oneMore = (place: string, i: number) =>
+        `${place}: error TS2322: Type '${i}' is not assignable to type '${i + 1}'.`;
+      const expected = [
+        ...[0, 1, 2, 3].flatMap(k => [
+          oneMore(`ring${k}.ts(${515 + k},7)`, 63 + k),
+          `ring${k}.ts(602,7): error TS2322: Type '"0-${64 + k}"' is not assignable to type 'never'.`,
+        ]),
+        ...[63, 64, 65].map(i => oneMore(`user0.ts(${i + 2},7)`, i)),
+        ...[4095, 4096, 4097].map(i => oneMore(`user1.ts(${i - 2098},7)`, i)),
+      ];
+      const runs = [1, 2, 8].map(threads => check(dir, ["--threads", String(threads)]));
+      for (const { stdout } of await Promise.all(runs)) expect(stdout.split("\n")).toEqual(expected);
+    });
+
     test("a variable referenced in a callback inside its own initializer", async () => {
       using dir = project({
         "a.ts": `
@@ -7125,55 +7180,148 @@ ss.length = 2;
       expect(exitCode).toBe(1);
     });
 
-    // `tsc` assigns the list of properties of `Style` once, and while the members of the mapped type are being resolved the
-    // list lacks them. Two tasks of the last step each assign one, and not the same: the files are large enough for a task
-    // each. The second task is checked again, and has to find what the first one assigned.
-    test.each([
-      [
-        "the whole list",
-        ["x.ts", "y.ts"],
-        [
-          "x.ts(4,31): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.",
-          "y.ts(2,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, \":hover\">'.",
-        ],
-      ],
-      [
-        "the list without the mapped type",
-        ["y.ts", "x.ts"],
-        [
-          "x.ts(4,31): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.",
-        ],
-      ],
-    ])("two tasks of the last step keep different lists of an intersection: %s first", async (_, order, expected) => {
-      const constants = (prefix: string) =>
-        Array.from({ length: 2000 }, (_, i) => `export const ${prefix}${i} = ${i};\n`).join("");
+    // TypeScript 7.0 assigns the list of properties of `Style` once. If that is while the members of the mapped type are being
+    // resolved, the list lacks them for good, and the error in y.ts is missing when y.ts comes first. TypeScript 7.1 reports
+    // it in either order, and so does `bun check`, on any number of threads. The files are large enough for a thread each.
+    test.each([[["x.ts", "y.ts"]], [["y.ts", "x.ts"]]])(
+      "an intersection with a mapped type that refers to it has all its properties, whichever file asks first: %j",
+      async order => {
+        const constants = (prefix: string) =>
+          Array.from({ length: 2000 }, (_, i) => `export const ${prefix}${i} = ${i};\n`).join("");
+        using dir = project({
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: {
+              ...{ strict: true, noEmit: true, target: "es2022", module: "esnext", moduleResolution: "bundler" },
+              ...{ types: [], skipLibCheck: true },
+            },
+            files: [...order, "z0.ts", "z1.ts"],
+          }),
+          "lib.d.ts": `type Pseudos = ':hover';
+export type CSSPseudos = { [P in Pseudos]?: Omit<Style, Pseudos> };
+export type Style = CSSPseudos & { top?: string };
+export declare function css(style: Style): void;
+`,
+          "x.ts": `import { Style } from './lib';
+export const key: keyof Style = 'top';
+export const whole: Style = { top: '' };
+export const wrong: Style = { tpo: '' };
+${constants("x")}`,
+          "y.ts": `import { css } from './lib';
+css({ ':hover': { notAProperty: '1' } });
+${constants("y")}`,
+          "z0.ts": constants("z0_"),
+          "z1.ts": constants("z1_"),
+        });
+        for (const threads of [[], ["--threads=4"], ["--threads=1"]]) {
+          const { stdout, exitCode } = await check(dir, threads);
+          expect({ threads, lines: stdout.split("\n") }).toEqual({
+            threads,
+            lines: [
+              "x.ts(4,31): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.",
+              "y.ts(2,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, \":hover\">'.",
+            ],
+          });
+          expect(exitCode).toBe(1);
+        }
+      },
+    );
+
+    // What TypeScript 7.1 reports. 7.0 leaves out 12 of these lines and prints 8 with a type that lacks the properties of the
+    // mapped type. Which ones depends on what comes first.
+    test("such an intersection is asked for its properties in seven ways, each of them first once", async () => {
+      const uses = [
+        "css({ ':hover': { notAProperty: '1' } });",
+        "export const assigned: Style = { ':hover': { notAProperty: '1' } };",
+        "css({ ':hover': { ':focus': {} } });",
+        "export const spread: never = { ...(null! as Style) };",
+        "export const mapped: never = null! as { [K in keyof Style]: K };",
+        "export const keys: never = null! as keyof Style;",
+        "export const wrong: Style = { tpo: '' };",
+      ];
       using dir = project({
         "tsconfig.json": JSON.stringify({
           compilerOptions: {
             ...{ strict: true, noEmit: true, target: "es2022", module: "esnext", moduleResolution: "bundler" },
             ...{ types: [], skipLibCheck: true },
           },
-          files: [...order, "z0.ts", "z1.ts"],
         }),
-        "lib.d.ts": `type Pseudos = ':hover';
+        ...Object.fromEntries(
+          uses.flatMap((first, i) => [
+            [
+              `lib${i}.d.ts`,
+              `type Pseudos = ':hover' | ':focus';
 export type CSSPseudos = { [P in Pseudos]?: Omit<Style, Pseudos> };
 export type Style = CSSPseudos & { top?: string };
 export declare function css(style: Style): void;
 `,
-        "x.ts": `import { Style } from './lib';
-export const key: keyof Style = 'top';
-export const whole: Style = { top: '' };
-export const wrong: Style = { tpo: '' };
-${constants("x")}`,
-        "y.ts": `import { css } from './lib';
-css({ ':hover': { notAProperty: '1' } });
-${constants("y")}`,
-        "z0.ts": constants("z0_"),
-        "z1.ts": constants("z1_"),
+            ],
+            [
+              `first${i}.ts`,
+              [`import { css, Style } from './lib${i}';`, first, ...uses.filter(it => it !== first), ""].join("\n"),
+            ],
+          ]),
+        ),
       });
-      for (const threads of [[], ["--threads=4"], ["--threads=1"]]) {
+      for (const threads of [["--threads=1"], ["--threads=4"]]) {
         const { stdout, exitCode } = await check(dir, threads);
-        expect({ threads, lines: stdout.split("\n") }).toEqual({ threads, lines: expected });
+        expect(stdout).toMatchInlineSnapshot(`
+          "first0.ts(2,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, Pseudos>'.
+          first0.ts(3,46): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, Pseudos>'.
+          first0.ts(4,19): error TS2353: Object literal may only specify known properties, and '':focus'' does not exist in type 'Omit<Style, Pseudos>'.
+          first0.ts(5,14): error TS2322: Type '{ top?: string; ":focus"?: Omit<Style, Pseudos> | undefined; ":hover"?: Omit<Style, Pseudos> | undefined; }' is not assignable to type 'never'.
+          first0.ts(6,14): error TS2322: Type '{ top?: "top" | undefined; ":focus"?: ":focus" | undefined; ":hover"?: ":hover" | undefined; }' is not assignable to type 'never'.
+          first0.ts(7,14): error TS2322: Type '"top" | Pseudos' is not assignable to type 'never'.
+            Type '":focus"' is not assignable to type 'never'.
+          first0.ts(8,31): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.
+          first1.ts(2,46): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, Pseudos>'.
+          first1.ts(3,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, Pseudos>'.
+          first1.ts(4,19): error TS2353: Object literal may only specify known properties, and '':focus'' does not exist in type 'Omit<Style, Pseudos>'.
+          first1.ts(5,14): error TS2322: Type '{ top?: string; ":focus"?: Omit<Style, Pseudos> | undefined; ":hover"?: Omit<Style, Pseudos> | undefined; }' is not assignable to type 'never'.
+          first1.ts(6,14): error TS2322: Type '{ top?: "top" | undefined; ":focus"?: ":focus" | undefined; ":hover"?: ":hover" | undefined; }' is not assignable to type 'never'.
+          first1.ts(7,14): error TS2322: Type '"top" | Pseudos' is not assignable to type 'never'.
+            Type '":focus"' is not assignable to type 'never'.
+          first1.ts(8,31): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.
+          first2.ts(2,19): error TS2353: Object literal may only specify known properties, and '':focus'' does not exist in type 'Omit<Style, Pseudos>'.
+          first2.ts(3,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, Pseudos>'.
+          first2.ts(4,46): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, Pseudos>'.
+          first2.ts(5,14): error TS2322: Type '{ top?: string; ":focus"?: Omit<Style, Pseudos> | undefined; ":hover"?: Omit<Style, Pseudos> | undefined; }' is not assignable to type 'never'.
+          first2.ts(6,14): error TS2322: Type '{ top?: "top" | undefined; ":focus"?: ":focus" | undefined; ":hover"?: ":hover" | undefined; }' is not assignable to type 'never'.
+          first2.ts(7,14): error TS2322: Type '"top" | Pseudos' is not assignable to type 'never'.
+            Type '":focus"' is not assignable to type 'never'.
+          first2.ts(8,31): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.
+          first3.ts(2,14): error TS2322: Type '{ top?: string; ":focus"?: Omit<Style, Pseudos> | undefined; ":hover"?: Omit<Style, Pseudos> | undefined; }' is not assignable to type 'never'.
+          first3.ts(3,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, Pseudos>'.
+          first3.ts(4,46): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, Pseudos>'.
+          first3.ts(5,19): error TS2353: Object literal may only specify known properties, and '':focus'' does not exist in type 'Omit<Style, Pseudos>'.
+          first3.ts(6,14): error TS2322: Type '{ top?: "top" | undefined; ":focus"?: ":focus" | undefined; ":hover"?: ":hover" | undefined; }' is not assignable to type 'never'.
+          first3.ts(7,14): error TS2322: Type '"top" | Pseudos' is not assignable to type 'never'.
+            Type '":focus"' is not assignable to type 'never'.
+          first3.ts(8,31): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.
+          first4.ts(2,14): error TS2322: Type '{ top?: "top" | undefined; ":focus"?: ":focus" | undefined; ":hover"?: ":hover" | undefined; }' is not assignable to type 'never'.
+          first4.ts(3,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, Pseudos>'.
+          first4.ts(4,46): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, Pseudos>'.
+          first4.ts(5,19): error TS2353: Object literal may only specify known properties, and '':focus'' does not exist in type 'Omit<Style, Pseudos>'.
+          first4.ts(6,14): error TS2322: Type '{ top?: string; ":focus"?: Omit<Style, Pseudos> | undefined; ":hover"?: Omit<Style, Pseudos> | undefined; }' is not assignable to type 'never'.
+          first4.ts(7,14): error TS2322: Type '"top" | Pseudos' is not assignable to type 'never'.
+            Type '":focus"' is not assignable to type 'never'.
+          first4.ts(8,31): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.
+          first5.ts(2,14): error TS2322: Type '"top" | Pseudos' is not assignable to type 'never'.
+            Type '":focus"' is not assignable to type 'never'.
+          first5.ts(3,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, Pseudos>'.
+          first5.ts(4,46): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, Pseudos>'.
+          first5.ts(5,19): error TS2353: Object literal may only specify known properties, and '':focus'' does not exist in type 'Omit<Style, Pseudos>'.
+          first5.ts(6,14): error TS2322: Type '{ top?: string; ":focus"?: Omit<Style, Pseudos> | undefined; ":hover"?: Omit<Style, Pseudos> | undefined; }' is not assignable to type 'never'.
+          first5.ts(7,14): error TS2322: Type '{ top?: "top" | undefined; ":focus"?: ":focus" | undefined; ":hover"?: ":hover" | undefined; }' is not assignable to type 'never'.
+          first5.ts(8,31): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.
+          first6.ts(2,31): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.
+          first6.ts(3,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, Pseudos>'.
+          first6.ts(4,46): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, Pseudos>'.
+          first6.ts(5,19): error TS2353: Object literal may only specify known properties, and '':focus'' does not exist in type 'Omit<Style, Pseudos>'.
+          first6.ts(6,14): error TS2322: Type '{ top?: string; ":focus"?: Omit<Style, Pseudos> | undefined; ":hover"?: Omit<Style, Pseudos> | undefined; }' is not assignable to type 'never'.
+          first6.ts(7,14): error TS2322: Type '{ top?: "top" | undefined; ":focus"?: ":focus" | undefined; ":hover"?: ":hover" | undefined; }' is not assignable to type 'never'.
+          first6.ts(8,14): error TS2322: Type '"top" | Pseudos' is not assignable to type 'never'.
+            Type '":focus"' is not assignable to type 'never'."
+        `);
         expect(exitCode).toBe(1);
       }
     });

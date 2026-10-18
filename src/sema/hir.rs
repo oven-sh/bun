@@ -8,8 +8,8 @@
 
 use crate::atom::Atom;
 pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, Places, ToNode};
-use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaHashSet, ArenaVec, Session};
-use crate::util::{FxHashMap, FxHashSet};
+use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaVec, Session};
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
@@ -309,6 +309,36 @@ impl<T: std::fmt::Debug> std::fmt::Debug for ArenaFew<'_, T> {
     }
 }
 
+/// A map that is empty in most files: its entries in the order of their keys, at their final size in an arena. One word, not
+/// the five of a hash map.
+pub struct ArenaFewMap<'s, K, V>(ArenaFew<'s, (K, V)>);
+
+impl<'s, K: Ord, V> ArenaFewMap<'s, K, V> {
+    pub fn from_iter_in(entries: impl Iterator<Item = (K, V)>, arena: &'s Arena) -> Self {
+        let mut entries: Vec<(K, V)> = entries.collect();
+        entries.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        ArenaFewMap(ArenaFew::from_iter_in(entries.into_iter(), arena))
+    }
+
+    pub fn get(&self, key: &K) -> Option<&V> {
+        let at = self.0.binary_search_by(|entry| entry.0.cmp(key)).ok()?;
+        Some(&self.0[at].1)
+    }
+
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.get(key).is_some()
+    }
+
+    /// For a set.
+    pub fn contains(&self, key: &K) -> bool {
+        self.get(key).is_some()
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&K, &V)> {
+        self.0.iter().map(|entry| (&entry.0, &entry.1))
+    }
+}
+
 /// Where the lists of a `FileIn` or a `BoundIn` are stored.
 pub trait Storage {
     type List<T: 'static>: DerefMut<Target = [T]>;
@@ -321,7 +351,10 @@ pub trait Storage {
     /// A list that is empty in most files.
     type Few<T: 'static>: DerefMut<Target = [T]>;
     type Map<K, V>;
-    type Set<K>;
+    /// A map that is empty in most files.
+    type FewMap<K: 'static, V: 'static>;
+    /// A set that is empty in most files.
+    type FewSet<K: 'static>;
     /// A list whose elements own memory on the regular heap.
     type Kept<T: Clone + 'static>: Deref<Target = [T]>;
     /// `FileIn::text`
@@ -341,7 +374,8 @@ impl Storage for Growable {
     type Ids<T: Id> = Vec<T>;
     type Few<T: 'static> = Vec<T>;
     type Map<K, V> = FxHashMap<K, V>;
-    type Set<K> = FxHashSet<K>;
+    type FewMap<K: 'static, V: 'static> = FxHashMap<K, V>;
+    type FewSet<K: 'static> = FxHashSet<K>;
     type Kept<T: Clone + 'static> = Vec<T>;
     type Text = Cow<'static, [u8]>;
     /// For `FileBuilder::lend`.
@@ -358,7 +392,8 @@ impl<'s> Storage for InArena<'s> {
     type Ids<T: Id> = Narrow<'s, T>;
     type Few<T: 'static> = ArenaFew<'s, T>;
     type Map<K, V> = ArenaHashMap<'s, K, V>;
-    type Set<K> = ArenaHashSet<'s, K>;
+    type FewMap<K: 'static, V: 'static> = ArenaFewMap<'s, K, V>;
+    type FewSet<K: 'static> = ArenaFewMap<'s, K, ()>;
     /// Owned until the program is loaded. Nothing drops a file of a program, so `Files::load` hands
     /// the list to `Session::keep` and borrows it from there.
     type Kept<T: Clone + 'static> = Cow<'s, [T]>;
@@ -458,28 +493,29 @@ impl<T: Copy> Ids<T> for Vec<T> {
     }
 }
 
-/// A list of ids that neither grows nor shrinks. An id takes two bytes if all of them fit, as in nearly every file:
-/// `NONE` is then `u16::MAX`.
-pub enum Narrow<'s, T> {
-    Short(Fixed<'s, u16>),
-    Long(Fixed<'s, T>),
+/// A list of ids that neither grows nor shrinks. An id takes two bytes if all of them fit, as in nearly every file.
+pub struct Narrow<'s, T> {
+    /// Each id plus one, so that `NONE` is zero. Empty if one does not fit.
+    short: Fixed<'s, u16>,
+    /// Empty if all fit.
+    long: Fixed<'s, T>,
 }
 
 impl<T> Default for Narrow<'_, T> {
     fn default() -> Self {
-        Narrow::Short(Fixed::default())
+        Narrow {
+            short: Fixed::default(),
+            long: Fixed::default(),
+        }
     }
 }
 
 impl<T: Id> Ids<T> for Narrow<'_, T> {
     #[inline]
     fn id_at(&self, index: usize) -> Option<T> {
-        match self {
-            Narrow::Short(list) => Some(T::from(match *list.get(index)? {
-                u16::MAX => u32::MAX,
-                id => u32::from(id),
-            })),
-            Narrow::Long(list) => list.get(index).copied(),
+        match self.short.get(index) {
+            Some(&id) => Some(T::from(u32::from(id).wrapping_sub(1))),
+            None => self.long.get(index).copied(),
         }
     }
 }
@@ -490,26 +526,29 @@ impl<'s, T: Id> Narrow<'s, T> {
         let fits =
             |found: bool, &id: &T| found & (id.into().wrapping_add(1) <= u32::from(u16::MAX));
         if !list.iter().fold(true, fits) {
-            return Narrow::Long(copy_to_arena(list, arena));
+            return Narrow {
+                short: Fixed::default(),
+                long: copy_to_arena(list, arena),
+            };
         }
-        let short = list.iter().map(|&id| id.into() as u16);
+        let short = list.iter().map(|&id| id.into().wrapping_add(1) as u16);
         let short = Fixed(FixedIn::Arena(ArenaBox::from_iter_in(short, arena)));
         list.clear();
-        Narrow::Short(short)
+        Narrow {
+            short,
+            long: Fixed::default(),
+        }
     }
 
     pub(crate) fn shared(&'s self) -> Self {
-        match self {
-            Narrow::Short(list) => Narrow::Short(Fixed::shared(list)),
-            Narrow::Long(list) => Narrow::Long(Fixed::shared(list)),
+        Narrow {
+            short: Fixed::shared(&self.short),
+            long: Fixed::shared(&self.long),
         }
     }
 
     pub fn len(&self) -> usize {
-        match self {
-            Narrow::Short(list) => list.len(),
-            Narrow::Long(list) => list.len(),
-        }
+        self.short.len().max(self.long.len())
     }
 
     /// Passes each id to `change`. The list is then this program's own, in `arena`.
@@ -777,6 +816,15 @@ pub enum ExprKind {
 
 /// `name_before_end` of a `Dot` whose name is in [`FileIn::far_names`].
 pub const FAR: u16 = u16::MAX;
+
+/// [`FileIn::stmt_modifiers`], given the list of the file.
+pub fn stmt_modifiers_in(
+    modifiers_of_stmts: &[(StmtId, Span<ModifierId>)],
+    s: StmtId,
+) -> Span<ModifierId> {
+    let found = modifiers_of_stmts.binary_search_by_key(&s, |of| of.0);
+    found.map_or(Span::EMPTY, |at| modifiers_of_stmts[at].1)
+}
 
 /// [`FileIn::template_of`], given the list of the file.
 pub fn template_in(tagged_templates: &[(CallId, ExprId)], call: CallId) -> ExprId {
@@ -1372,8 +1420,6 @@ pub struct Stmt {
     /// Position of its first token, including decorators and modifiers.
     pub start: u32,
     pub loc: TextRange,
-    /// `node.Modifiers()`
-    pub modifiers: Span<ModifierId>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -2329,6 +2375,9 @@ pub struct FileIn<S: Storage> {
     /// separate column and not a field of `Param`: few parameters have a modifier, and a field
     /// would cost every parameter.
     pub modifiers_of_params: S::Nodes<Span<ModifierId>>,
+    /// `node.Modifiers()` of the statements that have any: see `stmt_modifiers`. Sorted. A separate list for the same
+    /// reason: one statement in forty has a modifier.
+    pub modifiers_of_stmts: S::Nodes<(StmtId, Span<ModifierId>)>,
     /// `node.Modifiers()` of the members of object literals that have any: see `prop_modifiers`.
     /// Sorted.
     pub modifiers_of_props: S::Few<(PropId, Span<ModifierId>)>,
@@ -2551,6 +2600,10 @@ impl<S: Storage> FileIn<S> {
             .copied()
             .unwrap_or(Span::EMPTY)
     }
+    /// `node.Modifiers()` of the statement `s`.
+    pub fn stmt_modifiers(&self, s: StmtId) -> Span<ModifierId> {
+        stmt_modifiers_in(&self.modifiers_of_stmts, s)
+    }
     /// `node.Modifiers()` of the member `p` of an object literal.
     pub fn prop_modifiers(&self, p: PropId) -> Span<ModifierId> {
         let found = self
@@ -2763,7 +2816,6 @@ impl FileBuilder {
             kind: StmtKind::Empty,
             start: pos,
             loc: TextRange::default(),
-            modifiers: Span::EMPTY,
         });
         self.set_stmt_kind(stmt, kind);
         stmt
@@ -2866,7 +2918,8 @@ macro_rules! long_lists {
             jsx_expressions,
             modifiers,
             names,
-            body_starts
+            body_starts,
+            modifiers_of_stmts
         );
     };
 }
@@ -2904,6 +2957,7 @@ macro_rules! file_in_arena {
             body_starts: $long!($this.body_starts),
             after_skipped: $few!($this.after_skipped),
             modifiers_of_params: $long!($this.modifiers_of_params),
+            modifiers_of_stmts: $long!($this.modifiers_of_stmts),
             modifiers_of_props: $few!($this.modifiers_of_props),
             unclosed_literals: $few!($this.unclosed_literals),
             stray_decorators: $few!($this.stray_decorators),

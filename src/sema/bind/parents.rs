@@ -490,6 +490,11 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         set!(expr_parent[member.init] = Parent::MemberInit(id));
         ty!(member.ty);
     }
+    for &(id, modifiers) in f.modifiers_of_stmts.iter() {
+        if !matches!(f.stmts.get(id.idx()), Some(s) if matches!(s.kind, StmtKind::Class(_))) {
+            decorators!(modifiers, Parent::Stmt(id));
+        }
+    }
     for (i, s) in f.stmts.iter().enumerate() {
         let id = StmtId(i as u32);
         let me = Parent::Stmt(id);
@@ -513,9 +518,6 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         }
         if LINT {
             others[kind_counts::STMTS + s.kind.tag() as usize] += 1;
-        }
-        if !s.modifiers.is_empty() && !matches!(s.kind, StmtKind::Class(_)) {
-            decorators!(s.modifiers, me);
         }
         match s.kind {
             StmtKind::Return(e) => {

@@ -479,7 +479,7 @@ impl Checker<'_, '_> {
             Decl::Member(m) => (hir[m].flags, hir[m].modifiers),
             _ => {
                 let statement = self.statement_with_modifiers(declaration);
-                let modifiers = statement.map_or(Span::EMPTY, |s| hir[s].modifiers);
+                let modifiers = statement.map_or(Span::EMPTY, |s| hir.stmt_modifiers(s));
                 (bound.modifier_flags(hir, decl), modifiers)
             }
         };

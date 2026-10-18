@@ -337,8 +337,9 @@ fn declare_in_ambient_context<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         },
         _ => false,
     };
-    let declared = hir.stmts.iter().enumerate().filter_map(|(i, raw)| {
-        let first = hir.modifiers.get(raw.modifiers.range())?.first()?;
+    let declared = (0..hir.stmts.len()).filter_map(|i| {
+        let written = hir.stmt_modifiers(StmtId(i as u32));
+        let first = hir.modifiers.get(written.range())?.first()?;
         let is_in_tree = !matches!(file.bound.parent_of_stmt(StmtId(i as u32)), Parent::None);
         let statement = Node::Stmt(Stmt::from_raw(file, i as u32));
         (is_keyword(first, Flags::AMBIENT) && is_in_tree && statement.ancestors().any(is_ambient))

@@ -88,6 +88,7 @@ lists! {
     non_null_ends: (ExprId, u32),
     jsx_expressions: (ExprId, u32, u32),
     modifiers_of_params: Span<ModifierId>,
+    modifiers_of_stmts: (StmtId, Span<ModifierId>),
     modifiers_of_props: (PropId, Span<ModifierId>),
     with_bodies: (u32, u32),
     import_attributes: (u32, ExprId),
@@ -404,8 +405,11 @@ impl Walk<'_, '_> {
         for (id, (x, y)) in (0..).map(ExprId).zip(a.exprs.iter().zip(b.exprs)) {
             self.expr_kind((id, x), (id, y))?;
         }
-        for (x, y) in a.stmts.iter().zip(b.stmts) {
-            self.modifiers(x.modifiers, y.modifiers)?;
+        for (id, (x, y)) in (0..).map(StmtId).zip(a.stmts.iter().zip(b.stmts)) {
+            self.modifiers(
+                stmt_modifiers_in(a.modifiers_of_stmts, id),
+                stmt_modifiers_in(b.modifiers_of_stmts, id),
+            )?;
             self.stmt_kind(x.kind, y.kind)?;
         }
         for (id, (x, y)) in (0..).map(TypeNodeId).zip(a.types.iter().zip(b.types)) {
@@ -898,7 +902,10 @@ impl Walk<'_, '_> {
             );
         }
         let result = self
-            .modifiers(x.modifiers, y.modifiers)
+            .modifiers(
+                stmt_modifiers_in(self.a.modifiers_of_stmts, a),
+                stmt_modifiers_in(self.b.modifiers_of_stmts, b),
+            )
             .and_then(|()| self.stmt_kind(x.kind, y.kind));
         self.at(result, x.start, y.start)
     }

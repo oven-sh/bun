@@ -283,7 +283,7 @@ impl Checker<'_, '_> {
         let only_async;
         // `node.ModifierNodes()`
         let modifiers = match node {
-            NodeData::Stmt(s) => hir.modifier_list(hir[s].modifiers),
+            NodeData::Stmt(s) => hir.modifier_list(hir.stmt_modifiers(s)),
             NodeData::Member(m) => hir.modifier_list(hir[m].modifiers),
             NodeData::Prop(p) => hir.modifier_list(hir.prop_modifiers(p)),
             NodeData::Param(p) => hir.modifier_list(hir.param_modifiers(p)),

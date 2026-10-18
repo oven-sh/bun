@@ -48,6 +48,9 @@
 //!   diagnostic (`Program::drop_diagnostics_of_losers`). What the walk of a file reports belongs to the file, and goes when a
 //!   commit follows the end of the file. So does what the task has stored under the nodes of the file
 //!   (`Checker::withhold_until_the_file_ends`), with what was reported for it.
+//! - **What a task stores about an expression of the file that it visits never leaves the task**
+//!   (`crate::table::Location::KEEPS_THE_VISITED_FILE`). It is most of what a check stores, and hardly anybody else asks for it.
+//!   It is neither logged nor a `Task::hold_back`.
 //! - **An entry under a record does not wait for a commit if nothing that it rests on does** (`Task::may_write_at_once`):
 //!   neither its key nor its value is bound, and since its evaluation began nothing was stored that waits, and nothing was
 //!   read that holds only while the stack of the checker is as it is (`Task::hold_back`). So whatever its evaluation has
@@ -283,6 +286,12 @@ impl View<'_> {
             }
             file == pinned
         });
+    }
+
+    /// Whether the task is visiting `file`, so that what it sees there stays the same until it visits another file.
+    #[inline]
+    pub(crate) fn is_pinned(&self, file: FileId) -> bool {
+        self.pinned.get() == file.0 && !self.ignores_stamps
     }
 
     /// The task begins to visit `file`.

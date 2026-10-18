@@ -4730,7 +4730,7 @@ fn rename_private_names(hir: &mut hir::File, bound: &Bound, atoms: &Interner, pa
             *key = PropKey::Private(renamed(class.0, name));
         }
     }
-    for (&e, &class) in &bound.private_class {
+    for (&e, &class) in bound.private_class.iter() {
         if let ExprKind::Dot { name, .. } | ExprKind::PrivateIdentifier(name) =
             &mut hir.exprs[e.idx()].kind
         {

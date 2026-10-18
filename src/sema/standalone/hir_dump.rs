@@ -82,6 +82,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         text: _,
         unclosed_literals: _,
         modifiers_of_params: _,
+        modifiers_of_stmts: _,
         modifiers_of_props: _,
         body,
         references,
@@ -863,12 +864,8 @@ impl Dump<'_, '_> {
     }
 
     fn stmt(&mut self, depth: usize, label: &str, id: StmtId) {
-        let Stmt {
-            kind,
-            start,
-            loc,
-            modifiers,
-        } = node!(self, depth, label, stmts, id);
+        let Stmt { kind, start, loc } = node!(self, depth, label, stmts, id);
+        let modifiers = self.file.stmt_modifiers(id);
         let mut head = format!(
             "Stmt {} start={start} loc={}..{}",
             stmt_kind_name(kind),

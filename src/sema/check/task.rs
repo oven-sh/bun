@@ -497,9 +497,10 @@ impl<'s> Task<'s> {
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn buffer(&self) -> &mut Buffer<'s> {
         // SAFETY: the task is not `Sync`, and no two of these references are live at the same time:
-        // `crate::table` uses the reference for one call into `crate::local`, which calls nothing
-        // outside itself. References returned by an indirect table point into a `LocalVec`, whose
-        // elements do not move until `finish`, `begin` or the drop.
+        // a method of `crate::table` uses the reference for calls into `crate::local`, which calls
+        // nothing outside itself, and asks for the next one when it is done with this one.
+        // References returned by an indirect table point into a `LocalVec`, whose elements do not
+        // move until `finish`, `begin` or the drop.
         unsafe { &mut *self.buffer.get() }
     }
 
@@ -777,11 +778,34 @@ pub(super) fn tables_written_at_once() -> u128 {
 }
 
 /// The names of the `Buffered` fields of `Program`, by slot.
-pub fn table_names() -> Vec<&'static str> {
+const TABLE_NAMES: &[&str] = {
     macro_rules! each {
-        ($($field:ident)*) => { vec![$(stringify!($field)),*] };
+        ($($field:ident)*) => { &[$(stringify!($field)),*] };
     }
     super::buffered_fields!(each)
+};
+
+const _: () = assert!(TABLE_NAMES.len() <= crate::local::MOST_TABLES);
+
+pub fn table_names() -> Vec<&'static str> {
+    TABLE_NAMES.to_vec()
+}
+
+/// The slot of the `Buffered` field `name` of `Program`, for the type of the field. `number_tables` gives it the same.
+pub(super) const fn slot_of(name: &str) -> u32 {
+    let (name, mut slot) = (name.as_bytes(), 0);
+    while slot < TABLE_NAMES.len() {
+        let other = TABLE_NAMES[slot].as_bytes();
+        let mut same = 0;
+        while same < name.len() && same < other.len() && name[same] == other[same] {
+            same += 1;
+        }
+        if same == name.len() && same == other.len() {
+            return slot as u32;
+        }
+        slot += 1;
+    }
+    panic!("not in `buffered_fields!`")
 }
 
 /// The `Buffered` tables of `program`. The slot of a table is its index here: `number_tables`.

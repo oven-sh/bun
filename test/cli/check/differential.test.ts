@@ -145,6 +145,40 @@ test.concurrent.skipIf(!tsc)("a file that is checked again reports what it has r
   for (const lines of ours) expect(lines).toEqual(theirs);
 });
 
+// The same for names in types, heritage clauses, initializers of properties and of enum members, and for what is unused.
+test.concurrent.skipIf(!tsc)("a file that is checked again reports the same about its declarations", async () => {
+  const count = 300;
+  const numbers = Array.from({ length: count }, (_, i) => i);
+  const kinds: ((i: number) => string)[] = [
+    i => `const b${i}: Missing${i} = null!;`,
+    i => `type L${i} = A${i}; function f${i}(x: L${i}): Gone${i} { return x; }`,
+    i => `interface I${i} extends Absent${i} { a: A${i} }`,
+    i => `class C${i}<T extends A${i}> { p!: T; q = lost${i}; }`,
+    i => `enum E${i} { X = nowhere${i}, Y = 1 } let e${i}: E${i}.Z;`,
+    i => `let g${i} = (y: A${i}) => y.b; namespace N${i} { export type Q = Void${i}; }`,
+  ];
+  const options = { ...JSON.parse(tsconfig).compilerOptions, noUnusedLocals: true, noUnusedParameters: true };
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: options }),
+    "a.ts": numbers
+      .map(i => `export const a${i} = [${i}, "${i}"].map(it => [it]);\nexport interface A${i} { a: ${i} }\n`)
+      .join(""),
+    "b.ts": [
+      `import type { ${numbers.map(i => `A${i}`).join(", ")} } from "./a";`,
+      ...numbers.map(i => kinds[i % kinds.length](i)),
+      `export const ring = turn();\nexport function turn() { return [ring]; }\n`,
+    ].join("\n"),
+    "c.ts": `import { ring } from "./b";\nexport const c: never = ring;\n`,
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], root, root),
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  for (const code of ["TS2304", "TS2339", "TS2694", "TS6133", "TS6196"]) expect(theirs.join("\n")).toContain(code);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
 /**
  * `depth` layers of `width` modules. Each re-exports two modules of the layer below with `export *`, and imports a name
  * and a namespace from them. The first 8 of a layer are rings of two, with an alias that goes round. Some export a

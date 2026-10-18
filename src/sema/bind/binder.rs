@@ -2272,7 +2272,7 @@ impl<'f, 's> Binder<'f, 's> {
         let counted = self.yields.len();
         // `checkDecorators` never reaches the decorators of a statement that is not a class. Those
         // of a class are bound with it.
-        for modifier in self.f[id].modifiers.iter() {
+        for modifier in self.f.stmt_modifiers(id).iter() {
             if let ModifierKind::Decorator(decorator) = self.f[modifier].kind
                 && !matches!(self.f[id].kind, StmtKind::Class(_))
             {
@@ -3123,7 +3123,10 @@ impl<'f, 's> Binder<'f, 's> {
             }
             // `HasSyntacticModifier(node, ModifierFlagsExport)`
             StmtKind::Import(_)
-                if (self.f.find_modifier(self.f[s].modifiers, Flags::EXPORT)).is_none() =>
+                if (self
+                    .f
+                    .find_modifier(self.f.stmt_modifiers(s), Flags::EXPORT))
+                .is_none() =>
             {
                 ModuleInstanceState::NonInstantiated
             }

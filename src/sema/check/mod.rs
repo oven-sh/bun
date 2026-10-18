@@ -99,7 +99,8 @@ use crate::local::MaybeLocal;
 use crate::program::{FileId, Files, Sym};
 use crate::session::{Arena, ArenaBox, Session};
 use crate::session::{ArenaVec, vec_from_iter_in};
-use crate::table::{Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect, FileLocal};
+use crate::table::{At, Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect};
+use crate::table::{FileLocal, OfExpressions};
 use crate::types::Prop;
 use crate::types::*;
 use crate::util::{FxHashMap, List};
@@ -177,6 +178,16 @@ macro_rules! buffered_fields {
 }
 pub(crate) use buffered_fields;
 
+/// The policy of the `Buffered` field `$field`, which says where a task has the task-local part of the table.
+macro_rules! buffered {
+    ($field:ident) => {
+        Buffered<At<{ task::slot_of(stringify!($field)) }>>
+    };
+    ($field:ident, of expressions) => {
+        Buffered<OfExpressions<{ task::slot_of(stringify!($field)) }>>
+    };
+}
+
 /// The same for the `FileLocal` fields. Only a pure cache is `FileLocal`: a function of entries
 /// that are published. What tsgo stores on a node, a symbol or a signature is `Buffered`, so that a
 /// task sees the result of an outer evaluation together with what was evaluated inside it.
@@ -226,190 +237,272 @@ pub struct Program<'s> {
 
     /// `links.resolvedType` of an expression (`checkExpressionCached`). Also serves as a memo where
     /// tsgo rechecks an expression.
-    expr_types: ByNode<(FileId, ExprId), TypeId, Buffered, &'s Session>,
-    type_node_types: ByNode<(FileId, TypeNodeId), TypeId, Buffered, &'s Session>,
+    expr_types:
+        ByNode<(FileId, ExprId), TypeId, buffered!(expr_types, of expressions), &'s Session>,
+    type_node_types: ByNode<(FileId, TypeNodeId), TypeId, buffered!(type_node_types), &'s Session>,
     /// The flag, here and in `pat_types`, `declared_types` and `constraints`: the type is the result of a resolution cycle
     /// (`!popTypeResolution()`).
-    fn_return_types: ByNode<(FileId, FnId), (TypeId, bool), Buffered, &'s Session>,
-    pat_types: ByNode<(FileId, PatId), (TypeId, bool), Buffered, &'s Session>,
-    literal_prop_types: ByNode<(FileId, PropId), TypeId, Buffered, &'s Session>,
-    symbol_types: ByNode<Sym, TypeId, Buffered, &'s Session>,
+    fn_return_types:
+        ByNode<(FileId, FnId), (TypeId, bool), buffered!(fn_return_types), &'s Session>,
+    pat_types: ByNode<(FileId, PatId), (TypeId, bool), buffered!(pat_types), &'s Session>,
+    literal_prop_types:
+        ByNode<(FileId, PropId), TypeId, buffered!(literal_prop_types), &'s Session>,
+    symbol_types: ByNode<Sym, TypeId, buffered!(symbol_types), &'s Session>,
     /// The parameters for which `parameterInitializerContainsUndefined` closed a cycle. Their entry in `pat_types` is older than the cycle.
-    circular_initializers: ByNode<(FileId, PatId), (), Buffered, &'s Session>,
+    circular_initializers:
+        ByNode<(FileId, PatId), (), buffered!(circular_initializers), &'s Session>,
     /// The symbols whose type is the result of a resolution cycle.
-    circular_symbols: ByNode<Sym, (), Buffered, &'s Session>,
+    circular_symbols: ByNode<Sym, (), buffered!(circular_symbols), &'s Session>,
     /// The classes and interfaces whose base types were requested while they were being resolved
     /// (2310).
-    circular_base_types: ByNode<Sym, (), Buffered, &'s Session>,
+    circular_base_types: ByNode<Sym, (), buffered!(circular_base_types), &'s Session>,
     /// The aliases whose `aliasTarget` is `unknownSymbol` because `resolveAlias` found a cycle
     /// through a type (2303).
-    circular_alias_targets: ByNode<Sym, (), Buffered, &'s Session>,
+    circular_alias_targets: ByNode<Sym, (), buffered!(circular_alias_targets), &'s Session>,
     /// The mapped types whose key has a circular constraint (2313), by the node and the mapper:
     /// their `constraintType` is `errorType`.
-    circular_mapped_constraints: ByKey<(FileId, TypeNodeId, MapperId), (), Buffered, &'s Session>,
+    circular_mapped_constraints: ByKey<
+        (FileId, TypeNodeId, MapperId),
+        (),
+        buffered!(circular_mapped_constraints),
+        &'s Session,
+    >,
     /// The annotations of the setters whose `writeType` is `anyType` because
     /// `getWriteTypeOfAccessors` found a cycle (2502).
-    circular_write_types: ByKey<(FileId, TypeNodeId), (), Buffered, &'s Session>,
+    circular_write_types:
+        ByKey<(FileId, TypeNodeId), (), buffered!(circular_write_types), &'s Session>,
     /// The functions for which 7023 was reported and whose entry in `fn_return_types` is not the result of the cycle: it is in flight and
     /// keeps its inferred type, or the cycle is that of a composite signature.
-    circular_returns: ByNode<(FileId, FnId), (), Buffered, &'s Session>,
+    circular_returns: ByNode<(FileId, FnId), (), buffered!(circular_returns), &'s Session>,
     /// The calls that found no signature among members that were in place, or while index
     /// signatures were being computed. The callee may be the static side of a class whose members
     /// were in place and whose signatures were not (`resolveAnonymousTypeMembers`).
-    calls_before_signatures: ByNode<(FileId, ExprId), (), Buffered, &'s Session>,
+    calls_before_signatures:
+        ByNode<(FileId, ExprId), (), buffered!(calls_before_signatures), &'s Session>,
     /// References whose control flow walk reached depth 2000 (2563). `getTypeAtFlowNode`
-    flows_too_deep: ByNode<(FileId, ExprId), (), Buffered, &'s Session>,
+    flows_too_deep: ByNode<(FileId, ExprId), (), buffered!(flows_too_deep), &'s Session>,
     /// The same for the references that are no expressions: a binding pattern, a function, the name
     /// of a parameter, a synthesized access. `FindAncestor(reference, IsFunctionOrModuleBlock)`.
-    blocks_too_large_for_flow_analysis: ByKey<(FileId, Node), (), Buffered, &'s Session>,
+    blocks_too_large_for_flow_analysis:
+        ByKey<(FileId, Node), (), buffered!(blocks_too_large_for_flow_analysis), &'s Session>,
     /// `getEffectsSignature`, by call.
-    effects_signatures: ByNode<(FileId, ExprId), Option<SigId>, Buffered, &'s Session>,
+    effects_signatures: ByNode<
+        (FileId, ExprId),
+        Option<SigId>,
+        buffered!(effects_signatures, of expressions),
+        &'s Session,
+    >,
     /// `links.effectsSignature` of the calls `getEffectsSignature` has to resolve: generic or overloaded.
-    resolved_effects_signatures: ByNode<(FileId, ExprId), Option<SigId>, Buffered, &'s Session>,
+    resolved_effects_signatures: ByNode<
+        (FileId, ExprId),
+        Option<SigId>,
+        buffered!(resolved_effects_signatures, of expressions),
+        &'s Session,
+    >,
     /// `links.contextFreeType` of an expression (`getContextFreeTypeOfExpression`). `context_free_types` is that of a function.
-    context_free_expr_types: ByNode<(FileId, ExprId), TypeId, Buffered, &'s Session>,
+    context_free_expr_types: ByNode<
+        (FileId, ExprId),
+        TypeId,
+        buffered!(context_free_expr_types, of expressions),
+        &'s Session,
+    >,
     /// `flowNodeReachable`
     flow_node_reachable: ByNode<(FileId, crate::bind::FlowId), bool, FileLocal, &'s Session>,
     /// `sig.resolvedTypePredicate` for a function without a return type annotation.
-    type_predicates_from_body:
-        ByNodeIndirect<(FileId, FnId), Option<decl::Predicate>, Buffered, &'s Session>,
+    type_predicates_from_body: ByNodeIndirect<
+        (FileId, FnId),
+        Option<decl::Predicate>,
+        buffered!(type_predicates_from_body),
+        &'s Session,
+    >,
     /// `resolvedBaseConstructorType` of each class.
-    base_constructor_types: ByNode<Sym, TypeId, Buffered, &'s Session>,
+    base_constructor_types: ByNode<Sym, TypeId, buffered!(base_constructor_types), &'s Session>,
     /// `symbolReferenceLinks`: the symbols `Resolve` found when called with `isUse`, where the
     /// caller records that. `check_unused` computes the rest.
-    symbol_reference_links: ByNode<Sym, (), Buffered, &'s Session>,
+    symbol_reference_links: ByNode<Sym, (), buffered!(symbol_reference_links), &'s Session>,
     /// `GetGlobalDiagnostics`: errors that belong to no file. `Cannot find global type 'Array'.`
     /// The code and the message arguments.
     global_errors: bun_threading::Guarded<std::collections::BTreeSet<(u32, Vec<Vec<u8>>)>>,
     sink: sink::Sink<'s>,
     /// `MappedType.containsError`
-    mapped_types_with_errors: ById<TypeId, (), Buffered, &'s Session>,
+    mapped_types_with_errors: ById<TypeId, (), buffered!(mapped_types_with_errors), &'s Session>,
     /// `NodeCheckFlagsInitializerIsUndefinedComputed` and `NodeCheckFlagsInitializerIsUndefined`
-    initializer_is_undefined: ByNode<(FileId, ParamId), bool, Buffered, &'s Session>,
+    initializer_is_undefined:
+        ByNode<(FileId, ParamId), bool, buffered!(initializer_is_undefined), &'s Session>,
     /// `links.resolvedType != nil` of the symbol of a parameter that `is_resolved_on_request`: the
     /// type is in `pat_types`, with or without it.
-    resolved_parameter_symbols: ByNode<(FileId, ParamId), (), Buffered, &'s Session>,
+    resolved_parameter_symbols:
+        ByNode<(FileId, ParamId), (), buffered!(resolved_parameter_symbols), &'s Session>,
     /// See `is_untyped_signature_in_js_file`.
-    untyped_signatures_in_js: ByNode<(FileId, FnId), bool, Buffered, &'s Session>,
+    untyped_signatures_in_js:
+        ByNode<(FileId, FnId), bool, buffered!(untyped_signatures_in_js), &'s Session>,
     /// The flag, of a type alias: `typeAliasLinks.typeParameters` is nil, because no evaluation has ended with a
     /// `popTypeResolution` that succeeded.
-    declared_types: ByNode<Sym, (TypeId, bool), Buffered, &'s Session>,
-    shapes: ByIdIndirect<TypeId, shape::Resolved<'s>, Buffered, &'s Session>,
+    declared_types: ByNode<Sym, (TypeId, bool), buffered!(declared_types), &'s Session>,
+    shapes: ByIdIndirect<TypeId, shape::Resolved<'s>, buffered!(shapes), &'s Session>,
     /// `intersectionTypes`, for sets that contain a union.
-    distributed_intersections: ByKey<unions::IntersectionKey, TypeId, Buffered, &'s Session>,
-    sig_params: ByIdIndirect<SigId, ArenaBox<'s, [SigParam]>, Buffered, &'s Session>,
-    sig_type_params: ByIdIndirect<SigId, ArenaBox<'s, [TypeId]>, Buffered, &'s Session>,
+    distributed_intersections:
+        ByKey<unions::IntersectionKey, TypeId, buffered!(distributed_intersections), &'s Session>,
+    sig_params: ByIdIndirect<SigId, ArenaBox<'s, [SigParam]>, buffered!(sig_params), &'s Session>,
+    sig_type_params:
+        ByIdIndirect<SigId, ArenaBox<'s, [TypeId]>, buffered!(sig_type_params), &'s Session>,
     /// `Signature.resolvedReturnType` of a signature with a `target`.
-    resolved_return_types: ById<SigId, TypeId, Buffered, &'s Session>,
-    call_signatures: ByIdIndirect<TypeId, ArenaBox<'s, [SigId]>, Buffered, &'s Session>,
-    construct_signatures: ByIdIndirect<TypeId, ArenaBox<'s, [SigId]>, Buffered, &'s Session>,
+    resolved_return_types: ById<SigId, TypeId, buffered!(resolved_return_types), &'s Session>,
+    call_signatures:
+        ByIdIndirect<TypeId, ArenaBox<'s, [SigId]>, buffered!(call_signatures), &'s Session>,
+    construct_signatures:
+        ByIdIndirect<TypeId, ArenaBox<'s, [SigId]>, buffered!(construct_signatures), &'s Session>,
     /// Keyed by the first of several signatures: the list they are in, then the same list in the
     /// order `candidates_in_order` produces.
-    candidate_orders: ByIdIndirect<SigId, ArenaBox<'s, [SigId]>, Buffered, &'s Session>,
+    candidate_orders:
+        ByIdIndirect<SigId, ArenaBox<'s, [SigId]>, buffered!(candidate_orders), &'s Session>,
     /// The result of `members` for a type, once it is final.
-    members: ByIdIndirect<TypeId, shape::CachedMembers, Buffered, &'s Session>,
+    members: ByIdIndirect<TypeId, shape::CachedMembers, buffered!(members), &'s Session>,
     /// `TypeReference.resolvedTypeArguments` of a deferred type reference.
-    resolved_type_arguments: ByIdIndirect<TypeId, ArenaBox<'s, [TypeId]>, Buffered, &'s Session>,
-    instantiations: ByKey<(TypeId, MapperId), TypeId, Buffered, &'s Session>,
+    resolved_type_arguments: ByIdIndirect<
+        TypeId,
+        ArenaBox<'s, [TypeId]>,
+        buffered!(resolved_type_arguments),
+        &'s Session,
+    >,
+    instantiations: ByKey<(TypeId, MapperId), TypeId, buffered!(instantiations), &'s Session>,
     /// `UnionType.keyPropertyName`, `constituentMap`
-    key_properties:
-        ByIdIndirect<TypeId, Option<(Atom, FxHashMap<TypeId, TypeId>)>, Buffered, &'s Session>,
+    key_properties: ByIdIndirect<
+        TypeId,
+        Option<(Atom, FxHashMap<TypeId, TypeId>)>,
+        buffered!(key_properties),
+        &'s Session,
+    >,
     /// `compose`
-    composed: ByKey<(MapperId, MapperId), MapperId, Buffered, &'s Session>,
+    composed: ByKey<(MapperId, MapperId), MapperId, buffered!(composed), &'s Session>,
     outer_type_params: ByNodeIndirect<
         (FileId, crate::bind::ScopeId),
         ArenaBox<'s, [TypeId]>,
-        Buffered,
+        buffered!(outer_type_params),
         &'s Session,
     >,
     /// `type_param`
-    declared_type_params: ByNode<(FileId, TypeParamId), TypeId, Buffered, &'s Session>,
+    declared_type_params:
+        ByNode<(FileId, TypeParamId), TypeId, buffered!(declared_type_params), &'s Session>,
     /// `identity_mapper`
-    identity_mappers: ByNode<(FileId, crate::bind::ScopeId), MapperId, Buffered, &'s Session>,
-    identity_mappers_with_adopted:
-        ByNode<(FileId, crate::bind::ScopeId), MapperId, Buffered, &'s Session>,
-    base_types: ByNodeIndirect<Sym, ArenaBox<'s, [TypeId]>, Buffered, &'s Session>,
+    identity_mappers:
+        ByNode<(FileId, crate::bind::ScopeId), MapperId, buffered!(identity_mappers), &'s Session>,
+    identity_mappers_with_adopted: ByNode<
+        (FileId, crate::bind::ScopeId),
+        MapperId,
+        buffered!(identity_mappers_with_adopted),
+        &'s Session,
+    >,
+    base_types: ByNodeIndirect<Sym, ArenaBox<'s, [TypeId]>, buffered!(base_types), &'s Session>,
     /// `links.resolvedSignature`. `Checker::cached_resolved_signature` reads it together with `call_return_types`, `cache_call` writes both.
-    calls: ByNode<(FileId, ExprId), Option<SigId>, Buffered, &'s Session>,
+    calls: ByNode<(FileId, ExprId), Option<SigId>, buffered!(calls, of expressions), &'s Session>,
     /// `ResolvedCall::ret` of the entry of `calls`. A cell has 32 bits.
-    call_return_types: ByNode<(FileId, ExprId), TypeId, Buffered, &'s Session>,
+    call_return_types:
+        ByNode<(FileId, ExprId), TypeId, buffered!(call_return_types, of expressions), &'s Session>,
     /// `links.deferredNodes` for a file that the task was not checking at the time. See
     /// `check_node_deferred`.
-    deferred_nodes: ByNode<(FileId, ExprId), (), Buffered, &'s Session>,
+    deferred_nodes: ByNode<(FileId, ExprId), (), buffered!(deferred_nodes), &'s Session>,
     /// `links.jsxFragmentType` of a source file.
-    jsx_fragment_types: ByKey<FileId, TypeId, Buffered, &'s Session>,
+    jsx_fragment_types: ByKey<FileId, TypeId, buffered!(jsx_fragment_types), &'s Session>,
     /// `NodeCheckFlagsAssignmentsMarked` of a function or a source file. `true`: it had no parent
     /// with the flag, so `markNodeAssignments` has walked it. `markedAssignmentSymbolLinks` follows
     /// from the walks. Only for a file that `has_order_dependent_assignment_marks`. For
     /// `Node::NONE` see `are_assignments_marked_in_program_order`.
-    assignments_marked: ByKey<(FileId, Node), bool, Buffered, &'s Session>,
+    assignments_marked: ByKey<(FileId, Node), bool, buffered!(assignments_marked), &'s Session>,
     /// `getEffectiveFirstArgumentForJsxSignature` of the signature a JSX element is resolved to,
     /// keyed by the element.
     jsx_attributes_types: ByNode<(FileId, JsxId), TypeId, FileLocal, &'s Session>,
     /// The diagnostics `resolveCall` reported for a call at its final resolution, with their
     /// related information.
-    call_diagnostics: ByNodeIndirect<(FileId, ExprId), Vec<Reported>, Buffered, &'s Session>,
+    call_diagnostics:
+        ByNodeIndirect<(FileId, ExprId), Vec<Reported>, buffered!(call_diagnostics), &'s Session>,
     /// `NodeCheckFlagsContextChecked`, with the signature passed to
     /// `assignContextualParameterTypes`. `None`: it was not called.
-    context_checked: ByNode<(FileId, FnId), AssignedSignature, Buffered, &'s Session>,
+    context_checked:
+        ByNode<(FileId, FnId), AssignedSignature, buffered!(context_checked), &'s Session>,
     /// `contextFreeTypes` for a function.
-    context_free_types: ByNode<(FileId, FnId), TypeId, Buffered, &'s Session>,
+    context_free_types: ByNode<(FileId, FnId), TypeId, buffered!(context_free_types), &'s Session>,
     /// The diagnostics `resolveCall` reported for a call the first time it was resolved again while
     /// its resolution was in progress, with their related information.
-    diagnostics_of_re_resolved_calls:
-        ByNodeIndirect<(FileId, ExprId), Vec<Reported>, Buffered, &'s Session>,
-    relations: ByKey<relate::Key, u8, Buffered, &'s Session>,
-    variances: ByNodeIndirect<Sym, &'s [u8], Buffered, &'s Session>,
+    diagnostics_of_re_resolved_calls: ByNodeIndirect<
+        (FileId, ExprId),
+        Vec<Reported>,
+        buffered!(diagnostics_of_re_resolved_calls),
+        &'s Session,
+    >,
+    relations: ByKey<relate::Key, u8, buffered!(relations), &'s Session>,
+    variances: ByNodeIndirect<Sym, &'s [u8], buffered!(variances), &'s Session>,
     /// `resolvedType` of a property declared by assignment declarations, keyed by the first
     /// declaration.
     /// `CachedTypeKindAwaitedType`. `None`: `awaited_no_alias` with an empty `awaitedTypeStack` has
     /// no result.
-    awaited_types: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
+    awaited_types: ById<TypeId, Option<TypeId>, buffered!(awaited_types), &'s Session>,
     /// `resolvedType` of a property of a mapped type, keyed by the mapped type and the property name. `getTypeOfMappedSymbol`
-    mapped_prop_types: ByKey<(TypeId, Atom), TypeId, Buffered, &'s Session>,
+    mapped_prop_types: ByKey<(TypeId, Atom), TypeId, buffered!(mapped_prop_types), &'s Session>,
     /// `reverseMappedCache`
-    reverse_mapped_cache: ByKey<(TypeId, TypeId, TypeId), Option<TypeId>, Buffered, &'s Session>,
+    reverse_mapped_cache: ByKey<
+        (TypeId, TypeId, TypeId),
+        Option<TypeId>,
+        buffered!(reverse_mapped_cache),
+        &'s Session,
+    >,
     /// See `cached_optional_property`.
-    optional_properties: ById<TypeId, TypeId, Buffered, &'s Session>,
-    intersected_props: ByKey<(TypeId, Atom), TypeId, Buffered, &'s Session>,
+    optional_properties: ById<TypeId, TypeId, buffered!(optional_properties), &'s Session>,
+    intersected_props: ByKey<(TypeId, Atom), TypeId, buffered!(intersected_props), &'s Session>,
     /// `UnionOrIntersectionType.propertyCache`. A synthetic type holds the property.
-    union_properties: ByKey<(TypeId, Atom), Option<TypeId>, Buffered, &'s Session>,
+    union_properties:
+        ByKey<(TypeId, Atom), Option<TypeId>, buffered!(union_properties), &'s Session>,
     /// `UnionOrIntersectionType.resolvedProperties` of a union: `union_as_object`.
-    union_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
+    union_objects: ById<TypeId, TypeId, buffered!(union_objects), &'s Session>,
     /// An object type with the signatures and the index signatures of an intersection:
     /// `structured_members`.
-    intersection_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
+    intersection_objects: ById<TypeId, TypeId, buffered!(intersection_objects), &'s Session>,
     /// `resolvedProperties` of an intersection, where `getPropertiesOfUnionOrIntersectionType`
     /// assigned it while the members of a constituent were still in place: an object type with
     /// the properties it found. `getPropertyOfType` finds the others by name all the same.
-    listed_properties: ById<TypeId, TypeId, Buffered, &'s Session>,
+    listed_properties: ById<TypeId, TypeId, buffered!(listed_properties), &'s Session>,
     /// `get_literal_type_from_properties` without index flags. Instantiations under several
     /// mappers arrive at one object type.
-    keys_of_properties: ById<TypeId, TypeId, Buffered, &'s Session>,
-    never_intersections: ById<TypeId, bool, Buffered, &'s Session>,
+    keys_of_properties: ById<TypeId, TypeId, buffered!(keys_of_properties), &'s Session>,
+    never_intersections: ById<TypeId, bool, buffered!(never_intersections), &'s Session>,
     /// `getMappedTargetWithSymbol` of a mapped type.
-    mapped_targets: ById<TypeId, TypeId, Buffered, &'s Session>,
-    inferred_constraints: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
+    mapped_targets: ById<TypeId, TypeId, buffered!(mapped_targets), &'s Session>,
+    inferred_constraints:
+        ById<TypeId, Option<TypeId>, buffered!(inferred_constraints), &'s Session>,
     /// `ConstrainedType.resolvedBaseConstraint`: `None` is `noConstraintType`, the flag
     /// `circularConstraintType`.
-    constraints: ById<TypeId, (Option<TypeId>, bool), Buffered, &'s Session>,
+    constraints: ById<TypeId, (Option<TypeId>, bool), buffered!(constraints), &'s Session>,
     /// `global_ref` of a name, without type arguments.
-    plain_global_refs: ById<Atom, TypeId, Buffered, &'s Session>,
+    plain_global_refs: ById<Atom, TypeId, buffered!(plain_global_refs), &'s Session>,
     /// `CachedTypeKindEquivalentBaseType`
-    equivalent_base_types: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
+    equivalent_base_types:
+        ById<TypeId, Option<TypeId>, buffered!(equivalent_base_types), &'s Session>,
     /// `constraint_of_type_param` of a type parameter, once it is final.
-    type_param_constraints: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
-    enum_values: ByNodeIndirect<(FileId, EnumMemberId), decl::Evaluated, Buffered, &'s Session>,
+    type_param_constraints:
+        ById<TypeId, Option<TypeId>, buffered!(type_param_constraints), &'s Session>,
+    enum_values: ByNodeIndirect<
+        (FileId, EnumMemberId),
+        decl::Evaluated,
+        buffered!(enum_values),
+        &'s Session,
+    >,
     /// `default_of_type_param` of a type parameter, once it is final.
-    type_param_defaults: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
+    type_param_defaults: ById<TypeId, Option<TypeId>, buffered!(type_param_defaults), &'s Session>,
     /// The type parameters whose `resolvedDefaultType` is `circularConstraintType`.
-    circular_type_param_defaults: ById<TypeId, (), Buffered, &'s Session>,
+    circular_type_param_defaults:
+        ById<TypeId, (), buffered!(circular_type_param_defaults), &'s Session>,
     /// `ConditionalRoot.instantiations`, for the keys without an alias. The flag: nothing moved
     /// `non_cacheable_mark` while the type was computed, so `getConditionalType` returns it again.
-    conditionals: ByKey<(FileId, TypeNodeId, MapperId), (TypeId, bool), Buffered, &'s Session>,
+    conditionals:
+        ByKey<(FileId, TypeNodeId, MapperId), (TypeId, bool), buffered!(conditionals), &'s Session>,
     /// The constraint of the parameter of each mapped type, if any. See
     /// `constraint_of_mapped_param`.
-    mapped_param_constraints: ByNode<(FileId, TypeNodeId), Option<TypeId>, Buffered, &'s Session>,
+    mapped_param_constraints: ByNode<
+        (FileId, TypeNodeId),
+        Option<TypeId>,
+        buffered!(mapped_param_constraints),
+        &'s Session,
+    >,
 }
 
 /// No id: the arguments are printed when it is created, and `take_reported_from` gives no table a

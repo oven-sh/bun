@@ -14,7 +14,7 @@ use crate::atom::{Atom, Intern};
 use crate::check::self_check::{Mention, Mentions, is_same_value, note_differing};
 use crate::check::task::{Stored, Task};
 use crate::local::{
-    Buffer, Half, HashedInTask, InTask, LOCAL, ListInTask, MaybeLocal, Slot, SlotNumber, Typed,
+    Buffer, HashedInTask, InTask, Kept, LOCAL, ListInTask, MaybeLocal, Slot, SlotNumber, Typed,
     is_local_number, node_word,
 };
 use crate::program::{FileId, Sym};
@@ -347,6 +347,19 @@ impl<A: Alloc> Bases<A> {
         let (end, start) = (self.0[file.idx() + 1], self.0[file.idx()]);
         (index < end - start).then(|| (start + index) as usize)
     }
+
+    /// Where the nodes of `file` are in the concatenation.
+    fn of_file(&self, file: FileId) -> std::ops::Range<usize> {
+        let (end, start) = (self.0[file.idx() + 1], self.0[file.idx()]);
+        start as usize..end as usize
+    }
+
+    /// The node at `at` in the concatenation, as `node_word`.
+    fn word_at(&self, at: usize) -> u64 {
+        // The last file that starts there or before: those before it that start there have no nodes.
+        let file = self.0.partition_point(|&start| start as usize <= at) - 1;
+        node_word(file as u32, (at - self.0[file] as usize) as u32)
+    }
 }
 
 /// A node or a symbol: a file and an index within it.
@@ -382,6 +395,8 @@ impl NodeKey for Sym {
 /// Determines who writes an entry of a table and when it becomes visible to whom.
 pub trait Policy {
     const IS_FILE_LOCAL: bool = false;
+    /// `Location::SLOT` of a `Buffered` table.
+    const SLOT: u32 = NO_SLOT;
 }
 
 /// Written before the first step or at a barrier. Read-only while tasks run, so `get` is plain
@@ -393,14 +408,49 @@ pub struct Frozen;
 /// The default for a field of `Program`. The table holds the shared part, which only `publish`
 /// writes, at a barrier. A task's stores go to its task-local part (`crate::local::Half`), which no
 /// other task sees. `Task::finish` passes it to the barrier.
-pub struct Buffered;
+pub struct Buffered<W: Location = AtRunTime>(PhantomData<fn() -> W>);
+
+/// Where a task has the task-local part of a `Buffered` table.
+pub trait Location {
+    /// The slot of the table. `NO_SLOT`: only `set_slot` says.
+    const SLOT: u32;
+    /// For a table keyed by node: what a task stores under a node of the file that it is visiting never leaves the task. For
+    /// what is computed about an expression: nearly all of it is computed by the task that checks the file, which is
+    /// the only one that asks for all of it. Another task gets to an expression on the way to the type of a
+    /// declaration. What it stores is shared, and the task that checks the file finds it.
+    const KEEPS_THE_VISITED_FILE: bool = false;
+}
+
+/// The slot is a field of the table.
+pub struct AtRunTime;
+
+impl Location for AtRunTime {
+    const SLOT: u32 = NO_SLOT;
+}
+
+/// The slot is part of the type of the table, so its task-local part is at a fixed distance from the task.
+pub(crate) struct At<const SLOT: u32>;
+
+impl<const SLOT: u32> Location for At<SLOT> {
+    const SLOT: u32 = SLOT;
+}
+
+/// `At`, for a table with `Location::KEEPS_THE_VISITED_FILE`.
+pub(crate) struct OfExpressions<const SLOT: u32>;
+
+impl<const SLOT: u32> Location for OfExpressions<SLOT> {
+    const SLOT: u32 = SLOT;
+    const KEEPS_THE_VISITED_FILE: bool = true;
+}
 
 /// The entries are task-local and are dropped when the task finishes the file it is visiting. No
 /// other task ever sees one.
 pub struct FileLocal;
 
 impl Policy for Frozen {}
-impl Policy for Buffered {}
+impl<W: Location> Policy for Buffered<W> {
+    const SLOT: u32 = W::SLOT;
+}
 impl Policy for FileLocal {
     const IS_FILE_LOCAL: bool = true;
 }
@@ -461,6 +511,15 @@ impl Footprint {
 /// No slot: `number_tables` has not assigned one yet. A `Frozen` table needs none.
 const NO_SLOT: u32 = u32::MAX;
 
+/// The slot of a table with the policy `P`, whose field says `slot`.
+#[inline]
+fn known_slot<P: Policy>(slot: u32) -> u32 {
+    match P::SLOT {
+        NO_SLOT => slot,
+        known => known,
+    }
+}
+
 /// A value for each node of one kind in the program.
 pub struct ByNode<K, V: Packed, P: Policy = Frozen, A: Alloc = Global> {
     bases: Bases<A>,
@@ -503,7 +562,12 @@ impl<K: NodeKey, V: Packed, P: Policy, A: Alloc> ByNode<K, V, P, A> {
     }
 
     pub(crate) fn set_slot(&mut self, slot: SlotNumber) {
-        self.slot = slot.number();
+        self.set_slot_number(slot.number());
+    }
+
+    fn set_slot_number(&mut self, slot: u32) {
+        assert!(P::SLOT == NO_SLOT || P::SLOT == slot);
+        self.slot = slot;
     }
 
     /// Which cell the key at `at` in the concatenation of all keys has, and the bit offset of the key within the cell.
@@ -601,7 +665,7 @@ impl<K: NodeKey, T, P: Policy, A: Alloc> ByNodeIndirect<K, T, P, A> {
 impl<K: NodeKey, T, P: Policy, A: Alloc> ByNodeIndirect<K, T, P, A> {
     pub(crate) fn set_slot(&mut self, slot: SlotNumber) {
         self.in_task = slot.typed();
-        self.handles.slot = self.in_task.number();
+        self.handles.set_slot_number(self.in_task.number());
     }
 }
 
@@ -633,7 +697,12 @@ impl<I: Id, V: Packed, P: Policy, A: Alloc> ById<I, V, P, A> {
     }
 
     pub(crate) fn set_slot(&mut self, slot: SlotNumber) {
-        self.slot = slot.number();
+        self.set_slot_number(slot.number());
+    }
+
+    fn set_slot_number(&mut self, slot: u32) {
+        assert!(P::SLOT == NO_SLOT || P::SLOT == slot);
+        self.slot = slot;
     }
 }
 
@@ -669,7 +738,7 @@ impl<I: Id, T, P: Policy, A: Alloc> ByIdIndirect<I, T, P, A> {
 
     pub(crate) fn set_slot(&mut self, slot: SlotNumber) {
         self.in_task = slot.typed();
-        self.handles.slot = self.in_task.number();
+        self.handles.set_slot_number(self.in_task.number());
     }
 }
 
@@ -703,6 +772,7 @@ impl<K: std::hash::Hash + Eq, V, P: Policy, A: Alloc> ByKey<K, V, P, A> {
 
     pub(crate) fn set_slot(&mut self, slot: SlotNumber) {
         self.slot = slot.typed();
+        assert!(P::SLOT == NO_SLOT || P::SLOT == self.slot.number());
     }
 }
 
@@ -801,6 +871,8 @@ impl<I: Id, V: Packed, A: Alloc> ById<I, V, Frozen, A> {
 // - `insert` and `rewrite` of a table keyed by a record store into the shared part at once where
 //   `Task::may_write_at_once` allows it. `get` is the same: the shared part, then the task-local part, which has what
 //   waits for a commit and what is bound.
+// - What the task sees under the nodes of the file that it is visiting stays the same for as long as it does. It is copied
+//   into the task-local part, which then answers alone: `ByNode::adopt`.
 
 /// Whether an entry under `key` that may be written at once stays in the task all the same, and is freed with it.
 ///
@@ -823,34 +895,35 @@ fn is_for_all_tasks(task: &Task, value: &impl Follow) -> bool {
     task.writes_at_once() && !value.is_bound(&task.own)
 }
 
-impl<K: NodeKey, V: Packed<Cell = AtomicU32>, A: Alloc> ByNode<K, V, Buffered, A> {
+impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V, Buffered<W>, A> {
+    #[inline]
+    fn own_slot(&self) -> u32 {
+        known_slot::<Buffered<W>>(self.slot)
+    }
+
     /// 0: nothing is published for the key at `at`.
     #[inline]
     fn published_at(&self, at: usize) -> u32 {
         (self.bits_at(at, |cell| cell.load(Ordering::Relaxed)) & Self::MASK) as u32
     }
 
-    /// 0: nothing is published for `key`. A node that `Bases` does not count has no cell, and nothing is ever published for it.
+    /// `published_at`, for a task that sees the commits up to `snapshot` in the file of the key.
     #[inline]
-    fn published(&self, key: K) -> u32 {
-        (self.bases.at(key.file(), key.index())).map_or(0, |at| self.published_at(at))
-    }
-
-    /// `published`, as far as `task` sees it.
-    #[inline]
-    fn seen(&self, task: &Task, key: K) -> u32 {
-        let Some(view) = task.view() else {
-            return self.published(key);
-        };
-        let Some(at) = self.bases.at(key.file(), key.index()) else {
-            return 0;
-        };
-        // Before the look: a miss is a look at the file too.
-        let snapshot = view.snapshot_of(key.file());
+    fn seen_up_to(&self, snapshot: u32, at: usize) -> u32 {
         let raw = (self.bits_at(at, |cell| cell.load(Ordering::Acquire)) & Self::MASK) as u32;
         match raw != 0 && self.stamp_at(at) > snapshot {
             true => 0,
             false => raw,
+        }
+    }
+
+    /// `published_at`, as far as `task` sees it. `file`: of the key.
+    #[inline]
+    fn seen_at(&self, task: &Task, file: u32, at: usize) -> u32 {
+        match task.view() {
+            None => self.published_at(at),
+            // Before the look: a miss is a look at the file too.
+            Some(view) => self.seen_up_to(view.snapshot_of(FileId(file)), at),
         }
     }
 
@@ -870,11 +943,133 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, A: Alloc> ByNode<K, V, Buffered, A
 
     #[inline]
     pub fn get(&self, task: &Task, key: &K) -> Option<V> {
-        let mut raw = self.seen(task, *key);
-        if raw == 0 {
-            raw = (task.buffer()).node(self.slot, key.file().0, key.index());
-        }
+        let (file, index) = (key.file().0, key.index());
+        let raw = match task.buffer().in_row(self.own_slot(), file, index) {
+            Some(raw) => raw,
+            None => self.get_outside_the_row(task, file, index),
+        };
         (raw != 0).then(|| V::unpack(raw))
+    }
+
+    /// Whether the row of `file`, which `task` is visiting, can answer for the published part too: what the task sees of
+    /// that stays what it is for as long as it visits the file.
+    #[inline]
+    fn has_a_whole_row(task: &Task, file: u32) -> bool {
+        task.view().is_none_or(|view| view.is_pinned(FileId(file)))
+    }
+
+    /// What `task` sees of the published part for the node, and where the node is among the nodes of all files. A node
+    /// that `Bases` does not count has no cell, and nothing is ever published for it.
+    #[inline]
+    fn seen(&self, task: &Task, file: u32, index: u32) -> (u32, Option<usize>) {
+        let at = self.bases.at(FileId(file), index);
+        (at.map_or(0, |at| self.seen_at(task, file, at)), at)
+    }
+
+    /// `get`, if `Buffer::in_row` has no answer.
+    #[inline(never)]
+    fn get_outside_the_row(&self, task: &Task, file: u32, index: u32) -> u32 {
+        let (slot, buffer) = (self.own_slot(), task.buffer());
+        if file == buffer.file() && Self::has_a_whole_row(task, file) {
+            self.adopt(task, buffer, file);
+            return buffer.in_row(slot, file, index).unwrap_or(0);
+        }
+        match self.seen(task, file, index) {
+            (0, at) => buffer.node_anywhere(slot, file, index, at),
+            (raw, _) => raw,
+        }
+    }
+
+    /// The task is visiting `file`, and asks this table about it for the first time, or stores something for the first
+    /// time: from now on the file has the row, and the row has what the task sees of the published part.
+    /// `buffer`: of `task`, here and below.
+    #[cold]
+    #[inline(never)]
+    fn adopt(&self, task: &Task, buffer: &mut Buffer<'_>, file: u32) {
+        let (slot, nodes) = (self.own_slot(), self.bases.of_file(FileId(file)));
+        buffer.cover(slot, file, &nodes);
+        if !Self::has_a_whole_row(task, file) {
+            return;
+        }
+        let snapshot = task.view().map(|view| view.snapshot_of(FileId(file)));
+        let mut has_seeds = false;
+        for at in nodes.clone() {
+            let raw = match snapshot {
+                None => self.published_at(at),
+                Some(snapshot) => self.seen_up_to(snapshot, at),
+            };
+            if raw == 0 {
+                continue;
+            }
+            has_seeds = true;
+            let index = (at - nodes.start) as u32;
+            let own = buffer.seed(slot, index, raw);
+            if own != 0 && own != raw {
+                buffer.shadow(slot, file, index, own);
+            }
+        }
+        buffer.set_whole(slot, has_seeds);
+    }
+
+    /// The cell that holds the task's entry for the node, or that a new entry goes into. `Err`: the task sees a published
+    /// entry, this one.
+    fn cell_for<'b>(
+        &self,
+        task: &Task,
+        buffer: &'b mut Buffer<'_>,
+        file: u32,
+        index: u32,
+    ) -> Result<&'b mut u32, u32> {
+        let slot = self.own_slot();
+        if file == buffer.file() {
+            let is_adopted = match Self::has_a_whole_row(task, file) {
+                true => buffer.has_whole_row(slot, file),
+                false => buffer.covers(slot, file),
+            };
+            if !is_adopted {
+                self.adopt(task, buffer, file);
+            }
+        }
+        // What a whole row has is the task's own, unless something is published for a node of the file.
+        if buffer.has_whole_row(slot, file) && !buffer.has_seeds(slot) {
+            return Ok(buffer.cell_in_row(slot, index));
+        }
+        match self.seen(task, file, index) {
+            (0, at) => Ok(buffer.cell_anywhere(slot, file, index, at)),
+            (published, _) => Err(published),
+        }
+    }
+
+    /// `insert`, or with `replaces` `rewrite`, of a packed value. Returns what `get` finds from now on.
+    #[inline(never)]
+    fn put(&self, task: &Task, file: u32, index: u32, raw: u32, replaces: bool) -> u32 {
+        let buffer = task.buffer();
+        let (kept, is_stored) = match self.cell_for(task, buffer, file, index) {
+            Ok(cell) => {
+                let is_stored = replaces || *cell == 0;
+                if is_stored {
+                    *cell = raw;
+                }
+                (*cell, is_stored)
+            }
+            Err(published) if !replaces => return published,
+            Err(published) => {
+                buffer.shadow(self.own_slot(), file, index, raw);
+                (published, true)
+            }
+        };
+        if W::KEEPS_THE_VISITED_FILE && file == buffer.file() {
+            return kept;
+        }
+        if is_stored {
+            buffer.log_node(self.own_slot(), file, index);
+        }
+        // The entry waits for a commit in the task-local part. Not if `Bases` does not count the node: nothing is ever
+        // published under it, so no other task could find the entry.
+        if task.writes_at_once() && self.bases.at(FileId(file), index).is_some() {
+            task.hold_back();
+        }
+        kept
     }
 
     #[inline]
@@ -883,34 +1078,23 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, A: Alloc> ByNode<K, V, Buffered, A
         if key.index() == u32::MAX {
             return value;
         }
-        let mut raw = self.seen(task, key);
-        if raw == 0 {
-            let (file, index) = (key.file().0, key.index());
-            raw = (task.buffer()).put_node_if_empty(self.slot, file, index, value.pack());
-            self.hold_back(task, key);
-        }
-        V::unpack(raw)
-    }
-
-    /// An entry under `key` went to the task-local part, where it waits for a commit: `Task::hold_back`. Not if `Bases`
-    /// does not count the node: nothing is ever published under it, so no other task could find the entry.
-    #[inline]
-    fn hold_back(&self, task: &Task, key: K) {
-        if task.writes_at_once() && self.bases.at(key.file(), key.index()).is_some() {
-            task.hold_back();
-        }
+        V::unpack(self.put(task, key.file().0, key.index(), value.pack(), false))
     }
 
     pub fn rewrite(&self, task: &Task, key: K, value: V, _: Stored) -> V {
         if key.index() != u32::MAX {
-            (task.buffer()).store_node(self.slot, key.file().0, key.index(), value.pack());
-            self.hold_back(task, key);
+            self.put(task, key.file().0, key.index(), value.pack(), true);
         }
         value
     }
 }
 
-impl<I: Id, V: Packed<Cell = AtomicU32>, A: Alloc> ById<I, V, Buffered, A> {
+impl<I: Id, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ById<I, V, Buffered<W>, A> {
+    #[inline]
+    fn own_slot(&self) -> u32 {
+        known_slot::<Buffered<W>>(self.slot)
+    }
+
     /// 0: nothing is published for the id `number`.
     #[inline]
     fn published(&self, number: u32) -> u32 {
@@ -926,12 +1110,18 @@ impl<I: Id, V: Packed<Cell = AtomicU32>, A: Alloc> ById<I, V, Buffered, A> {
         (self.cells.existing_by_now(number)).map_or(0, |cell| cell.load(Ordering::Acquire))
     }
 
+    /// The entry that `task` has in its own part under the published id `number`. 0: none.
+    #[inline]
+    fn in_task(&self, task: &Task, number: u32) -> u32 {
+        task.buffer().published_id(self.own_slot(), number)
+    }
+
     #[inline]
     pub fn get(&self, task: &Task, key: &I) -> Option<V> {
         let raw = match key.local_number() {
-            Some(number) => task.buffer().own_id(self.slot, number),
+            Some(number) => task.buffer().own_id(self.own_slot(), number),
             None => match self.seen(task, key.number()) {
-                0 => task.buffer().published_id(self.slot, key.number()),
+                0 => self.in_task(task, key.number()),
                 raw => raw,
             },
         };
@@ -941,7 +1131,7 @@ impl<I: Id, V: Packed<Cell = AtomicU32>, A: Alloc> ById<I, V, Buffered, A> {
     /// `insert` into the task-local part.
     #[inline]
     fn insert_in_task(&self, task: &Task, key: I, value: V) -> V {
-        let (slot, new) = (self.slot, value.pack());
+        let (slot, new) = (self.own_slot(), value.pack());
         V::unpack(match key.local_number() {
             Some(number) => task.buffer().put_own_id_if_empty(slot, number, new),
             None => match self.seen(task, key.number()) {
@@ -955,7 +1145,7 @@ impl<I: Id, V: Packed<Cell = AtomicU32>, A: Alloc> ById<I, V, Buffered, A> {
     #[inline]
     fn insert_for_this_task(&self, task: &Task, key: I, value: V) -> V {
         V::unpack(match self.seen(task, key.number()) {
-            0 => (task.buffer()).put_unlogged_if_empty(self.slot, key.number(), value.pack()),
+            0 => (task.buffer()).put_unlogged_if_empty(self.own_slot(), key.number(), value.pack()),
             raw => raw,
         })
     }
@@ -964,7 +1154,7 @@ impl<I: Id, V: Packed<Cell = AtomicU32>, A: Alloc> ById<I, V, Buffered, A> {
     /// part. Returns what the key has afterwards.
     #[inline]
     fn put_at_once(&self, task: &Task, number: u32, raw: u32) -> u32 {
-        let own = task.buffer().published_id(self.slot, number);
+        let own = self.in_task(task, number);
         if own != 0 && self.seen(task, number) == 0 {
             return own;
         }
@@ -975,11 +1165,13 @@ impl<I: Id, V: Packed<Cell = AtomicU32>, A: Alloc> ById<I, V, Buffered, A> {
     }
 }
 
-impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, A: Alloc> ById<I, V, Buffered, A> {
+impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc>
+    ById<I, V, Buffered<W>, A>
+{
     #[inline]
     pub fn insert(&self, task: &Task, key: I, value: V, stored: Stored) -> V {
         if key.local_number().is_none() && is_for_all_tasks(task, &value) {
-            if task.may_write_at_once(self.slot, stored) {
+            if task.may_write_at_once(self.own_slot(), stored) {
                 if stays_in_task(task, &key) {
                     return self.insert_for_this_task(task, key, value);
                 }
@@ -1016,8 +1208,8 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, A: Alloc> ById<I, V, 
         let Some(number) = key.local_number() else {
             let number = key.number();
             if is_for_all_tasks(task, &value) {
-                if task.may_write_at_once(self.slot, stored)
-                    && task.buffer().published_id(self.slot, number) == 0
+                if task.may_write_at_once(self.own_slot(), stored)
+                    && self.in_task(task, number) == 0
                 {
                     match stays_in_task(task, &key) {
                         true => self.insert_for_this_task(task, key, value),
@@ -1027,10 +1219,11 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, A: Alloc> ById<I, V, 
                 }
                 task.hold_back();
             }
-            (task.buffer()).store_published_id(self.slot, number, value.pack());
+            (task.buffer()).store_published_id(self.own_slot(), number, value.pack());
             return value;
         };
-        task.buffer().store_own_id(self.slot, number, value.pack());
+        task.buffer()
+            .store_own_id(self.own_slot(), number, value.pack());
         value
     }
 }
@@ -1083,7 +1276,9 @@ fn keep<'s, T: Follow + Send + 's, A: Alloc>(
     store_in_task(slot, task, key, value)
 }
 
-impl<'s, K: NodeKey, T: Follow + Send + 's, A: Alloc> ByNodeIndirect<K, T, Buffered, A> {
+impl<'s, K: NodeKey, T: Follow + Send + 's, W: Location, A: Alloc>
+    ByNodeIndirect<K, T, Buffered<W>, A>
+{
     #[inline]
     pub fn get_ref(&self, task: &Task<'s>, key: &K) -> Option<&T> {
         let handle = self.handles.get(task, key)?;
@@ -1123,7 +1318,9 @@ impl<'s, K: NodeKey, T: Follow + Send + 's, A: Alloc> ByNodeIndirect<K, T, Buffe
     }
 }
 
-impl<'s, I: Id + Follow, T: Follow + Send + 's, A: Alloc> ByIdIndirect<I, T, Buffered, A> {
+impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
+    ByIdIndirect<I, T, Buffered<W>, A>
+{
     #[inline]
     pub fn get_ref(&self, task: &Task<'s>, key: &I) -> Option<&T> {
         self.handles
@@ -1200,9 +1397,9 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, A: Alloc> ByIdIndirect<I, T, Buf
     /// entry of this table is passed to the barrier only if the entry of `held` is, and one thread
     /// applies `held` and then this table, and stores the winning handle into the field. `held`
     /// comes before this table in `buffered_fields!`. Call after `set_slot`.
-    pub(crate) fn hold_handles_of<J: Id, U>(
+    pub(crate) fn hold_handles_of<J: Id, U, X: Location>(
         &mut self,
-        held: &mut ByIdIndirect<J, U, Buffered, A>,
+        held: &mut ByIdIndirect<J, U, Buffered<X>, A>,
         field: fn(&mut T) -> &mut Handle,
     ) {
         assert!(held.handles.slot < self.handles.slot);
@@ -1211,7 +1408,7 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, A: Alloc> ByIdIndirect<I, T, Buf
     }
 }
 
-impl<'s, K, V, A: Alloc> ByKey<K, V, Buffered, A>
+impl<'s, K, V, W: Location, A: Alloc> ByKey<K, V, Buffered<W>, A>
 where
     K: std::hash::Hash + Eq + Clone + MaybeLocal + Follow + Send + 's,
     V: Copy + Follow + Send + 's,
@@ -1631,8 +1828,9 @@ pub(crate) trait Dense: Sync {
     type Key: Follow;
     fn key(key: u32) -> Self::Key;
     fn table_slot(&self) -> u32;
-    /// The key of the dense cell `index` of `half`, in the encoding of `Half::sparse`.
-    fn dense_key(half: &Half, index: u32) -> u64;
+    /// Passes the entries of the task to `take`, each as a key and a packed value, in no particular order. A key is a
+    /// `node_word`, or an id. The task has none afterwards.
+    fn take_cells(&self, buffer: &mut Buffer<'_>, take: impl FnMut(u64, u32));
     /// `None`: `key -> value` is bound. `key`: in the encoding of the task-local part.
     fn hand_over(
         &self,
@@ -1656,7 +1854,9 @@ pub(crate) trait Dense: Sync {
     fn mention(key: u64) -> Vec<Mention>;
 }
 
-impl<K: NodeKey, V: Packed<Cell = AtomicU32>, A: Alloc> Dense for ByNode<K, V, Buffered, A> {
+impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
+    for ByNode<K, V, Buffered<W>, A>
+{
     type Value = V;
     /// The numbering of files and nodes is deterministic for a given program.
     type Key = u32;
@@ -1670,9 +1870,20 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, A: Alloc> Dense for ByNode<K, V, B
         self.slot
     }
 
-    #[inline]
-    fn dense_key(half: &Half, index: u32) -> u64 {
-        node_word(half.file(), index)
+    fn take_cells(&self, buffer: &mut Buffer<'_>, mut take: impl FnMut(u64, u32)) {
+        buffer.take_node_cells(self.slot, |kept, raw| {
+            let word = match kept {
+                Kept::InRow(word) | Kept::Shadowed(word) => word,
+                Kept::InPage(at) => self.bases.word_at(at),
+            };
+            // What `adopt` has put into the row is not the task's.
+            let at = self.bases.at(FileId((word >> 32) as u32), word as u32);
+            let is_seed =
+                matches!(kept, Kept::InRow(_)) && at.is_some_and(|at| self.published_at(at) != 0);
+            if !is_seed {
+                take(word, raw);
+            }
+        });
     }
 
     #[inline]
@@ -1708,7 +1919,14 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, A: Alloc> Dense for ByNode<K, V, B
 
     #[inline]
     fn own(&self, buffer: &Buffer<'_>, key: u64) -> u32 {
-        buffer.node(self.slot, (key >> 32) as u32, key as u32)
+        let (file, index) = ((key >> 32) as u32, key as u32);
+        match buffer.shadowed(self.slot, file, index) {
+            0 => {
+                let at = self.bases.at(FileId(file), index);
+                buffer.node_anywhere(self.slot, file, index, at)
+            }
+            raw => raw,
+        }
     }
 
     #[inline]
@@ -1734,7 +1952,9 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, A: Alloc> Dense for ByNode<K, V, B
     }
 }
 
-impl<I: Id + Follow, V: Packed<Cell = AtomicU32>, A: Alloc> Dense for ById<I, V, Buffered, A> {
+impl<I: Id + Follow, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
+    for ById<I, V, Buffered<W>, A>
+{
     type Value = V;
     type Key = I;
 
@@ -1747,9 +1967,8 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32>, A: Alloc> Dense for ById<I, V,
         self.slot
     }
 
-    #[inline]
-    fn dense_key(_: &Half, index: u32) -> u64 {
-        u64::from(index | LOCAL)
+    fn take_cells(&self, buffer: &mut Buffer<'_>, mut take: impl FnMut(u64, u32)) {
+        buffer.take_id_cells(self.slot, |id, raw| take(u64::from(id), raw));
     }
 
     #[inline]
@@ -1868,7 +2087,7 @@ impl<'s, D: Dense<Value: Follow>> Publish<'s> for D {
         finishing: &mut Finishing<'_, '_>,
     ) -> Option<Entries<'s>> {
         let mut entries = Vec::new();
-        (buffer.half_mut(self.table_slot())).take_cells(D::dense_key, |key, raw| {
+        self.take_cells(buffer, |key, raw| {
             if let Some(key) = self.hand_over(key, &D::Value::unpack(raw), finishing) {
                 entries.push((key, raw));
             }
@@ -2016,8 +2235,8 @@ fn apply_indirect<'s, D: Dense<Value = Handle>, T: Follow + Send + Sync, A: Allo
     }
 }
 
-impl<'s, K: NodeKey, T: Follow + Send + Sync + 's, A: Alloc> Publish<'s>
-    for ByNodeIndirect<K, T, Buffered, A>
+impl<'s, K: NodeKey, T: Follow + Send + Sync + 's, W: Location, A: Alloc> Publish<'s>
+    for ByNodeIndirect<K, T, Buffered<W>, A>
 {
     fn slot(&self) -> u32 {
         self.handles.slot
@@ -2033,7 +2252,7 @@ impl<'s, K: NodeKey, T: Follow + Send + Sync + 's, A: Alloc> Publish<'s>
     }
 
     fn follow(&self, entries: &mut Entries<'s>, link: &Link) {
-        follow_indirect::<ByNode<K, Handle, Buffered, A>, T>(&self.in_task, entries, link);
+        follow_indirect::<ByNode<K, Handle, Buffered<W>, A>, T>(&self.in_task, entries, link);
     }
 
     fn apply(
@@ -2059,8 +2278,8 @@ impl<'s, K: NodeKey, T: Follow + Send + Sync + 's, A: Alloc> Publish<'s>
     }
 }
 
-impl<'s, I: Id + Follow, T: Follow + Send + Sync + 's, A: Alloc> Publish<'s>
-    for ByIdIndirect<I, T, Buffered, A>
+impl<'s, I: Id + Follow, T: Follow + Send + Sync + 's, W: Location, A: Alloc> Publish<'s>
+    for ByIdIndirect<I, T, Buffered<W>, A>
 {
     fn slot(&self) -> u32 {
         self.handles.slot
@@ -2080,7 +2299,7 @@ impl<'s, I: Id + Follow, T: Follow + Send + Sync + 's, A: Alloc> Publish<'s>
     }
 
     fn follow(&self, entries: &mut Entries<'s>, link: &Link) {
-        follow_indirect::<ById<I, Handle, Buffered, A>, T>(&self.in_task, entries, link);
+        follow_indirect::<ById<I, Handle, Buffered<W>, A>, T>(&self.in_task, entries, link);
     }
 
     fn apply(
@@ -2124,7 +2343,7 @@ struct Keyed<K, V> {
     starts: [u32; PARTS + 1],
 }
 
-impl<'s, K, V, A: Alloc> Publish<'s> for ByKey<K, V, Buffered, A>
+impl<'s, K, V, W: Location, A: Alloc> Publish<'s> for ByKey<K, V, Buffered<W>, A>
 where
     K: std::hash::Hash + Eq + Clone + Follow + Send + Sync + 's,
     V: Copy + Follow + Send + Sync + 's,

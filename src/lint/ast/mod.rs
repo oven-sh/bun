@@ -124,6 +124,7 @@ slices! {
         jsx_expressions: (hir::ExprId, u32, u32),
         body_starts: (hir::FnId, u32),
         modifiers_of_params: hir::Span<hir::ModifierId>,
+        modifiers_of_stmts: (hir::StmtId, hir::Span<hir::ModifierId>),
         modifiers_of_props: (hir::PropId, hir::Span<hir::ModifierId>),
         with_bodies: (u32, u32),
         detached_semicolons: (u32, u32),
@@ -163,6 +164,11 @@ slices! {
 }
 
 impl Hir<'_> {
+    /// `node.Modifiers()` of the statement `s`.
+    pub(crate) fn stmt_modifiers(&self, s: hir::StmtId) -> hir::Span<hir::ModifierId> {
+        hir::stmt_modifiers_in(self.modifiers_of_stmts, s)
+    }
+
     /// Where the name of the `Dot` `e` starts.
     #[inline]
     pub(crate) fn name_pos(&self, e: hir::ExprId) -> u32 {

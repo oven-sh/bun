@@ -348,7 +348,7 @@ impl<'a> Stmt<'a> {
     #[inline]
     pub fn modifiers(self) -> List<'a, Modifier<'a>> {
         match self.try_raw() {
-            Some(raw) => List::run(self.file, raw.modifiers),
+            Some(_) => List::run(self.file, self.file.hir.stmt_modifiers(self.id)),
             None => List::empty(self.file),
         }
     }

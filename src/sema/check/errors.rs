@@ -2060,10 +2060,8 @@ fn is_grammar_error(code: u32) -> bool {
 
 /// Whether an `export as namespace` statement that has modifiers starts at `start`.
 fn is_before_namespace_export(hir: &hir::File, start: u32) -> bool {
-    hir.stmts.iter().any(|s| {
-        matches!(s.kind, StmtKind::ExportAsNamespace(_))
-            && s.start == start
-            && !s.modifiers.is_empty()
+    hir.modifiers_of_stmts.iter().any(|of| {
+        matches!(hir[of.0].kind, StmtKind::ExportAsNamespace(_)) && hir[of.0].start == start
     })
 }
 

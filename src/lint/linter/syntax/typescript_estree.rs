@@ -332,7 +332,7 @@ impl<'a> Checks<'a> {
     fn statements(&mut self) {
         let (hir, bound) = (&self.file.hir, &self.file.bound);
         for (i, raw) in hir.stmts.iter().enumerate() {
-            let has_check = !raw.modifiers.is_empty()
+            let has_check = !hir.stmt_modifiers(hir::StmtId(i as u32)).is_empty()
                 || matches!(
                     raw.kind,
                     StmtKind::Switch { .. }
@@ -348,7 +348,7 @@ impl<'a> Checks<'a> {
                 continue;
             }
             let node = Span::new(raw.start, raw.loc.end);
-            let modifiers = self.modifiers(raw.modifiers);
+            let modifiers = self.modifiers(hir.stmt_modifiers(hir::StmtId(i as u32)));
             // Those of a class are checked with the class.
             if !modifiers.is_empty() && !matches!(raw.kind, StmtKind::Class(_)) {
                 let kind = match raw.kind {
@@ -615,7 +615,7 @@ impl<'a> Checks<'a> {
         if head_of.is_some() {
             return;
         }
-        let is_declared = has_keyword(self.modifiers(statement.modifiers), Flags::AMBIENT);
+        let is_declared = has_keyword(self.modifiers(hir.stmt_modifiers(*list)), Flags::AMBIENT);
         let is_assignable = matches!(raw.kind, VarKind::Let | VarKind::Var);
         if is_definite && (is_declared || !is_assignable) {
             let message = "A definite assignment assertion '!' is not permitted in this context.";

@@ -481,20 +481,25 @@ fn export_assignments_beside_exports<'a>(
 ) {
     let hir = &file.hir;
     let body = hir.ids.get(module.body.range()).unwrap_or_default();
-    let body = || body.iter().filter_map(|&it| hir.stmts.get(it as usize));
-    let exports = |it: &hir::Stmt| match it.kind {
+    let with_ids = || {
+        body.iter()
+            .filter_map(|&it| Some((it, hir.stmts.get(it as usize)?)))
+    };
+    let body = || with_ids().map(|it| it.1);
+    let exports = |(id, it): (u32, &hir::Stmt)| match it.kind {
         StmtKind::ExportAssign(_) | StmtKind::ExportAsNamespace(_) => false,
         StmtKind::ExportNamed(export) => {
             (hir.exports.get(export.idx())).is_some_and(|it| !it.items.is_empty())
         }
         StmtKind::ExportStar { .. } | StmtKind::ExportDefault(_) => true,
         _ => {
-            let written = hir.modifiers.get(it.modifiers.range()).unwrap_or_default();
+            let written = hir.stmt_modifiers(hir::StmtId(id));
+            let written = hir.modifiers.get(written.range()).unwrap_or_default();
             let is_export = |it: &hir::Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
             written.iter().any(is_export)
         }
     };
-    if !body().any(exports) {
+    if !with_ids().any(exports) {
         return;
     }
     for it in body().filter(|it| matches!(it.kind, StmtKind::ExportAssign(_))) {
@@ -515,7 +520,8 @@ fn export_assignments_beside_exports<'a>(
 fn nested_module_syntax<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
     let hir = &file.hir;
     for (i, raw) in hir.stmts.iter().enumerate() {
-        let written = hir.modifiers.get(raw.modifiers.range()).unwrap_or_default();
+        let written = hir.stmt_modifiers(hir::StmtId(i as u32));
+        let written = hir.modifiers.get(written.range()).unwrap_or_default();
         let is_export = |it: &&hir::Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
         let (at, what) = match raw.kind {
             StmtKind::Import(_) => (raw.start, "import"),

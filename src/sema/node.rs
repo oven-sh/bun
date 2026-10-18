@@ -633,7 +633,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             NodeData::File => self.list(file.body),
             NodeData::Part(part, row) => self.part_of(part, row),
             NodeData::Expr(e) => self.expr(e, node),
-            NodeData::Stmt(s) => self.span(file[s].modifiers) || self.stmt(s, node),
+            NodeData::Stmt(s) => self.span(file.stmt_modifiers(s)) || self.stmt(s, node),
             NodeData::Type(t) => self.ty(t, node),
             NodeData::Pat(p) => match file[p].kind {
                 PatKind::Missing | PatKind::Ident(_) => false,
@@ -2429,12 +2429,13 @@ impl<'s> File<'s> {
                 (Part::Name, StmtKind::ImportEquals(i)) => self[i].name_pos,
                 (Part::Name, StmtKind::Import(i)) => self[i].default_pos,
                 // `export as namespace N`
-                (Part::Name, StmtKind::ExportAsNamespace(_)) => (0..self[s].modifiers.len() + 3)
-                    .fold(self[s].start, |at, _| {
+                (Part::Name, StmtKind::ExportAsNamespace(_)) => {
+                    (0..self.stmt_modifiers(s).len() + 3).fold(self[s].start, |at, _| {
                         let rest = self.text.get(at as usize..).unwrap_or_default();
                         let word = rest.iter().take_while(|b| b.is_ascii_alphabetic()).count();
                         self.token_after(at + word as u32)
-                    }),
+                    })
+                }
                 (Part::ImportClause, StmtKind::Import(i)) => self[i].clause_start,
                 (Part::NamedBindings, StmtKind::Import(i)) if self[i].namespace.is_some() => {
                     self[i].namespace_start
@@ -2662,7 +2663,7 @@ impl File<'_> {
                 StmtKind::Enum(e) => self[e].flags,
                 StmtKind::Module(m) => self[m].flags,
                 StmtKind::ImportEquals(i) => self[i].flags,
-                _ => self.modifiers_to_flags(self[s].modifiers),
+                _ => self.modifiers_to_flags(self.stmt_modifiers(s)),
             },
             NodeData::VarDecl(d) => self[d].flags,
             NodeData::Param(p) => self[p].flags,

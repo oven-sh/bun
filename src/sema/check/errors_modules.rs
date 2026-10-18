@@ -262,7 +262,7 @@ impl Checker<'_, '_> {
     fn modules_namespace_export_declaration(&mut self, cx: &Cx<'_>, s: StmtId, around: Around) {
         let hir = self.hir(cx.file);
         let node = (cx.file, hir[s].start, self.end_of_stmt(cx.file, s));
-        if !hir[s].modifiers.is_empty() {
+        if !hir.stmt_modifiers(s).is_empty() {
             self.error_at(node, 1184, &[]);
         }
         let code = if around.module.is_some() || !around.is_appropriate_context {
@@ -297,7 +297,7 @@ impl Checker<'_, '_> {
         let hir = self.hir(cx.file);
         around.is_ambient
             || hir
-                .find_modifier(hir[s].modifiers, Flags::AMBIENT)
+                .find_modifier(hir.stmt_modifiers(s), Flags::AMBIENT)
                 .is_some()
     }
 
@@ -338,7 +338,9 @@ impl Checker<'_, '_> {
             // The flag is also set on declarations nested in an exported one, so only the keyword
             // counts.
             if module.flags.contains(Flags::EXPORT)
-                && hir.find_modifier(hir[s].modifiers, Flags::EXPORT).is_some()
+                && hir
+                    .find_modifier(hir.stmt_modifiers(s), Flags::EXPORT)
+                    .is_some()
             {
                 self.error_at((cx.file, start, 0), 2668, &[]);
             }
@@ -386,7 +388,7 @@ impl Checker<'_, '_> {
             if cx.verbatim_commonjs
                 && is_at_top
                 && module.flags.contains(Flags::EXPORT)
-                && let Some(start) = hir.find_modifier(hir[s].modifiers, Flags::EXPORT)
+                && let Some(start) = hir.find_modifier(hir.stmt_modifiers(s), Flags::EXPORT)
             {
                 self.error_at((cx.file, start, 0), 1287, &[]);
             }
@@ -772,7 +774,7 @@ impl Checker<'_, '_> {
                 && hir[c].name.is_none()
                 && !hir[c].flags.contains(Flags::DEFAULT)
                 // `default` without `export` (1029) is still a modifier.
-                && hir.find_modifier(statement.modifiers, Flags::DEFAULT).is_none()
+                && hir.find_modifier(hir.stmt_modifiers(StmtId(i as u32)), Flags::DEFAULT).is_none()
             {
                 let start = hir[c].start;
                 self.error_at((cx.file, start, 0), 1211, &[]);

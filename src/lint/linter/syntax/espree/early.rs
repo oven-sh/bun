@@ -847,13 +847,12 @@ impl<'a> Checks<'a, '_> {
                     | hir::StmtKind::ExportNamed(_)
                     | hir::StmtKind::ExportStar { .. }
                     | hir::StmtKind::ExportDefault(_)
-            ) || !raw.modifiers.is_empty()
-                && hir
-                    .modifiers
-                    .get(raw.modifiers.range())
-                    .unwrap_or_default()
-                    .iter()
-                    .any(is_export);
+            ) || hir
+                .modifiers
+                .get(hir.stmt_modifiers(hir::StmtId(i as u32)).range())
+                .unwrap_or_default()
+                .iter()
+                .any(is_export);
             let is_nested = !matches!(
                 bound.parent_of_stmt(hir::StmtId(i as u32)),
                 Parent::None | Parent::File

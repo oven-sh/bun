@@ -10,10 +10,8 @@ pub use parents::{bind_for_format_in, try_bind_for_format_in};
 
 use crate::atom::{Atom, known};
 use crate::hir::*;
-use crate::session::{
-    Arena, ArenaHashMap, ArenaHashSet, ArenaVec, transfer_arena, vec_from_iter_in,
-};
-use crate::util::{FxBuild, FxHashMap, FxHashSet, SharedSort};
+use crate::session::{Arena, ArenaHashMap, ArenaVec, transfer_arena, vec_from_iter_in};
+use crate::util::{FxBuild, FxHashMap, SharedSort};
 use smallvec::SmallVec;
 
 define_id!(SymbolId, ScopeId, TableId, FlowId);
@@ -103,7 +101,7 @@ bitflags::bitflags! {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Decl {
     /// An identifier bound by `var`, `let`, `const`, `using`, `catch`, or a loop.
     Var(PatId),
@@ -1462,7 +1460,7 @@ pub struct BoundIn<S: Storage> {
     /// resolve their parts eagerly.
     pub type_by_alias: S::List<bool>,
     /// The `this` types inside a type literal, where they are invalid. `getThisType`
-    pub this_in_type_literal: S::Set<TypeNodeId>,
+    pub this_in_type_literal: S::FewSet<TypeNodeId>,
     /// `None`: the binder did not reach the node. The parser can leave unreferenced nodes (a
     /// construct dropped during error recovery, an annotation in a parenthesized list that is not
     /// an arrow function, `<T>(x)` parsed as a cast). They have no symbol, scope or owner, so a
@@ -1474,7 +1472,7 @@ pub struct BoundIn<S: Storage> {
     pub member_symbol: S::List<SymbolId>,
     /// `node.Symbol` for a parameter property and for a member of an object literal that has
     /// symbols.
-    pub property_symbol: S::Map<Decl, SymbolId>,
+    pub property_symbol: S::FewMap<Decl, SymbolId>,
     pub member_owner: S::List<MemberOwner>,
     /// The enclosing scope of the type, the function and the initializer of a member.
     pub member_scope: S::List<ScopeId>,
@@ -1549,11 +1547,11 @@ pub struct BoundIn<S: Storage> {
     pub import_equals_scope: S::Few<ScopeId>,
     pub export_scope: S::List<ScopeId>,
     /// The enclosing scope of an expression that creates no scope, for the few that need it.
-    pub expr_scope: S::Map<ExprId, ScopeId>,
+    pub expr_scope: S::FewMap<ExprId, ScopeId>,
     /// `a.#x`, and the `#x` of `#x in a` (its left operand): the innermost enclosing class that
     /// declares an `#x`.
     /// `lookupSymbolForPrivateIdentifierDeclaration`. No entry: no enclosing class does.
-    pub private_class: S::Map<ExprId, ClassId>,
+    pub private_class: S::FewMap<ExprId, ClassId>,
     /// The members of interfaces, type literals and object literals that are named `#x`, with
     /// `GetContainingClass`: `getDeclarationName` names them like an `#x` of that class.
     pub private_names_outside_class_bodies: S::Few<(Decl, ClassId)>,
@@ -2422,13 +2420,8 @@ fn map_to_arena<'s, K: Eq + std::hash::Hash, V>(
     exact
 }
 
-fn set_to_arena<'s, K: Eq + std::hash::Hash>(
-    set: FxHashSet<K>,
-    arena: &'s Arena,
-) -> ArenaHashSet<'s, K> {
-    let mut exact = ArenaHashSet::with_capacity_and_hasher_in(set.len(), FxBuild, arena);
-    exact.extend(set);
-    exact
+fn few_map_to_arena<K: Ord, V>(map: FxHashMap<K, V>, arena: &Arena) -> ArenaFewMap<'_, K, V> {
+    ArenaFewMap::from_iter_in(map.into_iter(), arena)
 }
 
 impl BoundBuilder {
@@ -2671,15 +2664,15 @@ impl BoundBuilder {
             stmt_scope: Narrow::moved_in(arena, &mut self.stmt_scope),
             type_scope: copy_to_arena(&mut self.type_scope, arena),
             type_by_alias: copy_to_arena(&mut self.type_by_alias, arena),
-            this_in_type_literal: set_to_arena(
-                std::mem::take(&mut self.this_in_type_literal),
+            this_in_type_literal: ArenaFewMap::from_iter_in(
+                self.this_in_type_literal.drain().map(|node| (node, ())),
                 arena,
             ),
             pat_parent: copy_to_arena(&mut self.pat_parent, arena),
             pat_symbol: copy_to_arena(&mut self.pat_symbol, arena),
             prop_owner: copy_to_arena(&mut self.prop_owner, arena),
             member_symbol: copy_to_arena(&mut self.member_symbol, arena),
-            property_symbol: map_to_arena(std::mem::take(&mut self.property_symbol), arena),
+            property_symbol: few_map_to_arena(std::mem::take(&mut self.property_symbol), arena),
             member_owner: copy_to_arena(&mut self.member_owner, arena),
             member_scope: copy_to_arena(&mut self.member_scope, arena),
             param_fn: copy_to_arena(&mut self.param_fn, arena),
@@ -2730,8 +2723,8 @@ impl BoundBuilder {
             import_scope: copy_to_arena(&mut self.import_scope, arena),
             import_equals_scope: few_to_arena(std::mem::take(&mut self.import_equals_scope), arena),
             export_scope: copy_to_arena(&mut self.export_scope, arena),
-            expr_scope: map_to_arena(std::mem::take(&mut self.expr_scope), arena),
-            private_class: map_to_arena(std::mem::take(&mut self.private_class), arena),
+            expr_scope: few_map_to_arena(std::mem::take(&mut self.expr_scope), arena),
+            private_class: few_map_to_arena(std::mem::take(&mut self.private_class), arena),
             private_names_outside_class_bodies: few_to_arena(
                 std::mem::take(&mut self.private_names_outside_class_bodies),
                 arena,
@@ -2808,12 +2801,12 @@ impl Bound<'_> {
             stmt_scope: self.stmt_scope.shared(),
             type_scope: Fixed::shared(&self.type_scope),
             type_by_alias: Fixed::shared(&self.type_by_alias),
-            this_in_type_literal: copy_of_set(&self.this_in_type_literal, arena),
+            this_in_type_literal: copy_of_few_map(&self.this_in_type_literal, arena),
             pat_parent: Fixed::shared(&self.pat_parent),
             pat_symbol: Fixed::shared(&self.pat_symbol),
             prop_owner: Fixed::shared(&self.prop_owner),
             member_symbol: Fixed::shared(&self.member_symbol),
-            property_symbol: copy_of_map(&self.property_symbol, arena),
+            property_symbol: copy_of_few_map(&self.property_symbol, arena),
             member_owner: Fixed::shared(&self.member_owner),
             member_scope: Fixed::shared(&self.member_scope),
             param_fn: Fixed::shared(&self.param_fn),
@@ -2879,8 +2872,8 @@ impl Bound<'_> {
                 arena,
             ),
             export_scope: Fixed::shared(&self.export_scope),
-            expr_scope: copy_of_map(&self.expr_scope, arena),
-            private_class: copy_of_map(&self.private_class, arena),
+            expr_scope: copy_of_few_map(&self.expr_scope, arena),
+            private_class: copy_of_few_map(&self.private_class, arena),
             private_names_outside_class_bodies: ArenaFew::from_iter_in(
                 self.private_names_outside_class_bodies.iter().cloned(),
                 arena,
@@ -2928,13 +2921,11 @@ fn copy_of_map<'s, K: Copy + Eq + std::hash::Hash, V: Copy>(
     exact
 }
 
-fn copy_of_set<'s, K: Copy + Eq + std::hash::Hash>(
-    set: &ArenaHashSet<'_, K>,
+fn copy_of_few_map<'s, K: Copy + Ord, V: Copy>(
+    map: &ArenaFewMap<'_, K, V>,
     arena: &'s Arena,
-) -> ArenaHashSet<'s, K> {
-    let mut exact = ArenaHashSet::with_capacity_and_hasher_in(set.len(), FxBuild, arena);
-    exact.extend(set.iter().copied());
-    exact
+) -> ArenaFewMap<'s, K, V> {
+    ArenaFewMap::from_iter_in(map.iter().map(|(&key, &value)| (key, value)), arena)
 }
 
 impl<'s> Bound<'s> {

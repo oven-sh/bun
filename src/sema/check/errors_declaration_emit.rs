@@ -3764,7 +3764,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     /// of the statement `s`.
     fn update_import(&self, kind: StatementKind, s: StmtId, text: Vec<u8>) -> Statement {
         let hir = self.c.hir(self.file());
-        let modifiers = (hir[s].modifiers.iter()).filter_map(|m| match hir[m].kind {
+        let modifiers = (hir.stmt_modifiers(s).iter()).filter_map(|m| match hir[m].kind {
             ModifierKind::Keyword(modifier) => Some(modifier),
             ModifierKind::Decorator(_) => None,
         });
@@ -3919,7 +3919,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(s));
                 self.needs_declare = false;
                 let container = bound.parent_of_stmt(s);
-                let written = hir[s].modifiers;
+                let written = hir.stmt_modifiers(s);
                 let modifiers =
                     self.ensure_modifiers_of_statement(written, hir[a].flags, container, modified);
                 let type_parameters = self.visit_type_parameters(hir[a].type_params);
@@ -3944,7 +3944,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     },
                     ModifiedNode::Nested => ModifiedNode::Nested,
                 };
-                let modifiers = self.ensure_modifiers(hir[s].modifiers, modified);
+                let modifiers = self.ensure_modifiers(hir.stmt_modifiers(s), modified);
                 let type_parameters = self.visit_type_parameters(hir[i].type_params);
                 let mut extends = Vec::new();
                 for node in hir.ids(hir[i].extends) {
@@ -3982,7 +3982,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     Some(self.expando_host(s, hir[f].name, &signature))
                 } else {
                     // A function is not `IsImplicitlyExportedJSDocDeclaration`.
-                    let (written, declared) = (hir[s].modifiers, hir[f].flags);
+                    let (written, declared) = (hir.stmt_modifiers(s), hir[f].flags);
                     let modifiers = self.ensure_modifiers_of_statement(
                         written,
                         declared,
@@ -4000,7 +4000,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
                     self.c.iso_transform_enum(isolated_declarations, e);
                 }
-                let modifiers = self.ensure_modifiers(hir[s].modifiers, modified);
+                let modifiers = self.ensure_modifiers(hir.stmt_modifiers(s), modified);
                 let text = self.transform_enum_declaration(e);
                 other(modifiers, text)
             }
@@ -4035,7 +4035,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let parent_is_file = bound.parent_of_stmt(s) == Parent::File;
         let modified = ModifiedNode::new(parent_is_file);
         let saved = std::mem::replace(&mut self.needs_declare, true);
-        let mut modifiers = self.ensure_modifiers(hir[s].modifiers, modified);
+        let mut modifiers = self.ensure_modifiers(hir.stmt_modifiers(s), modified);
         self.needs_declare = saved;
         let is_default_export = modifiers.contains(&Flags::DEFAULT);
         if is_default_export {
@@ -4148,7 +4148,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.enter(bound.module_scope[m.idx()]);
         let container = bound.parent_of_stmt(s);
         let modified = ModifiedNode::new(container == Parent::File);
-        let written = hir[s].modifiers;
+        let written = hir.stmt_modifiers(s);
         let modifiers =
             self.ensure_modifiers_of_statement(written, module.flags, container, modified);
         self.needs_declare = false;
@@ -4394,7 +4394,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         extra_imports.push(Statement {
             kind: StatementKind::Other,
             comments: Vec::new(),
-            modifiers: self.ensure_modifiers(hir[s].modifiers, modified),
+            modifiers: self.ensure_modifiers(hir.stmt_modifiers(s), modified),
             text: [&list[..], b";"].concat(),
         });
         Some(extra_imports)
@@ -4437,7 +4437,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.tracker.error_name_node = hir.name(hir.node(s));
         self.tracker.fallback_stack.push(hir.node(s));
         let modified = ModifiedNode::new(bound.parent_of_stmt(s) == Parent::File);
-        let modifiers = self.ensure_modifiers(hir[s].modifiers, modified);
+        let modifiers = self.ensure_modifiers(hir.stmt_modifiers(s), modified);
         let type_parameters = self.visit_type_parameters(class.type_params);
         let members = self.build_class_members(c);
         let (base, heritage) = self.visit_class_heritage(c);

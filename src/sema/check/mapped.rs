@@ -2786,7 +2786,7 @@ impl<'p, 's> Checker<'p, 's> {
                     true => self.union_as_object(ty),
                     false => ty,
                 };
-                (self.listed_members(owner)).map(|members| Modifiers::Object(owner, members))
+                (self.members(owner)).map(|members| Modifiers::Object(owner, members))
             }
             None => None,
         };
@@ -3090,14 +3090,8 @@ impl<'p, 's> Checker<'p, 's> {
             let key_name = self.property_name_of_type(key);
             // `modifiersProp`: `getPropertyOfType(modifiersType, ..)`
             let source_prop = match (&modifiers, key_name) {
-                // By name, a property is found in the constituents of an intersection also when
-                // the list that the intersection keeps lacks it (`listed_members`).
                 (Some(Modifiers::Object(modifiers_type, m)), Some(name)) => self
                     .property_in_type(*modifiers_type, m, name)
-                    .or_else(|| match self.has_partial_list(*modifiers_type) {
-                        true => self.get_property_of_type(*modifiers_type, name),
-                        false => None,
-                    })
                     .map(|(prop, _)| prop),
                 (Some(Modifiers::Union(union)), Some(name)) => self
                     .get_property_of_type(*union, name)

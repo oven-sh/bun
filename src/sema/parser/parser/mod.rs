@@ -155,7 +155,7 @@ file_lists! {
     cases, jsx, imports, import_specs, import_equals, exports, export_specs, tuple_elems, mapped,
     modifiers, names, parens, non_null_ends, far_names, tagged_templates,
     jsx_expressions, body_starts, specifier_uses,
-    decorators, modifiers_of_params, modifiers_of_props, with_bodies, detached_semicolons,
+    decorators, modifiers_of_params, modifiers_of_stmts, modifiers_of_props, with_bodies, detached_semicolons,
     import_attributes,
     deferred_import_calls, import_call_type_args, keyword_identifier_positions, comments,
     mentioned, diagnostics, after_skipped, stray_decorators,
@@ -288,7 +288,7 @@ fn is_an_external_module_indicator(f: &FileBuilder, id: StmtId) -> bool {
         return false;
     };
     let flags = match statement.kind {
-        StmtKind::Var(_) => f.modifiers_to_flags(statement.modifiers),
+        StmtKind::Var(_) => f.modifiers_to_flags(f.stmt_modifiers(id)),
         StmtKind::Fn(x) => f[x].flags,
         StmtKind::Class(x) => f[x].flags,
         StmtKind::Interface(x) => f[x].flags,
@@ -1264,7 +1264,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 kind: StmtKind::Expr(decorator),
                 start,
                 loc: TextRange::default(),
-                modifiers: Span::EMPTY,
             });
         }
         self.s.stray_decorators.truncate(base);

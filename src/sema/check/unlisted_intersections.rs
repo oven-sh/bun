@@ -16,7 +16,6 @@
 //!   counter moved. Otherwise the list is made at once, and goes the way it went before.
 //! - The members of a constituent are kept by reference, so they have to be the stored ones (`has_stored_members`): others
 //!   do not outlive the file.
-//! - The list of some intersections is noted for `Program::validate` when it is assigned (`listing_alias`). Those are listed.
 //! - Another task finds no list until there is one, as if this task had not asked yet, and makes its own.
 //!
 //! A property that is found by name is equal to the one in the list, field by field. It is not at the same address. Only
@@ -229,12 +228,11 @@ impl<'p, 's> Checker<'p, 's> {
             (shared * 2 > names.holders.len()).then_some(ty);
     }
 
-    /// Whether the properties of the intersection `whole` of `parts` may stay in `constituents`, if the list of them would
+    /// Whether the properties of the intersection `whole` may stay in `constituents`, if the list of them would
     /// be stored.
     pub(super) fn may_stay_unlisted(
         &self,
         whole: TypeId,
-        parts: &[TypeId],
         constituents: &[Constituent<'p>],
     ) -> bool {
         let count: usize = constituents.iter().map(|it| it.props().len()).sum();
@@ -243,7 +241,6 @@ impl<'p, 's> Checker<'p, 's> {
             // Two properties of one constituent that have one name are combined as well.
             && (constituents.iter()).all(|it| it.members.resolved.has_distinct_names())
             && (constituents.iter()).all(|it| self.has_stored_members(it.asked, it.members))
-            && self.listing_alias(whole, parts, false).is_none()
     }
 
     /// The properties of the intersection `ty` stay in `constituents`. `combined`, `constituents`: what

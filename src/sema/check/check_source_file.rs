@@ -1609,7 +1609,7 @@ impl<'s> Checker<'_, 's> {
         {
             self.check_grammar_statement_in_ambient_context(file, s);
         }
-        if !hir[s].modifiers.is_empty() {
+        if !hir.stmt_modifiers(s).is_empty() {
             self.check_grammar_modifiers_of_statement(file, s);
         }
         match hir[s].kind {

@@ -4863,73 +4863,10 @@ impl<'p, 's> Checker<'p, 's> {
         self.tally(MemberCount::IntersectionsListed, 1);
         self.tally(MemberCount::PropertiesListed, shape.props.len());
         match left {
-            Ok(_) if is_in_place => {
-                // `d.resolvedProperties = props`: the list stays as it is, unless an evaluation
-                // of it around this one ends later.
-                if !self.stack.contains(&q)
-                    && self.p.listed_properties.get(&self.task, &ty).is_none()
-                    && self.note_listing(ty, parts, true)
-                {
-                    let listed = self.synth(shape.clone_in(self.arena));
-                    (self.p.listed_properties).insert(&self.task, ty, listed, Stored::new());
-                }
-                self.provisional_shape(shape)
-            }
-            Ok(stored) => {
-                self.note_complete_listing(ty, parts);
-                self.keep_shape(ty, shape, stored)
-            }
+            Ok(_) if is_in_place => self.provisional_shape(shape),
+            Ok(stored) => self.keep_shape(ty, shape, stored),
             Err(open) => self.cache_shape_provisionally(q, shape, open),
         }
-    }
-
-    /// `Finished::listings`: the list of properties of an intersection of `parts` is assigned.
-    /// `is_partial`: only the mapped types whose members are in place are noted, which the list
-    /// lacks. Another task cannot tell which list the tasks before it assign, so
-    /// `Program::validate` compares what each has noted.
-    /// The list of properties of the intersection `ty` is assigned while no constituent has its
-    /// members in place: it is complete, and stays. The entry is `ty` itself.
-    fn note_complete_listing(&mut self, ty: TypeId, parts: &[TypeId]) {
-        if self.p.listed_properties.get(&self.task, &ty).is_none()
-            && self.note_listing(ty, parts, false)
-        {
-            (self.p.listed_properties).insert(&self.task, ty, ty, Stored::new());
-        }
-    }
-
-    /// `Finished::listings`: the list of properties of the intersection `ty` is assigned.
-    /// `is_partial`: the members of a mapped type among `parts` are in place, so the list lacks
-    /// them. Another task cannot tell which list the tasks before it assign, so
-    /// `Program::validate` compares what each has noted, by the type alias that names `ty`: an
-    /// intersection without one keeps no list of its own. `false`: nothing is noted.
-    fn note_listing(&mut self, ty: TypeId, parts: &[TypeId], is_partial: bool) -> bool {
-        let Some(alias) = self.listing_alias(ty, parts, is_partial) else {
-            return false;
-        };
-        if !self.task.listings.contains(&(alias, is_partial)) {
-            self.task.listings.push((alias, is_partial));
-            self.task.stop_writing_at_once();
-        }
-        true
-    }
-
-    /// The type alias that names the intersection `ty` of `parts`, when the list of properties
-    /// that `ty` keeps is noted (`note_listing`): it has a mapped type that is written where it
-    /// is, and for a partial list the members of one are in place.
-    fn listing_alias(&self, ty: TypeId, parts: &[TypeId], is_partial: bool) -> Option<Sym> {
-        let &(alias, ref type_arguments) = self.stored_alias(ty)?;
-        let from = self.resolution_start;
-        let has_mapped_type = type_arguments.is_empty()
-            && parts.iter().any(|&part| {
-                matches!(
-                    self.data(part),
-                    TypeData::Anon {
-                        origin: Origin::Mapped(..),
-                        mapper: MapperId::IDENTITY,
-                    }
-                ) && (!is_partial || self.stack[from..].contains(&Query::Shape(part)))
-            });
-        has_mapped_type.then_some(alias)
     }
 
     fn shape_of_synth(&mut self, object: TypeId) -> Built<'p> {
@@ -5106,7 +5043,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let waiting = match waiting {
-            Some(mut waiting) if self.may_stay_unlisted(whole, parts, &waiting) => properties
+            Some(mut waiting) if self.may_stay_unlisted(whole, &waiting) => properties
                 .add_shared(&mut waiting, self.arena)
                 .then_some(waiting),
             Some(waiting) => {
@@ -5473,7 +5410,7 @@ impl<'p, 's> Checker<'p, 's> {
                 true => TypeId::EMPTY_OBJECT,
                 false => c.reduced_apparent_type_as_object(ty),
             };
-            c.listed_members(if ty.is_never() {
+            c.members(if ty.is_never() {
                 TypeId::EMPTY_OBJECT
             } else {
                 ty
@@ -7706,16 +7643,6 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
             }
-            // It lists the properties: while the members of a constituent are in place, the
-            // list it assigns lacks them.
-            let mut in_progress = self.stack[self.resolution_start..].iter();
-            if in_progress.any(|q| matches!(q, Query::Shape(of) if members.contains(of))) {
-                self.properties_of_intersection(ty, &members, false);
-            } else if self.listing_alias(ty, &members, false).is_some() {
-                // `getReducedType` assigns the list. It is the complete one, and it is kept: a
-                // later read while a constituent has its members in place finds it.
-                self.properties_of_intersection(ty, &members, false);
-            }
         }
         // `isNeverReducedProperty`
         let is_never = self.has_property_in_several_members(ty)
@@ -8531,12 +8458,11 @@ impl<'p, 's> Checker<'p, 's> {
             return List::Kept(recent.1);
         }
         let p = self.p;
-        let kept = if construct {
-            &p.construct_signatures
-        } else {
-            &p.call_signatures
+        let kept = match construct {
+            true => p.construct_signatures.get_ref(&self.task, &ty),
+            false => p.call_signatures.get_ref(&self.task, &ty),
         };
-        if let Some(known) = kept.get_ref(&self.task, &ty) {
+        if let Some(known) = kept {
             let known: &'p [SigId] = known;
             self.recent_signatures[at] = (ty, known);
             return List::Kept(known);
@@ -8549,7 +8475,18 @@ impl<'p, 's> Checker<'p, 's> {
             && let Ok(stored) = ended
         {
             let signatures = signatures.into();
-            let known: &'p [SigId] = kept.insert_ref(&self.task, ty, signatures, stored).1;
+            let known: &'p [SigId] = match construct {
+                true => {
+                    (p.construct_signatures)
+                        .insert_ref(&self.task, ty, signatures, stored)
+                        .1
+                }
+                false => {
+                    (p.call_signatures)
+                        .insert_ref(&self.task, ty, signatures, stored)
+                        .1
+                }
+            };
             self.recent_signatures[at] = (ty, known);
             return List::Kept(known);
         }

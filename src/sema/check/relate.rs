@@ -5979,26 +5979,6 @@ impl<'p, 's> Checker<'p, 's> {
         result
     }
 
-    /// `members`, for `getPropertiesOfType(ty)`: an intersection has the list of properties that
-    /// `getPropertiesOfUnionOrIntersectionType` assigned, which can lack some that
-    /// `getPropertyOfType` finds by name (`listed_properties`).
-    /// Whether the list of properties that the intersection `ty` keeps lacks the members of a
-    /// constituent (`listed_members`).
-    pub(super) fn has_partial_list(&self, ty: TypeId) -> bool {
-        self.is_intersection(ty)
-            && (self.p.listed_properties.get(&self.task, &ty)).is_some_and(|listed| listed != ty)
-    }
-
-    pub(super) fn listed_members(&mut self, ty: TypeId) -> Option<Members<'p>> {
-        if self.is_intersection(ty)
-            && let Some(listed) = self.p.listed_properties.get(&self.task, &ty)
-            && listed != ty
-        {
-            return self.members(listed);
-        }
-        self.members(ty)
-    }
-
     /// The type that `getPropertiesOfType`, `getPropertyOfType` and `getIndexInfosOfType` use:
     /// `getReducedApparentType(ty)`, and for a union the properties common to all its members
     /// (`getPropertiesOfUnionOrIntersectionType`).
@@ -6477,8 +6457,7 @@ impl<'p, 's> Checker<'p, 's> {
             Some(_) => self.synth(Shape::new_in(self.arena)),
             None => properties.unwrap_or(source),
         };
-        let (Some(sm), Some(tm)) = (self.members(has_properties), self.listed_members(target))
-        else {
+        let (Some(sm), Some(tm)) = (self.members(has_properties), self.members(target)) else {
             return Ternary::FALSE;
         };
         // A cached shape does not change. An intersection has its signatures elsewhere.

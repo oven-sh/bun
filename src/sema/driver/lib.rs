@@ -4270,7 +4270,9 @@ fn check_named_files(
     // called after the semantic and the global diagnostics of the whole program are collected. So
     // these files come after the plan, or before it under `Options::emits_first`. If there are no
     // others, the plan is theirs.
-    let checker = program.checker();
+    // A `Checker` is about 30 KB. Boxing keeps this function's stack frame small.
+    let boxed_checker = || Box::new(program.checker());
+    let checker = boxed_checker();
     let (type_checked, only_emitted): (Vec<FileId>, Vec<FileId>) =
         (to_check.into_iter()).partition(|&file| checker.reports_semantic_errors(file));
     drop(checker);
@@ -4464,7 +4466,7 @@ fn check_named_files(
         false => Requested::All,
     };
     let new_checker = |expected: Requested| {
-        let mut checker = program.checker();
+        let mut checker = boxed_checker();
         checker.set_requested(expected);
         checker.begin_stack_budget();
         checker
@@ -5353,7 +5355,7 @@ fn check_named_files(
                 if is_left_out || is_checked[i] {
                     continue;
                 }
-                let mut checker = program.checker();
+                let mut checker = boxed_checker();
                 checker.begin_stack_budget();
                 after_file(&mut checker, file);
             }

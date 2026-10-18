@@ -906,16 +906,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether all that instantiating `ty` takes is to map its type arguments and to look up what has them: a type
-    /// reference, an object type, a function type or a conditional type. As in `getObjectTypeInstantiation` and
-    /// `getConditionalTypeInstantiation`, that lookup is the only one.
+    /// Whether `Program::instantiations` has nothing about `ty`. A union is put together again from its instantiated
+    /// members, which takes long and is asked for again and again, and a synthesized object type is copied. For any
+    /// other type the parts are instantiated and what has them is looked up, as in `getObjectTypeInstantiation` and
+    /// `getConditionalTypeInstantiation`: that lookup is the only one.
     #[inline]
     fn is_instantiation_kept_by_its_own_key(&self, ty: TypeId) -> bool {
-        match self.data(ty) {
-            TypeData::Ref { .. } | TypeData::Fns { .. } | TypeData::Cond { .. } => true,
-            TypeData::Anon { origin, .. } => !matches!(origin, Origin::Mapped(..)),
-            _ => false,
-        }
+        !matches!(
+            self.data(ty),
+            TypeData::Union(_) | TypeData::Synth(_) | TypeData::ReverseMapped { .. }
+        )
     }
 
     /// Whether `getOuterTypeParameters` of the object literal that `written` is a property of

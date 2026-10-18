@@ -10,8 +10,8 @@ use crate::local::{Found, Hashed, LOCAL, MaybeLocal, SlotNumber, spread_word};
 use crate::program::Sym;
 use crate::session::Session;
 use crate::table::{
-    Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect, Cell as _, FileLocal,
-    Id as _,
+    At, Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect, Cell as _, FileLocal,
+    Id as _, OfExpressions,
 };
 use crate::types::{
     ElemFlags, List, MapperId, OriginKey, Provenance, ProvenanceKey, ShortList, TypeArguments,
@@ -1175,6 +1175,307 @@ fn a_node_without_a_published_cell_has_an_entry_in_the_task_only() {
     assert_eq!(counts(&published), (0, 0, 0));
 }
 
+// ───────────────────────────── rows and pages ─────────────────────────────
+
+/// A table over files with `lengths` nodes.
+fn table_over(lengths: &[usize]) -> ByNode<Node, TypeId, Buffered> {
+    let bases = Bases::new_in(lengths.iter().copied(), &Global);
+    let mut table = ByNode::new_in(&bases, Global);
+    table.set_slot(numbered(0));
+    table
+}
+
+/// A page has 64 cells, and a list has 64 pages.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn the_nodes_of_files_that_a_task_does_not_visit_have_cells_in_pages() {
+    let session = Session::new();
+    let table = table_over(&[5000, 5000, 70]);
+    let mut task = begin(&session, 0);
+    // The last of these are at 4999, 5000, 8191, 8192 and 10069 among the nodes of all files.
+    let first = [0, 1, 62, 63, 64, 65, 127, 128, 4094, 4095, 4096, 4097, 4999].map(|at| (A, at));
+    let keys = first
+        .into_iter()
+        .chain([(B, 0), (B, 3191), (B, 3192), (C, 69)]);
+    let keys: Vec<Node> = keys.collect();
+    for (nth, &key) in keys.iter().enumerate() {
+        assert_eq!(table.get(&task, &key), None);
+        let value = TypeId(nth as u32);
+        assert_eq!(table.insert(&task, key, value, stored()), value);
+        assert_eq!(table.insert(&task, key, TypeId::ANY, stored()), value);
+    }
+    for (file, len) in [(A, 5000), (B, 5000), (C, 70)] {
+        for index in 0..len + 1 {
+            let expected = keys.iter().position(|&key| key == (file, index));
+            let expected = expected.map(|nth| TypeId(nth as u32));
+            assert_eq!(table.get(&task, &(file, index)), expected);
+        }
+    }
+    table.rewrite(&task, (A, 64), TypeId::ANY, stored());
+    assert_eq!(table.get(&task, &(A, 64)), Some(TypeId::ANY));
+    assert_eq!(table.get(&task, &(A, 63)), Some(TypeId(3)));
+    assert_eq!(table.get(&task, &(A, 65)), Some(TypeId(5)));
+    let mut finished = [task.finish_tables(&[&table], Vec::new())];
+    let published = publish_tables(&[&table], &mut finished, &forwards, None);
+    let all = keys.len() as u64;
+    assert_eq!(counts(&published), (all, all, 0));
+    let reader = Task::new_in(session.arena());
+    assert_eq!(table.get(&reader, &(B, 3192)), Some(TypeId(15)));
+    assert_eq!(table.get(&reader, &(B, 3193)), None);
+    assert_eq!(table.get(&reader, &(C, 69)), Some(TypeId(16)));
+}
+
+/// The files have 100 nodes each, so the second page has nodes of `A` and of `B`, and the fourth has
+/// nodes of `B` and of `C`.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn what_is_in_pages_is_in_the_row_once_the_task_visits_the_file() {
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let mut task = begin_in(&session, 0, C);
+    let early = [
+        (A, 63),
+        (A, 64),
+        (A, 99),
+        (B, 0),
+        (B, 27),
+        (B, 28),
+        (B, 91),
+        (B, 92),
+        (B, 99),
+    ];
+    for (nth, key) in early.into_iter().enumerate() {
+        tables
+            .by_node
+            .insert(&task, key, TypeId(nth as u32), stored());
+    }
+    tables.by_node.insert(&task, (C, 0), TypeId::ANY, stored());
+    tables.set.insert(&task, (B, 28), (), stored());
+    let check = |task: &Task<'_>| {
+        for (nth, key) in early.into_iter().enumerate() {
+            assert_eq!(tables.by_node.get(task, &key), Some(TypeId(nth as u32)));
+        }
+        for key in [
+            (A, 62),
+            (A, 65),
+            (A, 98),
+            (B, 1),
+            (B, 26),
+            (B, 29),
+            (B, 98),
+            (C, 1),
+        ] {
+            assert_eq!(tables.by_node.get(task, &key), None);
+        }
+        assert_eq!(tables.by_node.get(task, &(C, 0)), Some(TypeId::ANY));
+        assert_eq!(tables.set.get(task, &(B, 28)), Some(()));
+        assert_eq!(tables.set.get(task, &(B, 27)), None);
+    };
+    check(&task);
+    // Read first, then written. `set` is asked about `B` only after the task has left it.
+    task.begin_file(B, true);
+    assert_eq!(tables.by_node.get(&task, &(B, 28)), Some(TypeId(5)));
+    assert_eq!(
+        tables.by_node.insert(&task, (B, 28), TypeId::ANY, stored()),
+        TypeId(5)
+    );
+    assert_eq!(tables.by_node.get(&task, &(A, 99)), Some(TypeId(2)));
+    // Written first.
+    task.begin_file(A, true);
+    assert_eq!(
+        tables.by_node.insert(&task, (A, 64), TypeId::ANY, stored()),
+        TypeId(1)
+    );
+    check(&task);
+    // A new entry under a node of a file that the task has left, in its row and beyond the end of it.
+    tables
+        .by_node
+        .insert(&task, (B, 50), TypeId::NUMBER, stored());
+    tables
+        .by_node
+        .insert(&task, (C, 70), TypeId::NUMBER, stored());
+    assert_eq!(tables.by_node.get(&task, &(B, 50)), Some(TypeId::NUMBER));
+    assert_eq!(tables.by_node.get(&task, &(C, 70)), Some(TypeId::NUMBER));
+    task.begin_file(B, true);
+    check(&task);
+    assert_eq!(tables.by_node.get(&task, &(B, 50)), Some(TypeId::NUMBER));
+    let published = tables.barrier(&mut [tables.finish(&mut task)], &forwards);
+    assert_eq!(counts(&published), (13, 13, 0));
+    check(&Task::new_in(session.arena()));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn a_file_that_a_task_visits_and_stores_nothing_for_has_no_row() {
+    let session = Session::new();
+    let table = table_over(&[3; 100]);
+    let mut task = begin_in(&session, 0, FileId(32));
+    let with_entries = [0, 31, 32, 33, 63, 64, 99];
+    for file in with_entries {
+        table.insert(&task, (FileId(file), 1), TypeId(file), stored());
+    }
+    // A file that the task visits and stores nothing for, and one that it only asks about.
+    task.begin_file(FileId(30), true);
+    assert_eq!(table.get(&task, &(FileId(30), 1)), None);
+    task.begin_file(FileId(65), true);
+    for file in 0..100 {
+        let expected = with_entries.contains(&file).then_some(TypeId(file));
+        assert_eq!(table.get(&task, &(FileId(file), 1)), expected);
+        assert_eq!(table.get(&task, &(FileId(file), 0)), None);
+        assert_eq!(table.get(&task, &(FileId(file), 2)), None);
+    }
+    // After it has left the file without a row.
+    table.insert(&task, (FileId(30), 1), TypeId::ANY, stored());
+    assert_eq!(table.get(&task, &(FileId(30), 1)), Some(TypeId::ANY));
+    assert_eq!(table.get(&task, &(FileId(29), 1)), None);
+    let mut finished = [task.finish_tables(&[&table], Vec::new())];
+    let published = publish_tables(&[&table], &mut finished, &forwards, None);
+    assert_eq!(counts(&published), (8, 8, 0));
+}
+
+/// A file that nothing imports has no number for its nodes among those of all files.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn a_node_that_is_not_counted_has_a_cell_in_a_row() {
+    let session = Session::new();
+    let table = table_over(&[10, 0, 0]);
+    let mut task = begin_in(&session, 0, A);
+    assert_eq!(table.get(&task, &(B, 5)), None);
+    table.insert(&task, (B, 5), TypeId::STRING, stored());
+    assert_eq!(table.get(&task, &(B, 5)), Some(TypeId::STRING));
+    assert_eq!(table.get(&task, &(B, 4)), None);
+    assert_eq!(table.get(&task, &(B, 6)), None);
+    assert_eq!(table.get(&task, &(C, 5)), None);
+    task.begin_file(C, false);
+    table.rewrite(&task, (B, 7), TypeId::NUMBER, stored());
+    task.begin_file(B, false);
+    assert_eq!(table.get(&task, &(B, 5)), Some(TypeId::STRING));
+    assert_eq!(table.get(&task, &(B, 7)), Some(TypeId::NUMBER));
+    let mut finished = [task.finish_tables(&[&table], Vec::new())];
+    let published = publish_tables(&[&table], &mut finished, &forwards, None);
+    assert_eq!(counts(&published), (0, 0, 0));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn the_row_of_a_file_has_what_is_published_for_it() {
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let mut first = begin_in(&session, 0, C);
+    let (one, two) = (TypeId::STRING, TypeId::NUMBER);
+    for key in [(A, 0), (A, 63), (A, 64), (B, 28)] {
+        tables.by_node.insert(&first, key, one, stored());
+    }
+    tables.set.insert(&first, (A, 64), (), stored());
+    (tables.kept_by_node).insert(&first, (A, 64), Box::new([one]), stored());
+    tables.barrier(&mut [tables.finish(&mut first)], &forwards);
+
+    let mut later = Task::new_in(session.arena());
+    later.begin(1, 0, true);
+    // Before the task visits the file, while it does, and afterwards.
+    for file in [C, A, B] {
+        later.begin_file(file, true);
+        for key in [(A, 0), (A, 63), (A, 64), (B, 28)] {
+            assert_eq!(tables.by_node.get(&later, &key), Some(one));
+            assert_eq!(tables.by_node.insert(&later, key, two, stored()), one);
+        }
+        for key in [
+            (A, 1),
+            (A, 62),
+            (A, 65),
+            (A, 99),
+            (B, 0),
+            (B, 27),
+            (B, 29),
+            (C, 0),
+        ] {
+            assert_eq!(tables.by_node.get(&later, &key), None);
+        }
+        assert_eq!(tables.set.get(&later, &(A, 64)), Some(()));
+        assert_eq!(tables.set.get(&later, &(A, 63)), None);
+        assert_eq!(tables.set.get(&later, &(A, 65)), None);
+        let kept = tables.kept_by_node.get(&later, &(A, 64));
+        assert_eq!(kept, Some(Box::from([one])));
+        assert_eq!(tables.kept_by_node.get(&later, &(A, 63)), None);
+    }
+    // What `rewrite` stores is shadowed by the published entry, in a row as anywhere, and the last one
+    // loses at the barrier. An entry of the task's own in the same row is replaced.
+    later.begin_file(A, true);
+    tables.by_node.insert(&later, (A, 1), one, stored());
+    for value in [one, two] {
+        tables.by_node.rewrite(&later, (A, 63), value, stored());
+        tables.by_node.rewrite(&later, (B, 28), value, stored());
+        tables.by_node.rewrite(&later, (A, 1), value, stored());
+    }
+    assert_eq!(tables.by_node.get(&later, &(A, 63)), Some(one));
+    assert_eq!(tables.by_node.get(&later, &(B, 28)), Some(one));
+    assert_eq!(tables.by_node.get(&later, &(A, 1)), Some(two));
+    later.begin_file(B, true);
+    assert_eq!(tables.by_node.get(&later, &(B, 28)), Some(one));
+    assert_eq!(tables.by_node.get(&later, &(A, 63)), Some(one));
+    // Nothing that the rows have from the published part goes back to the barrier.
+    let published = tables.barrier(&mut [tables.finish(&mut later)], &forwards);
+    assert_eq!(counts(&published), (3, 1, 2));
+    let reader = Task::new_in(session.arena());
+    assert_eq!(tables.by_node.get(&reader, &(A, 63)), Some(one));
+    assert_eq!(tables.by_node.get(&reader, &(A, 1)), Some(two));
+}
+
+#[test]
+#[should_panic]
+#[cfg_attr(miri, ignore)]
+fn a_table_that_knows_its_slot_takes_no_other() {
+    let mut table = ById::<TypeId, TypeId, Buffered<At<3>>>::default();
+    table.set_slot(numbered(4));
+}
+
+/// A published id has a cell in a page, by its number.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn what_a_task_stores_under_published_ids_is_in_pages() {
+    let session = Session::new();
+    let tables = Tables::new(&session);
+    let mut task = begin(&session, 0);
+    let numbers = [0, 1, 63, 64, 65, 4095, 4096, 4097, 70000];
+    for number in numbers {
+        assert_eq!(tables.by_id.get(&task, &TypeId(number)), None);
+        let value = TypeId(number + 1);
+        assert_eq!(
+            tables.by_id.insert(&task, TypeId(number), value, stored()),
+            value
+        );
+        assert_eq!(
+            tables
+                .by_id
+                .insert(&task, TypeId(number), TypeId::ANY, stored()),
+            value
+        );
+    }
+    tables
+        .by_id
+        .rewrite(&task, TypeId(64), TypeId::ANY, stored());
+    tables
+        .by_id
+        .rewrite(&task, TypeId(66), TypeId::ANY, stored());
+    for number in 0..4100 {
+        let expected = match number {
+            64 | 66 => Some(TypeId::ANY),
+            _ => numbers.contains(&number).then_some(TypeId(number + 1)),
+        };
+        assert_eq!(tables.by_id.get(&task, &TypeId(number)), expected);
+    }
+    assert_eq!(tables.by_id.get(&task, &TypeId(70000)), Some(TypeId(70001)));
+    assert_eq!(tables.by_id.get(&task, &TypeId(69999)), None);
+    assert_eq!(tables.by_id.get(&task, &TypeId(900000)), None);
+    // Another table has its own.
+    assert_eq!(tables.shapes.get(&task, &TypeId(64)), None);
+    let published = tables.barrier(&mut [tables.finish(&mut task)], &forwards);
+    assert_eq!(counts(&published), (10, 10, 0));
+    let reader = Task::new_in(session.arena());
+    assert_eq!(tables.by_id.get(&reader, &TypeId(4096)), Some(TypeId(4097)));
+    assert_eq!(tables.by_id.get(&reader, &TypeId(66)), Some(TypeId::ANY));
+}
+
 // ───────────────────────────── bit storage ─────────────────────────────
 
 #[test]
@@ -1832,6 +2133,67 @@ fn the_file_that_a_task_visits_stays_as_it_was_when_the_visit_began() {
     assert_eq!(tables.by_node.get(&second, &(A, 1)), Some(NUMBER));
     second.begin_file(B, true);
     assert_eq!(tables.by_node.get(&second, &(A, 1)), Some(STRING));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn an_entry_that_a_task_stored_before_it_saw_another_one_loses() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let first = begin_committing(&session, &commits, 0);
+    let mut second = begin_committing(&session, &commits, 1);
+    second.begin_file(B, true);
+    assert_eq!(
+        tables.by_node.insert(&second, (A, 1), NUMBER, stored()),
+        NUMBER
+    );
+    assert_eq!(
+        tables.by_node.insert(&second, (A, 2), NUMBER, stored()),
+        NUMBER
+    );
+    tables.by_node.insert(&first, (A, 1), STRING, stored());
+    assert_eq!(commit(&tables, &commits, &first, 1), 1);
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), Some(NUMBER));
+    // The row has what the task sees now, and what it has stored where it sees nothing.
+    second.begin_file(A, true);
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), Some(STRING));
+    assert_eq!(tables.by_node.get(&second, &(A, 2)), Some(NUMBER));
+    assert_eq!(
+        tables.by_node.insert(&second, (A, 1), NUMBER, stored()),
+        STRING
+    );
+    assert_eq!(commit(&tables, &commits, &second, 2), 1);
+    assert_eq!(tables.by_node.commit_of((A, 1)), Some(1));
+    assert_eq!(tables.by_node.commit_of((A, 2)), Some(2));
+    second.begin_file(B, true);
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), Some(STRING));
+    assert_eq!(tables.by_node.get(&second, &(A, 2)), Some(NUMBER));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn what_is_stored_about_an_expression_of_the_visited_file_stays_in_the_task() {
+    let session = Session::new();
+    let commits = Commits::new_in(session.arena());
+    let bases = Bases::new_in([10, 10, 10].into_iter(), &Global);
+    let mut table = ByNode::<Node, TypeId, Buffered<OfExpressions<0>>>::new_in(&bases, Global);
+    table.set_slot(numbered(0));
+    let mut task = begin_writing_at_once(&session, &commits, 0);
+    task.begin_file(A, true);
+    table.insert(&task, (A, 1), STRING, stored());
+    table.rewrite(&task, (A, 1), NUMBER, stored());
+    assert_eq!((task.buffer().logged(), task.held_back()), (0, 0));
+    // On the way to the type of a declaration of another file.
+    table.insert(&task, (B, 1), STRING, stored());
+    assert_eq!((task.buffer().logged(), task.held_back()), (1, 1));
+    let mut log = task.buffer().take_log();
+    assert_eq!(commits.store(&[&table], &task, &mut log, 1), 1);
+    let mut other = begin_committing(&session, &commits, 1);
+    assert_eq!(table.get(&other, &(A, 1)), None);
+    assert_eq!(table.get(&other, &(B, 1)), Some(STRING));
+    other.begin_file(B, true);
+    assert_eq!(table.get(&other, &(B, 1)), Some(STRING));
+    assert_eq!(table.get(&task, &(A, 1)), Some(NUMBER));
 }
 
 #[test]

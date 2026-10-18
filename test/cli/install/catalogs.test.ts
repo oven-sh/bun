@@ -408,15 +408,24 @@ describe.concurrent("basic", () => {
   });
 
   // The registry also has a `no-deps` package. `leaf` is a catalog entry that the workspace itself uses.
-  test.concurrent.each(["hoisted", "isolated"])(
-    "a catalog: dependency still links to a workspace after another catalog entry changes (%s)",
-    async linker => {
+  test.concurrent.each([
+    ["hoisted", "*", ["install"]],
+    ["isolated", "*", ["install"]],
+    ["hoisted", "*", ["update", "no-deps"]],
+    ["isolated", "^0.1.0", ["update", "no-deps"]],
+    ["hoisted", "^0.1.0", ["update", "--latest", "no-deps"]],
+  ])(
+    "a catalog: dependency still links to a workspace after another catalog entry changes (%s, %j, bun %j)",
+    async (linker, range, command) => {
       const packageJson = (leaf: string) =>
-        JSON.stringify({ name: "mono", workspaces: { packages: ["packages/*"], catalog: { "no-deps": "*", leaf } } });
+        JSON.stringify({ name: "mono", workspaces: { packages: ["packages/*"], catalog: { "no-deps": range, leaf } } });
       using dir = writeRegistryProject(
         {
           "package.json": packageJson("1.0.0"),
-          "packages/web/package.json": JSON.stringify({ name: "web", dependencies: { "no-deps": "catalog:" } }),
+          "packages/web/package.json": JSON.stringify({
+            name: "web",
+            dependencies: { "no-deps": "catalog:", leaf: "catalog:" },
+          }),
           "packages/no-deps/package.json": JSON.stringify({
             name: "no-deps",
             version: "0.1.0",
@@ -430,9 +439,9 @@ describe.concurrent("basic", () => {
         realpath(join(packageDir, "packages", "web", "node_modules", "no-deps")).catch(() =>
           realpath(join(packageDir, "node_modules", "no-deps")),
         );
-      const install = async () => {
+      const run = async (command: string[]) => {
         await using proc = spawn({
-          cmd: [bunExe(), "install", "--linker", linker],
+          cmd: [bunExe(), ...command, "--linker", linker],
           cwd: packageDir,
           env: bunEnv,
           stdout: "pipe",
@@ -444,9 +453,9 @@ describe.concurrent("basic", () => {
         expect(exitCode).toBe(0);
       };
 
-      await install();
+      await run(["install"]);
       await write(join(packageDir, "package.json"), packageJson("2.0.0"));
-      await install();
+      await run(command);
     },
   );
 

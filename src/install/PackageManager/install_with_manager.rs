@@ -1824,7 +1824,12 @@ fn enqueue_named_updates(
         if collect_latest_rows {
             named.latest_rows.push(dependency_i as DependencyID);
         }
-        if package_id == invalid_package_id || dependency.behavior.is_bundled() {
+        // The root's link to a workspace has no version to update. Other dependencies on that name
+        // can only link to the workspace while it stays resolved.
+        if package_id == invalid_package_id
+            || dependency.behavior.is_bundled()
+            || dependency.behavior.is_workspace()
+        {
             continue;
         }
         if dependency.behavior.is_peer() {

@@ -1079,7 +1079,7 @@ fn build_store(
                 // are deduplicated only if their package id and their transitive peer package
                 // ids are equal.
                 let peer_dep = &dependencies[peer_dep_id as usize];
-                let best_version = (peer_ranges.shared_version(peer_dep))
+                let best_version = (peer_ranges.shared_version(entry.pkg_id, peer_dep))
                     .unwrap_or(resolutions[peer_dep_id as usize]);
                 let best_version = if is_omitted_peer(peer_dep)
                     || nested_folders.is_set_allow_out_of_bound(best_version as usize, false)

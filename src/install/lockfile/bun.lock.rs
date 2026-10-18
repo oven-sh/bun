@@ -3079,11 +3079,11 @@ pub(crate) fn resolve_peer_dep_version_based(
     )
 }
 
-/// For each package name, the required peer dependencies on it that no package provides, one per
-/// distinct range. Filled on demand.
+/// For each package name, the packages that nothing provides a peer dependency on it for, and their
+/// required peer dependencies on it, one per distinct range. Filled on demand.
 #[derive(Default)]
 pub(crate) struct PeerRangeCache(
-    core::cell::RefCell<HashMap<PackageNameHash, Box<[DependencyID]>>>,
+    core::cell::RefCell<HashMap<PackageNameHash, (DynamicBitSet, Box<[DependencyID]>)>>,
 );
 
 /// Finds the version that packages with a peer dependency on the same name can share.
@@ -3094,9 +3094,10 @@ pub(crate) struct PeerRanges<'a> {
 }
 
 impl PeerRanges<'_> {
-    /// Returns the highest installed version that satisfies `peer` and every other required peer
-    /// range on that name that no package provides. As in pnpm, those packages share one copy.
-    pub(crate) fn shared_version(self, peer: &Dependency) -> Option<PackageID> {
+    /// `peer` is a peer dependency of `owner`. If no package provides it, returns the highest
+    /// installed version that satisfies it and every other required peer range on that name that no
+    /// package provides. As in pnpm, those packages share one copy.
+    pub(crate) fn shared_version(self, owner: PackageID, peer: &Dependency) -> Option<PackageID> {
         let lockfile = self.lockfile;
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let pkg_resolutions = lockfile.packages.items_resolution();
@@ -3106,28 +3107,26 @@ impl PeerRanges<'_> {
         if candidates.len() < 2 {
             return None;
         }
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let mut cache = self.cache.0.borrow_mut();
+        let (missing, rows) = cache
+            .entry(name_hash)
+            .or_insert_with(|| self.collect(name_hash));
+        if !missing.is_set(owner as usize) {
+            return None;
+        }
         candidates.iter().copied().find(|&id| {
             let resolution = &pkg_resolutions[id as usize];
             resolution.satisfies_dependency_version(range, string_buf, string_buf)
-                && self.all_accept(name_hash, resolution)
+                && rows.iter().all(|&row| {
+                    let range =
+                        (lockfile.catalogs).resolve_range(string_buf, &dependencies[row as usize]);
+                    resolution.satisfies_dependency_version(range, string_buf, string_buf)
+                })
         })
     }
 
-    fn all_accept(self, name_hash: PackageNameHash, resolution: &Resolution) -> bool {
-        let lockfile = self.lockfile;
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-        let dependencies = lockfile.buffers.dependencies.as_slice();
-        let mut cache = self.cache.0.borrow_mut();
-        let rows = cache
-            .entry(name_hash)
-            .or_insert_with(|| self.collect(name_hash));
-        rows.iter().all(|&id| {
-            let range = (lockfile.catalogs).resolve_range(string_buf, &dependencies[id as usize]);
-            resolution.satisfies_dependency_version(range, string_buf, string_buf)
-        })
-    }
-
-    fn collect(self, name_hash: PackageNameHash) -> Box<[DependencyID]> {
+    fn collect(self, name_hash: PackageNameHash) -> (DynamicBitSet, Box<[DependencyID]>) {
         let lockfile = self.lockfile;
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
@@ -3155,7 +3154,7 @@ impl PeerRanges<'_> {
         }
         index_sort::sort_slice_unstable_by(&mut rows, |a, b| a.cmp(b));
         rows.dedup_by_key(|row| row.0);
-        rows.into_iter().map(|row| row.1).collect()
+        (missing, rows.into_iter().map(|row| row.1).collect())
     }
 }
 

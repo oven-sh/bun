@@ -278,6 +278,8 @@ export function getStdinStream(
   stream._read = triggerRead;
 
   stream.on("resume", () => {
+    // After EOF, _undestroy() would clear `ended` and 'end' would never be emitted.
+    if (stream_reachedEof) return;
     if (stream.isPaused()) return; // fake resume
     $debug('on("resume");');
     own();

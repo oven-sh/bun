@@ -2338,6 +2338,34 @@ describe.concurrent("--fix preserves behavior and comments", () => {
     },
     {
       rule: "import/order",
+      // The doc comment would end up above `console.log`. A license followed by an empty line stays at the top.
+      kept: 'import { b } from "./b";\n/** The package. */\nimport { a } from "a-package";\nconsole.log(a, b);\n',
+      fixed: [
+        '/**\n * Copyright 2024 Foo\n */\n\nimport { b } from "./b";\nimport { a } from "a-package";\nconsole.log(a, b);\n',
+        '/**\n * Copyright 2024 Foo\n */\n\nimport { a } from "a-package";\nimport { b } from "./b";\nconsole.log(a, b);\n',
+      ],
+    },
+    {
+      rule: "import/order",
+      // A header doesn't hide the directive below it.
+      kept: '/** @fileoverview Prints two letters. */\n// @ts-expect-error there are no types for this one\nimport { b } from "./b";\nimport { a } from "a-package";\nconsole.log(a, b);\n',
+      fixed: [
+        '/** @fileoverview Prints two letters. */\nimport { b } from "./b";\nimport { a } from "a-package";\nconsole.log(a, b);\n',
+        '/** @fileoverview Prints two letters. */\nimport { a } from "a-package";\nimport { b } from "./b";\nconsole.log(a, b);\n',
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "import/order",
+      // Here the first import is the one that moves.
+      kept: '/** The local one. */\nimport { b } from "./b";\nimport { a } from "a-package";\nimport { c } from "c-package";\nconsole.log(a, b, c);\n',
+      fixed: [
+        '/** @fileoverview Prints three letters. */\nimport { b } from "./b";\nimport { a } from "a-package";\nimport { c } from "c-package";\nconsole.log(a, b, c);\n',
+        '/** @fileoverview Prints three letters. */\nimport { a } from "a-package";\nimport { c } from "c-package";\nimport { b } from "./b";\nconsole.log(a, b, c);\n',
+      ],
+    },
+    {
+      rule: "import/order",
       // `require("./b")` and `[a, b]` would parse as one expression.
       kept: 'const b = require("./b")\nconst a = require("a-package")\n;[a, b].forEach(console.log)\n',
       fixed: [

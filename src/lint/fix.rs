@@ -400,10 +400,12 @@ impl<'a> Fixer<'a> {
         comments.any(|it| is_about_the_next_line(&it))
     }
 
-    /// True if [`Fixer::has_directive_before`] is true, or a `/** .. */` doc comment precedes `at`.
+    /// True if [`Fixer::has_directive_before`] is true, or a `/** .. */` doc comment precedes `at`. Skips the file's
+    /// header, like a license or `/** @fileoverview */`, because it isn't attached to `at`.
     pub fn has_directive_or_doc_before(self, at: impl Spanned) -> bool {
+        let end_of_head = self.end_of_head().unwrap_or(0);
         let mut comments = self.file.comments_before(at);
-        comments.any(|it| is_about_what_follows(&it))
+        comments.any(|it| it.end() > end_of_head && is_about_what_follows(&it))
     }
 
     /// `replaceText`, `replaceTextRange`

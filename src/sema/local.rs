@@ -697,8 +697,6 @@ pub(crate) struct Buffer<'s> {
     is_imported: bool,
     /// `Some`: the task commits while it runs.
     log: Option<Log>,
-    /// See `stop_logging`.
-    is_logging: bool,
     /// Indexed by file: 1 for the first file that the task has visited, 2 for the second, and so
     /// on. 0, or out of range: the task has not visited it.
     ordinals: Vec<u32>,
@@ -715,7 +713,6 @@ impl<'s> Buffer<'s> {
             ordinal: 0,
             is_imported: false,
             log: None,
-            is_logging: false,
             ordinals: Vec::new(),
             files: 0,
             pages: Pages::default(),
@@ -725,12 +722,7 @@ impl<'s> Buffer<'s> {
 
     /// From now on the keys of the new entries are logged.
     pub(crate) fn begin_log(&mut self) {
-        (self.log, self.is_logging) = (Some(Log::default()), true);
-    }
-
-    /// No key is logged from now on. What is logged stays.
-    pub(crate) fn stop_logging(&mut self) {
-        self.is_logging = false;
+        self.log = Some(Log::default());
     }
 
     /// How many keys are logged.
@@ -774,9 +766,7 @@ impl<'s> Buffer<'s> {
     /// An entry was stored under a published id, or at a place of a `Hashed`.
     #[inline]
     pub(crate) fn log_record(&mut self, slot: u32, key: u32) {
-        if let Some(log) = &mut self.log
-            && self.is_logging
-        {
+        if let Some(log) = &mut self.log {
             log.of_records.push([slot, key]);
         }
     }
@@ -785,7 +775,6 @@ impl<'s> Buffer<'s> {
     #[inline]
     pub(crate) fn log_node(&mut self, slot: u32, file: u32, index: u32) {
         if let Some(log) = &mut self.log
-            && self.is_logging
             && (file != self.file || self.is_imported)
         {
             log.of_nodes.push([slot, file, index]);

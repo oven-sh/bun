@@ -26,9 +26,9 @@
 //!   checker, and `Program::validate` says which. The serial order that a commit is compared with is the order of the
 //!   commits. What is thrown away is what the task has done since its last commit. It ends then, and the files that it had not
 //!   checked to the end by that commit go to the last round.
-//! - **A task that gives up at a limit shares nothing more** (`Checker::note_gave_up`, `Task::keep_the_rest_for_itself`).
-//!   What it returns there is no function of the question. It reports what it finds in the file that it is visiting, and
-//!   ends with that file.
+//! - **A task that gives up at a limit is not believed** (`Checker::note_gave_up`). How far from a limit a computation
+//!   begins depends on what was computed before, which for a task includes what it has found. It is thrown away like an
+//!   invalid one.
 //! - **A ring is entered from the first file that leads to it.** What a query gets that comes round to itself, or to what
 //!   it has in place, depends on where the checker came in (`Checker::close_ring_from`). `tsc --singleThreaded` comes in
 //!   from the first file in program order that leads there. So a task is believed about a ring only if every file before
@@ -48,7 +48,7 @@
 //!   (`Task::is_beside_a_ring`). It is lost if it has stored under a key of that commit: it has missed that one
 //!   (`Checker::lose_what_has_missed_a_ring`).
 //! - **The last round** is one task that checks those files in program order while nothing else runs. It finds all that was
-//!   committed.
+//!   committed. What it computes at a limit is what counts, as with one checker.
 //! - **A diagnostic goes with the entry of the query that has reported it**, in the same commit, and stays if the task is
 //!   lost later: whoever checks the file again finds the entry and does not report. If the entry loses, so does the
 //!   diagnostic (`Program::drop_diagnostics_of_losers`). What the walk of a file reports belongs to the file, and goes when a
@@ -691,11 +691,6 @@ impl<'s> Checker<'_, 's> {
     /// Before `check_file`: see `Task::set_first_in_order`.
     pub fn set_first_in_order(&self, is_first: bool, is_first_in_component: bool) {
         (self.task).set_first_in_order(is_first, is_first_in_component);
-    }
-
-    /// After `check_file`: the task has to end here. See `Task::keep_the_rest_for_itself`.
-    pub fn ends_with_the_file(&self) -> bool {
-        self.task.keeps_for_itself_since().is_some()
     }
 
     /// After `check_file`, and whatever is asked about the file afterwards. `is_last`: the task ends here.

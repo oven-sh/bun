@@ -2217,7 +2217,7 @@ impl<'p, 's> Checker<'p, 's> {
         if used > self.stack_limit {
             self.ran_out_of_stack.set(true);
             self.times_cut_short.set(self.times_cut_short.get() + 1);
-            self.note_lack_of_stack("the native stack");
+            self.note_gave_up("the native stack");
             return true;
         }
         false
@@ -3157,7 +3157,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `bailed_out`, where the frame at `from` makes the query again: see `starts_over_from_lower`.
     fn bailed_out_from(&mut self, from: usize) {
-        self.note_lack_of_stack("a query that was refused");
+        self.note_gave_up("a query that was refused");
         self.mark_tainted_from(from);
         self.note_cycle();
         self.refused_at = self.work;
@@ -3271,7 +3271,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// refused. Returns `UNRESOLVED` where the recursion here is no evidence of recursion in tsgo:
     /// after a refusal, and more than 60 levels of `instantiate` deep under a conditional type.
     pub(super) fn excessively_deep(&mut self) -> TypeId {
-        self.note_gave_up();
+        self.note_gave_up("instantiation that is excessively deep");
         // Only the call right after a refused `enter` sees the refusal.
         let is_limit_in_tsgo = match std::mem::replace(&mut self.last_enter, EnterOutcome::Entered)
         {
@@ -3293,7 +3293,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `instantiateTypeWithAlias`: `instantiationDepth == 100`. `instantiation_depth` counts what tsgo counts under a conditional type
     /// too: `resolve_conditional` follows a tail call in a loop, as `getConditionalType` does.
     pub(super) fn instantiation_too_deep(&mut self) -> TypeId {
-        self.note_gave_up();
+        self.note_gave_up("the depth of instantiation");
         self.instantiation_limit_hits += 1;
         if std::mem::replace(&mut self.last_enter, EnterOutcome::Entered) == EnterOutcome::Refused {
             return TypeId::UNRESOLVED;
@@ -3346,7 +3346,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// the program, so which task reaches the limit, and at which node, is too.
     #[cold]
     fn error_at_current_node(&mut self, code: u32) {
-        self.note_gave_up();
+        self.note_gave_up("a limit that is reported");
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
         let is_reported = self.eager.is_empty();
         // Outside of an expression, `c.currentNode` is the statement or declaration that
@@ -3870,24 +3870,16 @@ impl<'p, 's> Checker<'p, 's> {
         self.task.hold_back();
     }
 
-    /// The checker has given up for lack of native stack, or at a depth at which a query is refused. typescript-go has no
-    /// such limit. The task is lost: whoever checks the file again finds what was committed by then, which takes no stack.
-    /// `what`: for `--timing`.
+    /// The checker has given up: at a limit of instantiation (2589), of the size of a union (2590) or of a comparison (2859,
+    /// 2321), for lack of native stack, or at a depth at which a query is refused. What it returns then is no function
+    /// of the question alone. How far from the limit a computation begins, and how much of it is left to do, depends on
+    /// what was computed before, which for a task that sees commits includes what it has found. Such a task is lost.
+    /// `limit`: its name, for `--timing`.
     #[cold]
     #[inline(never)]
-    fn note_lack_of_stack(&self, what: &'static str) {
+    pub(super) fn note_gave_up(&self, limit: &'static str) {
         self.note_state_was_read();
-        self.task.lose(what);
-    }
-
-    /// The checker has given up at a limit that typescript-go has too: of instantiation (2589), of the size of a union
-    /// (2590) or of a comparison (2859, 2321). What it returns then is no function of the question alone. How far from the limit a computation begins, and how much of it is left to do, depends on
-    /// what was computed before: `Task::keep_the_rest_for_itself`.
-    #[cold]
-    #[inline(never)]
-    pub(super) fn note_gave_up(&self) {
-        self.note_state_was_read();
-        self.task.keep_the_rest_for_itself();
+        self.task.lose(limit);
     }
 
     /// Increments `cycles`.

@@ -4319,7 +4319,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Ternary::FALSE;
         }
         if r.relation_count <= 0 {
-            self.note_gave_up();
+            self.note_gave_up("the budget of a comparison");
             r.overflow = true;
             return Ternary::FALSE;
         }
@@ -4335,7 +4335,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let is_too_deep = r.source_stack.len() == 100 || r.target_stack.len() == 100;
         if is_too_deep || self.is_stack_low() {
-            self.note_gave_up();
+            self.note_gave_up("the depth of a comparison");
             r.is_too_deep |= is_too_deep;
             r.overflow = true;
             return Ternary::FALSE;
@@ -4450,7 +4450,7 @@ impl<'p, 's> Checker<'p, 's> {
         relation: Relation,
         kind: u8,
     ) {
-        self.note_gave_up();
+        self.note_gave_up("a comparison that overflowed");
         let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
         let scope = self.begin_scope();
         if let Ok(stored) = self.end_scope_as(scope, false) {

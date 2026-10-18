@@ -2410,15 +2410,26 @@ impl RunCommand {
             LoadError::Syntax => {
                 // SAFETY: `ctx.log` is the process-lifetime log of the CLI, and no resolver runs.
                 let log = unsafe { ctx.log() };
-                // The log also has what is wrong with other files, like a tsconfig.json.
-                log.msgs.retain(|msg| {
+                // Out of the log: a runtime that starts here next (`bun bake`, `.bunx`) prints it.
+                let mut of_file = bun_ast::Log::init();
+                of_file.level = log.level;
+                of_file.msgs.extend(log.msgs.extract_if(.., |msg| {
                     (msg.data.location.as_ref()).is_some_and(|location| *location.file == *path)
-                });
+                }));
+                for msg in &of_file.msgs {
+                    let (left, taken) = match msg.kind {
+                        bun_ast::Kind::Err => (&mut log.errors, &mut of_file.errors),
+                        bun_ast::Kind::Warn => (&mut log.warnings, &mut of_file.warnings),
+                        _ => continue,
+                    };
+                    *left = left.saturating_sub(1);
+                    *taken += 1;
+                }
                 // Out of memory, the parser fails with no message.
-                if log.msgs.is_empty() {
+                if of_file.msgs.is_empty() {
                     Output::err_generic("failed to parse '{}'", file);
                 }
-                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                let _ = of_file.print(std::ptr::from_mut::<bun_core::io::Writer>(
                     Output::error_writer(),
                 ));
             }

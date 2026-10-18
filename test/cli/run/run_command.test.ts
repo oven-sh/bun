@@ -239,6 +239,50 @@ describe.concurrent("a package.json that does not parse", () => {
     });
   });
 
+  // With no script, file or executable of that name, `bun bake` serves `app/server.ts`, and its runtime starts in the
+  // process of `bun run`. The runtime says what the log still has when that file is loaded, before its immediate runs.
+  // Not beside the other rows: a debug build then takes most of the time limit to start the server.
+  test.serial("bun bake says what is wrong with each file once", async () => {
+    using dir = tempDir("run-unparsable-package-json-bake", {
+      "package.json": JSON.stringify({ name: "parent", scripts: { bake: "echo from-parent" } }),
+      "child/package.json": text,
+      "child/tsconfig.json": `{"compilerOptions": {"strict": true`,
+      "child/app/server.ts": `export default { fetch: () => new Response("served") };\nsetImmediate(() => process.exit(0));`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "child", ["bake", "--port=0"]);
+    expect({ stdout: stdout.match(/^url: http:\/\/localhost:/m)?.[0] ?? stdout, stderr, exitCode }).toEqual({
+      stdout: "url: http://localhost:",
+      stderr: `${error}\n1 | {"compilerOptions": {"strict": true\n                                      ^\nerror: Expected "}" but found end of file\n    at <dir>/child/tsconfig.json:1:35`,
+      exitCode: 0,
+    });
+  });
+
+  // Each process of Bun that reads the package.json says what is wrong with it: `bun run` before it runs what it found,
+  // and a runtime when the file that it runs is loaded. `--sequential` runs a file in a process of its own.
+  test("bun run --sequential: the process of a file beside a command says it too", async () => {
+    using dir = project({ "package.json": text });
+    const { stdout, stderr, exitCode } = await run(String(dir), "child", ["run", "--sequential", "x.js", "echo raw"]);
+    expect({ stdout, stderr: timed(stderr), exitCode }).toEqual({
+      stdout: "x.js     | ran\necho raw | raw",
+      stderr: `${error}\n${error.replaceAll(/^/gm, "x.js     | ")}\nx.js     | Done in <time>\necho raw | Done in <time>`,
+      exitCode: 0,
+    });
+  });
+
+  // A file that starts with `#!` is no executable on Windows. With `--bun`, the `node` of this one is Bun.
+  test.skipIf(isWindows)("bun run --bun: the process of an executable that Bun runs says it too", async () => {
+    using dir = project({
+      "package.json": text,
+      "node_modules/.bin/installed": `#!/usr/bin/env node\nconsole.log("from-bin");\n`,
+    });
+    chmodSync(join(String(dir), "child/node_modules/.bin/installed"), 0o755);
+    expect(await run(String(dir), "child", ["run", "--bun", "installed"])).toEqual({
+      stdout: "from-bin",
+      stderr: `${error}\n${error}`,
+      exitCode: 0,
+    });
+  });
+
   // https://github.com/oven-sh/bun/issues/19604
   test.each([
     [["run"], ""],

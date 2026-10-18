@@ -115,8 +115,9 @@ impl BinaryExpressionVisitor {
         let e_ptr: *mut E::Binary = e_handle.as_ptr();
         let e_ = &mut *v.e;
 
-        let is_call_target =
-            matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
+        // A tagged template passes `this` to the tag like a call.
+        let is_call_target = matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr))
+            || matches!(p.template_tag, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
         let was_anonymous_named_expr = e_.right.is_anonymous_named();
         let prev_decorator_class_name = p.decorator_class_name;
 

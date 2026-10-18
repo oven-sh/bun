@@ -1481,8 +1481,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn e_if(p: &mut Self, e: &mut Expr, _: ExprIn) {
         let mut e_ = e.data.e_if().expect("infallible: variant checked");
-        let is_call_target =
-            matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+        // A tagged template passes `this` to the tag like a call.
+        let is_call_target = matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct))
+            || matches!(p.template_tag, Data::EIf(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;

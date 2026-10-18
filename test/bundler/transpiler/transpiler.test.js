@@ -211,6 +211,11 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = [y][0]`a`", "x = [y][0]`a`");
       ts.expectPrintedMin_("x = ({f: obj.m}).f`a`", "x = { f: obj.m }.f`a`");
       ts.expectPrintedMin_("x = ({f: y}).f`a`", "x = { f: y }.f`a`");
+      // A comma or a ternary strips `this` from a tag as it does from a callee.
+      ts.expectPrintedMin_("x = (0, obj.m)`a`", "x = (0, obj.m)`a`");
+      ts.expectPrintedMin_("x = (1 ? obj.m : 0)`a`", "x = (0, obj.m)`a`");
+      ts.expectPrintedMin_("x = (0 ? 0 : obj.m)`a`", "x = (0, obj.m)`a`");
+      ts.expectPrintedMin_("x = (0, y)`a`", "x = y`a`");
       // `new` does not thread `this` through the callee Reference, so the
       // fold still fires there.
       ts.expectPrintedMin_("x = new [C][0]()", "x = new C");

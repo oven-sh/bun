@@ -219,6 +219,10 @@ pub trait CalcValue:
     ) -> CssResult<RunningSum<Self>>;
     /// Wrap a value as a `Calc<Self>`.
     fn into_calc(self) -> Calc<Self>;
+}
+
+/// A calc() type that cannot hold a sum: `RunningSum::add_value` adds two of its values.
+pub trait ScalarCalcValue: CalcValue {
     /// Convert a `Calc<Self>` into `Self` if representable.
     fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self>;
 }
@@ -291,12 +295,14 @@ impl<V: CalcValue> Calc<V> {
         lhs.mul_f32(rhs)
     }
 
-    pub(crate) fn into_value(self, input: &mut css::Parser) -> CssResult<V> {
-        V::from_calc(self, input)
-    }
-
     pub(crate) fn into_calc(val: V) -> Self {
         val.into_calc()
+    }
+}
+
+impl<V: ScalarCalcValue> Calc<V> {
+    pub(crate) fn into_value(self, input: &mut css::Parser) -> CssResult<V> {
+        V::from_calc(self, input)
     }
 
     /// `self + rhs` for a type that cannot hold a sum. `add` adds two values.
@@ -343,7 +349,9 @@ impl<V: CalcValue> Calc<V> {
         let rhs_value = rhs.into_value(input)?;
         Ok(Self::into_calc(add(this_value, rhs_value)))
     }
+}
 
+impl<V: CalcValue> Calc<V> {
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
         Self::parse_with(input, &|_| None)
     }
@@ -1160,9 +1168,32 @@ impl<V: CalcValue + protocol::TryAdd> Calc<V> {
 /// The terms of a sum while terms are added to it.
 struct SumBuilder<V> {
     terms: Vec<Calc<V>>,
-    /// The positions of the `Calc::Value` terms, in order. A search of more
-    /// than `SCAN_MAX` terms builds it, and each change of `terms` updates it.
-    values: Option<Vec<usize>>,
+    /// A search of more than `SCAN_MAX` terms builds it, and each change of `terms` updates it.
+    values: Option<ValuePositions>,
+}
+
+/// The positions of the `Calc::Value` terms of a `SumBuilder`, in order.
+struct ValuePositions(Vec<usize>);
+
+impl ValuePositions {
+    fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.0.iter().copied()
+    }
+
+    /// The term at `i` is removed, and each later term moves one place.
+    fn remove(&mut self, i: usize) {
+        self.0.retain(|at| *at != i);
+        for at in self.0.iter_mut().filter(|at| **at > i) {
+            *at -= 1;
+        }
+    }
+
+    /// The first two terms change places, and one of the two is a value.
+    fn swap_first_two(&mut self) {
+        if let Some(at) = self.0.first_mut() {
+            *at = 1 - *at;
+        }
+    }
 }
 
 impl<V: CalcValue> SumBuilder<V> {
@@ -1185,7 +1216,7 @@ impl<V: CalcValue> SumBuilder<V> {
         debug_assert!(
             self.values
                 .as_ref()
-                .is_none_or(|values| values.iter().copied().eq(self.value_positions()))
+                .is_none_or(|values| values.iter().eq(self.value_positions()))
         );
         Calc::sum(self.terms)
     }
@@ -1239,7 +1270,7 @@ impl<V: CalcValue + protocol::TryAdd> SumBuilder<V> {
             return;
         }
         if let (Some(values), Calc::Value(_)) = (&mut self.values, &rhs) {
-            values.push(self.terms.len());
+            values.0.push(self.terms.len());
         }
         self.terms.push(rhs);
         if self.terms.len() == 2 {
@@ -1258,7 +1289,7 @@ impl<V: CalcValue + protocol::TryAdd> SumBuilder<V> {
                     .iter()
                     .all(|&j| i >= j || self.add_values_at(i, j).is_none())
             }));
-            self.values = Some(values);
+            self.values = Some(ValuePositions(values));
         }
         let terms = &self.terms;
         let add_to = |i: usize| match &terms[i] {
@@ -1266,7 +1297,7 @@ impl<V: CalcValue + protocol::TryAdd> SumBuilder<V> {
             _ => None,
         };
         match &self.values {
-            Some(values) => values.iter().copied().find_map(add_to),
+            Some(values) => values.iter().find_map(add_to),
             None => (0..terms.len()).find_map(add_to),
         }
     }
@@ -1283,10 +1314,7 @@ impl<V: CalcValue + protocol::TryAdd> SumBuilder<V> {
     fn remove(&mut self, i: usize) {
         self.terms.remove(i);
         if let Some(values) = &mut self.values {
-            values.retain(|at| *at != i);
-            for at in values.iter_mut().filter(|at| **at > i) {
-                *at -= 1;
-            }
+            values.remove(i);
         }
     }
 
@@ -1301,8 +1329,8 @@ impl<V: CalcValue + protocol::TryAdd> SumBuilder<V> {
         // A term with a sign is a value or a number.
         let one_value = matches!(a, Calc::Value(_)) != matches!(b, Calc::Value(_));
         core::mem::swap(a, b);
-        if let (true, Some([at, ..])) = (one_value, self.values.as_deref_mut()) {
-            *at = 1 - *at;
+        if let (true, Some(values)) = (one_value, &mut self.values) {
+            values.swap_first_two();
         }
     }
 }
@@ -1339,7 +1367,9 @@ impl<V: CalcValue> RunningSum<V> {
             Running::Many(sum) => Ok(sum),
         }
     }
+}
 
+impl<V: ScalarCalcValue> RunningSum<V> {
     /// `self + next` for a type that cannot hold a sum. `add` adds two values.
     /// A sum of this type takes one more math function and nothing else.
     pub(crate) fn add_value(
@@ -1770,6 +1800,9 @@ impl CalcValue for CSSNumber {
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
+}
+
+impl ScalarCalcValue for CSSNumber {
     fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
@@ -1792,6 +1825,9 @@ impl CalcValue for Angle {
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
+}
+
+impl ScalarCalcValue for Angle {
     fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
@@ -1933,6 +1969,9 @@ impl CalcValue for Percentage {
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
+}
+
+impl ScalarCalcValue for Percentage {
     fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
@@ -1979,6 +2018,9 @@ impl CalcValue for Time {
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
+}
+
+impl ScalarCalcValue for Time {
     fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
@@ -2022,9 +2064,6 @@ impl CalcValue for Length {
     #[inline]
     fn into_calc(self) -> Calc<Self> {
         Length::into_calc(self)
-    }
-    fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
-        Ok(Length::Calc(Box::new(c)))
     }
 }
 
@@ -2078,9 +2117,6 @@ macro_rules! dim_pct_protocol {
                 Ok(sum.add_term(next))
             }
             #[inline] fn into_calc(self) -> Calc<Self> { DimensionPercentage::into_calc(self) }
-            fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
-                Ok(DimensionPercentage::Calc(Box::new(c)))
-            }
         }
     };
 }

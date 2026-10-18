@@ -348,6 +348,8 @@ describe("css tests", () => {
     minify_test(`a { flex-grow: calc(1 + 2 - 0.5) }`, `a{flex-grow:2.5}`);
     minify_test(`a { flex-grow: calc(min(1,2) + min(3,4) + 1) }`, `a{flex-grow:calc(min(1,2) + min(3,4) + 1)}`);
     minify_test(`a { rotate: calc(10deg + 0.5turn - 5deg) }`, `a{rotate:185deg}`);
+    minify_test(`a { rotate: calc(1turn + 1turn) }`, `a{rotate:2turn}`);
+    minify_test(`a { rotate: calc(sin(0deg + 5) * 1deg) }`, `a{rotate:calc(sin(0deg + 5)*1deg)}`);
     minify_test(
       `a { rotate: calc(min(1deg,2) + min(1deg,2) + 1deg) }`,
       `a{rotate:calc(min(1deg,2) + min(1deg,2) + 1deg)}`,
@@ -362,22 +364,25 @@ describe("css tests", () => {
       `a{background:conic-gradient(red calc(30deg + 5%),#00f)}`,
     );
   });
+  // These sums print in the form that they keep when they are minified again. A sum times a number
+  // below zero does not: `calc(-1 * (1px - 10%) + 1em)` changes the order of its first two terms.
+  const minify_twice_test = (source: string, expected: string) =>
+    test(source, () => {
+      const once = minify_test_with_options(source, "");
+      expect(once).toEqual(expected);
+      expect(minify_test_with_options(once, "")).toEqual(once);
+    });
   describe("calc sum with a sum as an operand", () => {
     // An operand in brackets and a nested calc() are sums. Each term of the operand is added in turn.
     for (const prop of ["width", "outline-width"]) {
       const sum = (source: string, expected: string) =>
-        test(`a { ${prop}: ${source} }`, () => {
-          const once = minify_test_with_options(`a { ${prop}: ${source} }`, "");
-          expect(once).toEqual(`a{${prop}:${expected}}`);
-          // The result has no brackets, and it stays as it is when it is minified again.
-          expect(minify_test_with_options(once, "")).toEqual(once);
-        });
+        minify_twice_test(`a { ${prop}: ${source} }`, `a{${prop}:${expected}}`);
       sum(`calc(1vw - (1em + 2px))`, `calc(1vw - 1em - 2px)`);
       sum(`calc((1px + 1em) + (2px + 2em))`, `calc(3px + 3em)`);
       sum(`calc(1px + (2em + 3px))`, `calc(4px + 2em)`);
       sum(`calc(1em + (1px + 1em))`, `calc(2em + 1px)`);
       sum(`calc((1px + 1em) - (1px + 1em))`, `0`);
-      sum(`calc((1em - 1px) - (1px + 1em))`, `-2px`);
+      sum(`calc((1em + 3px) - (1px + 1em))`, `2px`);
       sum(`calc(1px + (min(1px,1em) + 1px))`, `calc(2px + min(1px,1em))`);
       sum(`calc(32px + (min(1px,1em) - 38px))`, `calc(-6px + min(1px,1em))`);
       sum(
@@ -393,6 +398,9 @@ describe("css tests", () => {
       sum(`calc(1px + (1px + 1em) * 0)`, `1px`);
       sum(`max(1px, (1px + 1em) * 0 + 1px)`, `1px`);
     }
+    minify_twice_test(`a { margin-left: calc((1em - 1px) - (1px + 1em)) }`, `a{margin-left:-2px}`);
+    // A number below zero changes places with the first term of the sum that follows it.
+    minify_twice_test(`a { width: calc(-2 + (1px + 1em)) }`, `a{width:calc(1px - 2 + 1em)}`);
     minify_test(`a { width: calc(100% - (1rem + 2px)) }`, `a{width:calc(100% - 1rem - 2px)}`);
     // uikit.css
     minify_test(`a { top: calc(50% - (calc(0.2px + 0.05em) / 2)) }`, `a{top:calc(50% - .1px - .025em)}`);
@@ -2420,6 +2428,19 @@ describe("css tests", () => {
         },
       );
     }
+
+    // Each term of a sum decides if an older browser needs the value before it.
+    for (const sum of ["calc(1px + 1em + 1dvh)", "calc(1px + 1dvh + 1em)"]) {
+      prefix_test(`.foo { width: 22px; width: ${sum} }`, `.foo { width: 22px; width: ${sum}; }`, {
+        chrome: 100 << 16,
+      });
+      prefix_test(`.foo { width: 22px; width: ${sum} }`, `.foo { width: ${sum}; }`, { chrome: 108 << 16 });
+    }
+    prefix_test(
+      `.foo { width: 22px; width: calc(100% - (1em + 1dvh)) }`,
+      `.foo { width: 22px; width: calc(100% - 1em - 1dvh); }`,
+      { chrome: 100 << 16 },
+    );
   });
 
   describe("padding", () => {

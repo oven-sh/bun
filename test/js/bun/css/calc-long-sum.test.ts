@@ -84,6 +84,13 @@ for (const property of ["width", "outline-width"]) {
   });
 }
 
+// Each value finds the term of its unit through a list of the places of the values, not through a look at every term.
+const apart = isDebug ? 45_000 : isASAN ? 250_000 : 500_000;
+test.concurrent(`width: ${apart} terms that do not fold, then ${apart} values`, async () => {
+  const result = await build(`.a{width:calc(${join(f, " + ", apart)}${repeat(" + 1px", apart)})}`);
+  expectSame(result, result.output, rule(`width: calc(${join(F, " + ", apart)} + ${apart}px)`));
+});
+
 // Memory
 
 test.concurrent("a value added to a sum of 3000 terms does not clone the sum", async () => {

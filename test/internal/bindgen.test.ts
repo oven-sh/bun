@@ -1067,6 +1067,57 @@ describe("overloads", () => {
   });
 });
 
+describe("what is only a result", () => {
+  it("b.f64.asDate is a Date", () => {
+    expect(bindgen.dateOf(86_400_000)).toEqual(new Date(86_400_000));
+    expect(bindgen.dateOf(NaN).getTime()).toBeNaN();
+  });
+
+  it("b.string.local is the string the body made", () => {
+    expect(bindgen.latin1(new Uint8Array([0x61, 0xe9, 0xff]))).toBe("a\u00e9\u00ff");
+    expect(bindgen.latin1(new Uint8Array())).toBe("");
+  });
+
+  it("a union is what its alternative is", () => {
+    expect(bindgen.textOrBytes("h\u00e9", 0)).toBe("h\u00e9");
+    expect(bindgen.textOrBytes("hi", 1)).toEqual(new Uint8Array([0x68, 0x69]));
+    expect(bindgen.textOrBytes("hi", 2)).toBeNull();
+  });
+
+  it("b.record has a property for each pair, in order", () => {
+    const lengths = bindgen.lengths("bb a \u00e9 ccc");
+    expect(Object.getPrototypeOf(lengths)).toBe(Object.prototype);
+    expect(Object.entries(lengths)).toEqual([
+      ["bb", 2],
+      ["a", 1],
+      ["\u00e9", 2],
+      ["ccc", 3],
+    ]);
+    expect(Object.getOwnPropertyDescriptor(lengths, "a")).toEqual({
+      value: 1,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(bindgen.lengths("")).toStrictEqual({});
+  });
+
+  it("b.record takes any key as an own property", () => {
+    const lengths = bindgen.lengths("__proto__ 10 constructor 2");
+    expect(Object.getPrototypeOf(lengths)).toBe(Object.prototype);
+    expect(Reflect.ownKeys(lengths)).toEqual(["2", "10", "__proto__", "constructor"]);
+    expect(Object.getOwnPropertyDescriptor(lengths, "__proto__")!.value).toBe(9);
+    expect(lengths[10]).toBe(2);
+  });
+
+  it("b.record keeps the last value of a key", () => {
+    expect(Object.entries(bindgen.lengths("a b a"))).toEqual([
+      ["a", 1],
+      ["b", 1],
+    ]);
+  });
+});
+
 describe("arrays", () => {
   it("in", () => {
     expect(bindgen.sumArray([])).toBe(0);

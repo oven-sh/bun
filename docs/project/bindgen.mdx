@@ -226,12 +226,23 @@ These come last, in this order (`b.any` already takes `undefined` and `null`, so
 
 As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` anything that
 is `IntoIterator`. The body of a `b.fn` or of a namespace's function whose bytes do not outlive
-it returns the string itself, from `heap.create_utf8_string(bytes)`. `b.u64.asBigInt` is a
-result only: a `u64` that is always returned as a BigInt. `b.bufferSource` as a result is what
+it returns the string itself, from `heap.create_utf8_string(bytes)`. `b.bufferSource` as a result is what
 `heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array(bytes)`,
 `heap.create_buffer(bytes)`, `heap.create_uint8_array_from_box(bytes)` or
 `heap.create_buffer_from_box(bytes)` made. The last two take over the allocation, and the two
 before them copy.
+
+These are results only:
+
+| Schema           | Rust                                          | JavaScript gets                                                                                                                                                                      |
+| ---------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `b.u64.asBigInt` | `u64`                                         | always a BigInt                                                                                                                                                                      |
+| `b.f64.asDate`   | `f64`                                         | a `Date` with that time value                                                                                                                                                        |
+| `b.string.local` | `JsLocal<'a, JSString>`                       | the string the body made: `heap.create_latin1_string(bytes)`, `heap.create_utf16_string_from_vec(units)`, `heap.create_utf8_string(bytes)` or `heap.common_string(CommonString::..)` |
+| `b.record(T)`    | anything that is `IntoIterator` of `(key, T)` | an object with an own property for each pair, in order; a key is UTF-8                                                                                                               |
+
+A union is returned as the alternative it holds. Like a dictionary, one that is only returned owns
+its strings, and one that is both taken and returned has alternatives with the same Rust type both ways.
 
 ### Numbers
 

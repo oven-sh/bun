@@ -2,6 +2,7 @@
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::JSString;
 use crate::bindgen::{
     self, BufferSource, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _, JsScope,
     JsWrapper, JsWrapperStrong, PinnedBytes, StringOrJsBytes,
@@ -9,7 +10,7 @@ use crate::bindgen::{
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
     TestCounterInternalFields as _, TestFailure, TestFlag, TestHolderClass, TestNames, TestOptions,
-    TestOptionsEcho, TestOuter, TestTokenClass, TestValue,
+    TestOptionsEcho, TestOuter, TestTextOrBytes, TestTokenClass, TestValue,
 };
 
 // This example should be kept in sync with bindgen's documentation
@@ -204,6 +205,30 @@ pub(crate) fn names(text: &[u8]) -> TestNames {
 
 pub(crate) fn bare(id: u32) -> TestBare {
     TestBare { id, label: None }
+}
+
+pub(crate) fn date_of(time: f64) -> f64 {
+    time
+}
+
+pub(crate) fn latin1<'a>(heap: &JsHeap<'a>, bytes: &[u8]) -> JsLocal<'a, JSString> {
+    heap.create_latin1_string(bytes)
+}
+
+pub(crate) fn text_or_bytes<'a>(
+    heap: &JsHeap<'a>,
+    text: &[u8],
+    r#as: u8,
+) -> bindgen::Result<'a, TestTextOrBytes<'a>> {
+    Ok(match r#as {
+        0 => TestTextOrBytes::Text(text.to_vec()),
+        1 => TestTextOrBytes::Bytes(heap.create_uint8_array(text)?),
+        _ => TestTextOrBytes::Nothing,
+    })
+}
+
+pub(crate) fn lengths(text: &[u8]) -> impl Iterator<Item = (&[u8], usize)> {
+    words(text).map(|word| (word, word.len()))
 }
 
 pub(crate) fn words(text: &[u8]) -> impl Iterator<Item = &[u8]> {

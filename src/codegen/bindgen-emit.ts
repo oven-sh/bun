@@ -71,9 +71,17 @@ function walk(type: Type, visit: (type: Type) => void, seen = new Set<Type>()): 
 /** Marks which direction each dictionary travels and gives every table entry its index. */
 export function analyze(files: readonly SchemaFile[]): Tables {
   const tables: Tables = { memberNames: [], enumerationValues: [], classes: [] };
-  const markAccepted = (type: Type) => walk(type, t => void (t instanceof DictionaryType && (t.accepted = true)));
+  const markAccepted = (type: Type) =>
+    walk(type, t => void ((t instanceof DictionaryType || t instanceof UnionType) && (t.accepted = true)));
   const markReturned = (type: Type) =>
-    walk(type, t => void ((t instanceof DictionaryType || t instanceof EnumerationType) && (t.returned = true)));
+    walk(
+      type,
+      t =>
+        void (
+          (t instanceof DictionaryType || t instanceof UnionType || t instanceof EnumerationType) &&
+          (t.returned = true)
+        ),
+    );
   for (const file of files) {
     for (const type of file.types) {
       if (type instanceof DictionaryType && type.fromJS) markAccepted(type);
@@ -124,6 +132,14 @@ export function analyze(files: readonly SchemaFile[]): Tables {
               `${type.name}.${member.name}: ${member.type.tsType} has different Rust types as an argument and as a result; split the dictionary`,
             );
           }
+        }
+      } else if (type instanceof UnionType && type.accepted && type.returned) {
+        const scope = type.origin!;
+        for (const { name, type: alternative } of type.alternatives) {
+          assert(
+            alternative.rustType(scope) === alternative.rustResultFieldType(scope),
+            `${type.name}.${name}: ${alternative.tsType} has different Rust types as an argument and as a result; split the union`,
+          );
         }
       }
     }
@@ -341,7 +357,7 @@ template<> std::optional<${type.cpp}> WebCore::parseEnumerationFromString<${type
 template<> std::optional<${type.cpp}> WebCore::parseEnumeration<${type.cpp}>(JSC::JSGlobalObject&, JSC::JSValue);
 `;
   }
-  if (type instanceof UnionType) return cppHeaderForUnion(type);
+  if (type instanceof UnionType) return type.accepted ? cppHeaderForUnion(type) : "";
   assert(type instanceof DictionaryType);
   if (!type.accepted) return "";
   return `
@@ -1120,8 +1136,14 @@ ${
 
 function rustForUnion(type: UnionType, scope: RustScope): string {
   const lifetime = type.needsLifetime ? "<'a>" : "";
-  return `
-#[repr(C)]
+  const held = (t: Type) => (type.accepted ? t.rustType(scope) : t.rustResultFieldType(scope));
+  let text = `
+${type.accepted && type.rustIsCopy ? "#[derive(Clone, Copy)]\n" : ""}pub enum ${type.name}${lifetime} {
+${type.alternatives.map(a => (a.type instanceof UnitType ? `    ${a.variant},` : `    ${a.variant}(${held(a.type)}),`)).join("\n")}
+}
+`;
+  if (type.accepted) {
+    text += `#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Extern${type.name} {
     data: Extern${type.name}Data,
@@ -1133,9 +1155,6 @@ union Extern${type.name}Data {
 ${type.alternatives.map(a => `    ${rustIdent(snakeCase(a.name))}: ${a.type.rustExternType(scope)},`).join("\n")}
 }
 ${rustLayoutAssert(`Extern${type.name}`, type)}
-${type.rustIsCopy ? "#[derive(Clone, Copy)]\n" : ""}pub enum ${type.name}${lifetime} {
-${type.alternatives.map(a => (a.type instanceof UnitType ? `    ${a.variant},` : `    ${a.variant}(${a.type.rustType(scope)}),`)).join("\n")}
-}
 impl${lifetime} ${type.name}${lifetime} {
     /// # Safety
     /// \`value\` was just filled in by generated C++${lifetime && " for the call `heap` belongs to"} and is read once.
@@ -1157,6 +1176,24 @@ ${type.alternatives
     }
 }
 `;
+  }
+  if (type.returned) {
+    text += `impl${lifetime} ${type.name}${lifetime} {
+    pub fn into_js${lifetime ? "" : "<'a>"}(self, heap: &bindgen::JsHeap<'a>) -> ${jsValueResult} {
+        match self {
+${type.alternatives
+  .map(a =>
+    a.type instanceof UnitType
+      ? `            Self::${a.variant} => Ok(bindgen::JsLocal::NULL),`
+      : `            Self::${a.variant}(value) => ${a.type.rustToJS("value", scope)},`,
+  )
+  .join("\n")}
+        }
+    }
+}
+`;
+  }
+  return text;
 }
 
 function rustForDictionary(type: DictionaryType, scope: RustScope): string {

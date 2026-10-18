@@ -32,6 +32,24 @@ extern "C" EncodedJSValue Bun__Bindgen__createNullPrototypeObject(JSGlobalObject
     return putMembers(vm, object, firstMemberNameIndex, values, count);
 }
 
+// No count says nothing about how many entries come, so that is an object as `{}` makes it.
+extern "C" EncodedJSValue Bun__Bindgen__createRecord(JSGlobalObject* globalObject, size_t atLeast)
+{
+    if (!atLeast)
+        return JSValue::encode(constructEmptyObject(globalObject));
+    return JSValue::encode(constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min<unsigned>(atLeast, JSFinalObject::maxInlineCapacity)));
+}
+
+extern "C" bool Bun__Bindgen__putRecordEntry(JSGlobalObject* globalObject, EncodedJSValue record, const uint8_t* key, size_t keyLength, EncodedJSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto name = Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(std::span { key, keyLength }));
+    asObject(JSValue::decode(record))->putDirectMayBeIndex(globalObject, name, JSValue::decode(value));
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
 extern "C" EncodedJSValue Bun__Bindgen__enumerationValueToJS(JSGlobalObject* globalObject, unsigned index)
 {
     return JSValue::encode(schemaStrings(getVM(globalObject)).enumerationValue(index));

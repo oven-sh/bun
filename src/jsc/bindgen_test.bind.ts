@@ -74,6 +74,21 @@ export const names = b.fn({ args: { text: b.string.utf8 }, returns: TestNames })
 export const TestBare = b.dictionary({ id: b.u32, label: b.string.utf8.optional }, { nullPrototype: true });
 export const bare = b.fn({ args: { id: b.u32 }, returns: TestBare });
 
+export const dateOf = b.fn({ args: { time: b.f64 }, returns: b.f64.asDate });
+export const latin1 = b.fn({
+  args: { bytes: b.bytes({ from: ["buffer"] }) },
+  returns: b.string.local,
+  capability: "heap",
+});
+export const TestTextOrBytes = b.union({ text: b.string.utf8, bytes: b.bufferSource, nothing: b.null });
+export const textOrBytes = b.fn({
+  args: { text: b.string.utf8, as: b.u8 },
+  returns: TestTextOrBytes,
+  capability: "heap",
+  throws: true,
+});
+export const lengths = b.fn({ args: { text: b.string.utf8 }, returns: b.record(b.usize) });
+
 export const TestValue = b.union({
   number: b.f64,
   flag: b.bool,

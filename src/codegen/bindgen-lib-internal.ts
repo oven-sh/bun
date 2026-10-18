@@ -507,6 +507,11 @@ export class DoubleType extends PrimitiveType {
   constructor(idlType = "Bun::Bindgen::IDLStrictDouble", valueKinds: ValueKinds = ["number"]) {
     super(idlType, valueKinds === "any" ? "any" : "number", "f64", 8, valueKinds);
   }
+  /** As a result: a `Date` with that time value. */
+  get asDate(): DateResultType {
+    assert(this.idlType === "Bun::Bindgen::IDLStrictDouble", ".asDate follows b.f64");
+    return new DateResultType();
+  }
   /** `ToNumber`: WebIDL's `unrestricted double`. */
   get loose(): LooseDoubleType {
     return new LooseDoubleType("WebCore::IDLUnrestrictedDouble", "any");
@@ -517,6 +522,23 @@ export class LooseDoubleType extends DoubleType {
   /** `ToNumeric`: a BigInt too, as the double nearest to it, for an argument whose type is `number | bigint`. */
   get allowBigInt(): DoubleType {
     return new DoubleType("Bun::Bindgen::IDLLooseDoubleOrBigInt", "any");
+  }
+}
+
+export class DateResultType extends Type {
+  readonly idlType = "";
+  readonly tsType = "Date";
+  layout(): Layout {
+    return { size: 8, align: 8 };
+  }
+  rustExternType(): string {
+    return "f64";
+  }
+  rustType(): string {
+    return "f64";
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::date(heap, ${value})`;
   }
 }
 
@@ -593,6 +615,11 @@ export class StringType extends Type {
   get utf8(): Utf8Type {
     return new Utf8Type(this.valueKinds === "any");
   }
+  /** As a result: the JS string, which the body made. */
+  get local(): LocalStringResultType {
+    assert(this.idlType === "Bun::Bindgen::IDLStrictString", ".local follows b.string");
+    return new LocalStringResultType();
+  }
   get nullRepresentation() {
     return "pointer" as const;
   }
@@ -617,6 +644,26 @@ export class StringType extends Type {
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::string(heap, ${value})`;
+  }
+}
+
+export class LocalStringResultType extends Type {
+  readonly idlType = "";
+  readonly tsType = "string";
+  get holdsJSValue(): boolean {
+    return true;
+  }
+  layout(): Layout {
+    return { size: 8, align: 8 };
+  }
+  rustExternType(): string {
+    return "JSValue";
+  }
+  rustType(): string {
+    return "bindgen::JsLocal<'a, bun_jsc::JSString>";
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::any(heap, ${value})`;
   }
 }
 
@@ -1292,6 +1339,40 @@ export class ArrayType extends Type {
   }
 }
 
+/** As a result: an object with a property for each pair of a key, in UTF-8, and a value. */
+export class RecordResultType extends Type {
+  readonly idlType = "";
+  readonly value: Type;
+  constructor(value: Type) {
+    super();
+    this.value = value;
+  }
+  get tsType(): string {
+    return `Record<string, ${this.value.tsType}>`;
+  }
+  get rustIsCopy(): boolean {
+    return false;
+  }
+  get dependencies(): readonly Type[] {
+    return [this.value];
+  }
+  layout(): Layout {
+    return { size: 16, align: 8 };
+  }
+  rustExternType(): never {
+    throw new TypeError("b.record is a result");
+  }
+  rustType(scope: RustScope): string {
+    return `Vec<(Vec<u8>, ${this.value.rustResultFieldType(scope)})>`;
+  }
+  rustReturnType(scope: RustScope): string {
+    return `impl IntoIterator<Item = (impl AsRef<[u8]>, ${this.value.rustReturnType(scope)})>`;
+  }
+  rustToJS(value: string, scope: RustScope): string {
+    return `bindgen::to_js::record(heap, ${value}, |heap, value| ${this.value.rustToJS("value", scope)})`;
+  }
+}
+
 // ───────────────────────────── named types ─────────────────────────────
 
 export abstract class NamedType extends Type {
@@ -1541,6 +1622,9 @@ export class DictionaryType extends NamedType {
 /** A value goes to the first alternative, in written order, that takes its kind. */
 export class UnionType extends NamedType {
   readonly alternatives: readonly { name: string; variant: string; type: Type }[];
+  /** Reachable from an argument / from a return type. Set by the generator. */
+  accepted = false;
+  returned = false;
   constructor(alternatives: Record<string, Type>) {
     super();
     this.alternatives = Object.entries(alternatives).map(([name, type]) => ({ name, variant: pascalCase(name), type }));
@@ -1573,6 +1657,10 @@ export class UnionType extends NamedType {
         `${name} is never chosen: the alternatives before it take every value it would. Move it earlier or remove it`,
       ),
     );
+  }
+  /** As for a dictionary. */
+  get needsLifetime(): boolean {
+    return this.accepted ? super.needsLifetime : this.holdsJSValue;
   }
   get alternativesByKind() {
     return alternativesByKind(this.alternatives.map(a => a.type));
@@ -1631,6 +1719,9 @@ export class UnionType extends NamedType {
   rustFromExtern(expr: string, scope: RustScope): string {
     return `${this.path(scope, this.name)}::from_extern(&${expr}${this.needsLifetime ? ", heap" : ""})`;
   }
+  rustToJS(value: string): string {
+    return `${value}.into_js(heap)`;
+  }
 }
 
 // ───────────────────────────── functions ─────────────────────────────
@@ -1681,6 +1772,8 @@ export class Signature {
     );
     for (const { name, type } of this.args) {
       assert(!isMadeOf(type, BigIntResultType), `${name}: .asBigInt is a result; an argument is b.u64.allowBigInt`);
+      for (const kind of [DateResultType, LocalStringResultType, RecordResultType])
+        assert(!isMadeOf(type, kind), `${name}: ${type.tsType} is written as a result is`);
       assert(
         !type.borrowsHeap || this.capability !== "js",
         `${name}: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read`,

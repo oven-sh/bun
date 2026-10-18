@@ -1,6 +1,6 @@
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal};
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
+use bun_jsc::bindgen::{self, JsHeap};
+use bun_jsc::{JSGlobalObject, JsResult, bun_string_jsc};
 
 use crate::generated_bindgen::s3_stat::S3StatClass;
 
@@ -42,10 +42,8 @@ impl S3StatClass for S3Stat {
         self.etag.clone()
     }
 
-    fn last_modified<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
-        // SAFETY: makes a `Date`.
-        let date = JSValue::from_date_number(unsafe { heap.global() }, self.last_modified);
-        JsLocal::new(heap, date)
+    fn last_modified(&self) -> f64 {
+        self.last_modified
     }
 
     fn size(&self) -> u64 {

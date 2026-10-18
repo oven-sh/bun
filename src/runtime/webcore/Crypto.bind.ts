@@ -5,6 +5,9 @@ export default b.module({ rustPath: "crate::webcore::crypto" });
 /** What is not a string is not converted: it is "hex". */
 export const UUIDEncoding = b.union({ label: b.string.utf8, ignored: b.any });
 
+/** `bytes` is a `Buffer`, for the encoding "buffer". */
+export const EncodedUUID = b.union({ text: b.string, bytes: b.bufferSource });
+
 export const randomUUIDv5 = b.fn({
   args: {
     name: b.bytes({ from: ["string", "buffer"] }),
@@ -12,7 +15,7 @@ export const randomUUIDv5 = b.fn({
     namespace: b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" }),
     encoding: UUIDEncoding,
   },
-  returns: b.any,
+  returns: EncodedUUID,
   capability: "heap",
   throws: true,
   rustPath: "crate::webcore::crypto::random_uuid_v5",

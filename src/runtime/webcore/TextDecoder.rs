@@ -2,13 +2,11 @@ use crate::generated_bindgen::text_decoder::{
     TextDecodeOptions, TextDecoderClass, TextDecoderOptions,
 };
 use crate::webcore::EncodingLabel;
-use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSValue};
+use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSString, JSValue};
 use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 
-use bun_core::EncodedSlice;
-use jsc::EncodedSliceJsc as _;
 use jsc::StringJsc as _;
 use jsc::bun_string_jsc;
 
@@ -219,7 +217,7 @@ impl TextDecoder {
         heap: &JsHeap<'a>,
         chunk: &[u8],
         stream: bool,
-    ) -> bindgen::Result<'a, JSValue> {
+    ) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
         // https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2: what follows a flush is a new stream.
         if !core::mem::replace(&mut self.do_not_flush, stream) {
             self.bom_seen = false;
@@ -236,13 +234,13 @@ impl TextDecoder {
         &mut self,
         heap: &JsHeap<'a>,
         buffer_slice: &[u8],
-    ) -> bindgen::Result<'a, JSValue> {
-        // SAFETY: makes a string. What throws is one that cannot be made, and then nothing reads `self` or the bytes.
+    ) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
+        // SAFETY: it throws, and then nothing reads `self` or the bytes.
         let global_this = unsafe { heap.global() };
         match self.encoding {
             EncodingLabel::LATIN1 => {
                 if strings::is_all_ascii(buffer_slice) {
-                    return Ok(EncodedSlice::latin1(buffer_slice).to_js(global_this));
+                    return Ok(heap.create_latin1_string(buffer_slice));
                 }
 
                 // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
@@ -257,7 +255,7 @@ impl TextDecoder {
                 let out = strings::copy_cp1252_into_utf16(buf, buffer_slice);
                 // SAFETY: the copy above initialized `out.written` (≤ `out_length`) units.
                 unsafe { units.set_len(out.written as usize) };
-                Ok(bun_string_jsc::owned_utf16_into_js(global_this, units)?)
+                heap.create_utf16_string_from_vec(units)
             }
             EncodingLabel::Utf8 => {
                 // Prepend the partial UTF-8 sequence carried over from the
@@ -332,13 +330,13 @@ impl TextDecoder {
                             };
                         }
                     }
-                    return Ok(bun_string_jsc::owned_utf16_into_js(global_this, decoded)?);
+                    return heap.create_utf16_string_from_vec(decoded);
                 }
 
-                // All-ASCII input needed no conversion. `EncodedSlice::latin1(..).to_js`
+                // All-ASCII input needed no conversion. `create_latin1_string`
                 // copies, so `input` may borrow the caller's buffer or `joined_owned`.
                 // Experiment: using mimalloc directly is slightly slower
-                Ok(EncodedSlice::latin1(input).to_js(global_this))
+                Ok(heap.create_latin1_string(input))
             }
 
             enc @ (EncodingLabel::Utf16Le | EncodingLabel::Utf16Be) => {
@@ -383,7 +381,7 @@ impl TextDecoder {
                     }
                 }
 
-                Ok(bun_string_jsc::owned_utf16_into_js(global_this, decoded)?)
+                heap.create_utf16_string_from_vec(decoded)
             }
 
             // Every other encoding goes through encoding_rs.
@@ -410,7 +408,7 @@ impl TextDecoder {
                         }
                     };
 
-                Ok(bun_string_jsc::owned_utf16_into_js(global_this, decoded)?)
+                heap.create_utf16_string_from_vec(decoded)
             }
         }
     }
@@ -450,14 +448,12 @@ impl TextDecoderClass for TextDecoder {
         heap: &JsHeap<'a>,
         input: Option<&'a [u8]>,
         options: &TextDecodeOptions,
-    ) -> bindgen::Result<'a, JsLocal<'a>> {
-        let decoded = self.decode_chunk(heap, input.unwrap_or_default(), options.stream)?;
-        Ok(JsLocal::new(heap, decoded))
+    ) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
+        self.decode_chunk(heap, input.unwrap_or_default(), options.stream)
     }
 
-    fn encoding<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
-        // SAFETY: makes a string.
-        JsLocal::new(heap, self.encoding.to_js(unsafe { heap.global() }))
+    fn encoding<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a, JSString> {
+        self.encoding.to_js(heap)
     }
 
     fn fatal(&self) -> bool {
@@ -538,7 +534,8 @@ pub(crate) extern "C" fn TextDecoder__encodingToJS(
     global: &JSGlobalObject,
     encoding: EncodingLabel,
 ) -> JSValue {
-    encoding.to_js(global)
+    // SAFETY: the getter of a stream called this with no `JsScope` borrowed.
+    unsafe { JsScope::with(global.as_mut_ptr(), |cx| encoding.to_js(&cx.heap).to_js()) }
 }
 
 #[unsafe(no_mangle)]
@@ -574,6 +571,7 @@ pub(crate) extern "C" fn TextDecoder__decodeForStream(
         JsScope::with(global.as_mut_ptr(), |cx| {
             (*this)
                 .decode_chunk(&cx.heap, slice, stream)
+                .map(JsLocal::to_js)
                 .map_err(|error| error.into_js_error(global))
         })
     }

@@ -420,19 +420,9 @@ impl FileSystemRouterClass for FileSystemRouter {
         Ok(this)
     }
 
-    fn routes<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
-        let paths = self.router.get_entry_points();
+    fn routes(&self) -> impl IntoIterator<Item = (impl AsRef<[u8]>, impl AsRef<[u8]>)> {
         let names = self.router.get_names();
-        let mut name_strings: Vec<EncodedSlice> = vec![EncodedSlice::EMPTY; names.len() * 2];
-        let (name_strings_slice, paths_strings) = name_strings.split_at_mut(names.len());
-        for (i, name) in names.iter().enumerate() {
-            name_strings_slice[i] = EncodedSlice::from_bytes(name);
-            paths_strings[i] = EncodedSlice::from_bytes(paths[i]);
-        }
-        // SAFETY: the object is new and plain, and its properties are defined and not set.
-        let global = unsafe { heap.global() };
-        let routes = JSValue::from_entries(global, name_strings_slice, paths_strings, true)?;
-        Ok(JsLocal::new(heap, routes))
+        names.iter().zip(self.router.get_entry_points())
     }
 
     fn style(&self) -> RouterStyle {

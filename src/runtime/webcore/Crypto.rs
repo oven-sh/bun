@@ -6,7 +6,7 @@ use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSType, JSValue, JsResult, StringJsc};
 
-use crate::generated_bindgen::crypto::{CryptoClass, UUIDEncoding};
+use crate::generated_bindgen::crypto::{CryptoClass, EncodedUUID, UUIDEncoding};
 use crate::node::Encoding;
 
 pub(crate) struct Crypto;
@@ -222,7 +222,7 @@ pub(crate) fn random_uuid_v5<'a>(
     name: &[u8],
     namespace: StringOrJsBytes<'a>,
     encoding: UUIDEncoding<'a>,
-) -> bindgen::Result<'a, JsLocal<'a>> {
+) -> bindgen::Result<'a, EncodedUUID<'a>> {
     let encoding = match encoding {
         UUIDEncoding::Label(label) => Encoding::from(label).ok_or_else(|| {
             heap.error_with_code(
@@ -267,15 +267,15 @@ pub(crate) fn random_uuid_v5<'a>(
                     .try_into()
                     .expect("infallible: size matches"),
             );
-            bindgen::to_js::string(heap, str)
+            Ok(EncodedUUID::Text(str))
         }
-        Encoding::Buffer => Ok(heap
-            .create_buffer_from_box(Box::from(uuid.bytes))?
-            .as_value()),
-        encoding => bindgen::to_js::string(
-            heap,
-            crate::webcore::encoding::to_bun_string(&uuid.bytes, encoding),
-        ),
+        Encoding::Buffer => Ok(EncodedUUID::Bytes(
+            heap.create_buffer_from_box(Box::from(uuid.bytes))?,
+        )),
+        encoding => Ok(EncodedUUID::Text(crate::webcore::encoding::to_bun_string(
+            &uuid.bytes,
+            encoding,
+        ))),
     }
 }
 

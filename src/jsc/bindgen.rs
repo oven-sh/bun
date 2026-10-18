@@ -5,9 +5,11 @@ use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
+use bun_core::EncodedSlice;
+
 use crate::{
-    ArrayBuffer, ErrorCode, JSGlobalObject, JSObject, JSString, JSValue, JsError, JsThread,
-    PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
+    ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSGlobalObject, JSObject, JSString,
+    JSValue, JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -65,6 +67,30 @@ impl<'a> JsHeap<'a> {
             self.global_object(),
             utf8,
         ))
+    }
+
+    /// A string with a copy of `latin1`.
+    #[inline]
+    pub fn create_latin1_string(&self, latin1: &[u8]) -> JsLocal<'a, JSString> {
+        JsLocal::from_raw(EncodedSlice::latin1(latin1).to_js(self.global_object()))
+    }
+
+    /// A string that takes over the allocation.
+    #[inline]
+    pub fn create_utf16_string_from_vec(
+        &self,
+        utf16: Vec<u16>,
+    ) -> Result<'a, JsLocal<'a, JSString>> {
+        JsLocal::from_js_result(crate::bun_string_jsc::owned_utf16_into_js(
+            self.global_object(),
+            utf16,
+        ))
+    }
+
+    /// One of the strings every global object has.
+    #[inline]
+    pub fn common_string(&self, string: CommonString) -> JsLocal<'a, JSString> {
+        JsLocal::from_raw(string.to_js(self.global_object()))
     }
 
     /// A `Uint8Array` whose bytes are whatever the allocator left there.
@@ -755,6 +781,12 @@ pub mod to_js {
         ))
     }
 
+    #[inline]
+    pub fn date<'a>(heap: &JsHeap<'a>, time_value: f64) -> Result<'a, JsLocal<'a>> {
+        let date = JSValue::from_date_number(heap.global_object(), time_value);
+        Ok(JsLocal::from_raw(date))
+    }
+
     #[inline(always)]
     pub fn undefined<'a>(_: &JsHeap<'a>, (): ()) -> Result<'a, JsLocal<'a>> {
         Ok(JsLocal::UNDEFINED)
@@ -838,6 +870,33 @@ pub mod to_js {
             array.put_index(global, index as u32, value?)?;
         }
         Ok(JsLocal::from_raw(array))
+    }
+
+    /// The value of a key that comes again replaces the one before.
+    #[inline]
+    pub fn record<'a, K: AsRef<[u8]>, V>(
+        heap: &JsHeap<'a>,
+        entries: impl IntoIterator<Item = (K, V)>,
+        mut convert: impl FnMut(&JsHeap<'a>, V) -> Result<'a, JsLocal<'a>>,
+    ) -> Result<'a, JsLocal<'a>> {
+        let global = heap.global_object();
+        let entries = entries.into_iter();
+        let record = extern_types::Bun__Bindgen__createRecord(global, entries.size_hint().0);
+        for (key, value) in entries {
+            let (key, value) = (key.as_ref(), convert(heap, value)?);
+            // SAFETY: `record` is the object made above, and the key is read before this returns.
+            crate::call_false_is_throw(global, || unsafe {
+                extern_types::Bun__Bindgen__putRecordEntry(
+                    global,
+                    record,
+                    key.as_ptr(),
+                    key.len(),
+                    value.0,
+                )
+            })
+            .map_err(Error::pending)?;
+        }
+        Ok(JsLocal::from_raw(record))
     }
 
     /// An empty value is a member that is absent.

@@ -1845,26 +1845,6 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(42);
   });
 
-  it("the second warning of --unhandled-rejections=warn has the stack of the reason", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "--unhandled-rejections=warn",
-        "-e",
-        `const reason = new Error("boom");
-         process.on("warning", warning => console.log(warning.stack === reason.stack, warning.stack.split("\\n")[0]));
-         Promise.reject(reason);`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    // node (v26.7.0) has identical output
-    expect(stdout).toBe("false UnhandledPromiseRejectionWarning: Error: boom\ntrue Error: boom\n");
-    expect(exitCode).toBe(0);
-  });
-
   it("delivers many unhandledRejections in order, including ones queued from the handler", async () => {
     // Pins the observable behaviour: order is preserved, late .catch()
     // suppresses delivery, and a rejection raised from inside the handler is

@@ -32,6 +32,30 @@ public:
     bool isFiringEventListeners { false };
 };
 
+// A listener in C++: the emitter calls it without entering the VM. `function` is what listeners() shows and off() takes.
+class NativeEventListener final : public EventListener {
+public:
+    static Ref<NativeEventListener> create(JSC::JSObject& function, WTF::Function<void()>&& call) { return adoptRef(*new NativeEventListener(function, WTF::move(call))); }
+
+    bool operator==(const EventListener& other) const final { return other.jsFunction() == m_function.get(); }
+    void handleEvent(ScriptExecutionContext&, Event&) final {}
+    JSC::JSObject* jsFunction() const final { return m_function.get(); }
+    void visitJSFunction(JSC::AbstractSlotVisitor& visitor) final { visitor.append(m_function); }
+    void visitJSFunction(JSC::SlotVisitor& visitor) final { visitor.append(m_function); }
+    void call() { m_call(); }
+
+private:
+    NativeEventListener(JSC::JSObject& function, WTF::Function<void()>&& call)
+        : EventListener(NativeEventListenerType)
+        , m_function(&function)
+        , m_call(WTF::move(call))
+    {
+    }
+
+    JSC::Weak<JSC::JSObject> m_function;
+    WTF::Function<void()> m_call;
+};
+
 class EventEmitter final : public ScriptWrappable, public CanMakeWeakPtr<EventEmitter>, public RefCounted<EventEmitter>, public ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(EventEmitter);
 

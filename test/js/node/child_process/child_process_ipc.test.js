@@ -109,10 +109,8 @@ test.concurrent("a message that arrives before there is a 'message' listener is 
     child, nobody listens and listenerCount() returns 1 as they arrive: ["end"]
     child, nobody listens and listenerCount() returns 1 in the tick: ["end"]
     child, the listenerCount() of node:events: ["first","second","end"]
-    child, opened by channel.ref(): ["first","second","end"]
-    child, opened by channel.unref(): ["first","second","end"]
-    child, opened by channel.refCounted(): ["first","second","end"]
-    child, opened by channel.unrefCounted(): ["first","second","end"]
+    child, nobody listens and listenerCount() throws: ["RangeError","RangeError","end"]
+    child, nobody listens and listenerCount is 5: ["TypeError","TypeError","end"]
     parent, a late listener: ["first","second","end"]
     parent, a handle: [["first","Server"],"second","end"]
     parent, a listener that throws: ["first","first","end"]
@@ -125,10 +123,8 @@ test.concurrent("a message that arrives before there is a 'message' listener is 
     parent, nobody listens and listenerCount() returns 1 as they arrive: ["end"]
     parent, nobody listens and listenerCount() returns 1 in the tick: ["end"]
     parent, the listenerCount() of node:events: ["first","second","end"]
-    parent, opened by channel.ref(): ["first","second","end"]
-    parent, opened by channel.unref(): ["first","second","end"]
-    parent, opened by channel.refCounted(): ["first","second","end"]
-    parent, opened by channel.unrefCounted(): ["first","second","end"]
+    parent, nobody listens and listenerCount() throws: ["RangeError","RangeError","end"]
+    parent, nobody listens and listenerCount is 5: ["TypeError","TypeError","end"]
     "
   `);
 });

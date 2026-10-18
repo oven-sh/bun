@@ -1589,14 +1589,9 @@ static bool hasMessageListener(Zig::GlobalObject* global)
         return true;
     JSValue listenerCount = process->get(global, Identifier::fromString(vm, "listenerCount"_s));
     RETURN_IF_EXCEPTION(scope, false);
-    auto callData = JSC::getCallData(listenerCount);
-    if (callData.type == CallData::Type::None) {
-        throwTypeError(global, scope, "process.listenerCount is not a function"_s);
-        return false;
-    }
     JSC::MarkedArgumentBuffer args;
     args.append(jsString(vm, vm.propertyNames->message.string()));
-    JSValue count = JSC::profiledCall(global, ProfilingReason::API, listenerCount, callData, process, args);
+    JSValue count = JSC::call(global, listenerCount, process, args, "process.listenerCount is not a function"_s);
     RETURN_IF_EXCEPTION(scope, false);
     return count.toBoolean(global);
 }
@@ -1632,23 +1627,28 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitPendingMessages, (JSGlobalObject * 
     return JSValue::encode(jsUndefined());
 }
 
+static void queueEmitPendingMessages(Zig::GlobalObject* global)
+{
+    auto* process = global->processObject();
+    if (process->m_pendingMessages)
+        process->queueNextTick(global, process->m_emitPendingMessagesFunction.getInitializedOnMainThread(process));
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionOnNewListener, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
 {
-    auto* global = defaultGlobalObject(lexicalGlobalObject);
-    global->processObject()->queueNextTick(global, JSFunction::create(JSC::getVM(global), global, 0, ""_s, Process_functionEmitPendingMessages, ImplementationVisibility::Private));
+    queueEmitPendingMessages(defaultGlobalObject(lexicalGlobalObject));
     return JSValue::encode(jsUndefined());
 }
 
-// A real listener as in Node's setupChannel: it is counted, and removeAllListeners() takes it away.
+// The 'newListener' listener of Node's setupChannel. Native, so that process.on() does not enter the VM for it.
 void Process::installPendingMessagesListener(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject(this->globalObject());
     if (!Bun__GlobalObject__hasIPC(globalObject))
         return;
     auto* onNewListener = JSFunction::create(vm, globalObject, 0, ""_s, Process_functionOnNewListener, ImplementationVisibility::Public);
-    wrapped().addListener(Identifier::fromString(vm, "newListener"_s), WebCore::JSEventListener::create(*onNewListener, *this, false, globalObject->world()), false, false);
+    wrapped().addListener(Identifier::fromString(vm, "newListener"_s), WebCore::NativeEventListener::create(*onNewListener, [globalObject] { queueEmitPendingMessages(globalObject); }), false, false);
     vm.writeBarrier(this, onNewListener);
-    wrapped().setThisObject(this);
 }
 
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
@@ -3844,6 +3844,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_bindingUV.visit(visitor);
     thisObject->m_bindingNatives.visit(visitor);
     thisObject->m_emitHelperFunction.visit(visitor);
+    thisObject->m_emitPendingMessagesFunction.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Process);
@@ -5227,6 +5228,9 @@ void Process::finishCreation(JSC::VM& vm)
     });
     m_bindingNatives.initLater([](const JSC::LazyProperty<Process, JSC::JSObject>::Initializer& init) {
         init.set(Bun::ProcessBindingNatives::create(init.vm, ProcessBindingNatives::createStructure(init.vm, init.owner->globalObject())));
+    });
+    m_emitPendingMessagesFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
+        init.set(JSFunction::create(init.vm, init.owner->globalObject(), 0, ""_s, Process_functionEmitPendingMessages, ImplementationVisibility::Private));
     });
     m_emitHelperFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
         init.set(JSFunction::create(init.vm, init.owner->globalObject(), 2, "emit"_s, Process_functionEmitHelper, ImplementationVisibility::Private));

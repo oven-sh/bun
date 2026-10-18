@@ -32,6 +32,7 @@
 // http://code.google.com/p/rescle/
 #include "rescle.h"
 
+#include <atlstr.h>
 #include <sstream> // wstringstream
 #include <iomanip> // setw, setfill
 
@@ -745,9 +746,10 @@ BOOL CALLBACK ResourceUpdater::OnEnumResourceLanguage(HANDLE hModule, LPCWSTR lp
             UINT id = reinterpret_cast<ptrdiff_t>(lpszName) - 1;
             auto& vector = instance->stringTableMap_[wIDLanguage][id];
             for (size_t k = 0; k < 16; k++) {
-                wchar_t buf[2048] = {0};
-                int len = LoadStringW(instance->module_, id * 16 + k, buf, 2048);
-                vector.push_back(std::wstring(buf, len > 0 ? len : 0));
+                CStringW buf;
+
+                buf.LoadStringW(instance->module_, id * 16 + k, wIDLanguage);
+                vector.push_back(buf.GetBuffer());
             }
             break;
         }

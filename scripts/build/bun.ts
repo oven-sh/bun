@@ -109,12 +109,6 @@ function systemLibs(cfg: Config): string[] {
       "crypt32.lib",
       "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
       "ws2_32.lib",
-      "user32.lib",
-      "ole32.lib",
-      "shell32.lib",
-      "oleaut32.lib",
-      "advapi32.lib",
-      "iphlpapi.lib",
       "delayimp.lib", // required for /delayload: in release
     );
   }
@@ -322,7 +316,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // Codegen .cpp files — compiled like regular sources.
   cxxSources.push(...codegen.cppSources);
-  cxxSources.push(...codegen.bindgenV2Cpp);
 
   // All deps must be ready (headers extracted, libs built) before compile.
   //

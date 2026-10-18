@@ -252,6 +252,37 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     }
   });
 
+  test("dispose() closes the terminals the graph opened, not the host's, and calls none of their callbacks", async () => {
+    const dir = fixture({
+      "terminal.mjs": `
+        export const heard = [];
+        const callbacks = name => ({ data() { heard.push(name + " data"); }, exit() { heard.push(name + " exit"); } });
+        export const open = () => new Bun.Terminal(callbacks("constructed"));
+        export const constructed = open();
+        export const child = Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(() => {}, 1000)"], terminal: callbacks("inline") });
+      `,
+    });
+    await using hosts = new Bun.Terminal({});
+    using graph = new Bun.ModuleGraph();
+    const app = await graph.import(join(dir, "terminal.mjs"));
+    const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
+    let late: Bun.Terminal | undefined;
+    try {
+      expect([app.constructed.closed, app.child.terminal.closed]).toEqual([false, false]);
+      app.heard.length = 0;
+      graph.dispose();
+      expect([app.constructed.closed, app.child.terminal.closed, hosts.closed]).toEqual([true, true, false]);
+      // What the graph's leftover code opens is closed on the next turn of the loop.
+      late = inGraph(() => app.open()) as Bun.Terminal;
+      await until(() => late!.closed);
+      await until(() => !isRunning(app.child.pid));
+      expect(app.heard).toEqual([]);
+    } finally {
+      app.child.kill("SIGKILL");
+      late?.close();
+    }
+  });
+
   test("dispose() terminates the workers the graph started and closes its ports", async () => {
     const dir = fixture({
       "spawner.mjs": `

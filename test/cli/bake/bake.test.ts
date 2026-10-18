@@ -171,6 +171,24 @@ test.concurrent.each([
     error: `"--port" needs a value.`,
   },
   {
+    name: "a port that is not a number",
+    files: { "app/pages/index.html": page },
+    args: ["--port=abc"],
+    error: `"--port" needs a port from 0 to 65535, not "abc".`,
+  },
+  {
+    name: "a port that is too large",
+    files: { "app/pages/index.html": page },
+    args: ["--port", "70000"],
+    error: `"--port" needs a port from 0 to 65535, not "70000".`,
+  },
+  {
+    name: "a host with a port that is not a number",
+    files: { "app/pages/index.html": page },
+    args: ["--host=localhost:abc"],
+    error: `"--host" needs a port from 0 to 65535, not "abc".`,
+  },
+  {
     name: "--watch, as it reloads on its own",
     files: { "app/pages/index.html": page },
     args: ["--watch"],

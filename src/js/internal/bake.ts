@@ -1,6 +1,6 @@
 // This is the file that loads for `bun bake`, when the project has no `bake` script or file of its own.
 // It serves the app in the working directory: the pages in `app/pages/` and the server in `app/server.*`.
-import type { HTMLBundle, Serve } from "bun";
+import type { HTMLBundle, Serve, Server } from "bun";
 const initial = performance.now();
 const argv = process.argv;
 
@@ -279,30 +279,37 @@ async function start() {
   const exportedPort = exported?.port;
   // A `unix` socket in the export is kept unless a flag asks for a TCP address.
   const useUnix = exported?.unix !== undefined && flags.hostname === undefined && flags.port === undefined;
-  const server = serveOnFreePort(
-    "bun bake",
-    port => {
-      const options = ObjectCreate(exported ?? null);
-      // Own properties, defined rather than assigned: the export may be frozen, or have getters.
-      const own = (key: string, value: unknown) =>
-        ObjectDefineProperty(options, key, { value, writable: true, enumerable: true, configurable: true });
-      own("routes", routes);
-      own("fetch", fetch);
-      own("development", { console: flags.console, hmr: undefined });
-      if (useUnix) {
-        own("hostname", undefined);
-        own("host", undefined);
-        own("port", undefined);
-      } else {
-        own("unix", undefined);
-        own("hostname", flags.hostname ?? exportedHostname ?? "localhost");
-        // `undefined` uses the default port via existing port detection code.
-        own("port", port);
-      }
-      return options as Serve.Options<undefined>;
-    },
-    useUnix ? undefined : (flags.port ?? exportedPort),
-  );
+  let server: Server<undefined>;
+  try {
+    server = serveOnFreePort(
+      "bun bake",
+      port => {
+        const options = ObjectCreate(exported ?? null);
+        // Own properties, defined rather than assigned: the export may be frozen, or have getters.
+        const own = (key: string, value: unknown) =>
+          ObjectDefineProperty(options, key, { value, writable: true, enumerable: true, configurable: true });
+        own("routes", routes);
+        own("fetch", fetch);
+        own("development", { console: flags.console, hmr: undefined });
+        if (useUnix) {
+          own("hostname", undefined);
+          own("host", undefined);
+          own("port", undefined);
+        } else {
+          own("unix", undefined);
+          own("hostname", flags.hostname ?? exportedHostname ?? "localhost");
+          // `undefined` uses the default port via existing port detection code.
+          own("port", port);
+        }
+        return options as Serve.Options<undefined>;
+      },
+      useUnix ? undefined : (flags.port ?? exportedPort),
+    );
+  } catch (error) {
+    // A flag value that cannot be served: no change to a file fixes it.
+    if (flags.port !== undefined || flags.hostname !== undefined) exitWith(error);
+    throw error;
+  }
   configKeyInServer ??= config.key;
   const elapsed = (performance.now() - initial).toFixed(2);
 

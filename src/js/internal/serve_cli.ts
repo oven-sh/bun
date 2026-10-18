@@ -17,19 +17,28 @@ function defaultServeFlags(): ServeFlags {
   return { hostname: undefined, port: undefined, console: false };
 }
 
+/** The port in the value of `name`: a whole number from 0 to 65535. */
+function parsePort(name: string, value: string): number {
+  const port = Number(value);
+  if (value === "" || !Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(`"${name}" needs a port from 0 to 65535, not "${value}".`);
+  }
+  return port;
+}
+
 /** Sets the hostname, and the port if there is one: `host`, `host:3000`, `::1`, `[::1]` or `[::1]:3000`. */
 function applyHost(name: string, value: string, flags: ServeFlags) {
   const end = value.startsWith("[") ? value.indexOf("]") : -1;
   if (end !== -1) {
     flags.hostname = value.slice(1, end);
     const rest = value.slice(end + 1);
-    if (rest.startsWith(":")) flags.port = parseInt(rest.slice(1), 10);
+    if (rest.startsWith(":")) flags.port = parsePort(name, rest.slice(1));
   } else {
     const colon = value.indexOf(":");
     // More than one `:` is an IPv6 address without a port.
     if (colon !== -1 && colon === value.lastIndexOf(":")) {
       flags.hostname = value.slice(0, colon);
-      flags.port = parseInt(value.slice(colon + 1), 10);
+      flags.port = parsePort(name, value.slice(colon + 1));
     } else {
       flags.hostname = value;
     }
@@ -66,7 +75,7 @@ function parseServeFlag(args: string[], i: number, flags: ServeFlags): number {
       continue;
     }
     if (name === "--port") {
-      flags.port = parseInt(value, 10);
+      flags.port = parsePort(name, value);
     } else {
       applyHost(name, value, flags);
     }

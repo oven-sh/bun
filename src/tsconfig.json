@@ -16,8 +16,8 @@
     "runtime/bake",
     "runtime/cli/init",
     "runtime/cli/create",
-    "cli/init",
-    "cli/create",
+    // Not `cli`: tsc would still walk the link, and then skip `runtime/cli` as a directory that it has seen.
+    "cli/**",
     "jsc/bindings/libuv"
   ]
 }

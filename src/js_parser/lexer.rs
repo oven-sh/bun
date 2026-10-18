@@ -413,6 +413,16 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Whether an error was logged after `snapshot` was taken.
+    #[inline]
+    pub(crate) fn logged_error_since(&self, snapshot: &LexerSnapshot<'a>) -> bool {
+        let msgs = &self.log().msgs;
+        msgs.len() > snapshot.log_msgs_len
+            && msgs[snapshot.log_msgs_len..]
+                .iter()
+                .any(|msg| msg.kind == bun_ast::Kind::Err)
+    }
+
     /// Look ahead at the next n codepoints without advancing the iterator.
     /// If fewer than n codepoints are available, then return the remainder of the string.
     #[inline]

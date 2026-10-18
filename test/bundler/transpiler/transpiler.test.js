@@ -1136,9 +1136,12 @@ describe("Bun.Transpiler", () => {
         check("tsx", { "var x = <\n--> c\nT,>(a: T) => a;": warning });
         // The attempt at type arguments reads "--> t" as a comment. It is the text of the element.
         expect(run("x = a < <b>\n--> t</b>", "tsx")).toStartWith("x = a < jsx");
-        // The lookahead for a TSX arrow function reported the escaped name, and
-        // the attempt that is kept reports no lexer error with either loader.
-        expect(run("x = async <\\u{30}a,>(y) => y", "tsx")).toEqual(run("x = async <\\u{30}a,>(y) => y", "ts"));
+        // The lookahead for a TSX arrow function logs the error of the escaped
+        // name. The attempt that reads the name next does not, so the error stays.
+        check("tsx", {
+          "x = async <\\u{30}a,>(y) => y": ['Invalid identifier: "0a"'],
+          "x = <\\u{30}a,>(y) => y": ['Invalid identifier: "0a"'],
+        });
       });
 
       it("every Bun.Transpiler API takes a left shift by out", async () => {

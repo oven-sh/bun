@@ -380,9 +380,7 @@ static bool evaluateCommonJSModuleWithCompileHook(JSC::VM& vm, Zig::GlobalObject
         RETURN_IF_EXCEPTION(scope, false);
     }
 
-    // Node does not run the -e / stdin entry through _compile; its source has no wrapper.
-    // The default with the default wrapper is the plain evaluation. With an overridden wrapper
-    // the call applies it, as the source still has the transpiler's.
+    // The -e / stdin entry has no wrapper. The default _compile call applies an overridden Module.wrapper.
     if ((isDefaultCompileFunction(compileFunction) && !globalObject->hasOverriddenModuleWrapper) || Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)))
         return evaluateCommonJSModuleOnce(vm, globalObject, moduleObject, dirname, filename);
 
@@ -1082,9 +1080,7 @@ public:
 
 const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
 
-// Flag set with an empty override slot: the accessor is gone, the loader looks `_compile` up.
-// A module accessor written on something that is not a module. `Object.create(Module.prototype)`
-// gets an own property. The prototype itself keeps the accessor.
+// `Object.create(Module.prototype)` gets an own property. The prototype itself keeps the accessor.
 static bool putOnNonModuleReceiver(JSC::JSGlobalObject* globalObject, JSValue receiver, JSValue value, JSC::PropertyName propertyName)
 {
     JSObject* object = receiver.getObject();

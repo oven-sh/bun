@@ -3195,7 +3195,8 @@ where
         // So we first use a hash of the main field:
         let first_hash_segment: [u8; 8] = 'brk: {
             let mut buffer = paths::path_buffer_pool::get();
-            let main = self.vm_ref().main();
+            // No entry module (`bun bake`): the hash of the project root below tells servers apart.
+            let main = self.vm_ref().main().unwrap_or_default();
             let len = main.len().min(buffer.len());
             break 'brk hash(strings::copy_lowercase(&main[..len], &mut buffer[..len]))
                 .to_ne_bytes();

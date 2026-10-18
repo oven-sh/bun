@@ -170,15 +170,10 @@ using namespace JSC;
 #endif
 
 using JSGlobalObject = JSC::JSGlobalObject;
-using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;
 using JSString = JSC::JSString;
-using JSModuleLoader = JSC::JSModuleLoader;
-using JSModuleRecord = JSC::JSModuleRecord;
 using Identifier = JSC::Identifier;
-using SourceOrigin = JSC::SourceOrigin;
 using JSObject = JSC::JSObject;
-using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
@@ -1541,7 +1536,7 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
     return false;
 }
 
-extern "C" void Bun__setChannelListenerCount(JSC::JSGlobalObject* globalObject, int32_t count);
+extern "C" void Bun__setChannelListenerCount(int32_t count);
 extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject* globalObject);
 
 extern "C" void Bun__ensureSignalHandler();
@@ -1635,7 +1630,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
             auto totalListenerCount = messageListenerCount + disconnectListenerCount;
             if (isAdded && eventName == "message" && global->processObject()->m_pendingMessages)
                 global->processObject()->queueNextTick(global, JSFunction::create(vm, global, 0, ""_s, Process_functionEmitPendingMessages, ImplementationVisibility::Private));
-            Bun__setChannelListenerCount(global, static_cast<int32_t>(totalListenerCount));
+            Bun__setChannelListenerCount(static_cast<int32_t>(totalListenerCount));
             return;
         }
 

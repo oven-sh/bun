@@ -20,7 +20,8 @@ function defaultServeFlags(): ServeFlags {
 /** The port in the value of `name`: a whole number from 0 to 65535. */
 function parsePort(name: string, value: string): number {
   const port = Number(value);
-  if (value === "" || !Number.isInteger(port) || port < 0 || port > 65535) {
+  // Only digits: `Number()` also reads " ", "0x1F90" and "1e3".
+  if (!/^\d+$/.test(value) || port > 65535) {
     throw new Error(`"${name}" needs a port from 0 to 65535, not "${value}".`);
   }
   return port;

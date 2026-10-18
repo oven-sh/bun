@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { symlinkSync } from "node:fs";
+import { rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const env = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1", NO_COLOR: "1" };
@@ -181,6 +181,18 @@ test.concurrent.each([
     files: { "app/pages/index.html": page },
     args: ["--port", "70000"],
     error: `"--port" needs a port from 0 to 65535, not "70000".`,
+  },
+  {
+    name: "a port in hexadecimal",
+    files: { "app/pages/index.html": page },
+    args: ["--port=0x1F90"],
+    error: `"--port" needs a port from 0 to 65535, not "0x1F90".`,
+  },
+  {
+    name: "a port of spaces",
+    files: { "app/pages/index.html": page },
+    args: ["--port", "  "],
+    error: `"--port" needs a port from 0 to 65535, not "  ".`,
   },
   {
     name: "a host with a port that is not a number",
@@ -678,4 +690,59 @@ test.concurrent("bun bake keeps serving when a reload finds a page it cannot ser
 
   expect(proc.exitCode).toBeNull();
   expect(await get(url, "/missing")).toBe("200 v1");
+});
+
+test.concurrent("bun bake reads a bake.config.ts whose default export is a promise", async () => {
+  using dir = tempDir("bake-command-config-promise", {
+    "bake.config.ts": `
+      async function load() {
+        return {
+          plugins: [{
+            name: "from-promise",
+            setup(build) {
+              build.onLoad({ filter: /style\\.css$/ }, () => ({ contents: ".from-promise { color: red; }", loader: "css" }));
+            },
+          }],
+        };
+      }
+      export default load();
+    `,
+    "app/style.css": `.unchanged { color: red; }`,
+    "app/pages/index.html": `<!doctype html><html><head><link rel="stylesheet" href="../style.css" /></head><body></body></html>`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  expect(await getPageCss(url, "/")).toContain(".from-promise");
+});
+
+test.concurrent("bun bake --check waits for a fix when a restart finds a page it cannot serve", async () => {
+  using dir = tempDir("bake-command-check-restart-error", {
+    "tsconfig.json": checkedTsconfig,
+    "app/pages/index.html": page,
+    "app/server.ts": `declare const Response: any;\nexport default { fetch: () => new Response("v1") };\n`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--check", "--port=0"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/url: /);
+
+  // `--check` starts the process again on a change: the error must not end the session.
+  const slug = join(String(dir), "app/pages/[slug].html");
+  await Bun.write(slug, page);
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
+  );
+  await output.waitFor(/a page cannot have/);
+
+  rmSync(slug);
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `declare const Response: any;\nexport default { fetch: () => new Response("v3") };\n`,
+  );
+  const [, url] = await output.waitFor(/a page cannot have[\s\S]*url: (http:\/\/\S+)/);
+
+  expect(await get(url, "/missing")).toBe("200 v3");
 });

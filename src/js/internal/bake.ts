@@ -13,6 +13,7 @@ const {
   printBannerAndHandleShortcuts,
 } = require("internal/serve_cli");
 const setConfigPlugins = $newRustFunction("bake/config/plugins.rs", "setConfigPlugins", 2);
+const restartsOnChange = $newRustFunction("bake/config/plugins.rs", "restartsOnChange", 0);
 
 // `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
 const ObjectKeys = Object.keys;
@@ -126,7 +127,8 @@ async function loadConfig(cwd: string): Promise<Config> {
 
   const name = display(file);
   const key = file + "\0" + Bun.hash(await Bun.file(file).bytes());
-  let config = (await import(file)).default;
+  // A promise, a function, or a function that returns a promise: each gives the config.
+  let config = await (await import(file)).default;
   if ($isCallable(config)) config = await config({ mode: "development" });
   if (config === null || typeof config !== "object") {
     throw new TypeError(`"${name}" must have a default export: a config object, or a function that returns one.`);
@@ -204,13 +206,20 @@ async function loadAppServer(
 let runs = 0;
 
 /**
- * At the start, prints the message of `error` and exits. An error that a change to `app/server.ts`
- * or `bake.config.ts` can fix is thrown instead: the process waits for that change and reloads.
- * These come from the arguments or from files that `bun bake` does not load, so no change reloads
- * it. On a reload, the server is up: throw, so it keeps serving until the next change.
+ * At the start, prints the message of `error` and exits: it comes from a file that `bun bake` does
+ * not load, so no change to a file reloads it. An error that a change to `app/server.ts` or
+ * `bake.config.ts` can fix is thrown instead: the process waits for that change and reloads. On a
+ * reload, the server is up: throw, so it keeps serving until the next change.
  */
 function exitWith(error: any): never {
-  if (runs > 1) throw $isObject(error) ? error : new Error(error);
+  // `--check` starts the process again on a change, so a restart is a first run here too. Its
+  // type checker watches the files of the project, so a change to them gives a restart.
+  if (runs > 1 || restartsOnChange()) throw $isObject(error) ? error : new Error(error);
+  exitForArguments(error);
+}
+
+/** Prints the message of `error` and exits: a change to a file does not change the arguments. */
+function exitForArguments(error: any): never {
   console.error(`error: ${error?.message ?? error}`);
   process.exit(1);
 }
@@ -229,9 +238,9 @@ async function start() {
     try {
       used = parseServeFlag(argv, i, flags);
     } catch (error) {
-      exitWith(error);
+      exitForArguments(error);
     }
-    if (used === 0) exitWith(`Unknown argument "${arg}". Run "bun bake --help" for the usage.`);
+    if (used === 0) exitForArguments(`Unknown argument "${arg}". Run "bun bake --help" for the usage.`);
     i += used;
   }
 

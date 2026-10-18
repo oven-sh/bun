@@ -13,7 +13,21 @@ pub(crate) fn set_config_plugins(global: &JSGlobalObject, frame: &CallFrame) -> 
         list.push(Box::from(&*name.to_utf8(global)?));
     }
     let vm = global.bun_vm().as_mut();
-    vm.bake_config_plugins.set(global, plugins);
+    // With none, the server sets up no plugins, unless bunfig.toml has some.
+    if list.is_empty() {
+        vm.bake_config_plugins.deinit();
+    } else {
+        vm.bake_config_plugins.set(global, plugins);
+    }
     vm.bake_config_plugin_names = list.into_boxed_slice();
     Ok(JSValue::UNDEFINED)
+}
+
+/// `restartsOnChange()`: whether a change starts the process again (`--check` runs in watch mode)
+/// instead of reloading it in place.
+pub(crate) fn restarts_on_change(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let vm = global.bun_vm();
+    Ok(JSValue::from(
+        vm.hot_reload == crate::cli::command::HotReload::Watch,
+    ))
 }

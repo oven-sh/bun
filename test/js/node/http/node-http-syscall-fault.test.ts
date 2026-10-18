@@ -3,7 +3,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
 import { once } from "node:events";
 import http from "node:http";
+import https from "node:https";
 import net from "node:net";
+import nodeTls from "node:tls";
+import { checkPlan, describePlan, listenTransport, makePlan } from "./node-http-backpressure-invariants";
 
 const skip = !fault.available() || isWindows;
 
@@ -309,6 +312,238 @@ describe.skipIf(skip)("node:http pipelining under stalled sends", () => {
     }).toEqual({ first: SIZE, firstIntact: true, second: "second" });
     expect(await proc.exited).toBe(0);
   });
+});
+
+// Every send takes a few bytes, so a write backs the socket up at once, with no megabytes and no slow client.
+describe.skipIf(skip)("node:http 'drain' under short sends", () => {
+  const CHUNK16 = Buffer.alloc(16 * 1024, "b");
+  const shortSends = (bytes = 1000) => {
+    for (const syscall of ["send", "writev"] as const) fault.set({ syscall, action: "short", bytes, repeat: -1 });
+  };
+  // Resolves with what came behind the last head. With `chunked`, with everything behind the first one.
+  async function receive(server: http.Server, request: string, chunked = false) {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as net.AddressInfo).port;
+    const secure = server instanceof https.Server;
+    const socket = secure
+      ? nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+      : net.connect(port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+    socket.on(secure ? "secureConnect" : "connect", () => socket.write(request));
+    await once(socket, "close");
+    const bytes = Buffer.concat(chunks);
+    return bytes.subarray((chunked ? bytes.indexOf("\r\n\r\n") : bytes.lastIndexOf("\r\n\r\n")) + 4);
+  }
+  const closing = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+
+  // The chunk and the head fit in the cork buffer, so the write is accepted
+  // whole. The socket then takes only part of it. Under the high water mark
+  // Node returns true, and runs the callback when the socket has the chunk.
+  test("a first write(chunk, callback) that the socket takes only part of returns true, and its callback waits for the socket", async () => {
+    const events: string[] = [];
+    await using server = http.createServer((req, res) => {
+      res.setHeader("Content-Length", CHUNK16.length + 4);
+      res.on("drain", () => events.push("'drain'"));
+      // One turn later, the write is outside the cork of the request dispatch.
+      setImmediate(() => {
+        shortSends();
+        const returned = res.write(CHUNK16, () => {
+          events.push(`write callback: writableLength ${res.writableLength}`);
+          res.end("tail");
+        });
+        events.push(
+          `write(chunk, callback) returned ${returned}: writableNeedDrain ${res.writableNeedDrain}, unsent ${res.writableLength > 0}`,
+        );
+      });
+    });
+    const body = await receive(server, closing);
+    expect({ events, length: body.length, tail: body.subarray(-4).toString() }).toEqual({
+      events: [
+        "write(chunk, callback) returned true: writableNeedDrain false, unsent true",
+        "write callback: writableLength 0",
+      ],
+      length: CHUNK16.length + 4,
+      tail: "tail",
+    });
+  });
+
+  // The socket takes the first 100000 bytes of the chunk inside write(), and the rest later.
+  test.each(["http", "https"] as const)(
+    "a write() over the high water mark on an %s server gets one 'drain', when none of its bytes is left",
+    async protocol => {
+      const events: string[] = [];
+      const chunk = Buffer.alloc(256 * 1024, "b");
+      const listener: http.RequestListener = (req, res) => {
+        setImmediate(() => {
+          shortSends(100000);
+          events.push(`write() returned ${res.write(chunk)}`);
+          res.on("drain", () => {
+            events.push(`'drain': writableNeedDrain ${res.writableNeedDrain}, writableLength ${res.writableLength}`);
+            // A second 'drain' would come before 'finish'.
+            res.on("finish", () => events.push("finish"));
+            res.end();
+          });
+        });
+      };
+      await using server =
+        protocol === "http"
+          ? http.createServer(listener)
+          : https.createServer({ key: certs.key, cert: certs.cert }, listener);
+      const body = await receive(server, closing, true);
+      // The chunk in its framing, and the last chunk.
+      expect({ events, length: body.length }).toEqual({
+        events: ["write() returned false", "'drain': writableNeedDrain false, writableLength 0", "finish"],
+        length: chunk.length + "40000\r\n".length + "\r\n0\r\n\r\n".length,
+      });
+    },
+  );
+
+  test("a write() that returned false gets its 'drain' when res._send() follows it, and then the callback of res._send()", async () => {
+    const events: string[] = [];
+    const chunk = Buffer.alloc(256 * 1024, "b");
+    await using server = http.createServer((req, res) => {
+      res.setHeader("Content-Length", chunk.length + 4);
+      setImmediate(() => {
+        shortSends();
+        events.push(`write() returned ${res.write(chunk)}`);
+        (res as any)._send("tail", "latin1", () => events.push(`_send callback: writableLength ${res.writableLength}`));
+        res.on("drain", () => {
+          events.push(`'drain': writableLength ${res.writableLength}`);
+          res.end();
+        });
+      });
+    });
+    const body = await receive(server, closing);
+    expect({ events, length: body.length, tail: body.subarray(-4).toString() }).toEqual({
+      events: ["write() returned false", "'drain': writableLength 0", "_send callback: writableLength 0"],
+      length: chunk.length + 4,
+      tail: "tail",
+    });
+  });
+
+  // The head and the data of a first res._send() go through the cork buffer. What the socket
+  // does not take of them stays in the handle when the cork ends.
+  test("the callback of a first res._send() waits for the socket", async () => {
+    const events: string[] = [];
+    await using server = http.createServer((req, res) => {
+      res.setHeader("Content-Length", CHUNK16.length);
+      setImmediate(() => {
+        shortSends();
+        (res as any)._send(CHUNK16, undefined, () => {
+          events.push(`_send callback: writableLength ${res.writableLength}`);
+          res.end();
+        });
+        events.push(`after _send(): unsent ${res.writableLength > 0}`);
+      });
+    });
+    const body = await receive(server, closing);
+    expect({ events, length: body.length }).toEqual({
+      events: ["after _send(): unsent true", "_send callback: writableLength 0"],
+      length: CHUNK16.length,
+    });
+  });
+
+  // The buffered writes of a response that waited back the socket up at its
+  // turn. The 'drain' that one of them is owed comes from the drain callback
+  // of the handle, after the bytes.
+  test("a write() that returned false while the response waited gets its 'drain' after the socket took the buffered writes", async () => {
+    const events: string[] = [];
+    let first: http.ServerResponse;
+    let total = 0;
+    await using server = http.createServer((req, res) => {
+      if (req.url === "/first") return void (first = res);
+      // As many chunks as reach the high water mark: the last write() returns false.
+      const count = Math.ceil(res.writableHighWaterMark / CHUNK16.length);
+      total = count * CHUNK16.length;
+      res.setHeader("Content-Length", total + 4);
+      let returned = true;
+      for (let i = 0; i < count; i++) returned = res.write(CHUNK16);
+      events.push(`waits: write() returned ${returned}, writableNeedDrain ${res.writableNeedDrain}`);
+      res.on("socket", () => events.push(`'socket': writableNeedDrain ${res.writableNeedDrain}`));
+      res.on("drain", () => {
+        events.push(`'drain': writableNeedDrain ${res.writableNeedDrain}, writableLength ${res.writableLength}`);
+        res.end("tail");
+      });
+      shortSends();
+      first.end("first");
+    });
+    const body = await receive(
+      server,
+      "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    );
+    expect({
+      events,
+      length: body.length,
+      inOrder: body.equals(Buffer.concat([Buffer.alloc(total, "b"), Buffer.from("tail")])),
+    }).toEqual({
+      events: [
+        "waits: write() returned false, writableNeedDrain true",
+        "'socket': writableNeedDrain true",
+        "'drain': writableNeedDrain false, writableLength 0",
+      ],
+      length: total + 4,
+      inOrder: true,
+    });
+  });
+
+  // With highWaterMark 0 a small write() returns false while the response
+  // waits. At its turn that one write fits the cork buffer, so the handle
+  // accepts it whole and reports no backpressure. The socket then takes only
+  // part of it.
+  test("a small write() that returned false while the response waited gets its 'drain' after the socket took it", async () => {
+    const events: string[] = [];
+    let first: http.ServerResponse;
+    await using server = http.createServer({ highWaterMark: 0 }, (req, res) => {
+      if (req.url === "/first") return void (first = res);
+      res.setHeader("Content-Length", 100 + 4);
+      const returned = res.write(Buffer.alloc(100, "b"));
+      events.push(`waits: write() returned ${returned}, writableNeedDrain ${res.writableNeedDrain}`);
+      res.on("drain", () => {
+        events.push(`'drain': writableNeedDrain ${res.writableNeedDrain}, writableLength ${res.writableLength}`);
+        res.end("tail");
+      });
+      shortSends(50);
+      first.end("first");
+    });
+    const body = await receive(
+      server,
+      "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    );
+    expect({ events, body: body.toString() }).toEqual({
+      events: [
+        "waits: write() returned false, writableNeedDrain true",
+        "'drain': writableNeedDrain false, writableLength 0",
+      ],
+      body: Buffer.alloc(100, "b") + "tail",
+    });
+  });
+});
+
+// The plans of node-http-backpressure-invariants.ts on a listening server. Short sends stand for a slow client.
+// Replay a failing plan with BUN_HTTP_DRAIN_FUZZ_SEED=<seed of the plan>. Soak with BUN_HTTP_DRAIN_FUZZ_ITERS=<plans in a group>.
+describe.skipIf(skip)("node:http seeded plans of write(), res._send() and end() under short sends", () => {
+  const seed = Number(process.env.BUN_HTTP_DRAIN_FUZZ_SEED ?? 1000003);
+  const iterations = Number(process.env.BUN_HTTP_DRAIN_FUZZ_ITERS ?? 9);
+
+  test.each([0, 1, 2, 3, 4])(
+    "keep the rules of 'drain', write() callbacks and writableLength (group %i)",
+    async group => {
+      for (let i = 0; i < iterations; i++) {
+        const plan = makePlan(seed + group * iterations + i, true);
+        const violations = await checkPlan(
+          listener => http.createServer({ highWaterMark: plan.hwm }, listener),
+          plan,
+          listenTransport(plan, fault),
+        );
+        expect({ seed: plan.seed, plan: describePlan(plan), violations }).toEqual({
+          seed: plan.seed,
+          plan: describePlan(plan),
+          violations: [],
+        });
+      }
+    },
+  );
 });
 
 describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {

@@ -336,7 +336,7 @@ function sameSettings(a: BaseSQLAdapter<any, any>, b: BaseSQLAdapter<any, any>):
       return false;
     }
   }
-  return x.transform?.column.from === y.transform?.column.from;
+  return $getByIdDirect(x, "transform")?.column.from === $getByIdDirect(y, "transform")?.column.from;
 }
 
 /// bun --hot only. This module and the open connections outlive a reload, the `new SQL()` of the program does not.

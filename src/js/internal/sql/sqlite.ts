@@ -69,7 +69,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
               } else if (mode === SQLQueryResultMode.raw) {
                 rows = stmt.raw(values);
               } else {
-                const columnFrom = adapter.connectionInfo.transform?.column.from;
+                const columnFrom = $getByIdDirect(adapter.connectionInfo, "transform")?.column.from;
                 if (columnFrom !== undefined) stmt.native.$setColumnNameTransform(columnFrom);
                 rows = stmt.all(values);
               }

@@ -17,6 +17,11 @@ const ObjectPrototype = Object.prototype;
 const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 const env = Bun.env;
 
+/** `Bun.env` inherits from `Object.prototype`, and what is there is no variable. */
+function envVar(name: string): string | undefined {
+  return ObjectHasOwn(env, name) ? env[name] : undefined;
+}
+
 const SQLITE_MEMORY = ":memory:";
 const REDACTED = "[REDACTED]";
 const SCHEME = /^[a-z][a-z0-9+.-]*$/i;
@@ -146,7 +151,7 @@ function urlFromEnvironment(
 
     for (let i = 1; i < row.length; i++) {
       const name = row[i] as string;
-      const url = env[name];
+      const url = envVar(name);
       if (!url) continue;
 
       const tls = name.startsWith("TLS_");
@@ -381,7 +386,8 @@ function parseSQLiteOptions(target: string | URL | null, options: AnyOptions): B
   const safeIntegers = options.safeIntegers ?? options.bigint;
   if (safeIntegers !== undefined) sqliteOptions.safeIntegers = safeIntegers;
 
-  if (sqliteOptions.transform != null) sqliteOptions.transform = parseTransform(sqliteOptions.transform);
+  const transform = options.transform;
+  if (transform != null) sqliteOptions.transform = parseTransform(transform);
 
   return sqliteOptions;
 }
@@ -551,7 +557,7 @@ function readUrlQuery(url: URL, isPostgres: boolean, parameters: Record<string, 
 const NO_QUERY: UrlQuery = { __proto__: null };
 
 function envOf(prefix: string, name: string): string | undefined {
-  return env[`${prefix}_${name}`] || env[prefix + name];
+  return envVar(`${prefix}_${name}`) || envVar(prefix + name);
 }
 
 function isDirectory(path: string): boolean {
@@ -638,7 +644,8 @@ function parseOptions(
 
   const parameters = { __proto__: null } as unknown as Record<string, string>;
   if (isPostgres) {
-    const { PGAPPNAME, PGOPTIONS } = env;
+    const PGAPPNAME = envVar("PGAPPNAME");
+    const PGOPTIONS = envVar("PGOPTIONS");
     if (PGAPPNAME) parameters.application_name = PGAPPNAME;
     if (PGOPTIONS) parameters.options = PGOPTIONS;
   }
@@ -656,7 +663,8 @@ function parseOptions(
 
   const connection = options.connection;
   if (connection && $isObject(connection)) {
-    for (const key in { __proto__: null, ...connection }) {
+    for (const key in connection) {
+      if (!ObjectHasOwn(connection, key) && ObjectHasOwn(ObjectPrototype, key)) continue;
       if (connection[key] !== undefined) {
         setStartupParameter(parameters, `options.connection.${key}`, key, connection[key]);
       }
@@ -683,10 +691,10 @@ function parseOptions(
     options.user ||
     query.username ||
     decodeIfValid(url?.username) ||
-    (isPostgres && env.PGUSERNAME) ||
+    (isPostgres && envVar("PGUSERNAME")) ||
     envOf(prefix, "USER") ||
-    env.USER ||
-    env.USERNAME ||
+    envVar("USER") ||
+    envVar("USERNAME") ||
     (isPostgres ? "postgres" : "root");
 
   const password =
@@ -733,7 +741,7 @@ function parseOptions(
       options.connectTimeout ??
       options.connect_timeout ??
       query.connectionTimeout ??
-      ((isPostgres && env.PGCONNECT_TIMEOUT) || undefined),
+      ((isPostgres && envVar("PGCONNECT_TIMEOUT")) || undefined),
   );
   const maxLifetime = secondsToMilliseconds(
     "options.max_lifetime",
@@ -752,7 +760,7 @@ function parseOptions(
 
   const channelBinding = (options.channelBinding ||
     query.channelBinding ||
-    (isPostgres && env.PGCHANNELBINDING) ||
+    (isPostgres && envVar("PGCHANNELBINDING")) ||
     "disable") as Bun.SQL.__internal.ChannelBinding;
   if (channelBinding !== "disable" && channelBinding !== "prefer" && channelBinding !== "require") {
     throw $ERR_INVALID_ARG_VALUE("channelBinding", channelBinding, "must be one of: disable, prefer, require");

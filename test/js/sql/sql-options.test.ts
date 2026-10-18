@@ -591,6 +591,12 @@ describe("the error for a connection URL that cannot be parsed", () => {
   });
 });
 
+test("options.connection also gives what it inherits", () => {
+  expect(optionsOf("postgres://db.example/app", { connection: Object.create({ search_path: "s" }) }).query).toBe(
+    "search_path\0s\0",
+  );
+});
+
 test.each(["postgres", "mysql", "sqlite"])("%s: what is on Object.prototype is not an option", async adapter => {
   using dir = tempDir("sql-options-prototype", {});
   const socket = path.join(String(dir), "evil.sock");
@@ -617,8 +623,12 @@ test.each(["postgres", "mysql", "sqlite"])("%s: what is on Object.prototype is n
       mysql: ["mysql://user:secret@db.example:3307/app?ssl-mode=required", { max: 2 }],
       sqlite: ["sqlite://app.db?mode=ro", {}],
     }[${JSON.stringify(adapter)}];
-    const parsed = () => JSON.stringify(new Bun.SQL(...args).options);
-    const clean = parsed();
+    const observed = async () => {
+      await using memory = new Bun.SQL(":memory:");
+      const fromVariables = new Bun.SQL({ adapter: ${JSON.stringify(adapter)} }).options;
+      return JSON.stringify([new Bun.SQL(...args).options, fromVariables, await memory\`select \${undefined} as a_b\`]);
+    };
+    const clean = await observed();
     Object.assign(Object.prototype, {
       helper() {},
       adapter: "mysql",
@@ -638,12 +648,24 @@ test.each(["postgres", "mysql", "sqlite"])("%s: what is on Object.prototype is n
       readonly: false,
       create: true,
       connection: { evil: "1" },
+      transform: { undefined: "evil", column: name => name.toUpperCase() },
+      DATABASE_URL: "postgres://evil.example:1",
+      MYSQL_URL: "mysql://evil.example:1",
+      SQLITE_URL: "evil.db",
+      PGOPTIONS: "-c search_path=evil",
     });
-    console.log(parsed() === clean ? "the same" : parsed() + " <- " + clean);
+    const planted = await observed();
+    console.log(planted === clean ? "the same" : planted + " <- " + clean);
 
     ${dial}
   `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const variables = { HOST: "db.example", USER: "user", PASSWORD: "secret", DATABASE: "app" };
+  const prefix = adapter === "postgres" ? "PG" : "MYSQL_";
+  const env = {
+    ...bunEnv,
+    ...Object.fromEntries(Object.entries(variables).map(([name, value]) => [prefix + name, value])),
+  };
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "the same", stderr: "", exitCode: 0 });
 });

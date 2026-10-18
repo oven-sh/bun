@@ -4859,6 +4859,49 @@ it.concurrent.each<[string, Hold[]]>([
   },
 );
 
+// p is installed for a's peer, so bun gets to g and its tarball of z after everything else.
+it.concurrent(
+  "a peer is looked up in the registry if the optional tarball that provides it fails below a package that a peer installed",
+  async () => {
+    using empty = await serveRegistry({});
+    const manifests: Manifests = {
+      a: { "1.0.0": { peerDependencies: { p: "1.0.0" } } },
+      g: {
+        "1.0.0": { optionalDependencies: { z: `${empty.origin}/z-9.9.9.tgz` }, peerDependencies: { z: "^1.0.0" } },
+      },
+      p: { "1.0.0": {} },
+      z: zVersions,
+    };
+    using registry = await serveRegistry(manifests);
+    manifests.p["1.0.0"].dependencies = { g: `${registry.origin}/g-1.0.0.tgz` };
+    using dir = projectOn(registry, { "package.json": { name: "foo", dependencies: { a: "1.0.0" } } });
+    await installWithOwnCache(String(dir));
+    expect(instancesOf(await file(join(String(dir), "bun.lock")).text(), "z")).toEqual({ "z": "z@1.1.0" });
+  },
+);
+
+// a shares w's p@1.0.0, so p@2.0.0 goes again, with its peer on q.
+it.concurrent(
+  "the peer of a version that goes again is not reported if the optional tarball that provides it fails",
+  async () => {
+    using registry = await serveRegistry({
+      a: { "1.0.0": { peerDependencies: { p: "^2.0.0" } } },
+      p: { "1.0.0": {}, "2.0.0": { peerDependencies: { q: "^1.0.0" } } },
+    });
+    using dir = projectOn(registry, {
+      "package.json": {
+        name: "foo",
+        workspaces: ["w"],
+        optionalDependencies: { q: `${registry.origin}/q-9.9.9.tgz` },
+      },
+      "w/package.json": { name: "w", dependencies: { a: "1.0.0", p: "1.0.0" } },
+    });
+    const { err } = await installWithOwnCache(String(dir));
+    expect(err).not.toContain(`GET ${registry.origin}/q - 404`);
+    expect(instancesOf(await file(join(String(dir), "bun.lock")).text(), "p")).toEqual({ "p": "p@1.0.0" });
+  },
+);
+
 // a loads w's z, so the z@2.0.0 that was resolved for a's peer goes again, with its dependency on `gone`.
 it.concurrent("a version that is resolved for a peer and then dropped is not downloaded or warned about", async () => {
   using registry = await serveRegistry({
@@ -5044,6 +5087,25 @@ it.concurrent.each(["0b", "b"])(
   },
 );
 
+// b moves to the x@1.0.0 of c, so x@1.1.0 goes again and the peer of p is all that needs y.
+it.concurrent(
+  "a manifest that the registry does not have fails the install if a peer and a version that goes again need it",
+  async () => {
+    using registry = await serveRegistry({
+      b: { "1.0.0": { dependencies: { x: "^1.0.0" } } },
+      c: { "1.0.0": { dependencies: { x: "1.0.0" } } },
+      p: { "1.0.0": { peerDependencies: { y: "1.0.0" } } },
+      x: { "1.0.0": {}, "1.1.0": { dependencies: { y: "1.0.0" } } },
+    });
+    using dir = projectOn(registry, {
+      "package.json": { name: "foo", dependencies: { b: "1.0.0", c: "1.0.0", p: "1.0.0" } },
+    });
+    const { err, code } = await runWithOwnCache(String(dir), "install");
+    expect(err).toContain(`error: GET ${registry.origin}/y - 404`);
+    expect(code).toBe(1);
+  },
+);
+
 it.concurrent.each(["hoisted", "isolated"])(
   "a peer shares the devDependency of the project under --production, %s",
   async linker => {
@@ -5057,6 +5119,23 @@ it.concurrent.each(["hoisted", "isolated"])(
     expect((await file(join(nextToA, "z", "package.json")).json()).version).toBe("1.0.0");
     const { out } = await installWithOwnCache(cwd, "--production", "--linker", linker);
     expect(out).toContain("(no changes)");
+  },
+);
+
+it.concurrent.each(["hoisted", "isolated"])(
+  "peers that no version suits install under --production if the devDependency of the project is a folder, %s",
+  async linker => {
+    using registry = await serveRegistry({
+      a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      b: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      z: zVersions,
+    });
+    using dir = projectOn(registry, {
+      "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" }, devDependencies: { z: "file:./z" } },
+      "z/package.json": { name: "z", version: "3.0.0" },
+    });
+    const { out } = await installWithOwnCache(String(dir), "--production", "--linker", linker);
+    expect(out).toContain("+ a@1.0.0\n+ b@1.0.0\n");
   },
 );
 

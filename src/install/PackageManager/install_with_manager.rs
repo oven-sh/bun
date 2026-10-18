@@ -1776,6 +1776,9 @@ fn resolve_peers_of_failed_providers(manager: &mut PackageManager) -> bool {
         |row: DependencyID| lockfile.buffers.resolutions[row as usize] == invalid_package_id;
     let mut rows: Vec<DependencyID> = Vec::new();
     for (owner, owned) in lockfile.packages.items_dependencies().iter().enumerate() {
+        if lockfile.is_only_for_peers(owner as PackageID) {
+            continue;
+        }
         rows.extend((owned.begin()..owned.end()).filter(|&row| {
             let peer = &dependencies[row as usize];
             peer.behavior.is_peer()
@@ -1810,6 +1813,9 @@ fn settle_only_peers(
         download_kept(manager, &kept)?;
         manager.drain_dependency_list();
         if manager.pending_task_count() > 0 {
+            resolve_pending_tasks(manager, root, progress, &mut NamedUpdates::default())?;
+        }
+        if resolve_peers_of_failed_providers(manager) && manager.pending_task_count() > 0 {
             resolve_pending_tasks(manager, root, progress, &mut NamedUpdates::default())?;
         }
     }

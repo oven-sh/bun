@@ -468,14 +468,7 @@ impl<'a> Pass<'a> {
         }
         let still_live =
             (hoisted.as_deref()).map(|cur| reachable(lockfile, cur, self.frozen_below));
-        if let Some(still_live) = &still_live {
-            // Nothing would install what only such a peer holds.
-            for id in 0..lockfile.only_peers.bit_length() {
-                if lockfile.only_peers.is_set(id) && live.is_set(id) && !still_live.is_set(id) {
-                    self.spare.set(id);
-                }
-            }
-        }
+        let was_live = live;
         let (cur, live) = (
             hoisted.as_deref().unwrap_or(cur),
             still_live.as_ref().unwrap_or(live),
@@ -486,6 +479,15 @@ impl<'a> Pass<'a> {
             self.candidates.clear();
             self.candidates
                 .extend(group.iter().copied().filter(|&id| live.is_set(id as usize)));
+            // Nothing would install what only such a peer holds. The root's copy takes the peer,
+            // unless it is not from the registry.
+            if (self.candidates.iter()).any(|&id| !self.closed.is_set(id as usize)) {
+                for &id in group.iter().filter(|&&id| lockfile.is_only_for_peers(id)) {
+                    if was_live.is_set(id as usize) && !live.is_set(id as usize) {
+                        self.spare.set(id as usize);
+                    }
+                }
+            }
             if self.candidates.len() >= 2 {
                 for id in self.find_spare_in_group(&self.edges[g], cur, below) {
                     self.spare.set(id as usize);

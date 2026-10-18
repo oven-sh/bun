@@ -4231,26 +4231,28 @@ impl PackageManager {
                 }
                 HeldAbout::Task(id) => match self.task_queue.get(&id) {
                     Some(waiters) if !waiters.is_empty() => {
+                        let (mut is_needed, mut is_needed_by_peer, mut only_peers) =
+                            (false, false, true);
+                        for waiter in waiters {
+                            let (TaskCallbackContext::Dependency(row)
+                            | TaskCallbackContext::RootDependency(row)) = *waiter
+                            else {
+                                is_needed = true;
+                                continue;
+                            };
+                            if !is_in_tree(row) {
+                                continue;
+                            }
+                            let behavior = lockfile.buffers.dependencies[row as usize].behavior;
+                            if behavior.is_peer() {
+                                is_needed_by_peer |= behavior.is_required();
+                            } else {
+                                only_peers = false;
+                                is_needed |= behavior.is_required();
+                            }
+                        }
                         // A peer stays unbound if another dependency has to do without the package.
-                        let only_peers = waiters.iter().all(|waiter| match *waiter {
-                            TaskCallbackContext::Dependency(row)
-                            | TaskCallbackContext::RootDependency(row) => {
-                                lockfile.buffers.dependencies[row as usize]
-                                    .behavior
-                                    .is_peer()
-                            }
-                            _ => false,
-                        });
-                        waiters.iter().any(|waiter| match *waiter {
-                            TaskCallbackContext::Dependency(row)
-                            | TaskCallbackContext::RootDependency(row) => {
-                                let behavior = lockfile.buffers.dependencies[row as usize].behavior;
-                                is_in_tree(row)
-                                    && behavior.is_required()
-                                    && (only_peers || !behavior.is_peer())
-                            }
-                            _ => true,
-                        })
+                        is_needed || (only_peers && is_needed_by_peer)
                     }
                     _ => true,
                 },

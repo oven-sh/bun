@@ -474,7 +474,10 @@ impl<'p, 's> Checker<'p, 's> {
             return known;
         }
         let scope = self.begin_scope();
+        let is_inner = self.keys_of_properties_in_progress.contains(&ty);
+        self.keys_of_properties_in_progress.push(ty);
         let keys = self.get_literal_type_from_properties_uncached(ty, index_flags);
+        self.keys_of_properties_in_progress.pop();
         let result = self.end_scope_by_counters(scope);
         // `c.propertiesTypes[key] = result`, whatever is in progress. `interface D extends M<D>`:
         // whether `M<D>` is a valid base type depends on `keyof D`, which has no key of `M<D>` from
@@ -482,6 +485,7 @@ impl<'p, 's> Checker<'p, 's> {
         // stays.
         let replaces = (self.p.keys_of_properties.get(&self.task, &ty)).is_some();
         let stored = match result {
+            Ok(stored) if is_inner => stored.held_back(),
             Ok(stored) => stored,
             Err(_) if replaces || self.is_resolving_base_types_of(ty) => Stored::new(),
             Err(_) => return keys,
@@ -1559,6 +1563,11 @@ impl<'p, 's> Checker<'p, 's> {
             // Where it was in progress several times, the outermost is the last to store.
             (Ok(stored), None) => {
                 let entry = (ty, is_repeatable);
+                let is_inner = self.may_be_in_flight(q) && self.stack.contains(&q);
+                let stored = match is_inner || !is_repeatable {
+                    true => stored.held_back(),
+                    false => stored,
+                };
                 (self.p.conditionals).rewrite(&self.task, (file, node, mapper), entry, stored);
                 ty
             }

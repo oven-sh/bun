@@ -203,6 +203,8 @@ impl<'s> Checker<'_, 's> {
         }
         self.order_dependent.clear();
         self.order_dependent_filter = 0;
+        self.constraints_of_this_task.clear();
+        self.relations_of_this_task.clear();
     }
 
     /// Called on the thread of the task, after everything else this checker does.

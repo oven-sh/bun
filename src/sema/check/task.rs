@@ -17,6 +17,7 @@
 //! The other way to run tasks, without steps and barriers, is in `super::commit`.
 
 use super::commit::View;
+use super::self_check::DifferingEntries;
 use super::sink::Reported;
 use super::{Program, Query};
 use crate::atom::Intern;
@@ -30,6 +31,7 @@ use crate::types::{Link, Marks, OwnRecords, OwnStore, Sharing};
 use crate::util::SharedSort;
 use crate::util::{InParallel, for_each_mut};
 use std::cell::{Cell, RefCell, UnsafeCell};
+use std::time::Duration;
 
 /// Permission to store a finished result. Only `Checker::leave` and the scopes in check/mod.rs
 /// create one.
@@ -49,6 +51,12 @@ impl Stored {
     #[inline]
     pub(super) fn since(held_back: u64) -> Stored {
         Stored(held_back)
+    }
+
+    /// The same permission for a result that waits for the next commit: another store under its key is to replace it.
+    #[inline]
+    pub(super) fn held_back(self) -> Stored {
+        Stored::new()
     }
 }
 
@@ -93,6 +101,18 @@ pub struct Task<'s> {
     is_believed: bool,
     /// How many keys the task had logged at its commits, and how many entries they have stored.
     committed: Cell<[u64; 2]>,
+    /// How long the task has waited for the mutex of the commits, has had it, and has waited for claims of variances.
+    waits: Cell<[Duration; 3]>,
+    /// The tables to which the task writes at once, as a bit set by slot: see `may_write_at_once`. 0: none, or none before
+    /// its next commit (`stop_writing_at_once`).
+    at_once: Cell<u128>,
+    /// What `at_once` is again after a commit.
+    at_once_unless_stopped: u128,
+    /// How many of `diagnostics`, from the first on, were logged before `stop_writing_at_once`. `usize::MAX`: it was not
+    /// called since the last commit.
+    logged_before_the_stop: Cell<usize>,
+    /// See `super::self_check`.
+    pub(crate) differing: RefCell<DifferingEntries>,
     /// The types, signatures, mappers and component lists that the task has created.
     pub(crate) own: OwnStore<'s>,
     /// Interior-mutable because every access to a table takes `&Task`: some are made under `&Checker`. See `Task::buffer`.
@@ -122,6 +142,11 @@ impl<'s> Task<'s> {
             is_lost: Cell::new(false),
             is_believed: false,
             committed: Cell::new([0; 2]),
+            waits: Cell::new([Duration::ZERO; 3]),
+            at_once: Cell::new(0),
+            at_once_unless_stopped: 0,
+            logged_before_the_stop: Cell::new(usize::MAX),
+            differing: RefCell::default(),
             own: OwnStore::new_in(arena),
             buffer: UnsafeCell::new(Buffer::new()),
             file_local: UnsafeCell::new(FileLocalTables::new()),
@@ -167,10 +192,56 @@ impl<'s> Task<'s> {
         })
     }
 
-    /// After `begin`. `is_believed`: see the field.
-    pub(super) fn see_commits(&mut self, view: View<'s>, is_believed: bool) {
+    /// After `begin`. `is_believed`: see the field. `at_once`: the tables to which it writes at once, as a bit set by slot.
+    pub(super) fn see_commits(&mut self, view: View<'s>, is_believed: bool, at_once: u128) {
         self.buffer.get_mut().begin_log();
         (self.view, self.is_believed) = (Some(view), is_believed);
+        self.at_once_unless_stopped = at_once;
+        self.write_at_once_again();
+    }
+
+    /// Whether an entry of the table with `slot`, stored with `stored`, goes to the shared part now and not at the next
+    /// commit. The caller has found that neither its key nor its value is bound.
+    ///
+    /// Whoever finds an entry does not evaluate it. So he has to find whatever was stored while it was evaluated as well.
+    /// What is keyed by syntax waits for the commit. So an entry is written at once only if nothing was held back since
+    /// its evaluation began: then whatever that has stored was written at once too, before it.
+    #[inline]
+    pub(crate) fn may_write_at_once(&self, slot: u32, stored: Stored) -> bool {
+        self.at_once.get() >> slot & 1 != 0 && !self.has_held_back_since(stored)
+    }
+
+    /// Whether the task writes to any table at once.
+    #[inline]
+    pub(crate) fn writes_at_once(&self) -> bool {
+        self.at_once.get() != 0
+    }
+
+    /// Until its next commit the task writes nothing at once. What is written at once can't be taken back, and what the
+    /// task computes from here on may be thrown away with it, or follows from an entry that no other task sees yet and
+    /// would compute differently: it is lost, it has noted something for which the commit can find it invalid, or it
+    /// has stored what a member of a resolution cycle gets.
+    pub(super) fn stop_writing_at_once(&self) {
+        if self.at_once.replace(0) != 0 {
+            self.logged_before_the_stop.set(self.diagnostics.len());
+        }
+    }
+
+    /// At the beginning, and after a commit: what the task had noted is valid, and what it had held back is there for all.
+    pub(super) fn write_at_once_again(&self) {
+        if !self.is_lost() {
+            self.at_once.set(self.at_once_unless_stopped);
+            let logged = match self.at_once_unless_stopped {
+                0 => 0,
+                _ => usize::MAX,
+            };
+            self.logged_before_the_stop.set(logged);
+        }
+    }
+
+    /// How many of `diagnostics`, from the first on, were logged while the task wrote at once.
+    pub(super) fn logged_while_writing_at_once(&self) -> usize {
+        self.logged_before_the_stop.get()
     }
 
     #[inline]
@@ -184,6 +255,11 @@ impl<'s> Task<'s> {
         self.view.is_some()
     }
 
+    /// `CommitPolicy::compares_lost`
+    pub(crate) fn compares_lost_entries(&self) -> bool {
+        self.view.as_ref().is_some_and(View::compares_lost)
+    }
+
     /// Whether a commit of the task will store what it stores now.
     #[inline]
     pub(crate) fn shares_what_it_stores(&self) -> bool {
@@ -193,6 +269,7 @@ impl<'s> Task<'s> {
     /// What the task has done since its last commit is thrown away, and so is what it does from now on.
     pub(super) fn lose(&self) {
         self.is_lost.set(self.commits() && !self.is_believed);
+        self.stop_writing_at_once();
     }
 
     #[inline]
@@ -210,6 +287,16 @@ impl<'s> Task<'s> {
         (self.committed).set([so_far + logged, stored_so_far + stored]);
     }
 
+    /// Adds to `waits`.
+    pub(super) fn count_waits(&self, more: [Duration; 3]) {
+        let [for_commits, in_commits, for_claims] = self.waits.get();
+        (self.waits).set([
+            for_commits + more[0],
+            in_commits + more[1],
+            for_claims + more[2],
+        ]);
+    }
+
     /// Whether the task has noted a listing or a walk for which its next commit can find it invalid
     /// (`Finished::can_be_invalid`), or is lost. What it has computed since then may depend on that.
     pub(super) fn may_be_thrown_away(&self) -> bool {
@@ -225,7 +312,9 @@ impl<'s> Task<'s> {
         let ended = Ended {
             logged,
             stored,
+            waits: self.waits.get(),
             foreign_evaluations: self.foreign_evaluations,
+            differing: self.differing.take(),
         };
         self.drop_everything();
         ended
@@ -247,7 +336,6 @@ impl<'s> Task<'s> {
     /// Whether `hold_back` was called since the computation began whose result `stored` permits to store, or nobody knows
     /// when that was.
     #[inline]
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn has_held_back_since(&self, stored: Stored) -> bool {
         stored.0 != self.held_back.get()
     }
@@ -298,6 +386,10 @@ impl<'s> Task<'s> {
         (self.view, self.is_believed) = (None, false);
         self.is_lost.set(false);
         self.committed.set([0; 2]);
+        self.waits.set([Duration::ZERO; 3]);
+        (self.at_once_unless_stopped, self.at_once) = (0, Cell::new(0));
+        self.logged_before_the_stop.set(usize::MAX);
+        *self.differing.get_mut() = DifferingEntries::default();
         // Outside the plan it publishes nothing.
         let (sharing, jitter) = (self.own.sharing().min(Sharing::Finds), self.own.jitter());
         self.own = OwnStore::new_in(self.arena);
@@ -395,7 +487,10 @@ pub struct Ended {
     /// another task was first.
     pub logged: u64,
     pub stored: u64,
+    /// How long the task has waited for the mutex of the commits, has had it, and has waited for claims of variances.
+    pub waits: [Duration; 3],
     pub foreign_evaluations: [u32; 14],
+    pub differing: DifferingEntries,
 }
 
 /// The result a task passes to the barrier.
@@ -570,6 +665,21 @@ const TABLES_OF_RECORDS: [&str; 30] = [
     "plain_global_refs",
     "equivalent_base_types",
 ];
+
+/// The tables to which a task that commits writes at once (`Task::may_write_at_once`), as a bit set by slot: those that are
+/// keyed by a record and hold results. Not `listed_properties`: which list an intersection keeps is compared at a commit.
+pub(super) fn tables_written_at_once() -> u128 {
+    let more = ["relations", "type_param_constraints", "type_param_defaults"];
+    let mut set = 0;
+    for (slot, name) in table_names().into_iter().enumerate() {
+        if name != "listed_properties"
+            && (TABLES_OF_RECORDS.contains(&name) || more.contains(&name))
+        {
+            set |= 1 << slot;
+        }
+    }
+    set
+}
 
 /// The names of the `Buffered` fields of `Program`, by slot.
 pub fn table_names() -> Vec<&'static str> {

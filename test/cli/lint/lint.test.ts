@@ -8598,6 +8598,18 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect(stdout).toEndWith(`exit code ${exitCode}\n`);
       });
 
+      // There it is below the working directory, like a link in a checkout.
+      test.skipIf(["/.git", "/.jj", "/dev/.git", "/dev/.jj"].some(it => existsSync(it))).each([
+        ["/", "/dev/stdout"],
+        ["/dev", "stdout"],
+      ])("in %s, which is in no repository, %s that is a pipe gets the report", async (cwd, name) => {
+        using dir = tempDir("bun-lint", tree);
+        const script = `cd ${cwd}; { "$@" "$OLDPWD/a.js" 2> /dev/null; echo "exit code $?"; } | cat`;
+        const { stdout } = await throughShell(String(dir), script, name);
+        expect(stdout).toContain("a.js:1:1: Unexpected 'debugger' statement.");
+        expect(stdout).toEndWith("exit code 1\n");
+      });
+
       test("/dev/null takes the report", async () => {
         const result = await lint(tree, ["-f", "unix", "-o", "/dev/null"], { cwd: "project" });
         expect(result.raw).toBe("");

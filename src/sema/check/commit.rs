@@ -35,9 +35,18 @@
 //!   lost later: whoever checks the file again finds the entry and does not report. If the entry loses, so does the
 //!   diagnostic (`Program::drop_diagnostics_of_losers`). What the walk of a file reports belongs to the file, and goes when a
 //!   commit follows the end of the file.
-//! - One kind of result does not wait for a commit: variances. See `Claims`.
+//! - **An entry under a record does not wait for a commit if nothing that it rests on does** (`Task::may_write_at_once`):
+//!   neither its key nor its value is bound, and since its evaluation began nothing was stored that waits, and nothing was
+//!   read that holds only while the stack of the checker is as it is (`Task::hold_back`). So whatever its evaluation has
+//!   stored was written at once too, before it. What is written at once can't be taken back. So a task writes nothing
+//!   at once from the moment at which something happens for which it may be thrown away, or at which it stores the result
+//!   of a resolution cycle, until its next commit (`Task::stop_writing_at_once`).
+//! - **What depends on how deep the checker was never leaves the task**: a base constraint that was cut short, a comparison
+//!   that holds because two types inside it counted as deeply nested, and what follows from either
+//!   (`Checker::constraints_of_this_task`, `relations_of_this_task`). In a table the first of them would stay for everybody.
+//! - Variances do not wait for a commit either. See `Claims`.
 
-use super::task::{Ended, Task, tables_of};
+use super::task::{Ended, Task, tables_of, tables_written_at_once};
 use super::{Checker, Program};
 use crate::jitter::{Jitter, Place};
 use crate::local::{Log, node_word};
@@ -57,6 +66,8 @@ pub(super) struct Commits<'s> {
     committing: Guarded<Committing>,
     numbers: &'s Numbers,
     claims: Claims,
+    /// `tables_written_at_once`
+    at_once: u128,
     /// Every checker gets a copy.
     pub(super) jitter: Jitter,
 }
@@ -89,6 +100,7 @@ impl<'s> Commits<'s> {
                 table: Guarded::default(),
                 has_changed: Condvar::new(),
             },
+            at_once: tables_written_at_once(),
             jitter: Jitter::default(),
         }
     }
@@ -157,14 +169,18 @@ impl<'s> Commits<'s> {
     }
 }
 
-/// When a task commits besides at its end: at the first moment of rest after either has come true. They change the time that
-/// a check takes, never its result.
+/// When a task commits besides at its end: at the first moment of rest after one of the first two has come true. All of it
+/// changes the time that a check takes, never its result.
 #[derive(Copy, Clone, Default)]
 pub struct CommitPolicy {
     /// It has logged this many keys since its last commit. 0: never for that reason.
     pub entries: usize,
     /// Its last commit is this many microseconds ago. 0: never for that reason.
     pub microseconds: u64,
+    /// No entry is written at once (`Task::may_write_at_once`).
+    pub holds_everything_back: bool,
+    /// An entry that loses at a commit is compared with the one that stays: see `super::self_check`.
+    pub compares_lost: bool,
 }
 
 const NO_FILE: u32 = u32::MAX;
@@ -236,6 +252,10 @@ impl View<'_> {
         self.oldest_pin.set(self.oldest_pin.get().min(snapshot));
     }
 
+    pub(super) fn compares_lost(&self) -> bool {
+        self.policy.compares_lost
+    }
+
     fn is_own(&self, commit: u32) -> bool {
         self.own.borrow().binary_search(&commit).is_ok()
     }
@@ -256,6 +276,7 @@ impl View<'_> {
         let CommitPolicy {
             entries,
             microseconds,
+            ..
         } = self.policy;
         entries != 0 && logged >= entries
             || microseconds != 0
@@ -485,15 +506,15 @@ impl<'s> Checker<'_, 's> {
     pub fn see_commits(&mut self, policy: CommitPolicy, is_alone: bool) {
         let files = self.p.files.modules.len();
         let view = (self.p.commits).view(files, policy, self.task.own.jitter());
-        self.task.see_commits(view, is_alone);
+        // Alone it writes nothing at once: nobody is there to read it, and at a limit it stores, and replaces, what tsgo
+        // does.
+        let at_once = match is_alone || policy.holds_everything_back {
+            true => 0,
+            false => self.p.commits.at_once,
+        };
+        self.task.see_commits(view, is_alone, at_once);
         self.task.own.count_places_from(self.task.number());
         self.task.own.wait_at(Place::TaskBegins);
-    }
-
-    /// Whether the task is thrown away: it was found invalid, or it has given up at a limit. It stores and reports nothing
-    /// any more.
-    pub fn is_lost(&self) -> bool {
-        self.task.is_lost()
     }
 
     /// For a task that sees commits: a greater number than last time if a commit may have added to the tables in between.
@@ -521,7 +542,8 @@ impl<'s> Checker<'_, 's> {
         let logged = self.task.buffer().logged();
         let is_due = (self.task.view()).is_some_and(|view| view.is_commit_due(logged));
         if is_due && !self.task.is_lost() {
-            self.commit(false, true);
+            let (is_between_files, is_read) = (false, true);
+            self.commit(is_between_files, is_read);
         } else if let Some(view) = self.task.view() {
             view.forget();
         }
@@ -546,19 +568,24 @@ impl<'s> Checker<'_, 's> {
     /// `is_read`: whether anything will look at the tables afterwards. If not, nothing is stored in them.
     /// Returns whether the task goes on: it is not lost.
     fn commit(&mut self, is_between_files: bool, is_read: bool) -> bool {
-        if self.task.is_lost() {
-            return false;
-        }
-        let Some(mut reported) = self.take_diagnostics_for_commit(is_between_files) else {
+        let p = self.p;
+        let Some([of_entries_written_at_once, mut reported]) =
+            self.take_diagnostics_for_commit(is_between_files)
+        else {
             if let Some(view) = self.task.view() {
                 view.forget();
             }
-            return true;
+            return !self.task.is_lost();
         };
-        let p = self.p;
+        p.publish_reported(self.task.number(), of_entries_written_at_once);
+        if self.task.is_lost() {
+            return false;
+        }
         let mut log = self.task.buffer().take_log();
         self.task.own.wait_at(Place::CommitBegins);
+        let asked = Instant::now();
         let mut committing = p.commits.committing.lock();
+        let entered = Instant::now();
         let is_invalid = !self.task.is_believed()
             && (self.task.view()).is_some_and(|view| p.is_invalid(&self.task, view, &committing));
         if is_invalid {
@@ -579,10 +606,12 @@ impl<'s> Checker<'_, 's> {
             false => 0,
         };
         drop(committing);
+        task.count_waits([entered - asked, entered.elapsed(), Duration::ZERO]);
         task.count_committed(log.len() as u64, stored);
         if let Some(view) = task.view() {
             view.has_committed(number);
         }
+        task.write_at_once_again();
         if task.closed_a_cycle {
             p.closed_a_cycle.store(true, Ordering::Relaxed);
         }

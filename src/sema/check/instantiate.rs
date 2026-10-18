@@ -164,9 +164,9 @@ impl PropInstantiation {
         }
     }
 
-    /// Whether `apply_to(prop)` and `other.apply_to(of_other)` would make `prop` and `of_other` equal. They have the same
+    /// Whether `apply_to(own)` and `other.apply_to(theirs)` would make `own` and `theirs` equal. They have the same
     /// name.
-    pub(super) fn makes_the_same_as(self, prop: &Prop, other: Self, of_other: &Prop) -> bool {
+    pub(super) fn makes_the_same_as(self, own: &Prop, other: Self, theirs: &Prop) -> bool {
         let name_type = |it: Self, of: &Prop| match it {
             Self::MapperWithKey(_) => TypeId::UNRESOLVED,
             Self::Type(_) | Self::Mapper(_) => of.name_type,
@@ -175,13 +175,13 @@ impl PropInstantiation {
             Self::Mapper(mapper) | Self::MapperWithKey(mapper) => mapper,
             Self::Type(_) => of.mapper,
         };
-        prop.flags == of_other.flags
-            && name_type(self, prop) == name_type(other, of_other)
-            && mapper(self, prop) == mapper(other, of_other)
+        own.flags == theirs.flags
+            && name_type(self, own) == name_type(other, theirs)
+            && mapper(self, own) == mapper(other, theirs)
             && match (self, other) {
                 (Self::Type(new), Self::Type(other_new)) => {
                     new == other_new
-                        && match (&prop.source, &of_other.source) {
+                        && match (&own.source, &theirs.source) {
                             (PropSource::Type(_), PropSource::Type(_)) => true,
                             (
                                 PropSource::Copy(_, declared, has_value_declaration),
@@ -194,33 +194,37 @@ impl PropInstantiation {
                         }
                 }
                 (Self::Type(_), _) | (_, Self::Type(_)) => false,
-                _ => prop.source == of_other.source,
+                _ => own.source == theirs.source,
             }
     }
 
-    /// Whether `apply_to(prop)` would make `prop` equal to `instantiated`, which has the same name.
-    pub(super) fn makes(self, instantiated: &Prop, prop: &Prop) -> bool {
+    /// Whether `apply_to(source)` would make `source` equal to `instantiated`, which has the same name.
+    pub(super) fn makes(self, instantiated: &Prop, source: &Prop) -> bool {
         let name_type = match self {
             Self::MapperWithKey(_) => TypeId::UNRESOLVED,
-            Self::Type(_) | Self::Mapper(_) => prop.name_type,
+            Self::Type(_) | Self::Mapper(_) => source.name_type,
         };
-        instantiated.flags == prop.flags
+        instantiated.flags == source.flags
             && instantiated.name_type == name_type
             && match self {
                 Self::Mapper(mapper) | Self::MapperWithKey(mapper) => {
-                    instantiated.mapper == mapper && instantiated.source == prop.source
+                    instantiated.mapper == mapper && instantiated.source == source.source
                 }
                 Self::Type(new) => {
-                    instantiated.mapper == prop.mapper
-                        && match (&instantiated.source, &prop.source) {
+                    instantiated.mapper == source.mapper
+                        && match (&instantiated.source, &source.source) {
                             (PropSource::Type(ty), PropSource::Type(_)) => *ty == new,
                             (
                                 PropSource::Copy(ty, declared, has_value_declaration),
-                                PropSource::Copy(_, declared_of_prop, prop_has_value_declaration),
+                                PropSource::Copy(
+                                    _,
+                                    declared_of_source,
+                                    source_has_value_declaration,
+                                ),
                             ) => {
                                 *ty == new
-                                    && has_value_declaration == prop_has_value_declaration
-                                    && declared == declared_of_prop
+                                    && has_value_declaration == source_has_value_declaration
+                                    && declared == declared_of_source
                             }
                             _ => false,
                         }
@@ -833,8 +837,17 @@ impl<'p, 's> Checker<'p, 's> {
             self.get_symbol_id_of_object_type_alias(ty);
         }
         self.instantiations_computed += 1;
+        // See `instantiations_in_progress`.
+        let is_listed = self.task.writes_at_once();
+        let is_inner = is_listed && self.instantiations_in_progress.contains(&(ty, mapper));
+        if is_listed {
+            self.instantiations_in_progress.push((ty, mapper));
+        }
         let result = self.instantiate_uncached(ty, mapper);
         let result = self.with_new_alias(ty, mapper, result, None);
+        if is_listed {
+            self.instantiations_in_progress.pop();
+        }
         if serial == 0 {
             self.active_mappers.pop();
         }
@@ -857,6 +870,10 @@ impl<'p, 's> Checker<'p, 's> {
                 // `data.instantiations[key] = result`: of two instantiations with one key, one
                 // within the other, the outer one assigns last.
                 let (table, key) = (&self.p.instantiations, (ty, mapper));
+                let stored = match is_inner {
+                    true => stored.held_back(),
+                    false => stored,
+                };
                 match absent {
                     Some(spread) => table.rewrite_absent(&self.task, spread, key, result, stored),
                     None => table.rewrite(&self.task, key, result, stored),

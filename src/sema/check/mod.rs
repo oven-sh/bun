@@ -69,6 +69,7 @@ pub(crate) mod regexp_scanner;
 mod relate;
 mod related;
 mod related_expected;
+pub mod self_check;
 pub mod services;
 mod shape;
 mod shortcuts;
@@ -754,6 +755,12 @@ impl<'s> Program<'s> {
             instantiation_limit_hits: 0,
             limits_in_earlier_files: 0,
             comparisons_of_deeply_nested_types: 0,
+            relations_of_this_task: Default::default(),
+            keeps_relations_for_this_task: false,
+            constraints_of_this_task: Default::default(),
+            constraint_cuts: Default::default(),
+            instantiations_in_progress: Vec::new(),
+            keys_of_properties_in_progress: Vec::new(),
             instantiations_up_to_a_limit: Default::default(),
             relations_cut_short: Default::default(),
             enum_relation: Default::default(),
@@ -1442,6 +1449,22 @@ pub struct Checker<'p, 's> {
     /// How many comparisons were `TernaryMaybe` because both types were deeply nested (`isDeeplyNestedType`). That depends on the
     /// comparisons in progress and on the order in which the types were created.
     comparisons_of_deeply_nested_types: u64,
+    /// In a task that commits: the comparisons that hold because one inside them was `TernaryMaybe` for two deeply nested
+    /// types. Another task may get another result, and in `Program::relations` the first of them would stay for
+    /// everybody. See `known_relation`.
+    relations_of_this_task: FxHashMap<relate::Key, u8>,
+    /// `insert_relation` stores in `relations_of_this_task`.
+    keeps_relations_for_this_task: bool,
+    /// The same for the base constraints that were cut short, or follow from one that was: where the cut is depends on how
+    /// deep the computation was when it got to the type. See `known_constraint`.
+    constraints_of_this_task: FxHashMap<TypeId, (Option<TypeId>, bool)>,
+    /// How many times a base constraint was cut short, or an entry of `constraints_of_this_task` was read.
+    constraint_cuts: std::cell::Cell<u64>,
+    /// In a task that commits: the keys of the `instantiate_cached` in progress that have found no entry, and the types of
+    /// the `get_literal_type_from_properties` in progress. Of two with one key the outer one stores last, and its entry
+    /// is the one that stays. So the inner one does not write at once.
+    instantiations_in_progress: Vec<(TypeId, MapperId)>,
+    keys_of_properties_in_progress: Vec<TypeId>,
     /// The results withheld from `Program::instantiations` because `instantiate` returned the error type at a limit, with the serial number
     /// of the activation of the mapper, and whether `limits` moved. While the mapper is active no
     /// path to the limit is taken twice (`activeTypeMappersCaches`). The next caller hits the limit
@@ -3344,8 +3367,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// Permission to store the result that a member of a resolution cycle gets: `any` or the error type. tsgo caches it for every member
     /// (`!popTypeResolution()`) and after a failed `pushTypeResolution`, also where `leave` returns `Err`. The value is a constant, derived
     /// from no unfinished result.
+    ///
+    /// Which member gets it depends on where the task has entered the cycle. The entry waits for a commit, but what the task
+    /// computes from it until then looks like any other result: `Task::stop_writing_at_once`.
     fn cycle_result(&self) -> Stored {
         debug_assert!(self.left_a_cycle || self.found_cycle);
+        self.task.stop_writing_at_once();
         Stored::new()
     }
 

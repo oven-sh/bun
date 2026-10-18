@@ -1821,7 +1821,7 @@ fn run_one(
                 has_no_steps: setup.has_no_steps,
                 commit_policy: bun_sema::check::commit::CommitPolicy {
                     entries: setup.commit_entries,
-                    microseconds: 0,
+                    ..Default::default()
                 },
                 ..Default::default()
             },

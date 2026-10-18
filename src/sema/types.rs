@@ -4038,6 +4038,8 @@ impl<'p, 's> Types<'p, 's> {
 /// Receives what `Follow::visit` reports for a value: every id, every file, and everything else as
 /// data to hash.
 pub trait Visitor {
+    /// Two values that hold the same are to be shown in the same order, also where they hold a hash map.
+    const IS_ORDERED: bool = false;
     fn atom(&mut self, atom: Atom);
     fn components(&mut self, id: ComponentsId);
     fn mapper(&mut self, id: MapperId);
@@ -4046,6 +4048,11 @@ pub trait Visitor {
     /// A node or a symbol of `file` is referenced.
     fn file(&mut self, file: FileId);
     fn plain<T: Hash + ?Sized>(&mut self, value: &T);
+    /// The number of a `crate::table::Handle`. Two copies of one value have two.
+    #[inline]
+    fn handle(&mut self, handle: u32) {
+        self.plain(&handle);
+    }
 }
 
 /// A value that can reference an atom, a list of index components, a mapper, a signature or a type:
@@ -4101,7 +4108,6 @@ macro_rules! has_no_references {
         }
     )*};
 }
-pub(crate) use has_no_references;
 
 /// `follow_struct!(Name { every, field })`
 macro_rules! follow_struct {
@@ -4281,8 +4287,21 @@ impl Follow for &[u8] {
 }
 
 impl<K: Follow + Hash + Eq, T: Follow> Follow for FxHashMap<K, T> {
-    /// In no particular order: not for a content hash.
+    /// In no particular order, so not for a content hash, unless the visitor asks for one: then by the hash of the key,
+    /// which is the same for two maps that hold the same ids.
     fn visit<V: Visitor>(&self, visitor: &mut V) {
+        if V::IS_ORDERED {
+            let mut entries: Vec<(u64, &K, &T)> = (self.iter())
+                .map(|(key, value)| (crate::util::fx_hash(key), key, value))
+                .collect();
+            entries.shared_sort_unstable_by_key(|entry| entry.0);
+            visitor.plain(&entries.len());
+            for (_, key, value) in entries {
+                key.visit(visitor);
+                value.visit(visitor);
+            }
+            return;
+        }
         for (key, value) in self {
             key.visit(visitor);
             value.visit(visitor);
@@ -6225,6 +6244,10 @@ mod tests {
             created
         };
         let all: Vec<Vec<TypeId>> = std::thread::scope(|scope| {
+            #[expect(
+                clippy::needless_collect,
+                reason = "all are started before the first is joined"
+            )]
             let threads: Vec<_> = (0..8).map(|_| scope.spawn(create)).collect();
             (threads.into_iter())
                 .map(|thread| thread.join().unwrap())

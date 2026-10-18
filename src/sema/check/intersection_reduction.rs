@@ -633,7 +633,7 @@ impl<'p, 's> Checker<'p, 's> {
         ty: TypeId,
         kept: &mut Kept,
         place: usize,
-        before: BeforeName,
+        before: &BeforeName,
         of_name: &OfName,
         left_out: Option<&OfName>,
     ) {

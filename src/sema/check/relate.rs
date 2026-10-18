@@ -1134,7 +1134,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut missed = None;
         if is_object_kind(sd) && is_object_kind(td) {
             let key = self.relation_key_as(source, sd, target, td, relation, STATE_NONE);
-            if let Some(entry) = self.p.relations.get(&self.task, &key.0) {
+            if let Some(entry) = self.known_relation(&key.0) {
                 // The cache is shared between threads, so another thread measuring the same symbol may have stored this
                 // comparison already. Without its flags the variances would lack `UNMEASURABLE` or `UNRELIABLE`.
                 if is_marker_comparison {
@@ -1842,7 +1842,7 @@ impl<'p, 's> Checker<'p, 's> {
         // value afterwards. The read always hits: every caller passes a type of a kind that has an
         // entry.
         !self.constraints_marked_circular.contains(&t)
-            && !(self.p.constraints.get(&self.task, &t)).is_some_and(|(_, is_circular)| is_circular)
+            && !(self.known_constraint(t)).is_some_and(|(_, is_circular)| is_circular)
     }
 
     /// `getBaseConstraintOfType`. `None`: there is none.
@@ -2797,7 +2797,10 @@ impl<'p, 's> Checker<'p, 's> {
         let mut has_claim = false;
         if self.task.commits() && !self.in_variance_computation {
             self.task.own.wait_at(crate::jitter::Place::Claim);
+            let asked = std::time::Instant::now();
             let claim = self.p.claim_variances(sym, cuts == 0);
+            let none = std::time::Duration::ZERO;
+            self.task.count_waits([none, none, asked.elapsed()]);
             self.task.own.wait_at(crate::jitter::Place::Claim);
             match claim {
                 VarianceClaim::Known(variances) => {
@@ -2983,7 +2986,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let may_share = reason.is_none();
         // What was measured inside can be whole where the outermost result is not.
-        let reason = reason.or(is_open.then_some(NotShared::Open));
+        let reason = reason.or_else(|| is_open.then_some(NotShared::Open));
         let claimed = has_claim.then_some((sym, reason));
         self.task.own.wait_at(crate::jitter::Place::VariancesShared);
         let not_registered = self.p.share_variances(measured, may_share, claimed);
@@ -3025,6 +3028,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             self.order_dependent_uses += 1;
             self.task.hold_back();
+            self.task.stop_writing_at_once();
             // How many pairs were compared.
             let count = match holds {
                 true => sources.len().min(targets.len()),
@@ -3058,6 +3062,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             self.order_dependent_uses += 1;
             self.task.hold_back();
+            self.task.stop_writing_at_once();
             let all = u32::MAX.checked_shr(32 - count.min(32) as u32).unwrap_or(0);
             self.task.order_dependent_variances[at as usize].inferred |= all;
         }
@@ -4287,7 +4292,7 @@ impl<'p, 's> Checker<'p, 's> {
         } = self.recursive_relation_key(r, source, sd, target, td, state);
         let cached = match missed {
             true => None,
-            false => self.p.relations.get(&self.task, &key),
+            false => self.known_relation(&key),
         };
         if let Some(entry) = cached
             // A cached failure is recomputed to produce its error elaboration.
@@ -4335,6 +4340,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let maybe_start = r.maybe_keys.len();
         let scope = self.begin_scope();
+        let cuts = self.comparisons_of_deeply_nested_types;
         r.push_maybe_key(key);
         let save_expanding = r.expanding;
         if recursion & REC_SOURCE != 0 {
@@ -4358,6 +4364,7 @@ impl<'p, 's> Checker<'p, 's> {
         let save_reliability = std::mem::replace(&mut self.reliability, 0);
         let result = if r.expanding == REC_BOTH {
             self.comparisons_of_deeply_nested_types += 1;
+            self.task.hold_back();
             Ternary::MAYBE
         } else {
             self.structured_type_related_to::<REPORT>(r, source, sd, target, td, state)
@@ -4376,6 +4383,12 @@ impl<'p, 's> Checker<'p, 's> {
             if result == Ternary::TRUE || r.source_stack.is_empty() && r.target_stack.is_empty() {
                 // Results that were true under assumptions are definite now that no assumption is
                 // left. Unknown results stay unknown.
+                // Where two types count as deeply nested depends on the comparisons around this one.
+                let is_cut = self.comparisons_of_deeply_nested_types != cuts;
+                let around = std::mem::replace(
+                    &mut self.keeps_relations_for_this_task,
+                    is_cut && self.task.commits(),
+                );
                 self.reset_maybe_stack(
                     r,
                     maybe_start,
@@ -4384,6 +4397,7 @@ impl<'p, 's> Checker<'p, 's> {
                     stored,
                     REPORT,
                 );
+                self.keeps_relations_for_this_task = around;
             }
         } else {
             // A result that is false under assumptions is false without them, and so is one that
@@ -4444,7 +4458,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `relation.set(key, entry)`
     fn set_relation(&mut self, key: Key, entry: u8, stored: Stored) {
-        if self.p.relations.get(&self.task, &key).is_none() {
+        if self.keeps_relations_for_this_task || self.p.relations.get(&self.task, &key).is_none() {
             self.insert_relation(key, entry, stored);
         } else {
             (self.p.relations).rewrite(&self.task, key, entry, stored);
@@ -4455,7 +4469,25 @@ impl<'p, 's> Checker<'p, 's> {
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
         self.generic_relation_entries_not_published += u64::from(key.is_hash_of_own_ids());
         self.relation_sizes[usize::from(key.2 & 0xf)] += 1;
+        if self.keeps_relations_for_this_task {
+            self.relations_of_this_task.entry(key).or_insert(entry);
+            return;
+        }
         self.p.relations.insert(&self.task, key, entry, stored);
+    }
+
+    /// The entry of `Program::relations`, or else of `relations_of_this_task`. What is computed from the latter is for this
+    /// task too.
+    #[inline]
+    fn known_relation(&mut self, key: &Key) -> Option<u8> {
+        let known = self.p.relations.get(&self.task, key);
+        if known.is_some() || self.relations_of_this_task.is_empty() {
+            return known;
+        }
+        let kept = self.relations_of_this_task.get(key).copied()?;
+        self.comparisons_of_deeply_nested_types += 1;
+        self.task.hold_back();
+        Some(kept)
     }
 
     /// `(16_000_000 - relation.size()) / 8`, see `Checker::relation_sizes`.

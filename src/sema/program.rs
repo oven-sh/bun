@@ -98,12 +98,12 @@ const ASKS_ONLY_THE_PATTERNS_THAT_END_ALIKE: bool = true;
 /// On: `Files::merge` finds the `declare module "*.svg"` for every specifier of every file, and later lookups read the result.
 const KEEPS_THE_PATTERN_OF_EVERY_SPECIFIER: bool = false;
 
-/// Off: each step of `Files::link` is a parallel region of its own. The tasks, what each of them sees, and the order in which
-/// they are published are the same.
-const LINKS_WITHOUT_LETTING_THREADS_SLEEP: bool = false;
+/// Off: each step of `Files::link_by_level` is a parallel region of its own. The tasks, what each of them sees, and the order
+/// in which they are published are the same.
+const LINKS_ALL_LEVELS_IN_ONE_REGION: bool = true;
 
 /// Off: `Files::link` goes level by level of the import graph, with a barrier after each.
-const LINKS_BY_COMPONENT: bool = false;
+const LINKS_BY_COMPONENT: bool = true;
 
 /// For `Files::link_by_level`. Not a function of the number of threads: which components share a buffer is part of the
 /// plan.
@@ -2772,6 +2772,10 @@ struct LinkPlan<'s> {
     levels: Vec<u32>,
     /// By component.
     is_published: Vec<AtomicBool>,
+    /// How many tasks sleep in `sees`.
+    asleep: Guarded<usize>,
+    /// For them: a component is published.
+    has_published: bun_threading::Condvar,
     /// The keys for which the merge has stored something in `Files::alias_symbol_links`, and in `Memo::module_links`.
     aliases_at_merge: FxHashSet<Sym>,
     modules_at_merge: FxHashSet<Sym>,
@@ -2786,7 +2790,7 @@ impl LinkPlan<'_> {
     /// Whether the task for the component `own` reads what the tables have for the symbols of `file`. It returns when
     /// that is published.
     ///
-    /// It waits for a lower level only, and the lowest component that is not finished is never left in the queue
+    /// It waits for a lower level only, and the lowest component that is not finished is always at work
     /// (`Files::link_by_component`). So that one is finished without waiting, and then the next.
     fn sees(&self, own: u32, file: FileId) -> bool {
         let other = self.component_of(file);
@@ -2798,11 +2802,27 @@ impl LinkPlan<'_> {
         if level.is_none_or(|&level| level >= self.levels[own as usize]) {
             return false;
         }
-        let mut turns = 0u32;
-        while !self.is_published[other as usize].load(Ordering::Acquire) {
-            wait_a_turn(&mut turns);
+        let is_published = || self.is_published[other as usize].load(Ordering::Acquire);
+        if is_published() {
+            return true;
         }
+        pause_before_sleeping();
+        // It looks once more under the lock that `set_published` takes after the store. So either it sees the store, or
+        // `set_published` sees that it sleeps.
+        let mut asleep = self.asleep.lock();
+        *asleep += 1;
+        while !is_published() {
+            self.has_published.wait_guarded(&mut asleep);
+        }
+        *asleep -= 1;
         true
+    }
+
+    fn set_published(&self, component: u32) {
+        self.is_published[component as usize].store(true, Ordering::Release);
+        if *self.asleep.lock() > 0 {
+            self.has_published.notify_all();
+        }
     }
 }
 
@@ -2815,12 +2835,32 @@ fn is_nested(&(module, links): &(&Sym, &ModuleSymbolLinks)) -> bool {
     collisions.any(|it| it.duplicate.0 != module.file)
 }
 
-/// For a thread that waits for another thread that is at work, for less time than it takes to sleep and wake up.
-fn wait_a_turn(turns: &mut u32) {
-    *turns = turns.wrapping_add(1);
-    match *turns % 64 {
-        0 => std::thread::yield_now(),
-        _ => std::hint::spin_loop(),
+/// For a thread that has nothing to do until another thread is done with something short: about as long as it takes to
+/// wake a thread that sleeps. If there is still nothing then, it sleeps. A thread that goes on looking takes the processor
+/// time of the thread it waits for, where the process may use less of it than it has threads.
+fn pause_before_sleeping() {
+    for _ in 0..64 {
+        std::hint::spin_loop();
+    }
+}
+
+/// The threads of one parallel region that lasts for the whole link step. Under the lock of what they take their tasks
+/// from.
+#[derive(Default)]
+struct LinkThreads {
+    /// How many have come and not left.
+    present: usize,
+    /// How many of them sleep because there is no task to take.
+    asleep: usize,
+}
+
+impl LinkThreads {
+    /// After tasks have been added: wakes a thread for each of the `tasks` that can be taken, but for the one that the
+    /// calling thread takes.
+    fn wake_for(&self, tasks: usize, has_tasks: &bun_threading::Condvar) {
+        for _ in 0..tasks.saturating_sub(1).min(self.asleep) {
+            has_tasks.notify_one();
+        }
     }
 }
 
@@ -9215,6 +9255,10 @@ impl<'s> Files<'s> {
     ///   has found for another file on the way is dropped: the task of that file finds it, for every alias and every module.
     /// - What is left, for a symbol that is neither, waits until all tasks have ended. Then the first entry for a key wins,
     ///   in the order of the components by level.
+    ///
+    /// A thread that finds no component to take leaves, if the levels that are left are too narrow for the threads that are
+    /// here, and else sleeps until there are more components than the thread that made them ready takes itself. A chain of
+    /// modules is linked by one thread, which waits for nothing.
     fn link_by_component(&self, host: &dyn Host, unordered: &[FileId], found: &FoundByLink<'s>) {
         use std::cmp::Reverse;
         let all = self.components.all;
@@ -9223,6 +9267,8 @@ impl<'s> Files<'s> {
             of_file: self.components.of_file,
             levels: all.iter().map(|it| it.level).collect(),
             is_published: all.iter().map(|_| AtomicBool::new(false)).collect(),
+            asleep: Guarded::new(0),
+            has_published: bun_threading::Condvar::new(),
             aliases_at_merge: at_merge
                 .chain(self.circular_at_merge.iter().copied())
                 .collect(),
@@ -9252,28 +9298,75 @@ impl<'s> Files<'s> {
             .collect();
         // By level, then in program order.
         let place = |at: u32| Reverse(u64::from(plan.levels[at as usize]) << 32 | u64::from(at));
+        struct Queue {
+            /// `place` of the components that can be linked now.
+            ready: std::collections::BinaryHeap<Reverse<u64>>,
+            finished: usize,
+            /// By level: how many components no thread has taken.
+            not_taken: Vec<usize>,
+            /// The lowest level that has one.
+            lowest: usize,
+            threads: LinkThreads,
+        }
+        let levels = plan.levels.iter().map(|&it| it as usize + 1).max();
+        let mut widths = vec![0usize; levels.unwrap_or(0)];
+        for &level in &plan.levels {
+            widths[level as usize] += 1;
+        }
+        // How many components the widest level has, of each level and those above it. More threads than that are not fed.
+        let mut widest_from = vec![0usize; widths.len() + 1];
+        for level in (0..widths.len()).rev() {
+            widest_from[level] = widest_from[level + 1].max(widths[level]);
+        }
         let first = (0..all.len() as u32).filter(|&at| all[at as usize].imports.is_empty());
-        let ready: Guarded<std::collections::BinaryHeap<Reverse<u64>>> =
-            Guarded::new(first.map(place).collect());
-        let finished = AtomicUsize::new(0);
+        let shared = Guarded::new(Queue {
+            ready: first.map(place).collect(),
+            finished: 0,
+            not_taken: widths,
+            lowest: 0,
+            threads: LinkThreads::default(),
+        });
+        // For a thread that sleeps because `ready` is empty: it is not, or all components are finished.
+        let has_tasks = bun_threading::Condvar::new();
         // `Files::decls_of` reads them without asking the plan. So they are published when no task is left to read them.
         let decls: Guarded<Vec<Vec<(Sym, &'s [(FileId, Decl)])>>> = Guarded::new(Vec::new());
         // With `place`.
         let left_over: Guarded<Vec<(u64, Resolved<'s>)>> = Guarded::new(Vec::new());
         let all_dropped: Guarded<Vec<(Sym, AliasSymbolLinks)>> = Guarded::new(Vec::new());
-        host.parallel(host.threads().min(all.len()), &|_| {
-            let mut turns = 0u32;
+        host.parallel(host.threads().min(widest_from[0]), &|_| {
+            let mut queue = shared.lock();
+            queue.threads.present += 1;
+            let mut has_paused = false;
             loop {
-                // The lowest first. A thread that has finished a component adds what that has made ready, and then
-                // comes here. So the lowest component that is not finished is at work, or is taken next.
-                let next = ready.lock().pop();
-                let Some(Reverse(next)) = next else {
-                    if finished.load(Ordering::Acquire) == all.len() {
+                // The lowest first. A thread that has finished a component adds what that has made ready and takes the
+                // lowest, under one lock. So the lowest component that is not finished is always at work.
+                let Some(Reverse(next)) = queue.ready.pop() else {
+                    if queue.finished == all.len() {
                         break;
                     }
-                    wait_a_turn(&mut turns);
+                    // What is left never feeds all the threads that are here. The others go on, and wake nobody for it.
+                    let is_any_left = queue.lowest < queue.not_taken.len();
+                    if is_any_left && queue.threads.present > widest_from[queue.lowest] {
+                        queue.threads.present -= 1;
+                        return;
+                    }
+                    if !std::mem::replace(&mut has_paused, true) {
+                        drop(queue);
+                        pause_before_sleeping();
+                        queue = shared.lock();
+                        continue;
+                    }
+                    queue.threads.asleep += 1;
+                    has_tasks.wait_guarded(&mut queue);
+                    queue.threads.asleep -= 1;
                     continue;
                 };
+                has_paused = false;
+                queue.not_taken[(next >> 32) as usize] -= 1;
+                while queue.not_taken.get(queue.lowest) == Some(&0) {
+                    queue.lowest += 1;
+                }
+                drop(queue);
                 let at = next as u32;
                 let mut resolved = self.resolve_files(all[at as usize].files, Some((&plan, at)));
                 let of_symbols = std::mem::take(&mut resolved.decls);
@@ -9284,16 +9377,13 @@ impl<'s> Files<'s> {
                 let mut failed_lookups = std::mem::take(&mut resolved.failed_lookups);
                 failed_lookups.retain(|it| plan.component_of(it.file) == at);
                 let rest = self.publish_own(resolved, &plan, at, &mut nested, &mut dropped);
-                plan.is_published[at as usize].store(true, Ordering::Release);
+                plan.set_published(at);
                 let is_ready =
                     |&&it: &&u32| waits_for[it as usize].fetch_sub(1, Ordering::AcqRel) == 1;
                 let now_ready: SmallVec<[Reverse<u64>; 8]> = (importers_of(at as usize).iter())
                     .filter(is_ready)
                     .map(|&it| place(it))
                     .collect();
-                if !now_ready.is_empty() {
-                    ready.lock().extend(now_ready);
-                }
                 if !nested.is_empty() || !failed_lookups.is_empty() {
                     let mut found = found.lock();
                     found.0.append(&mut nested);
@@ -9305,8 +9395,15 @@ impl<'s> Files<'s> {
                 if !dropped.is_empty() {
                     all_dropped.lock().append(&mut dropped);
                 }
-                finished.fetch_add(1, Ordering::Release);
+                queue = shared.lock();
+                queue.ready.extend(now_ready);
+                queue.finished += 1;
+                match queue.finished == all.len() {
+                    true => has_tasks.notify_all(),
+                    false => queue.threads.wake_for(queue.ready.len(), &has_tasks),
+                }
             }
+            drop(queue);
             loop {
                 let of_symbols = decls.lock().pop();
                 let Some(of_symbols) = of_symbols else {
@@ -9380,35 +9477,75 @@ impl<'s> Files<'s> {
                 self.publish(resolved);
             }
         };
-        if LINKS_WITHOUT_LETTING_THREADS_SLEEP {
-            // There are dozens of steps, most of them shorter than it takes to wake the threads. So the threads stay for
-            // all the steps. Each takes the next task, in order, and waits until the step of that task begins. Every task
-            // before it is taken by then, by a thread that runs it or waits for an earlier step: one thread alone gets
-            // through all of them.
-            let (next, finished) = (AtomicUsize::new(0), AtomicUsize::new(0));
-            // The tasks below it may run: all the steps before theirs are published.
-            let begun = AtomicUsize::new(ends.first().copied().unwrap_or(0));
-            host.parallel(host.threads().min(tasks.len()), &|_| {
+        if LINKS_ALL_LEVELS_IN_ONE_REGION {
+            // There are dozens of steps, most of them shorter than it takes to start a region. So the threads stay for all
+            // the steps. A thread takes a task of the step that has begun. Whoever finishes the last task of a step is the
+            // barrier, begins the next step and takes a task of it: one thread alone gets through all of them.
+            #[derive(Default)]
+            struct Steps {
+                /// Which step has begun. Its tasks end at `ends[step]`.
+                step: usize,
+                /// The first task that no thread has taken.
+                next: usize,
+                finished: usize,
+                threads: LinkThreads,
+            }
+            // How many tasks the widest step has, of each step and those after it. More threads than that are not fed.
+            let mut widest_from = vec![0usize; ends.len() + 1];
+            for step in (0..ends.len()).rev() {
+                let start = step.checked_sub(1).map_or(0, |before| ends[before]);
+                widest_from[step] = widest_from[step + 1].max(ends[step] - start);
+            }
+            let shared = Guarded::new(Steps::default());
+            // For a thread that sleeps because the tasks of the step are taken: there are more, or all tasks are taken.
+            let has_tasks = bun_threading::Condvar::new();
+            host.parallel(host.threads().min(widest_from[0]), &|_| {
+                let mut steps = shared.lock();
+                steps.threads.present += 1;
+                let mut has_paused = false;
                 loop {
-                    let at = next.fetch_add(1, Ordering::Relaxed);
-                    if at >= tasks.len() {
+                    // Whoever finishes the last of them publishes.
+                    if steps.next == tasks.len() {
                         return;
                     }
-                    let mut turns = 0u32;
-                    while begun.load(Ordering::Acquire) <= at {
-                        turns = turns.wrapping_add(1);
-                        match turns % 64 {
-                            0 => std::thread::yield_now(),
-                            _ => std::hint::spin_loop(),
+                    if steps.next == ends[steps.step] {
+                        // What is left never feeds all the threads that are here. The others go on, and wake nobody
+                        // for it.
+                        if steps.threads.present > widest_from[steps.step + 1] {
+                            steps.threads.present -= 1;
+                            return;
                         }
+                        if !std::mem::replace(&mut has_paused, true) {
+                            drop(steps);
+                            pause_before_sleeping();
+                            steps = shared.lock();
+                            continue;
+                        }
+                        steps.threads.asleep += 1;
+                        has_tasks.wait_guarded(&mut steps);
+                        steps.threads.asleep -= 1;
+                        continue;
                     }
+                    has_paused = false;
+                    let at = steps.next;
+                    steps.next += 1;
+                    if steps.next == tasks.len() {
+                        has_tasks.notify_all();
+                    }
+                    drop(steps);
                     run(at);
-                    // Whoever finishes the last task of a step is the barrier.
-                    let step = ends.partition_point(|&end| end <= at);
-                    if finished.fetch_add(1, Ordering::AcqRel) + 1 == ends[step] {
-                        publish(step.checked_sub(1).map_or(0, |before| ends[before])..ends[step]);
-                        let next_end = ends.get(step + 1).copied().unwrap_or(ends[step]);
-                        begun.store(next_end, Ordering::Release);
+                    steps = shared.lock();
+                    steps.finished += 1;
+                    let (step, end) = (steps.step, ends[steps.step]);
+                    if steps.finished == end {
+                        // No task is at work, and none can be taken.
+                        drop(steps);
+                        publish(step.checked_sub(1).map_or(0, |before| ends[before])..end);
+                        steps = shared.lock();
+                        if let Some(next_end) = ends.get(step + 1) {
+                            steps.step += 1;
+                            steps.threads.wake_for(next_end - end, &has_tasks);
+                        }
                     }
                 }
             });

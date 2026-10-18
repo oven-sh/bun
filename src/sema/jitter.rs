@@ -31,6 +31,11 @@ pub enum Place {
     /// A task has reserved ids, which have no record yet.
     IdsTaken,
     AtomPublished,
+    /// Before an entry is written at once: between the look that has found nothing and the store, and between the stores
+    /// of one evaluation.
+    BeforeEntry,
+    /// After it: the entry is there, and what the caller stores next is not.
+    AfterEntry,
     /// `Program::claim_variances`, before it asks and after it was answered.
     Claim,
     /// `Program::share_variances`, before and after.
@@ -47,10 +52,13 @@ pub enum Place {
 }
 
 impl Place {
-    pub const NAMES: [&str; 10] = [
+    #[cfg(test)]
+    const NAMES: [&str; 12] = [
         "record-published",
         "ids-taken",
         "atom-published",
+        "before-entry",
+        "after-entry",
         "claim",
         "variances-shared",
         "task-begins",
@@ -64,7 +72,11 @@ impl Place {
     /// often a task comes by a place, the less.
     fn weight(self) -> (u64, u64) {
         match self {
-            Place::RecordPublished | Place::AtomPublished | Place::EntryStored => (8, 12),
+            Place::RecordPublished
+            | Place::AtomPublished
+            | Place::BeforeEntry
+            | Place::AfterEntry
+            | Place::EntryStored => (8, 12),
             Place::IdsTaken | Place::FileBegins => (32, 16),
             Place::Claim
             | Place::VariancesShared
@@ -129,7 +141,7 @@ impl Jitter {
     #[cold]
     #[inline(never)]
     fn sleep(&self, commit: u64) {
-        if mix(self.seed, commit) % u64::from(self.stretches_one_in.max(1)) == 0 {
+        if mix(self.seed, commit).is_multiple_of(u64::from(self.stretches_one_in.max(1))) {
             std::thread::sleep(std::time::Duration::from_micros(u64::from(self.stretch)));
         }
     }

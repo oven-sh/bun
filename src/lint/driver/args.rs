@@ -166,7 +166,7 @@ pub(crate) fn parse<'a>(
                 _ => (name, false),
             };
             let Some(param) = find_long(positive) else {
-                return unknown(&[b"--", positive].concat(), positive);
+                return unknown(&[b"--", name].concat(), positive);
             };
             match (is_flag(param), value) {
                 (true, Some(value)) => {

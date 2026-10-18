@@ -6218,6 +6218,10 @@ impl<'p, 's> Checker<'p, 's> {
                 let is_visiting = self.task.file == Some(file);
                 let mut walked = self.task.assignments_walked.borrow_mut();
                 walked.push((file, parent, is_visiting));
+                // No other task walks in a file that nothing imports.
+                if is_visiting && !self.files().module(file).is_leaf {
+                    self.task.stop_writing_at_once();
+                }
             }
         }
     }

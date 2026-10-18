@@ -2347,6 +2347,8 @@ impl<'p, 's> Checker<'p, 's> {
         // for a key assigns last. Not a result cut short by a request or a limit that tsgo has not.
         let is_cut_short = before != self.interruptions();
         let stored = match self.end_scope_by_counters(scope) {
+            // Inside another one the result follows from the two stacks, and the other one may have the same key.
+            Ok(stored) if !self.reverse_mapped_source_stack.is_empty() => Some(stored.held_back()),
             Ok(stored) => Some(stored),
             Err(_) => (!is_cut_short).then(Stored::new),
         };

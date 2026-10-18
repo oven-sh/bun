@@ -1688,12 +1688,25 @@ fn local_is_bit_30() {
 const STRING: TypeId = TypeId::STRING;
 const NUMBER: TypeId = TypeId::NUMBER;
 
-/// A task that commits while it runs.
+/// A task that commits while it runs, and writes nothing at once.
 fn begin_committing<'s>(session: &'s Session, commits: &Commits<'s>, index: u32) -> Task<'s> {
     let mut task = begin(session, index);
     let view = commits.view(3, CommitPolicy::default(), Jitter::default());
-    task.see_commits(view, false);
+    task.see_commits(view, false, 0);
     task
+}
+
+/// .. and writes at once to the tables of `Tables` that are keyed by a record.
+fn begin_writing_at_once<'s>(session: &'s Session, commits: &Commits<'s>, index: u32) -> Task<'s> {
+    let mut task = begin(session, index);
+    let view = commits.view(3, CommitPolicy::default(), Jitter::default());
+    task.see_commits(view, false, 1 << 2 | 1 << 3 | 1 << 5 | 1 << 6);
+    task
+}
+
+/// Permission to store the result of a computation that begins now.
+fn from_now(task: &Task) -> Stored {
+    Stored::since(task.held_back())
 }
 
 /// The commit `number` of `task`. Returns how many entries it has stored.
@@ -1701,6 +1714,7 @@ fn commit<'s>(tables: &Tables<'s>, commits: &Commits<'s>, task: &Task<'s>, numbe
     let mut log = task.buffer().take_log();
     let stored = commits.store(&tables.all(), task, &mut log, number);
     task.view().unwrap().has_committed(number);
+    task.write_at_once_again();
     stored
 }
 
@@ -1876,7 +1890,7 @@ fn without_stamps_an_entry_counts_as_soon_as_it_is_stored() {
         ignores_stamps: true,
         ..Jitter::default()
     };
-    second.see_commits(commits.view(3, CommitPolicy::default(), jitter), false);
+    second.see_commits(commits.view(3, CommitPolicy::default(), jitter), false, 0);
     second.begin_file(A, true);
     assert_eq!(tables.by_node.get(&second, &(A, 1)), None);
     tables.by_node.insert(&first, (A, 1), STRING, stored());
@@ -1916,4 +1930,155 @@ fn a_task_sees_all_that_a_commit_stores_under_the_nodes_of_a_file_or_nothing_of_
             });
         }
     });
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn an_entry_is_written_at_once_if_nothing_was_held_back_since_its_computation_began() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let task = begin_writing_at_once(&session, &commits, 0);
+    let other = begin_writing_at_once(&session, &commits, 1);
+    let outer = from_now(&task);
+    tables.by_id.insert(&task, STRING, NUMBER, from_now(&task));
+    (tables.by_key).insert(&task, (STRING, STRING), NUMBER, from_now(&task));
+    let (shape, _) = (tables.shapes).insert_ref(&task, STRING, Box::new([NUMBER]), outer);
+    let holder = Holder { shape, of: NUMBER };
+    tables.members.insert(&task, STRING, holder, outer);
+    assert_eq!(task.buffer().logged(), 0);
+    assert_eq!(tables.by_id.get(&other, &STRING), Some(NUMBER));
+    assert_eq!(tables.by_key.get(&other, &(STRING, STRING)), Some(NUMBER));
+    assert_eq!(tables.shapes.handle(&other, &STRING), Some(shape));
+    assert_eq!(tables.members.get(&other, &STRING), Some(holder));
+    // What is keyed by a node waits, and so does whatever was in progress when it was stored.
+    (tables.by_node).insert(&task, (A, 1), STRING, from_now(&task));
+    tables.by_id.insert(&task, NUMBER, STRING, outer);
+    (tables.by_key).insert(&task, (NUMBER, NUMBER), STRING, outer);
+    assert_eq!(task.buffer().logged(), 3);
+    assert_eq!(tables.by_id.get(&other, &NUMBER), None);
+    assert_eq!(tables.by_key.get(&other, &(NUMBER, NUMBER)), None);
+    assert_eq!(tables.by_id.get(&task, &NUMBER), Some(STRING));
+    // What begins afterwards does not.
+    (tables.by_id).insert(&task, TypeId::BOOLEAN, STRING, from_now(&task));
+    assert_eq!(tables.by_id.get(&other, &TypeId::BOOLEAN), Some(STRING));
+    // Nobody knows when this began.
+    tables.by_id.insert(&task, TypeId::ANY, STRING, stored());
+    assert_eq!(tables.by_id.get(&other, &TypeId::ANY), None);
+    assert_eq!(commit(&tables, &commits, &task, 1), 4);
+    assert_eq!(tables.by_id.get(&other, &TypeId::ANY), Some(STRING));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn of_two_entries_written_at_once_the_first_stays_and_a_difference_is_counted() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let first = begin_writing_at_once(&session, &commits, 0);
+    let second = begin_writing_at_once(&session, &commits, 1);
+    (tables.by_id).rewrite(&first, STRING, NUMBER, from_now(&first));
+    (tables.by_key).rewrite(&first, (STRING, STRING), NUMBER, from_now(&first));
+    (tables.shapes).insert_ref(&first, STRING, Box::new([NUMBER]), from_now(&first));
+    // The same again.
+    let kept = (tables.by_id).rewrite(&second, STRING, NUMBER, from_now(&second));
+    assert_eq!(kept, NUMBER);
+    assert!(second.differing.borrow().by_table.is_empty());
+    // `rewrite` looks no further than the task's own part, as for a key that `get` has not found.
+    (tables.by_id).rewrite(&second, STRING, STRING, from_now(&second));
+    let spread = crate::util::spread_hash(&(STRING, STRING));
+    let key = (STRING, STRING);
+    let kept = (tables.by_key).insert_absent(&second, spread, key, STRING, from_now(&second));
+    assert_eq!(kept, NUMBER);
+    assert_eq!(second.differing.borrow().by_table, [0, 0, 1, 0, 0, 0, 1]);
+    for task in [&first, &second] {
+        assert_eq!(tables.by_id.get(task, &STRING), Some(NUMBER));
+        assert_eq!(tables.by_key.get(task, &(STRING, STRING)), Some(NUMBER));
+    }
+    assert_eq!(second.buffer().logged(), 0);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn a_task_that_has_stopped_writes_at_once_again_after_its_next_commit() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let task = begin_writing_at_once(&session, &commits, 0);
+    let other = begin_writing_at_once(&session, &commits, 1);
+    task.stop_writing_at_once();
+    assert!(!task.writes_at_once());
+    tables.by_id.insert(&task, STRING, NUMBER, from_now(&task));
+    assert_eq!(tables.by_id.get(&other, &STRING), None);
+    assert_eq!(commit(&tables, &commits, &task, 1), 1);
+    assert_eq!(tables.by_id.get(&other, &STRING), Some(NUMBER));
+    tables.by_id.insert(&task, NUMBER, NUMBER, from_now(&task));
+    assert_eq!(tables.by_id.get(&other, &NUMBER), Some(NUMBER));
+    // Not if it is lost.
+    task.lose();
+    assert_eq!(commit(&tables, &commits, &task, 2), 0);
+    assert!(!task.writes_at_once() && !task.shares_what_it_stores());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn what_a_task_holds_back_under_a_key_is_what_it_goes_by() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let task = begin_writing_at_once(&session, &commits, 0);
+    let other = begin_writing_at_once(&session, &commits, 1);
+    tables.by_id.insert(&task, STRING, NUMBER, stored());
+    (tables.by_key).insert(&task, (STRING, STRING), NUMBER, stored());
+    let kept = tables.by_id.insert(&task, STRING, STRING, from_now(&task));
+    assert_eq!(kept, NUMBER);
+    let kept = (tables.by_key).insert(&task, (STRING, STRING), STRING, from_now(&task));
+    assert_eq!(kept, NUMBER);
+    assert_eq!(tables.by_id.get(&other, &STRING), None);
+    assert_eq!(tables.by_key.get(&other, &(STRING, STRING)), None);
+    assert!(task.differing.borrow().by_table.is_empty());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn nothing_that_is_bound_is_written_at_once() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let mut task = begin_writing_at_once(&session, &commits, 0);
+    task.begin_file(C, false);
+    let other = begin_writing_at_once(&session, &commits, 1);
+    let bound = tables.this_of(&task, C);
+    let outer = from_now(&task);
+    tables.by_id.insert(&task, STRING, bound, from_now(&task));
+    (tables.by_key).insert(&task, (STRING, STRING), bound, from_now(&task));
+    let (shape, _) = (tables.shapes).insert_ref(&task, STRING, Box::new([bound]), outer);
+    assert!(shape.local_number().is_some());
+    assert_eq!(tables.by_id.get(&other, &STRING), None);
+    assert_eq!(tables.by_key.get(&other, &(STRING, STRING)), None);
+    assert_eq!(tables.shapes.handle(&other, &STRING), None);
+    // No other task could find those, so nothing waits for them.
+    tables.by_id.insert(&task, NUMBER, STRING, outer);
+    assert_eq!(tables.by_id.get(&other, &NUMBER), Some(STRING));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn an_entry_that_loses_at_a_commit_is_compared_on_request() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let first = begin_committing(&session, &commits, 0);
+    let mut second = begin(&session, 1);
+    let policy = CommitPolicy {
+        compares_lost: true,
+        ..CommitPolicy::default()
+    };
+    second.see_commits(commits.view(3, policy, Jitter::default()), false, 0);
+    for (task, value) in [(&first, STRING), (&second, NUMBER)] {
+        tables.by_node.insert(task, (A, 1), value, stored());
+        tables.by_node.insert(task, (A, 2), STRING, stored());
+        tables.by_id.insert(task, STRING, value, stored());
+        (tables.shapes).insert_ref(task, STRING, Box::new([value]), stored());
+        (tables.shapes).insert_ref(task, NUMBER, Box::new([STRING]), stored());
+        (tables.by_key).insert(task, (STRING, STRING), value, stored());
+    }
+    assert_eq!(commit(&tables, &commits, &first, 1), 6);
+    assert_eq!(commit(&tables, &commits, &second, 2), 0);
+    assert!(first.differing.borrow().by_table.is_empty());
+    assert_eq!(second.differing.borrow().by_table, [1, 0, 1, 1, 0, 0, 1]);
 }

@@ -14,6 +14,7 @@
 //! Each gets its memory from the allocator that it holds, and returns it there. Any thread that
 //! adds to an `AppendVec`, a `Cells` or a `Newest` may allocate, and the thread that drops it frees.
 
+use bun_threading::Guarded;
 use std::alloc::{Allocator, Global};
 use std::cell::Cell;
 use std::marker::PhantomData;
@@ -532,16 +533,14 @@ pub fn slice_made_by<T: Send, A: Allocator>(
     make: &(dyn Fn(usize) -> T + Sync),
     run: impl FnOnce(&(dyn Fn(usize) + Sync)),
 ) -> Box<[T], A> {
-    use std::sync::{Mutex, PoisonError};
-    let slots: Vec<Mutex<Option<T>>> = (0..len).map(|_| Mutex::new(None)).collect();
+    let mut slots: Vec<Guarded<Option<T>>> = (0..len).map(|_| Guarded::new(None)).collect();
     run(&|index| {
         let element = make(index);
-        *slots[index].lock().unwrap_or_else(PoisonError::into_inner) = Some(element);
+        *slots[index].lock() = Some(element);
     });
     let mut all = Vec::with_capacity_in(len, alloc);
-    for (index, slot) in slots.into_iter().enumerate() {
-        let made = slot.into_inner().unwrap_or_else(PoisonError::into_inner);
-        all.push(made.unwrap_or_else(|| make(index)));
+    for (index, slot) in slots.iter_mut().enumerate() {
+        all.push(slot.get_mut().take().unwrap_or_else(|| make(index)));
     }
     all.into_boxed_slice()
 }

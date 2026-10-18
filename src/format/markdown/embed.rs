@@ -163,12 +163,9 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
             Op::Element(element) => f.write_element(*element),
             Op::Line(Line::Space) => f.write_element(FormatElement::Line(LineMode::SoftOrSpace)),
             Op::Line(Line::Soft) => f.write_element(FormatElement::Line(LineMode::Soft)),
-            // The line break is written as it is. The other only says how far the next line is indented.
-            Op::Line(Line::Literal) => {
-                write_line_breaks(1, f);
-                f.write_element(FormatElement::Line(LineMode::Hard));
-            }
-            Op::Line(Line::Hard) => {
+            Op::Line(first @ (Line::Literal | Line::Hard)) => {
+                // Written as it is, so that the blanks before it stay.
+                let is_literal = *first == Line::Literal;
                 // Several in a row, with nothing written between them, are empty lines. The last says how far the
                 // next line is indented.
                 let run = ops[index..]
@@ -179,22 +176,27 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
                     .iter()
                     .rposition(|op| matches!(op, Op::Line(Line::Hard)));
                 let Some(last) = last else {
+                    if is_literal {
+                        write_line_breaks(1, f);
+                    }
                     f.write_element(FormatElement::Line(LineMode::Hard));
                     continue;
                 };
                 let rest = &ops[index..index + last];
                 let count = 2 + rest.iter().filter(|op| matches!(op, Op::Line(_))).count();
-                // The printer writes no more than one empty line for line breaks.
-                match count {
-                    2 => f.write_element(FormatElement::Line(LineMode::Hard)),
-                    _ => write_line_breaks(count, f),
+                // The printer writes no more than one empty line for line breaks. After a line break that is written as it is
+                // it writes none at all, since the line is empty.
+                let is_one_empty_line = count == 2 && !is_literal;
+                match is_one_empty_line {
+                    true => f.write_element(FormatElement::Line(LineMode::Hard)),
+                    false => write_line_breaks(count, f),
                 }
                 for op in rest {
                     if let Op::Element(element) = op {
                         f.write_element(*element);
                     }
                 }
-                f.write_element(FormatElement::Line(if count == 2 {
+                f.write_element(FormatElement::Line(if is_one_empty_line {
                     LineMode::Empty
                 } else {
                     LineMode::Hard

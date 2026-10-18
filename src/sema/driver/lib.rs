@@ -21,6 +21,7 @@ use bun_sema::bind::{SymFlags, SymbolId};
 use bun_sema::check::commit::{AfterFile, CommitPolicy};
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
+use bun_sema::check::self_check::DifferingEntries;
 use bun_sema::check::task::{Finished, Published};
 use bun_sema::check::{
     FOREIGN_EVALUATION_KINDS, INFERENCE_WALK_COUNTS, MEMBER_COUNTS, Program, Requested,
@@ -1221,6 +1222,9 @@ pub struct StepReport {
     pub in_tasks: Duration,
     pub in_link: Duration,
     pub in_publish: Duration,
+    /// `PlanOptions::has_no_steps`, summed over the tasks: how long they have waited for the mutex of the commits, have had
+    /// it, and have waited for claims of variances.
+    pub waits: [Duration; 3],
     /// How long threads had no task because the step was not over, summed over the threads.
     pub idle: Duration,
     /// The five tasks that took longest: wall time, the number of files, the path of the first file.
@@ -1348,6 +1352,9 @@ pub struct Report {
     pub files_not_checked: usize,
     /// The steps that ran, in order. See `Plan`.
     pub steps: Vec<StepReport>,
+    /// `PlanOptions::has_no_steps`: what `bun_sema::check::self_check` has found. How many entries, by table, and a line
+    /// about each of the first few.
+    pub entries_that_differ: (Vec<(&'static str, u64)>, Vec<String>),
     /// How many projects are reported, if `references` are followed. Otherwise 0.
     pub projects_checked: usize,
     /// The configuration file has `references` and no files of its own, and `--build` was not
@@ -1399,6 +1406,8 @@ impl Report {
         self.files_checked += other.files_checked;
         self.files_not_checked += other.files_not_checked;
         self.steps.extend(other.steps);
+        (self.entries_that_differ.0).extend(other.entries_that_differ.0);
+        (self.entries_that_differ.1).extend(other.entries_that_differ.1);
         self.check_time += other.check_time;
         for (phase, more) in self.load_phases.iter_mut().zip(other.load_phases) {
             *phase += more;
@@ -4812,6 +4821,7 @@ fn check_named_files(
                 in_tasks,
                 in_link,
                 in_publish,
+                waits: [Duration::ZERO; 3],
                 idle: (in_tasks * threads as u32)
                     .saturating_sub(Duration::from_nanos(busy.into_inner())),
                 entries,
@@ -4852,9 +4862,14 @@ fn check_named_files(
         tasks: usize,
         logged: u64,
         stored: u64,
+        waits: [Duration; 3],
         generic_relation_entries_not_published: u64,
         foreign_evaluations: [u64; FOREIGN_EVALUATION_KINDS.len()],
     }
+    // `bun_sema::check::self_check`, of all tasks.
+    let differing: Guarded<DifferingEntries> = Guarded::new(DifferingEntries::default());
+    // `Report::entries_that_differ`
+    let entries_that_differ: Guarded<(Vec<(&'static str, u64)>, Vec<String>)> = Guarded::default();
     // Every thread takes the next task of `tasks` until none is left. `is_last_round`: there is one task, which is believed.
     let run_tasks = |round: usize, tasks: &[Task], expected: Requested, is_last_round: bool| {
         let weight_of = |i: usize| tasks[i].iter().map(|&it| size_of(it)).sum::<usize>();
@@ -4946,6 +4961,9 @@ fn check_named_files(
                 sums.tasks += 1;
                 sums.logged += ended.logged;
                 sums.stored += ended.stored;
+                for (sum, more) in sums.waits.iter_mut().zip(ended.waits) {
+                    *sum += more;
+                }
                 sums.generic_relation_entries_not_published +=
                     checker.generic_relation_entries_not_published();
                 let evaluations = sums.foreign_evaluations.iter_mut();
@@ -4953,6 +4971,7 @@ fn check_named_files(
                     *sum += u64::from(more);
                 }
             }
+            differing.lock().add(ended.differing);
             // It holds references into the HIR of files.
             drop(checker);
             free_trees(trees_to_free);
@@ -4997,6 +5016,7 @@ fn check_named_files(
             in_tasks,
             in_link: Duration::ZERO,
             in_publish: Duration::ZERO,
+            waits: sums.waits,
             idle: (in_tasks * threads as u32)
                 .saturating_sub(Duration::from_nanos(busy.into_inner())),
             entries: Published {
@@ -5019,6 +5039,19 @@ fn check_named_files(
             // In program order.
             again.shared_sort_unstable();
             run_tasks(1, &[again], expected, true);
+        }
+        let differing = std::mem::take(&mut *differing.lock());
+        if !differing.by_table.is_empty() {
+            // To print a type is to ask about it. What that stores and reports is dropped with the task.
+            let mut printer = new_checker(expected);
+            printer.begin_task(u32::MAX, 0, false);
+            let lines = differing.first.iter();
+            let lines = lines.map(|entry| printer.describe_entry_that_differs(entry));
+            let lines: Vec<String> = lines.collect();
+            drop(printer.end_task());
+            let names = bun_sema::check::task::table_names().into_iter();
+            let by_table = names.zip(differing.by_table).filter(|it| it.1 != 0);
+            *entries_that_differ.lock() = (by_table.collect(), lines);
         }
     };
     // After `shared_plan`, before any other task of the program.
@@ -5210,6 +5243,7 @@ fn check_named_files(
     report.inference_walks = *inference_walks.lock();
     report.members = *members.lock();
     report.steps = std::mem::take(&mut *steps.lock());
+    report.entries_that_differ = std::mem::take(&mut *entries_that_differ.lock());
     report.incomplete = std::mem::take(&mut *incomplete.lock());
     report.incomplete.shared_sort();
     report.incomplete.dedup();

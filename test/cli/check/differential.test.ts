@@ -190,6 +190,61 @@ test.concurrent.skipIf(!tsc)(
   },
 );
 
+/**
+ * A chain of `length` modules, each of which imports from the one before it and passes a name on. Some export a default
+ * that does not exist, which the next one imports. Beside it `beside` modules, in rings of two with an alias that goes
+ * round, each of which imports from somewhere in the chain.
+ */
+function aChainAndModulesBesideIt(length: number, beside: number) {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < length; i++) {
+    const lines = [`export const c${i} = "c${i}" as const;`];
+    const read = [`c${i}`];
+    if (i > 0) {
+      lines.push(`export { first } from "./c${i - 1}";`, `import { first, c${i - 1} as below } from "./c${i - 1}";`);
+      read.push("first", "below");
+    } else {
+      lines.push(`export const first = "first" as const;`);
+    }
+    if (i % 100 === 50) lines.push(`export default missing${i};`);
+    if (i % 100 === 51) {
+      lines.push(`import fromBelow from "./c${i - 1}";`);
+      read.push("fromBelow");
+    }
+    // `never` puts the types in the messages.
+    lines.push(`export const read${i}: never[] = [${read.join(", ")}];`);
+    files[`c${i}.ts`] = lines.join("\n") + "\n";
+  }
+  for (let i = 0; i < beside; i++) {
+    const [at, partner] = [(i * 37) % length, i ^ 1];
+    files[`w${i}.ts`] = [
+      `import { first, c${at} as fromTheChain } from "./c${at}";`,
+      `import { w${partner} as partner } from "./w${partner}";`,
+      `export { ring${partner} as ring${i} } from "./w${partner}";`,
+      `export const w${i} = "w${i}" as const;`,
+      `export const read: never[] = [first, fromTheChain, partner];`,
+      ``,
+    ].join("\n");
+  }
+  return files;
+}
+
+// In a chain one module can be linked at a time, so all threads but one have nothing to do: they leave or sleep, and are
+// there again for what is beside the chain.
+test.concurrent.skipIf(!tsc)("a long chain of modules and many beside it, on any number of threads", async () => {
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": tsconfig,
+    ...(isDebug || isASAN ? aChainAndModulesBesideIt(152, 40) : aChainAndModulesBesideIt(1000, 200)),
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    ...[1, 2, 8, 64].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  for (const code of ["TS2303", "TS2304", "TS2322"]) expect(theirs.join("\n")).toContain(code);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
 /** The error lines of `cmd`, which are in the format of `tsc --pretty false`, by line of `a.ts`. */
 async function errorsOf(cmd: string[], cwd: string) {
   await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });

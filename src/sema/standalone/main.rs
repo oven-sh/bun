@@ -304,6 +304,8 @@ fn run(args: &[String]) {
                         "--commit-microseconds=",
                         defaults.commit_policy.microseconds as usize,
                     ) as u64,
+                    holds_everything_back: has("--hold-everything-back"),
+                    compares_lost: has("--compare-lost"),
                 },
                 // `--jitter=<seed>`: threads wait where what the others see changes. `--jitter-places=<bits>`: only at
                 // those of `Place::NAMES`. `--jitter-stretch=<microseconds>`: one commit in four sleeps that long between
@@ -584,6 +586,14 @@ fn run(args: &[String]) {
                     for (name, (buffered, published)) in by_table.iter().take(10) {
                         error_line!("lost {name}: {} of {buffered}", buffered - published);
                     }
+                    let (by_table, lines) = &report.entries_that_differ;
+                    let by_table: Vec<String> = (by_table.iter())
+                        .map(|(name, count)| format!("{name} {count}"))
+                        .collect();
+                    error_line!("entries that differ: {}", by_table.join(", "));
+                    for line in lines {
+                        error_line!("  {line}");
+                    }
                     for (number, step) in report.steps.iter().enumerate() {
                         error_line!(
                             "step {number}: {} tasks, {} files, {:.3} s, link {:.3}, publish {:.3}, idle {:.3}, entries {} / {} / {}, records {} / {}, digest {:016x}",
@@ -600,6 +610,13 @@ fn run(args: &[String]) {
                             step.records.joined.iter().sum::<usize>(),
                             step.entries.digest
                         );
+                        if step.waits != [std::time::Duration::ZERO; 3] {
+                            let [for_commits, in_commits, for_claims] =
+                                step.waits.map(|it| it.as_secs_f64());
+                            error_line!(
+                                "  summed over the tasks: waiting for the commit mutex {for_commits:.3} s, in commits {in_commits:.3}, waiting for claims {for_claims:.3}"
+                            );
+                        }
                         if step.ranges != 0 {
                             let [cycle, limit, nesting] = step.ranges_by_obstacle;
                             error_line!(

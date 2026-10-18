@@ -2845,7 +2845,7 @@ impl<'h> Resolver<'h> {
     /// The `package.json` in `dir`, if one exists.
     pub fn package_json(&self, dir: &[u8]) -> Option<std::sync::Arc<Json>> {
         self.package(dir).map(|package| match SHARES_PACKAGE_JSONS {
-            true => package.json.clone(),
+            true => std::sync::Arc::clone(&package.json),
             false => std::sync::Arc::new(Json::clone(&package.json)),
         })
     }

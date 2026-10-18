@@ -4818,6 +4818,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if !self.task.listings.contains(&(alias, is_partial)) {
             self.task.listings.push((alias, is_partial));
+            self.task.stop_writing_at_once();
         }
         true
     }
@@ -6995,6 +6996,41 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `ConstrainedType.resolvedBaseConstraint` of `ty`: the entry of `Program::constraints`, or else of
+    /// `constraints_of_this_task`. What is computed from the latter is for this task too.
+    #[inline]
+    pub(super) fn known_constraint(&self, ty: TypeId) -> Option<(Option<TypeId>, bool)> {
+        let known = self.p.constraints.get(&self.task, &ty);
+        if known.is_some() || self.constraints_of_this_task.is_empty() {
+            return known;
+        }
+        let kept = self.constraints_of_this_task.get(&ty).copied()?;
+        self.constraint_cuts.set(self.constraint_cuts.get() + 1);
+        self.task.hold_back();
+        Some(kept)
+    }
+
+    /// `getResolvedBaseConstraint` goes no further down.
+    fn cut_constraint_short(&self) {
+        self.constraint_cuts.set(self.constraint_cuts.get() + 1);
+        self.task.hold_back();
+    }
+
+    /// `t.resolvedBaseConstraint = constraint`, without the flag. `cuts`: `constraint_cuts` when the computation began.
+    fn store_constraint(
+        &mut self,
+        ty: TypeId,
+        constraint: Option<TypeId>,
+        cuts: u64,
+        stored: Stored,
+    ) {
+        if self.task.commits() && self.constraint_cuts.get() != cuts {
+            (self.constraints_of_this_task.entry(ty)).or_insert((constraint, false));
+            return;
+        }
+        (self.p.constraints).insert(&self.task, ty, (constraint, false), stored);
+    }
+
     /// `getNextBaseConstraint`: the same, as part of the constraint computation in progress.
     pub(super) fn next_base_constraint(&mut self, ty: TypeId) -> Option<TypeId> {
         // `computeBaseConstraint` of a type parameter assigns `tp.constraint`.
@@ -7004,9 +7040,7 @@ impl<'p, 's> Checker<'p, 's> {
         let data = self.data(ty);
         let is_union_or_intersection =
             matches!(data, TypeData::Union(_) | TypeData::Intersection(_));
-        if is_union_or_intersection
-            && let Some((known, _)) = self.p.constraints.get(&self.task, &ty)
-        {
+        if is_union_or_intersection && let Some((known, _)) = self.known_constraint(ty) {
             return known;
         }
         let is_own_base_constraint = self.is_own_base_constraint(ty);
@@ -7041,7 +7075,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if depth == 0 {
                     return Some(ty);
                 }
-                if let Some((known, _)) = self.p.constraints.get(&self.task, &ty) {
+                if let Some((known, _)) = self.known_constraint(ty) {
                     return known;
                 }
             } else if !is_union_or_intersection {
@@ -7051,7 +7085,9 @@ impl<'p, 's> Checker<'p, 's> {
             // `resolvedBaseConstraint` keeps `noConstraintType` or the type itself from the first visit on.
             let is_cut = depth >= 10
                 && (depth >= 50 || self.constraint_stack.contains(&self.recursion_identity(ty)));
+            let (held_back, cuts) = (self.task.held_back(), self.constraint_cuts.get());
             let result = if is_cut {
+                self.cut_constraint_short();
                 None
             } else if is_object_type {
                 Some(ty)
@@ -7062,12 +7098,11 @@ impl<'p, 's> Checker<'p, 's> {
                 self.constraint_stack.pop();
                 result
             };
-            self.p
-                .constraints
-                .insert(&self.task, ty, (result, false), Stored::new());
+            // It is stored whatever is in progress.
+            self.store_constraint(ty, result, cuts, Stored::since(held_back));
             return result;
         }
-        if let Some((known, _)) = self.p.constraints.get(&self.task, &ty) {
+        if let Some((known, _)) = self.known_constraint(ty) {
             return known;
         }
         if let Some(raw) = self.provisional(Query::Constraint(ty)) {
@@ -7103,10 +7138,12 @@ impl<'p, 's> Checker<'p, 's> {
         let depth = self.constraint_stack.len();
         let continues = depth < 10 || depth < 50 && !self.constraint_stack.contains(&identity);
         self.constraint_stack.push(identity);
+        let cuts = self.constraint_cuts.get();
         let result = if continues {
             let simplified = self.simplified(ty, false);
             self.compute_base_constraint(simplified)
         } else {
+            self.cut_constraint_short();
             None
         };
         self.constraint_stack.pop();
@@ -7141,19 +7178,22 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => {}
             }
             // The value of an inner evaluation above a `resolution_start` barrier stays, if one was stored. It gets the flag.
-            let known = self.p.constraints.get(&self.task, &ty);
+            let known = self.known_constraint(ty);
             let known = known.and_then(|(known, _)| known);
-            self.p
-                .constraints
-                .rewrite(&self.task, ty, (known, true), Stored::new());
+            match self.constraints_of_this_task.get_mut(&ty) {
+                Some(kept) => kept.1 = true,
+                None => {
+                    (self.p.constraints).rewrite(&self.task, ty, (known, true), Stored::new());
+                }
+            }
             return None;
         }
         match left {
-            Ok(stored) => {
-                self.p
-                    .constraints
-                    .insert(&self.task, ty, (result, false), stored);
+            // An outer frame of `ty` may give the entry the flag.
+            Ok(stored) if self.stack.contains(&Query::Constraint(ty)) => {
+                self.store_constraint(ty, result, cuts, stored.held_back());
             }
+            Ok(stored) => self.store_constraint(ty, result, cuts, stored),
             Err(open) => {
                 let raw = result.map_or(0, |constraint| u64::from(constraint.0) + 1);
                 self.cache_provisionally(Query::Constraint(ty), raw, open);
@@ -7938,7 +7978,7 @@ impl<'p, 's> Checker<'p, 's> {
             if let (Some(kept), Some(before)) = (kept.as_deref_mut(), before) {
                 kept.counts_each_time = counts_each_time;
                 let left_out = left_out.as_ref();
-                self.end_name_of_reduction(ty, kept, place, before, &of_name, left_out);
+                self.end_name_of_reduction(ty, kept, place, &before, &of_name, left_out);
             }
             match of_name.adds {
                 reduction::Adds::Nothing => {}

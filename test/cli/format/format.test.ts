@@ -2266,6 +2266,54 @@ describe.concurrent("bun fmt", () => {
           expect(result.exitCode).toBe(0);
         });
       });
+
+      describe("before an empty line of the code, in a template", () => {
+        const indented = (by: string, lines: string[]) => lines.map(line => line && by + line);
+        /** The tag and the lines of a template with the heading `title` and a block of `code`. */
+        const shapes: Record<string, (title: string, code: string[]) => [string, string[]]> = {
+          "indented": (title, code) => ["markdown", [`  ${title}`, "", ...indented("      ", code), "", "  - b"]],
+          "tag-md": (title, code) => ["md", [`  ${title}`, "", ...indented("      ", code), "", "  - b"]],
+          "column-0": (title, code) => ["markdown", [title, "", ...indented("    ", code), "", "- b"]],
+          "in-a-list-item": (title, code) => [
+            "markdown",
+            [`  ${title}`, "", "  - b", "", ...indented("        ", code)],
+          ],
+          "at-the-end": (title, code) => ["markdown", [`  ${title}`, "", ...indented("      ", code)]],
+          "fenced": (title, code) => [
+            "markdown",
+            [`  ${title}`, "", "  ~~~txt", ...indented("  ", code), "  ~~~", "", "  - b"],
+          ],
+          "fenced-column-0": (title, code) => ["markdown", [title, "", "~~~txt", ...code, "~~~"]],
+          "fenced-in-a-list-item": (title, code) => [
+            "markdown",
+            [`  ${title}`, "", "  - ~~~txt", ...indented("    ", code), "    ~~~"],
+          ],
+        };
+        const blanks = { "two-blanks": "  ", "one-blank": " ", "tab": "\t" };
+        /** Every shape, with each kind of blanks and with one and two empty lines. */
+        const templates = (title: string) =>
+          Object.fromEntries(
+            Object.entries(shapes).flatMap(([shape, make]) =>
+              Object.entries(blanks).flatMap(([kind, blank]) =>
+                [[""], ["", ""]].map(empty => {
+                  const [tag, lines] = make(title, [`abc${blank}`, ...empty, "def"]);
+                  return [`${shape}-${kind}-${empty.length}.js`, [`const a = ${tag}\``, ...lines, "`;", ""].join("\n")];
+                }),
+              ),
+            ),
+          );
+
+        // Prettier 3.9.9 prints each of these the same, but for the blanks.
+        test("the empty lines stay, and a second run changes nothing", async () => {
+          const [before, after] = [templates("#  a"), templates("# a")];
+          const reads = Object.keys(before);
+          const first = await format(before, [], { reads });
+          expect(first.files).toEqual(after);
+          const second = await format(after, [], { reads });
+          expect(second.files).toEqual(after);
+          expect([first.exitCode, second.exitCode]).toEqual([0, 0]);
+        });
+      });
     });
 
     /** What a reader sees, with every run of white space as one blank. */
@@ -9124,10 +9172,13 @@ try {
       `);
     });
 
-    test("an unknown flag fails with 2", async () => {
-      const result = await format({ "a.js": ugly }, ["--chekc"], { reads: ["a.js"] });
+    test.each([
+      ["--chekc", "--check"],
+      ["--no-ignore", "--init"],
+    ])("the unknown flag %s fails with 2, and is named as it is written", async (flag, closest) => {
+      const result = await format({ "a.js": ugly }, [flag], { reads: ["a.js"] });
       expect(result.files).toEqual({ "a.js": ugly });
-      expect(result.stderr).toContain("Invalid option '--chekc' - perhaps you meant '--check'?");
+      expect(result.stderr).toContain(`Invalid option '${flag}' - perhaps you meant '${closest}'?`);
       expect(result.exitCode).toBe(2);
     });
 

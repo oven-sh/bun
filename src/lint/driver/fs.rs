@@ -443,15 +443,20 @@ fn write_through(real: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
     }
 }
 
-/// The nearest directory from `cwd` upward that has a `.git` or a `.jj`, as for the ignore files, or else `cwd`. Without links.
-fn repository(cwd: &[u8]) -> Option<Vec<u8>> {
-    let cwd = real_path(cwd)?;
+/// The nearest directory from `directory` upward that has a `.git` or a `.jj`, as for the ignore files.
+fn root_above(directory: &[u8]) -> Option<&[u8]> {
     let is_root = |it: &&[u8]| {
         [&b".git"[..], b".jj"]
             .iter()
             .any(|name| link_kind_and_size(&paths::join(it, name)).is_some())
     };
-    let found = paths::ancestors(&cwd).find(is_root).map(<[u8]>::to_vec);
+    paths::ancestors(directory).find(is_root)
+}
+
+/// [`root_above`] `cwd`, or else `cwd`. Without links.
+fn repository(cwd: &[u8]) -> Option<Vec<u8>> {
+    let cwd = real_path(cwd)?;
+    let found = root_above(&cwd).map(<[u8]>::to_vec);
     Some(found.unwrap_or(cwd))
 }
 
@@ -541,11 +546,15 @@ fn identity_if_stream(found: &bun_sys::Stat) -> Option<Identity> {
 
 /// Writes `text` to `stream`, which `path` leads to. Nothing is made, replaced or cut.
 fn write_to_stream(cwd: &[u8], path: &[u8], stream: Identity, text: &[u8]) -> Result<(), Vec<u8>> {
-    // `/dev/stdout` that is a pipe has no path without links, and nothing in a repository is without one.
+    // `/dev/stdout` that is a pipe has no path without links, and nothing in a repository is without one. In `/` and in `/dev`,
+    // which are in no repository, it is below `cwd` as well.
     let real = real_path(path);
     let is_refused = match &real {
         Some(real) => leads_out(cwd, path, real),
-        None => paths::inside(cwd, &paths::from_native(path)).is_some(),
+        None => {
+            paths::inside(cwd, &paths::from_native(path)).is_some()
+                && real_path(cwd).is_none_or(|cwd| root_above(&cwd).is_some())
+        }
     };
     if is_refused {
         return Err(LEADS_OUT.to_vec());

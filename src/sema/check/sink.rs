@@ -225,6 +225,9 @@ fn equal_message_chains(a: &[Reported], b: &[Reported]) -> bool {
         })
 }
 
+/// Diagnostics as in `Task::diagnostics`.
+pub(super) type Logged = Vec<(Option<Query>, Reported)>;
+
 pub(super) struct Sink<'s> {
     /// The diagnostics reported in each file. A `Reported` owns memory of the regular heap:
     /// `release`.
@@ -310,7 +313,7 @@ impl super::Program<'_> {
     }
 
     /// `publish_diagnostics`, also for a commit. `task`: `Task::number`.
-    pub(super) fn publish_reported(&self, task: u64, reported: Vec<(Option<Query>, Reported)>) {
+    pub(super) fn publish_reported(&self, task: u64, reported: Logged) {
         let mut owners = self.sink.owners.lock();
         for (owner, diagnostic) in reported {
             if owner.is_some_and(|q| *owners.entry(q).or_insert(task) != task) {
@@ -350,7 +353,7 @@ impl super::Program<'_> {
     /// the winner has logged it if there was anything to log. Whether one in another file is logged depends on the task.
     pub(super) fn drop_diagnostics_of_losers(
         &self,
-        reported: &mut Vec<(Option<Query>, Reported)>,
+        reported: &mut Logged,
         is_own: impl Fn(u32) -> bool,
     ) {
         reported.retain(|(owner, diagnostic)| {
@@ -917,29 +920,43 @@ impl Checker<'_, '_> {
     /// What belongs to the task goes when the file is checked to the end (`is_between_files`): if the task is lost before,
     /// whoever checks the file again reports it.
     /// `None`: not now. A callback among them has not been called, which `check_file` does at the end of the file.
+    ///
+    /// The first list: what belongs to a query about a shared record and was logged while the task wrote at once. The entry
+    /// of such a query is there for all already, so this is reported also if the commit fails or the task is lost:
+    /// whoever checks the file again finds the entry and does not report.
     pub(super) fn take_diagnostics_for_commit(
         &mut self,
         is_between_files: bool,
-    ) -> Option<Vec<(Option<Query>, Reported)>> {
+    ) -> Option<[Logged; 2]> {
+        let while_writing_at_once = self.task.logged_while_writing_at_once();
         let logged = &mut self.task.diagnostics;
-        let taken: Vec<(Option<Query>, Reported)> = if is_between_files {
-            std::mem::take(logged)
-        } else if logged.iter().any(|it| it.1.deferred.is_some()) {
+        if !is_between_files && logged.iter().any(|it| it.1.deferred.is_some()) {
             return None;
-        } else {
-            (logged.iter_mut())
-                .filter(|it| it.0.is_some_and(is_same_in_every_task))
-                .map(|it| std::mem::replace(it, (None, Reported::taken())))
-                .collect()
-        };
-        let mut directives = Default::default();
-        let settled = taken.into_iter().filter_map(|(owner, diagnostic)| {
-            if diagnostic.is_taken() {
-                return None;
+        }
+        let mut taken: Vec<(usize, (Option<Query>, Reported))> = Vec::new();
+        for (at, it) in logged.iter_mut().enumerate() {
+            if is_between_files || it.0.is_some_and(is_same_in_every_task) {
+                taken.push((at, std::mem::replace(it, (None, Reported::taken()))));
             }
-            let diagnostic = self.settled(diagnostic, &mut directives)?;
-            Some((owner.filter(|&q| is_same_in_every_task(q)), diagnostic))
-        });
-        Some(settled.collect())
+        }
+        if is_between_files {
+            logged.clear();
+        }
+        let mut directives = Default::default();
+        let [mut of_entries_written_at_once, mut others] = [Vec::new(), Vec::new()];
+        for (at, (owner, diagnostic)) in taken {
+            if diagnostic.is_taken() {
+                continue;
+            }
+            let Some(diagnostic) = self.settled(diagnostic, &mut directives) else {
+                continue;
+            };
+            let owner = owner.filter(|&q| is_same_in_every_task(q));
+            match at < while_writing_at_once && owner.is_some_and(|q| !is_task_independent(q)) {
+                true => of_entries_written_at_once.push((owner, diagnostic)),
+                false => others.push((owner, diagnostic)),
+            }
+        }
+        Some([of_entries_written_at_once, others])
     }
 }

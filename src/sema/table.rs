@@ -11,6 +11,7 @@
 //! to whom: `Frozen`, `Buffered`, `FileLocal`. See `Policy`.
 
 use crate::atom::{Atom, Intern};
+use crate::check::self_check::{Mention, Mentions, is_same_value, note_differing};
 use crate::check::task::{Stored, Task};
 use crate::local::{
     Buffer, Half, HashedInTask, InTask, LOCAL, ListInTask, MaybeLocal, Slot, SlotNumber, Typed,
@@ -554,7 +555,15 @@ impl<K: NodeKey, A: Alloc> ByNode<K, RawWord, Frozen, A> {
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Handle(pub u32);
 packed_ids!(Handle);
-crate::types::has_no_references!(Handle);
+
+impl Follow for Handle {
+    #[inline]
+    fn visit<V: Visitor>(&self, visitor: &mut V) {
+        visitor.handle(self.0);
+    }
+    #[inline]
+    fn follow(&mut self, _: &Link) {}
+}
 
 /// A value too large for a cell, for some of the nodes of one kind. It is stored out of line and
 /// never moves.
@@ -778,6 +787,16 @@ impl<I: Id, V: Packed, A: Alloc> ById<I, V, Frozen, A> {
 //   for `get` and for `insert`: `ByNode::seen`. The task computes its own entry, which loses when it commits.
 // - A value that is stored out of line goes to the shared `kept` when it is inserted, unless the entry is bound: a commit
 //   stores only the handle.
+// - `insert` and `rewrite` of a table keyed by a record store into the shared part at once where
+//   `Task::may_write_at_once` allows it. `get` is the same: the shared part, then the task-local part, which has what
+//   waits for a commit and what is bound.
+
+/// Whether an entry with a published key and `value` could be written at once, if its table and its `Stored` allow it: the task
+/// does that at all, and the value is not bound. If it then goes to the task-local part, that is a `Task::hold_back`.
+#[inline]
+fn is_for_all_tasks(task: &Task, value: &impl Follow) -> bool {
+    task.writes_at_once() && !value.is_bound(&task.own)
+}
 
 impl<K: NodeKey, V: Packed<Cell = AtomicU32>, A: Alloc> ByNode<K, V, Buffered, A> {
     /// 0: nothing is published for the key at `at`.
@@ -845,13 +864,24 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, A: Alloc> ByNode<K, V, Buffered, A
         if raw == 0 {
             let (file, index) = (key.file().0, key.index());
             raw = (task.buffer()).put_node_if_empty(self.slot, file, index, value.pack());
+            self.hold_back(task, key);
         }
         V::unpack(raw)
+    }
+
+    /// An entry under `key` went to the task-local part, where it waits for a commit: `Task::hold_back`. Not if `Bases`
+    /// does not count the node: nothing is ever published under it, so no other task could find the entry.
+    #[inline]
+    fn hold_back(&self, task: &Task, key: K) {
+        if task.writes_at_once() && self.bases.at(key.file(), key.index()).is_some() {
+            task.hold_back();
+        }
     }
 
     pub fn rewrite(&self, task: &Task, key: K, value: V, _: Stored) -> V {
         if key.index() != u32::MAX {
             (task.buffer()).store_node(self.slot, key.file().0, key.index(), value.pack());
+            self.hold_back(task, key);
         }
         value
     }
@@ -885,8 +915,9 @@ impl<I: Id, V: Packed<Cell = AtomicU32>, A: Alloc> ById<I, V, Buffered, A> {
         (raw != 0).then(|| V::unpack(raw))
     }
 
+    /// `insert` into the task-local part.
     #[inline]
-    pub fn insert(&self, task: &Task, key: I, value: V, _: Stored) -> V {
+    fn insert_in_task(&self, task: &Task, key: I, value: V) -> V {
         let (slot, new) = (self.slot, value.pack());
         V::unpack(match key.local_number() {
             Some(number) => task.buffer().put_own_id_if_empty(slot, number, new),
@@ -897,11 +928,71 @@ impl<I: Id, V: Packed<Cell = AtomicU32>, A: Alloc> ById<I, V, Buffered, A> {
         })
     }
 
-    pub fn rewrite(&self, task: &Task, key: I, value: V, _: Stored) -> V {
-        match key.local_number() {
-            Some(number) => task.buffer().store_own_id(self.slot, number, value.pack()),
-            None => (task.buffer()).store_published_id(self.slot, key.number(), value.pack()),
+    /// Stores `raw` in the shared cell of the published id `number` unless there is an entry, there or in the task-local
+    /// part. Returns what the key has afterwards.
+    #[inline]
+    fn put_at_once(&self, task: &Task, number: u32, raw: u32) -> u32 {
+        let own = task.buffer().published_id(self.slot, number);
+        if own != 0 && self.seen(task, number) == 0 {
+            return own;
         }
+        task.own.wait_at(crate::jitter::Place::BeforeEntry);
+        let held = self.cells.cell(number).put_if_empty(raw);
+        task.own.wait_at(crate::jitter::Place::AfterEntry);
+        held
+    }
+}
+
+impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, A: Alloc> ById<I, V, Buffered, A> {
+    #[inline]
+    pub fn insert(&self, task: &Task, key: I, value: V, stored: Stored) -> V {
+        if key.local_number().is_none() && is_for_all_tasks(task, &value) {
+            if task.may_write_at_once(self.slot, stored) {
+                return self.put_value_at_once(task, key, value);
+            }
+            task.hold_back();
+        }
+        self.insert_in_task(task, key, value)
+    }
+
+    /// `put_at_once`, and the self-check.
+    #[inline]
+    fn put_value_at_once(&self, task: &Task, key: I, value: V) -> V {
+        let raw = value.pack();
+        let held = self.put_at_once(task, key.number(), raw);
+        // Not with what the task itself holds back under the key.
+        if held != raw && self.seen(task, key.number()) == held {
+            self.compare(task, key, V::unpack(held), value);
+        }
+        V::unpack(held)
+    }
+
+    /// `key` has `stored`, and `task` has computed `computed`.
+    #[cold]
+    fn compare(&self, task: &Task, key: I, stored: V, computed: V) {
+        if !is_same_value(&stored, &computed) {
+            note_differing(task, self.slot, Mentions::of(&key), &stored, &computed);
+        }
+    }
+
+    /// An entry that was written at once is published, so it is unchanged. Whoever stores an entry that is to be replaced
+    /// stores it with `Stored::held_back`.
+    pub fn rewrite(&self, task: &Task, key: I, value: V, stored: Stored) -> V {
+        let Some(number) = key.local_number() else {
+            let number = key.number();
+            if is_for_all_tasks(task, &value) {
+                if task.may_write_at_once(self.slot, stored)
+                    && task.buffer().published_id(self.slot, number) == 0
+                {
+                    self.put_value_at_once(task, key, value);
+                    return value;
+                }
+                task.hold_back();
+            }
+            (task.buffer()).store_published_id(self.slot, number, value.pack());
+            return value;
+        };
+        task.buffer().store_own_id(self.slot, number, value.pack());
         value
     }
 }
@@ -994,7 +1085,7 @@ impl<'s, K: NodeKey, T: Follow + Send + 's, A: Alloc> ByNodeIndirect<K, T, Buffe
     }
 }
 
-impl<'s, I: Id, T: Follow + Send + 's, A: Alloc> ByIdIndirect<I, T, Buffered, A> {
+impl<'s, I: Id + Follow, T: Follow + Send + 's, A: Alloc> ByIdIndirect<I, T, Buffered, A> {
     #[inline]
     pub fn get_ref(&self, task: &Task<'s>, key: &I) -> Option<&T> {
         self.handles
@@ -1015,17 +1106,37 @@ impl<'s, I: Id, T: Follow + Send + 's, A: Alloc> ByIdIndirect<I, T, Buffered, A>
 
     /// Does not overwrite an existing value. Returns the stored value.
     pub fn insert_ref(&self, task: &Task<'s>, key: I, value: T, stored: Stored) -> (Handle, &T) {
-        let handle = self.handles.get(task, &key).unwrap_or_else(|| {
-            let mut value = value;
-            // A handle with `LOCAL` means nothing to another task.
-            let holds_own = (self.holding.holds)
-                .is_some_and(|(_, field)| field(&mut value).local_number().is_some());
-            let may_be_shared = key.local_number().is_none() && !holds_own;
-            let key_in_task = (u64::from(key.number()), may_be_shared);
-            let kept = keep((&self.kept, &self.in_task), task, key_in_task, value);
-            self.handles.insert(task, key, kept, stored)
-        });
+        let known = self.handles.get(task, &key);
+        let handle = known.unwrap_or_else(|| self.insert_absent(task, key, value, stored));
         (handle, self.at(task, handle))
+    }
+
+    /// `insert_ref` for a key for which the task has just found nothing.
+    fn insert_absent(&self, task: &Task<'s>, key: I, mut value: T, stored: Stored) -> Handle {
+        let is_for_all = key.local_number().is_none()
+            && task.shares_what_it_stores()
+            && !value.is_bound(&task.own);
+        // A handle with `LOCAL` means nothing to another task.
+        let holds_own = (self.holding.holds)
+            .is_some_and(|(_, field)| field(&mut value).local_number().is_some());
+        if !is_for_all || holds_own {
+            if is_for_all {
+                task.hold_back();
+            }
+            let kept = store_in_task(&self.in_task, task, u64::from(key.number()), value);
+            return self.handles.insert_in_task(task, key, kept);
+        }
+        let is_at_once = task.may_write_at_once(self.handles.slot, stored);
+        // A value that loses stays, and nothing refers to it.
+        let kept = Handle(self.kept.push(value));
+        let held = self.handles.insert(task, key, kept, stored);
+        if is_at_once && held != kept && held.local_number().is_none() {
+            let (first, mine) = (self.kept.get(held.0), self.kept.get(kept.0));
+            if !is_same_value(first, mine) {
+                note_differing(task, self.handles.slot, Mentions::of(&key), first, mine);
+            }
+        }
+        held
     }
 
     #[inline]
@@ -1060,9 +1171,40 @@ impl<'s, I: Id, T: Follow + Send + 's, A: Alloc> ByIdIndirect<I, T, Buffered, A>
 
 impl<'s, K, V, A: Alloc> ByKey<K, V, Buffered, A>
 where
-    K: std::hash::Hash + Eq + MaybeLocal + Send + 's,
-    V: Copy + Send + 's,
+    K: std::hash::Hash + Eq + Clone + MaybeLocal + Follow + Send + 's,
+    V: Copy + Follow + Send + 's,
 {
+    /// `Some`: the entry went to the shared part, or another task was first: what the key has there now. `None`: the
+    /// caller stores the entry in the task-local part. `spread`: the hash of `key`.
+    #[inline]
+    fn put_at_once(
+        &self,
+        task: &Task<'s>,
+        (spread, key, value): (u64, &K, V),
+        stored: Stored,
+    ) -> Option<V> {
+        if !task.writes_at_once() || key.is_bound(&task.own) || value.is_bound(&task.own) {
+            return None;
+        }
+        // What the task holds back under the key stays what it goes by.
+        let own = || task.buffer().typed(&self.slot)?.get(spread, key).copied();
+        if !task.may_write_at_once(self.slot.number(), stored) || own().is_some() {
+            task.hold_back();
+            return None;
+        }
+        task.own.wait_at(crate::jitter::Place::BeforeEntry);
+        let is_first = self.published.add_if_absent(spread, key, value);
+        task.own.wait_at(crate::jitter::Place::AfterEntry);
+        if is_first {
+            return Some(value);
+        }
+        let first = self.published.get_by_now(spread, key).copied();
+        if let Some(first) = first.filter(|first| !is_same_value(first, &value)) {
+            note_differing(task, self.slot.number(), Mentions::of(key), &first, &value);
+        }
+        first
+    }
+
     /// `spread`: the hash of `key`.
     #[inline]
     fn published(&self, task: &Task<'s>, spread: u64, key: &K) -> Option<V> {
@@ -1075,10 +1217,19 @@ where
         }
     }
 
-    /// Stores in the task-local part. `replaces`: an entry that is there, or else that one stays. Returns what the key has
-    /// afterwards.
+    /// Stores at once, or else in the task-local part. `replaces`: an entry that is there, or else that one stays. Returns
+    /// what the key has afterwards.
     #[inline]
-    fn put(&self, task: &Task<'s>, spread: u64, key: K, value: V, replaces: bool) -> V {
+    fn put(
+        &self,
+        task: &Task<'s>,
+        (spread, key, value): (u64, K, V),
+        stored: Stored,
+        replaces: bool,
+    ) -> V {
+        if let Some(held) = self.put_at_once(task, (spread, &key, value), stored) {
+            return held;
+        }
         let is_shared = !key.is_local();
         let own = task.buffer().typed_or_new(&self.slot);
         let place = own.len();
@@ -1106,18 +1257,20 @@ where
     }
 
     #[inline]
-    pub fn insert(&self, task: &Task<'s>, key: K, value: V, _: Stored) -> V {
+    pub fn insert(&self, task: &Task<'s>, key: K, value: V, stored: Stored) -> V {
         let spread = spread_hash(&key);
         if let Some(value) = self.published(task, spread, &key) {
             return value;
         }
-        self.put(task, spread, key, value, false)
+        self.put(task, (spread, key, value), stored, false)
     }
 
-    pub fn rewrite(&self, task: &Task<'s>, key: K, value: V, _: Stored) {
+    /// An entry that was written at once is published, so it is unchanged. Whoever stores an entry that is to be replaced
+    /// stores it with `Stored::held_back`.
+    pub fn rewrite(&self, task: &Task<'s>, key: K, value: V, stored: Stored) {
         let spread = spread_hash(&key);
         if self.published(task, spread, &key).is_none() {
-            self.put(task, spread, key, value, true);
+            self.put(task, (spread, key, value), stored, true);
         }
     }
 
@@ -1138,14 +1291,21 @@ where
     /// published during a step, so it is still not among the published entries. If a commit has
     /// stored one in the meantime, `get` returns that one from now on.
     #[inline]
-    pub fn insert_absent(&self, task: &Task<'s>, spread: u64, key: K, value: V, _: Stored) -> V {
-        self.put(task, spread, key, value, false)
+    pub fn insert_absent(
+        &self,
+        task: &Task<'s>,
+        spread: u64,
+        key: K,
+        value: V,
+        stored: Stored,
+    ) -> V {
+        self.put(task, (spread, key, value), stored, false)
     }
 
     /// `rewrite`, likewise.
     #[inline]
-    pub fn rewrite_absent(&self, task: &Task<'s>, spread: u64, key: K, value: V, _: Stored) {
-        self.put(task, spread, key, value, true);
+    pub fn rewrite_absent(&self, task: &Task<'s>, spread: u64, key: K, value: V, stored: Stored) {
+        self.put(task, (spread, key, value), stored, true);
     }
 }
 
@@ -1444,8 +1604,10 @@ pub(crate) trait Dense: Sync {
     fn own(&self, buffer: &Buffer<'_>, key: u64) -> u32;
     /// The key of the shared part for `key`, which is from a `Log`. `None`: `key -> value` is bound.
     fn shared_key(&self, key: u64, value: &impl Follow, own: &OwnStore) -> Option<u32>;
-    /// The commit `number` is about to `store` under `key`.
-    fn stamp(&self, key: u32, number: u32);
+    /// In the commit `number`: stores `raw` under `key` unless there is an entry. Returns whether it has.
+    fn store_in_commit(&self, key: u32, raw: u32, number: u32) -> bool;
+    /// `key`, which is from a `Log`, for the self-check.
+    fn mention(key: u64) -> Vec<Mention>;
 }
 
 impl<K: NodeKey, V: Packed<Cell = AtomicU32>, A: Alloc> Dense for ByNode<K, V, Buffered, A> {
@@ -1510,9 +1672,19 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, A: Alloc> Dense for ByNode<K, V, B
         (!file.is_bound(own) && !value.is_bound(own)).then_some(at as u32)
     }
 
+    /// Only commits write to the table, one at a time. The number is there before the entry.
     #[inline]
-    fn stamp(&self, key: u32, number: u32) {
-        self.stamps.cell(key).store(number, Ordering::Relaxed);
+    fn store_in_commit(&self, key: u32, raw: u32, number: u32) -> bool {
+        let is_first = self.load(key) == 0;
+        if is_first {
+            self.stamps.cell(key).store(number, Ordering::Relaxed);
+            self.store(key, raw);
+        }
+        is_first
+    }
+
+    fn mention(key: u64) -> Vec<Mention> {
+        vec![Mention::Node(FileId((key >> 32) as u32), key as u32)]
     }
 }
 
@@ -1573,9 +1745,16 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32>, A: Alloc> Dense for ById<I, V,
         (!id.is_bound(own) && !value.is_bound(own)).then_some(key as u32)
     }
 
-    /// An entry under a record counts as soon as it is stored.
+    /// Other tasks write to the table at once meanwhile. An entry under a record counts as soon as it is stored.
     #[inline]
-    fn stamp(&self, _: u32, _: u32) {}
+    fn store_in_commit(&self, key: u32, raw: u32, _: u32) -> bool {
+        let cell = self.cells.cell(key);
+        cell.load(Ordering::Relaxed) == 0 && cell.put_if_empty(raw) == raw
+    }
+
+    fn mention(key: u64) -> Vec<Mention> {
+        Mentions::of(&I::from_number(key as u32))
+    }
 }
 
 /// `Publish::store_logged` of a table with one cell per key.
@@ -1589,28 +1768,45 @@ fn store_logged_cell<D: Dense<Value: Follow>>(
     if raw == 0 {
         return false;
     }
-    let Some(key) = table.shared_key(key, &D::Value::unpack(raw), &task.own) else {
+    let computed = D::Value::unpack(raw);
+    let Some(shared_key) = table.shared_key(key, &computed, &task.own) else {
         return false;
     };
-    let is_first = table.load(key) == 0;
-    if is_first {
-        table.stamp(key, number);
-        table.store(key, raw);
+    let is_first = table.store_in_commit(shared_key, raw, number);
+    if !is_first && task.compares_lost_entries() {
+        let stored = D::Value::unpack(table.load(shared_key));
+        if !is_same_value(&stored, &computed) {
+            let (slot, key) = (table.table_slot(), D::mention(key));
+            note_differing(task, slot, key, &stored, &computed);
+        }
     }
     is_first
 }
 
 /// .. of an indirect table. A value whose handle has `LOCAL` is bound: see `keep`.
-fn store_logged_handle<D: Dense<Value = Handle>>(
-    handles: &D,
+fn store_logged_handle<D: Dense<Value = Handle>, T: Follow, A: Alloc>(
+    (handles, kept): (&D, &AppendVec<T, A>),
     task: &Task,
     key: u64,
     number: u32,
 ) -> bool {
     let raw = handles.own(task.buffer(), key);
-    raw != 0
-        && Handle::unpack(raw).local_number().is_none()
-        && store_logged_cell(handles, task, key, number)
+    if raw == 0 || Handle::unpack(raw).local_number().is_some() {
+        return false;
+    }
+    let is_first = store_logged_cell(handles, task, key, number);
+    let mine = Handle::unpack(raw);
+    if !is_first
+        && task.compares_lost_entries()
+        && let Some(shared_key) = handles.shared_key(key, &mine, &task.own)
+    {
+        let first = Handle::unpack(handles.load(shared_key));
+        let (first, mine) = (kept.get(first.0), kept.get(mine.0));
+        if !is_same_value(first, mine) {
+            note_differing(task, handles.table_slot(), D::mention(key), first, mine);
+        }
+    }
+    is_first
 }
 
 /// A table whose values fit in a cell. The entries passed to the barrier: `Vec<(u32, u32)>`, a key
@@ -1813,7 +2009,7 @@ impl<'s, K: NodeKey, T: Follow + Send + Sync + 's, A: Alloc> Publish<'s>
     }
 
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool {
-        store_logged_handle(&self.handles, task, key, number)
+        store_logged_handle((&self.handles, &self.kept), task, key, number)
     }
 }
 
@@ -1853,7 +2049,7 @@ impl<'s, I: Id + Follow, T: Follow + Send + Sync + 's, A: Alloc> Publish<'s>
     }
 
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool {
-        store_logged_handle(&self.handles, task, key, number)
+        store_logged_handle((&self.handles, &self.kept), task, key, number)
     }
 }
 
@@ -1983,9 +2179,19 @@ where
         let Some((key, value)) = own.and_then(|own| own.entry(key as u32)) else {
             return false;
         };
-        !key.is_bound(&task.own)
-            && !value.is_bound(&task.own)
-            && (self.published).add_if_absent(spread_hash(key), key, *value)
+        if key.is_bound(&task.own) || value.is_bound(&task.own) {
+            return false;
+        }
+        let spread = spread_hash(key);
+        let is_first = self.published.add_if_absent(spread, key, *value);
+        if !is_first
+            && task.compares_lost_entries()
+            && let Some(first) = self.published.get_by_now(spread, key)
+            && !is_same_value(first, value)
+        {
+            note_differing(task, self.slot.number(), Mentions::of(key), first, value);
+        }
+        is_first
     }
 }
 

@@ -1,6 +1,6 @@
 // Tests for `--staged` and `--changed` in `bun lint` and `bun fmt`.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import {
   chmodSync,
   existsSync,
@@ -830,41 +830,35 @@ describe.concurrent("bun fmt --staged reads a partly staged file with the line e
     expect(exitCode).toBe(1);
   });
 
-  test(
-    "in a language that only a plugin of Prettier reads",
-    async () => {
-      // Stand-ins. This Prettier takes blanks away, and ends lines as it is told.
-      using repo = await repository({
-        ".gitattributes": "*.astro text eol=crlf\n",
-        ".gitignore": "node_modules\n",
-        ".prettierrc": '{ "plugins": ["prettier-plugin-astro"], "endOfLine": "crlf" }\n',
-        "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
-        "node_modules/prettier/index.cjs": `const fs = require("node:fs");
+  test("in a language that only a plugin of Prettier reads", async () => {
+    // Stand-ins. This Prettier takes blanks away, and ends lines as it is told.
+    using repo = await repository({
+      ".gitattributes": "*.astro text eol=crlf\n",
+      ".gitignore": "node_modules\n",
+      ".prettierrc": '{ "plugins": ["prettier-plugin-astro"], "endOfLine": "crlf" }\n',
+      "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
+      "node_modules/prettier/index.cjs": `const fs = require("node:fs");
 exports.resolveConfig = async (file, { config }) => JSON.parse(fs.readFileSync(config, "utf8"));
 exports.format = async (text, { endOfLine }) =>
   text.replace(/ +/g, " ").replace(/\\r?\\n/g, endOfLine === "crlf" ? "\\r\\n" : "\\n");
 `,
-        "node_modules/prettier-plugin-astro/package.json": '{ "name": "prettier-plugin-astro", "version": "4.0.0" }',
-        "tidy.astro": "<p>a</p>\r\n",
-        "messy.astro": "<p>a</p>\r\n",
-      });
-      const { root } = repo;
-      write(root, "tidy.astro", "<p >b</p>\r\n");
-      write(root, "messy.astro", "<p   >b</p>\r\n");
-      await git(root, "add", "-A");
-      // On disk it's the other way round.
-      write(root, "tidy.astro", "<p   >c</p>\r\n");
-      write(root, "messy.astro", "<p >c</p>\r\n");
-      expect(await git(root, "show", ":tidy.astro")).toBe("<p >b</p>\n");
-      const { stdout, stderr, exitCode } = await bun(root, ["fmt", "--staged", "--check"]);
-      expect(stdout + stderr).toContain("messy.astro");
-      expect(stdout + stderr).not.toContain("tidy.astro");
-      expect(exitCode).toBe(1);
-    },
-    // A run starts a VM, and the search for leaks at its end takes seconds with the threads of one. Without that search it
-    // still takes over 5 seconds on Windows, next to the other tests and their calls of git.
-    isDebug || isASAN ? 120_000 : 30_000,
-  );
+      "node_modules/prettier-plugin-astro/package.json": '{ "name": "prettier-plugin-astro", "version": "4.0.0" }',
+      "tidy.astro": "<p>a</p>\r\n",
+      "messy.astro": "<p>a</p>\r\n",
+    });
+    const { root } = repo;
+    write(root, "tidy.astro", "<p >b</p>\r\n");
+    write(root, "messy.astro", "<p   >b</p>\r\n");
+    await git(root, "add", "-A");
+    // On disk it's the other way round.
+    write(root, "tidy.astro", "<p   >c</p>\r\n");
+    write(root, "messy.astro", "<p >c</p>\r\n");
+    expect(await git(root, "show", ":tidy.astro")).toBe("<p >b</p>\n");
+    const { stdout, stderr, exitCode } = await bun(root, ["fmt", "--staged", "--check"]);
+    expect(stdout + stderr).toContain("messy.astro");
+    expect(stdout + stderr).not.toContain("tidy.astro");
+    expect(exitCode).toBe(1);
+  });
 
   test("git converts nothing", async () => {
     using repo = await repository({ "partly.js": tidy });

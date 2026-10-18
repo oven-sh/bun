@@ -1782,6 +1782,28 @@ test.concurrent(
   },
 );
 
+test.concurrent("the factories that a factory's import calls run in the order of that import", async () => {
+  await expectFixturesToPass(
+    {
+      "a.ts": ``,
+      "b.ts": ``,
+      "first.ts": ``,
+      "inner.ts": `import "./a"; import "./b";`,
+      "page.ts": `import "./first"; import "./b"; import "./a";`,
+      "nested-order.test.ts": `
+        import { expect, test, vi } from "vitest";
+        const log = vi.hoisted(() => []);
+        vi.mock("./a", async () => (log.push("a"), {}));
+        vi.mock("./b", async () => (log.push("b"), {}));
+        vi.mock("./first", async () => (log.push("first starts"), await import("./inner"), log.push("first ends"), {}));
+        import "./page";
+        test("order", () => expect(log).toEqual(["first starts", "a", "b", "first ends"]));
+      `,
+    },
+    1,
+  );
+});
+
 test.concurrent("two import() calls that share a module don't wait for each other's factories", async () => {
   await expectFixturesToPass(
     {

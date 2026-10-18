@@ -1576,12 +1576,17 @@ __attribute__((minsize, noinline)) static void rankWaitingModuleMocks(Zig::Globa
         }
     }
     loads.removeAllMatching([&](auto* key) { return imported.contains(key) || plugins.modulesAskedFor.contains(String(key)); });
+    // What a running factory has asked for comes first, the latest first: the mocks it leads to are called in its order, as in Vitest.
     Vector<String> finished;
     for (auto& key : plugins.modulesAskedFor) {
         auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key));
         if (!entry || (entry->record() && !unfinishedRecord(entry)))
             finished.append(key);
-        else if (entry->record())
+        else if (!entry->record())
+            continue;
+        else if (plugins.runningModuleMocks.containsIf([&](auto& running) { return running.importChain.contains(key); }))
+            loads.insert(0, entry->key().impl());
+        else
             loads.append(entry->key().impl());
     }
     for (auto& key : finished)

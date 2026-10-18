@@ -1717,8 +1717,7 @@ impl Example {
         }
 
         let http_proxy = env_loader.get_http_proxy_for(&api_url);
-        let mutable: &'static mut MutableString =
-            crate::cli::cli_arena().alloc(MutableString::init(8192)?);
+        let mut mutable = MutableString::default();
 
         // ensure very stable memory address
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
@@ -1734,7 +1733,7 @@ impl Example {
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-        let response = async_http.send_sync(mutable)?;
+        let response = async_http.send_sync(&mut mutable)?;
 
         match response.status_code() {
             404 => return Err(crate::Error::GitHubRepositoryNotFound),
@@ -1773,7 +1772,7 @@ impl Example {
             Global::crash();
         }
 
-        Ok(mutable.clone()?)
+        Ok(mutable)
     }
 
     pub(crate) fn fetch(
@@ -1788,8 +1787,7 @@ impl Example {
 
         // SAFETY: single-threaded CLI access to static buffer.
         let url_buf = unsafe { &mut *NPM_REGISTRY_URL_BUF.get() };
-        let mutable: &'static mut MutableString =
-            crate::cli::cli_arena().alloc(MutableString::init(2048)?);
+        let mut mutable = MutableString::default();
 
         let api_url = URL::parse({
             let mut cursor: &mut [u8] = &mut url_buf[..];
@@ -1812,23 +1810,21 @@ impl Example {
             .get_http_proxy_for(unsafe { (*URL_.get()).as_ref().unwrap() })
             .map(|u| URL::parse_single_reader(crate::cli::cli_dupe(u.href)));
 
-        // ensure very stable memory address
-        let async_http: &mut HTTP::AsyncHTTP =
-            crate::cli::cli_arena().alloc(HTTP::AsyncHTTP::init_sync(
-                HTTP::Method::GET,
-                // SAFETY: single-threaded CLI access to static URL_ (set just above)
-                unsafe { (*URL_.get()).clone() }.unwrap(),
-                Default::default(),
-                b"",
-                b"",
-                http_proxy,
-                HTTP::ProxySettings::from_env(env_loader),
-                HTTP::FetchRedirect::Follow,
-            ));
+        let mut async_http = HTTP::AsyncHTTP::init_sync(
+            HTTP::Method::GET,
+            // SAFETY: single-threaded CLI access to static URL_ (set just above)
+            unsafe { (*URL_.get()).clone() }.unwrap(),
+            Default::default(),
+            b"",
+            b"",
+            http_proxy,
+            HTTP::ProxySettings::from_env(env_loader),
+            HTTP::FetchRedirect::Follow,
+        );
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-        let mut response = async_http.send_sync(mutable)?;
+        let mut response = async_http.send_sync(&mut mutable)?;
 
         match response.status_code() {
             404 => return Err(crate::Error::ExampleNotFound),
@@ -1896,7 +1892,7 @@ impl Example {
             .get_http_proxy_for(&parsed_tarball_url)
             .map(|u| URL::parse_single_reader(crate::cli::cli_dupe(u.href)));
 
-        *async_http = HTTP::AsyncHTTP::init_sync(
+        async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             parsed_tarball_url,
             Default::default(),
@@ -1911,7 +1907,7 @@ impl Example {
 
         refresher.maybe_refresh();
 
-        response = async_http.send_sync(mutable)?;
+        response = async_http.send_sync(&mut mutable)?;
 
         refresher.maybe_refresh();
 
@@ -1927,7 +1923,7 @@ impl Example {
 
         refresher.refresh();
 
-        Ok(mutable.clone()?)
+        Ok(mutable)
     }
 
     pub(crate) fn fetch_all(
@@ -1938,8 +1934,13 @@ impl Example {
         let url = URL::parse(Self::EXAMPLES_URL);
         let http_proxy = env_loader.get_http_proxy_for(&url);
 
+        // Process-lifetime: the returned `Example` names borrow the body.
         let mutable: &'static mut MutableString =
-            crate::cli::cli_arena().alloc(MutableString::init(2048)?);
+            crate::cli::cli_arena().alloc(MutableString::default());
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<MutableString>(mutable).cast(),
+            core::mem::size_of::<MutableString>(),
+        );
 
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,

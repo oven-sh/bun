@@ -23,7 +23,6 @@ test/bundler/transpiler/runtime-transpiler.test.ts
 test/cli/run/transpiler-cache.test.ts
 test/cli/hot/hot.test.ts
 test/cli/install/bun-add.test.ts
-test/cli/install/bun-create.test.ts
 test/cli/install/bun-install-lifecycle-scripts.test.ts
 test/cli/install/bun-install-patch.test.ts
 test/cli/install/bun-install-proxy.test.ts

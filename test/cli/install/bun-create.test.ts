@@ -2,8 +2,9 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, lstatSync, mkdirSync, readdirSync, statSync, symlinkSync } from "fs";
 import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, githubTarball, isPosix, tempDir, tls, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, githubTarball, isASAN, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
+import { connect, createServer, type AddressInfo, type Socket } from "node:net";
 import * as nodetls from "node:tls";
 import { delimiter, join } from "path";
 import { TestRegistry } from "registry";
@@ -920,6 +921,196 @@ async function serveGithub(files: Record<string, string>) {
     [Symbol.dispose]: () => void server.stop(true),
   };
 }
+
+/**
+ * Serves `respond` as GitHub and as registry.npmjs.org. The official templates and the template list come from that
+ * registry, and `bun create` has no setting for it, so `env` sets `https_proxy` to a CONNECT proxy that opens every
+ * tunnel to this one server. A request to `GITHUB_API_DOMAIN` does not go through the proxy.
+ */
+async function serveRemote(respond: (pathname: string) => Response) {
+  const origin = Bun.serve({ tls, port: 0, fetch: request => respond(new URL(request.url).pathname) });
+  const sockets = new Set<Socket>();
+  const proxy = createServer(client => {
+    sockets.add(client);
+    client.on("error", () => {});
+    client.on("close", () => sockets.delete(client));
+    let head = "";
+    client.on("data", function onData(chunk: Buffer) {
+      head += chunk.toString("latin1");
+      if (!head.includes("\r\n\r\n")) return;
+      client.off("data", onData);
+      // `pipe()` below resumes the socket once the upstream is connected.
+      client.pause();
+      const upstream = connect(origin.port!, "127.0.0.1", () => {
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        client.pipe(upstream);
+        upstream.pipe(client);
+      });
+      sockets.add(upstream);
+      upstream.on("error", () => client.destroy());
+      upstream.on("close", () => sockets.delete(upstream));
+      client.on("close", () => upstream.destroy());
+    });
+  });
+  proxy.listen(0, "127.0.0.1");
+  await once(proxy, "listening");
+
+  const proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+  return {
+    env: {
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      GITHUB_API_DOMAIN: `${origin.hostname}:${origin.port}`,
+      https_proxy: proxyUrl,
+      HTTPS_PROXY: proxyUrl,
+      no_proxy: origin.hostname,
+      NO_PROXY: origin.hostname,
+    },
+    async [Symbol.asyncDispose]() {
+      for (const socket of sockets) socket.destroy();
+      proxy.close();
+      await Promise.all([once(proxy, "close"), origin.stop(true)]);
+    },
+  };
+}
+
+// Each case is one way that `bun create` ends for a template that is not a local folder. The response buffers of its
+// requests stayed allocated until exit, with no owner that LeakSanitizer could find.
+describe.concurrent("a remote template leaves no memory unreachable at exit", () => {
+  type Case = {
+    args?: string[];
+    /** What the working directory holds. */
+    files?: Record<string, string>;
+    respond: (pathname: string, tarball: Uint8Array) => Response;
+    /** The paths that the local server is asked for. */
+    requests: string[];
+    out?: string;
+    err?: string;
+    exitCode: number;
+  };
+  const github = "/repos/owner/template/tarball";
+  const manifest = "/@bun-examples/elysia/latest";
+  const list = "/bun-examples-all/latest";
+  const gzip = (tarball: Uint8Array) => new Response(tarball, { headers: { "content-type": "application/x-gzip" } });
+  const official = () => Response.json({ dist: { tarball: "https://registry.npmjs.org/elysia.tgz" } });
+  // Every string of this template list has an escape. The parser copies such a string, so no string of the parsed
+  // list points into the response body, and only the buffer that received the body keeps it.
+  const escapedList = String.raw`{"ex\u0061mples":{"\u0040bun-examples/h\u0065llo":{"d\u0065scription":"H\u0065llo"}}}`;
+  const notFoundThenList = (pathname: string) =>
+    pathname === list ? new Response(escapedList) : new Response("not found", { status: 404 });
+  const cases: [string, Case][] = [
+    [
+      "created from GitHub",
+      { respond: (_, tarball) => gzip(tarball), requests: [github], out: "Success! owner/template", exitCode: 0 },
+    ],
+    [
+      "GitHub answers 503 with a body",
+      {
+        respond: () => new Response("down", { status: 503 }),
+        requests: [github],
+        err: "GitHub returned a server error",
+        exitCode: 1,
+      },
+    ],
+    [
+      "GitHub answers 503 with no body",
+      {
+        respond: () => new Response(null, { status: 503 }),
+        requests: [github],
+        err: "GitHub returned a server error",
+        exitCode: 1,
+      },
+    ],
+    [
+      "GitHub answers with the wrong content type",
+      {
+        respond: () => new Response("hello", { headers: { "content-type": "text/plain" } }),
+        requests: [github],
+        err: "Unexpected content type from GitHub: text/plain",
+        exitCode: 1,
+      },
+    ],
+    [
+      "a file in the destination is in the way",
+      {
+        files: { "dest/index.ts": "mine" },
+        respond: (_, tarball) => gzip(tarball),
+        requests: [github],
+        err: "contains files that could conflict",
+        exitCode: 1,
+      },
+    ],
+    [
+      "GitHub answers 404 and the template list is printed",
+      {
+        respond: notFoundThenList,
+        requests: [github, list],
+        out: "bun create hello dest",
+        err: "was not found on GitHub",
+        exitCode: 1,
+      },
+    ],
+    [
+      "created from the official templates",
+      {
+        args: ["elysia", "dest"],
+        respond: (pathname, tarball) => (pathname === manifest ? official() : new Response(tarball)),
+        requests: [manifest, "/elysia.tgz"],
+        out: "Created elysia project successfully",
+        exitCode: 0,
+      },
+    ],
+    [
+      "an official template is not found and the template list is printed",
+      {
+        args: ["elysia", "dest"],
+        respond: notFoundThenList,
+        requests: [manifest, list],
+        out: "bun create hello dest",
+        err: `"elysia" was not found`,
+        exitCode: 1,
+      },
+    ],
+    [
+      "the tarball of an official template answers 500",
+      {
+        args: ["elysia", "dest"],
+        respond: pathname => (pathname === manifest ? official() : new Response("down", { status: 500 })),
+        requests: [manifest, "/elysia.tgz"],
+        err: "Error fetching tarball: 500",
+        exitCode: 1,
+      },
+    ],
+  ];
+
+  // LeakSanitizer needs more than the default timeout to symbolize a report. A case that ends with a timeout on an
+  // ASAN build found a leak or ran on a slow machine: run it with `--timeout=60000` to see the report.
+  it.skipIf(!isASAN).each(cases)(
+    "%s",
+    async (_, { args = ["owner/template", "dest"], files = {}, respond, requests, out = "", err = "", exitCode }) => {
+      const tarball = await githubTarball("template-main", { "index.ts": "template", "package.json": "{}" });
+      const requested: string[] = [];
+      await using remote = await serveRemote(pathname => {
+        requested.push(pathname);
+        return respond(pathname, tarball);
+      });
+      using dir = tempDir("create-remote-leak", files);
+      const created = await create(String(dir), [...args, "--no-install", "--no-git"], {
+        ...remote.env,
+        // abort_on_error: a leak report must not look like the exit code 1 of a failed `bun create`.
+        ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=1:abort_on_error=1"].filter(Boolean).join(":"),
+        // use_registers=0: a stale pointer in a register of an idle thread hides a leak on some builds.
+        LSAN_OPTIONS: `use_registers=0:print_suppressions=0:suppressions=${join(import.meta.dirname, "../../leaksan.supp")}`,
+      });
+
+      expect({ ...created, requested }).toEqual({
+        out: expect.stringContaining(out),
+        err: expect.stringContaining(err),
+        exitCode,
+        requested: requests,
+      });
+    },
+  );
+});
 
 describe.concurrent("GitHub template", () => {
   const createTest = {

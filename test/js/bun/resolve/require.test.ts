@@ -262,6 +262,37 @@ describe("require(specifier)", () => {
         signalCode: null,
       });
     });
+
+    // The require() puts its own module in require.cache before the loader of the graph gets to the file.
+    it.concurrent("a module that a require() in the same graph removed and loads again runs once", async () => {
+      using dir = tempDir("bun-test-import-reloaded-module", {
+        "real.cjs": `
+          globalThis.realRuns = (globalThis.realRuns ?? 0) + 1;
+          module.exports = { runs: globalThis.realRuns };
+        `,
+        "reloader.cjs": `
+          const id = require.resolve("./real.cjs");
+          if (require.cache[id]?.loaded !== false) console.log("real.cjs must be in require.cache here, not loaded");
+          delete require.cache[id];
+          globalThis.required = require(id);
+        `,
+        "graph.mjs": `
+          import "./reloader.cjs";
+          import real from "./real.cjs";
+          export const imported = real;
+        `,
+        "index.cjs": `
+          const { imported } = require("./graph.mjs");
+          console.log(JSON.stringify({ required: globalThis.required, imported, realRuns: globalThis.realRuns }));
+        `,
+      });
+      expect(await bunRun(path.join(String(dir), "index.cjs"))).toEqual({
+        stdout: JSON.stringify({ required: { runs: 1 }, imported: { runs: 1 }, realRuns: 1 }),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
   });
 
   describe("require.main", () => {

@@ -1148,6 +1148,11 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
+unsafe fn run_pending_test_step(vm: *mut VirtualMachine) {
+    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+    crate::test_runner::bun_test::BunTest::run_pending_step(unsafe { &*vm }.global());
+}
+
 unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     // Note: reshaped for borrowck — see `auto_tick` above.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
@@ -1567,6 +1572,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     ensure_debugger,
     auto_tick,
     auto_tick_active,
+    run_pending_test_step,
     print_exception,
     timer_insert,
     timer_remove,

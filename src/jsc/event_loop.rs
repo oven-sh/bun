@@ -431,31 +431,49 @@ impl EventLoop {
         }
 
         jsc::mark_binding();
-        jsc_vm.release_weak_refs();
+        loop {
+            jsc_vm.release_weak_refs();
 
-        match JSC__JSGlobalObject__drainMicrotasks(global_object) {
-            drain_result::SUCCESS => {}
-            drain_result::STOPPED => return Err(Stopped),
-            // The exception is on its way to a fold, which drains after taking
-            // it; the deferred tasks wait for that checkpoint too.
-            drain_result::PENDING_EXCEPTION => return Ok(()),
-            _ => unreachable!(),
+            match JSC__JSGlobalObject__drainMicrotasks(global_object) {
+                drain_result::SUCCESS => {}
+                drain_result::STOPPED => return Err(Stopped),
+                // The exception is on its way to a fold, which drains after taking
+                // it; the deferred tasks wait for that checkpoint too.
+                drain_result::PENDING_EXCEPTION => return Ok(()),
+                _ => unreachable!(),
+            }
+
+            // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
+            // overlap `&mut self: EventLoop`, which is a value field of the VM).
+            vm.is_inside_deferred_task_queue.set(true);
+            self.deferred_tasks.run();
+            vm.is_inside_deferred_task_queue.set(false);
+
+            // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
+            // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
+            // `event_loop_handle` (which is the libuv loop).
+            if vm.event_loop_handle.is_some() {
+                vm.uws_loop_mut().drain_quic_if_necessary();
+            }
+
+            // Run the next test or hook before any other timer or I/O callback.
+            // Jest and Vitest chain them with promises, so nothing runs in between.
+            if !vm.has_pending_test_step.get()
+                || self.entered_event_loop_count > 1
+                || jsc_vm.is_entered()
+            {
+                return Ok(());
+            }
+            vm.has_pending_test_step.set(false);
+            let Some(hooks) = crate::virtual_machine::runtime_hooks() else {
+                return Ok(());
+            };
+            // `exit()` drains before it decrements the count. Reset it so each test callback still drains its microtasks.
+            let entered = core::mem::replace(&mut self.entered_event_loop_count, 0);
+            // SAFETY: the live per-thread VM that owns this loop (hook contract).
+            unsafe { (hooks.run_pending_test_step)(self.vm()) };
+            self.entered_event_loop_count = entered;
         }
-
-        // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
-        // overlap `&mut self: EventLoop`, which is a value field of the VM).
-        vm.is_inside_deferred_task_queue.set(true);
-        self.deferred_tasks.run();
-        vm.is_inside_deferred_task_queue.set(false);
-
-        // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
-        // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
-        // `event_loop_handle` (which is the libuv loop).
-        if vm.event_loop_handle.is_some() {
-            vm.uws_loop_mut().drain_quic_if_necessary();
-        }
-
-        Ok(())
     }
 
     #[inline(always)]

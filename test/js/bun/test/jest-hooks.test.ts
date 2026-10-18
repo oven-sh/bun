@@ -274,3 +274,59 @@ describe("registered inside AsyncLocalStorage.run()", () => {
     });
   });
 });
+
+describe("afterEach runs before any other pending callback", () => {
+  let where = "";
+  let fired = Promise.withResolvers<void>();
+  const seen: string[] = [];
+  const callback = () => {
+    seen.push(where);
+    fired.resolve();
+  };
+  const untilTimersAreDue = () => {
+    const start = performance.now();
+    while (performance.now() - start < 2);
+  };
+
+  afterEach(async () => {
+    where = "afterEach";
+    await fired.promise;
+    fired = Promise.withResolvers<void>();
+  });
+
+  it("runs before a due timer when setImmediate resumed the test", async () => {
+    await new Promise(resolve => setImmediate(resolve));
+    setTimeout(callback, 0);
+    untilTimersAreDue();
+    where = "after the test";
+  });
+
+  it("runs before a due timer when setImmediate called done()", done => {
+    setImmediate(() => {
+      setTimeout(callback, 0);
+      untilTimersAreDue();
+      where = "after the test";
+      done();
+    });
+  });
+
+  it("runs before the next due timer when a timer resumed the test", async () => {
+    const first = new Promise(resolve => setTimeout(resolve, 1));
+    setTimeout(callback, 1);
+    untilTimersAreDue();
+    await first;
+    where = "after the test";
+  });
+
+  it("runs before the next immediate when setImmediate resumed the test", async () => {
+    const first = new Promise(resolve => setImmediate(resolve));
+    setImmediate(callback);
+    await first;
+    where = "after the test";
+  });
+
+  it("every callback fired during afterEach", () => {
+    fired.resolve();
+    expect(seen).toEqual(["afterEach", "afterEach", "afterEach", "afterEach"]);
+  });
+});

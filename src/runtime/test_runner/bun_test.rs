@@ -739,6 +739,8 @@ pub(crate) struct BunTest {
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub(crate) wants_wakeup: bool,
+    /// The phase passed to the most recent `run_next_tick`.
+    pending_phase: RefDataValue,
     /// True until `TestCommand::run` starts the runner, because the file's module may still be registering tests.
     pub(crate) is_loading: bool,
     /// Callback-less entry that runs last in the file. `defer_to_file_end` links its entries after it.
@@ -781,6 +783,7 @@ impl BunTest {
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
+            pending_phase: RefDataValue::Start,
             is_loading: true,
             file_end: None,
             unclaimed: Default::default(),
@@ -1061,8 +1064,26 @@ impl BunTest {
         }));
         // SAFETY: single field write through `UnsafeCell`; no other `&mut` live.
         strong.get().wants_wakeup = true;
+        strong.get().pending_phase = phase;
+        // The next microtask drain normally runs this. The task is a fallback for a drain that happens with JS on the stack.
+        vm.has_pending_test_step.set(true);
         // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
         vm.enqueue_task(task);
+    }
+
+    /// Runs the step queued by `run_next_tick` right away instead of waiting for its task.
+    pub(crate) fn run_pending_step(global_this: &JSGlobalObject) {
+        let Some(strong) = clone_active_strong() else {
+            return;
+        };
+        let phase = strong.get().pending_phase;
+        // After a termination the exception is still pending, and the caller's next drain reports it.
+        let _ = Box::new(RunTestsTask {
+            weak: Rc::downgrade(&strong),
+            global_this: GlobalRef::from(global_this),
+            phase,
+        })
+        .call();
     }
 
     pub(crate) fn add_result(&mut self, result: RefDataValue) {

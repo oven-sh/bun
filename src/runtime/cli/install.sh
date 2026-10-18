@@ -183,22 +183,34 @@ fi
 refresh_command=''
 
 # Appends the `# bun` block to the config file in $1. The remaining arguments
-# are the lines of the block. Returns 1 without a write when the file already
-# has every line, so a rerun with the same install dir adds nothing.
+# are the lines of the block, the install dir line first. Returns 1 without a
+# write when the file already has the block: the last install dir line in the
+# file is this one (a later line for another dir wins in the shell) and the
+# other lines are present.
 append_shell_config() {
     local config=$1
     shift
 
-    local missing=false
-    for line in "$@"; do
-        if ! grep -Fxq -- "$line" "$config"; then
-            missing=true
-            break
+    local prefix=${1%%"$install_env"*}$install_env
+    local line last=''
+    while IFS= read -r line || [[ -n $line ]]; do
+        if [[ $line = "$prefix"* ]]; then
+            last=$line
         fi
-    done
+    done <"$config"
 
-    if [[ $missing = false ]]; then
-        return 1
+    if [[ $last = "$1" ]]; then
+        local missing=false
+        for line in "${@:2}"; do
+            if ! grep -Fxq -- "$line" "$config"; then
+                missing=true
+                break
+            fi
+        done
+
+        if [[ $missing = false ]]; then
+            return 1
+        fi
     fi
 
     {

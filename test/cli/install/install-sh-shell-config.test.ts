@@ -164,6 +164,33 @@ describe.concurrent("install.sh shell config", () => {
       '\n# bun\nexport BUN_INSTALL="$HOME/other"\nexport PATH="$BUN_INSTALL/bin:$PATH"\n',
     );
     expect(await bunOnPath(h, "-lic")).toBe(join(h, "other/bin/bun"));
+
+    // Back to the default dir: the lines exist, but a later block wins, so
+    // a new block is needed.
+    const third = await runInstaller(h, "/bin/bash");
+    expect(third.stdout).toContain(`Added "~/.bun/bin" to $PATH in`);
+    expect(third.exitCode).toBe(0);
+    expect(countBunBlocks(config)).toBe(3);
+    expect(await bunOnPath(h, "-lic")).toBe(join(h, ".bun/bin/bun"));
+  });
+
+  test.skipIf(!pathDir || isMacOS)("bash: a Debian home with ~/.profile and no ~/.bash_profile", async () => {
+    using home = tempDir("install-sh-home", {
+      ".profile":
+        'if [ -n "$BASH_VERSION" ]; then\n    if [ -f "$HOME/.bashrc" ]; then\n        . "$HOME/.bashrc"\n    fi\nfi\n',
+      ".bashrc": "case $- in\n    *i*) ;;\n    *) return;;\nesac\n",
+    });
+    const h = String(home);
+
+    const { stdout, exitCode } = await runInstaller(h, "/bin/bash");
+    expect(stdout).toContain('Added "~/.bun/bin" to $PATH in "~/.bashrc"');
+    expect(exitCode).toBe(0);
+
+    const bin = join(h, ".bun/bin/bun");
+    expect(countBunBlocks(join(h, ".bashrc"))).toBe(1);
+    expect(existsSync(join(h, ".bash_profile"))).toBe(false);
+    expect(await bunOnPath(h, "-ic")).toBe(bin);
+    expect(await bunOnPath(h, "-lic")).toBe(bin);
   });
 
   test.skipIf(!pathDir)("zsh: a second run does not append a second block", async () => {

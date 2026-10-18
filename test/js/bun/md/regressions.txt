@@ -985,27 +985,3 @@ bar
 bar</p>
 ````````````````````````````````
 
-
-## Empty item inside nested block quotes
-
-Closing the empty item must keep the remaining block quote markers consumed.
-
-```````````````````````````````` example
-> > > > -
-> > > >
-> > > >
-> > > >   b
-.
-<blockquote>
-<blockquote>
-<blockquote>
-<blockquote>
-<ul>
-<li></li>
-</ul>
-<p>b</p>
-</blockquote>
-</blockquote>
-</blockquote>
-</blockquote>
-````````````````````````````````

@@ -84,6 +84,11 @@ pub trait RendererImpl {
     fn leave_span(&mut self, span_type: SpanType) -> JsResult<()>;
     fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()>;
 
+    /// Whether the white space that a line of code or HTML starts with comes as one `text` of one space for each
+    /// column that it spans in the source, and not as it is written. Asked once, before parsing.
+    fn wants_indentation_as_spaces(&self) -> bool {
+        false
+    }
     /// Whether this consumer wants to know where things are written in the
     /// document. Asked once, before parsing. None of the methods below is
     /// called, and nothing is recorded for them, unless it does. It is then

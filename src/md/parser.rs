@@ -149,6 +149,10 @@ pub(crate) struct Parser<'a> {
     pub(crate) line_starts: Vec<OFF>,
     // The labels of the footnotes that are defined, normalized.
     pub(crate) footnote_labels: bun_collections::StringSet,
+    // Where the last line of code or HTML that `emit_rest_of_tab` mapped ends. Each later line starts behind it.
+    pub(crate) verbatim_floor: OFF,
+    // `RendererImpl::wants_indentation_as_spaces`
+    pub(crate) indentation_as_spaces: bool,
 }
 
 #[repr(C)]
@@ -315,6 +319,7 @@ impl<'a> Parser<'a> {
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
         let size = input_size(text)?;
         let track = rend.ptr.wants_source();
+        let indentation_as_spaces = rend.ptr.wants_indentation_as_spaces();
         let mut p = Parser {
             text,
             size,
@@ -370,6 +375,8 @@ impl<'a> Parser<'a> {
             starts_extension_leaf: bun_collections::ByteSet::init_empty(),
             line_starts: Vec::new(),
             footnote_labels: bun_collections::StringSet::new(),
+            verbatim_floor: 0,
+            indentation_as_spaces,
         };
         p.build_mark_char_map();
         Ok(p)

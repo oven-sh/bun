@@ -675,7 +675,7 @@ impl Builder<'_> {
     /// Where the `indent` columns of white space before `beg` start, and how many of them are the rest of a tab
     /// before that place.
     fn indentation_start(&self, beg: u32, indent: u32) -> (u32, u8) {
-        let (start, spaces) = indentation_start(self.text, beg, indent);
+        let (start, spaces) = indentation_start(self.text, beg, indent, 0);
         (start, spaces as u8)
     }
 

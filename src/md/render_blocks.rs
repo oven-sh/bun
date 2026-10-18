@@ -39,34 +39,55 @@ impl Parser<'_> {
             }
         }
 
-        for vline in &block_lines[0..count] {
-            self.emit_verbatim_line(TextType::Normal, vline)?;
-        }
-        Ok(())
+        self.emit_verbatim_lines(TextType::Normal, &block_lines[0..count])
     }
 
     pub(crate) fn process_html_block(&mut self, block_lines: &[VerbatimLine]) -> JsResult<()> {
-        for vline in block_lines {
-            self.emit_verbatim_line(TextType::Html, vline)?;
+        self.emit_verbatim_lines(TextType::Html, block_lines)
+    }
+
+    #[inline(always)]
+    fn emit_verbatim_lines(&mut self, text_type: TextType, lines: &[VerbatimLine]) -> JsResult<()> {
+        if self.indentation_as_spaces {
+            return self.emit_verbatim_lines_in_columns(text_type, lines);
+        }
+        for vline in lines {
+            let start = match vline.indent {
+                0 => vline.beg,
+                _ => self.emit_rest_of_tab(text_type, vline)?,
+            };
+            self.emit_text(text_type, &self.text[start as usize..vline.end as usize])?;
+            self.emit_text(text_type, b"\n")?;
         }
         Ok(())
     }
 
-    #[inline(always)]
-    fn emit_verbatim_line(&mut self, text_type: TextType, vline: &VerbatimLine) -> JsResult<()> {
-        let start = match vline.indent {
-            0 => vline.beg,
-            _ => self.emit_rest_of_tab(text_type, vline)?,
-        };
-        self.emit_text(text_type, &self.text[start as usize..vline.end as usize])?;
-        self.emit_text(text_type, b"\n")
+    /// For `RendererImpl::wants_indentation_as_spaces`.
+    #[inline(never)]
+    fn emit_verbatim_lines_in_columns(
+        &mut self,
+        text_type: TextType,
+        lines: &[VerbatimLine],
+    ) -> JsResult<()> {
+        for vline in lines {
+            for _ in 0..vline.indent {
+                self.emit_text(text_type, b" ")?;
+            }
+            self.emit_text(
+                text_type,
+                &self.text[vline.beg as usize..vline.end as usize],
+            )?;
+            self.emit_text(text_type, b"\n")?;
+        }
+        Ok(())
     }
 
     /// CommonMark 2.2: only what is left of a tab that the indentation of the block splits is made of spaces.
     #[inline(never)]
     fn emit_rest_of_tab(&mut self, text_type: TextType, vline: &VerbatimLine) -> JsResult<OFF> {
         const SPACES: &[u8] = b"   ";
-        let (start, spaces) = helpers::indentation_start(self.text, vline.beg, vline.indent);
+        let floor = core::mem::replace(&mut self.verbatim_floor, vline.end);
+        let (start, spaces) = helpers::indentation_start(self.text, vline.beg, vline.indent, floor);
         if spaces > 0 {
             self.emit_text(text_type, &SPACES[..(spaces as usize).min(SPACES.len())])?;
         }

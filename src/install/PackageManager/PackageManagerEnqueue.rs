@@ -4130,8 +4130,9 @@ fn peer_provided_from_above(
     loop {
         let mut above = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
         let mut any_above = false;
-        // A package that's only installed for a peer dependency is below the packages that have
-        // that peer dependency.
+        // As in pnpm, a package that's only installed for a peer dependency belongs to the project.
+        // The packages that have that peer dependency provide nothing to it, but the packages
+        // above them do.
         for follows_peers in [false, true] {
             for (parent, list) in lists.iter().enumerate() {
                 if seen.is_set(parent)
@@ -4142,9 +4143,10 @@ fn peer_provided_from_above(
                 {
                     continue;
                 }
-                let provided = named(parent, false).or_else(|| named(parent, true));
-                if provided.is_some() {
-                    return provided;
+                if !follows_peers
+                    && let Some(provided) = named(parent, false).or_else(|| named(parent, true))
+                {
+                    return Some(provided);
                 }
                 seen.set(parent);
                 above.set(parent);

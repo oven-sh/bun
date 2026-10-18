@@ -1907,3 +1907,87 @@ it("internal FixedQueue backing list is not holey (test-fixed-queue.js)", () => 
   for (let i = 0; i < list.length; i++) if (!(i in list)) holes++;
   expect(holes).toBe(0);
 });
+
+// The promise API drops the PassThrough that pipelineImpl builds for a
+// function tail, so nothing read it and the pump stalled at the high water
+// mark (16 objects). nodejs/node#65559 resumes it in the promise wrapper.
+describe("promise pipeline with a function as the last entry (nodejs/node#65559)", () => {
+  const { pipeline: pipelineP } = require("node:stream/promises");
+  const { promisify } = require("node:util");
+  const chunks = () => Array.from({ length: 100 }, () => "x".repeat(1024));
+  async function* passThrough(source) {
+    for await (const chunk of source) yield chunk;
+  }
+
+  it("resolves when more than the high water mark flows through an async generator", async () => {
+    expect(await pipelineP(Readable.from(chunks()), passThrough)).toBeUndefined();
+  });
+
+  it("resolves with the single-array form", async () => {
+    expect(await pipelineP([Readable.from(chunks()), passThrough])).toBeUndefined();
+  });
+
+  it("resolves with a trailing options object", async () => {
+    expect(await pipelineP(Readable.from(chunks()), passThrough, { end: true })).toBeUndefined();
+  });
+
+  it("resolves through Stream.promises.pipeline and util.promisify(Stream.pipeline)", async () => {
+    expect(await Stream.promises.pipeline(Readable.from(chunks()), passThrough)).toBeUndefined();
+    expect(await promisify(Stream.pipeline)(Readable.from(chunks()), passThrough)).toBeUndefined();
+  });
+
+  it("pulls every chunk through the generator", async () => {
+    let seen = 0;
+    await pipelineP(Readable.from(chunks()), async function* (source) {
+      for await (const chunk of source) {
+        seen++;
+        yield chunk;
+      }
+    });
+    expect(seen).toBe(100);
+  });
+
+  it("rejects when the generator throws after the high water mark", async () => {
+    const boom = new Error("boom");
+    let seen = 0;
+    let caught;
+    try {
+      await pipelineP(Readable.from(chunks()), async function* (source) {
+        for await (const chunk of source) {
+          if (++seen === 50) throw boom;
+          yield chunk;
+        }
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(boom);
+  });
+
+  it("resolves when the function returns a web ReadableStream", async () => {
+    expect(
+      await pipelineP(
+        Readable.from(chunks()),
+        source =>
+          new ReadableStream({
+            async start(controller) {
+              for await (const chunk of source) controller.enqueue(chunk);
+              controller.close();
+            },
+          }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("still rejects with an already aborted signal", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    let caught;
+    try {
+      await pipelineP(Readable.from(chunks()), passThrough, { signal: ac.signal });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toHaveProperty("name", "AbortError");
+  });
+});

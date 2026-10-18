@@ -62,6 +62,12 @@ which is otherwise the number of arguments up to the last that is not written
 `.optional`, `.nullable`, `.falsyAsNull` or `.default()`. The ones after that are
 the ones TypeScript lets a caller leave out.
 
+A function of a `node:*` module names what Node's own source expects of an argument:
+`expected: { data: ["Buffer", "TypedArray", "DataView", "string"] }`. A value the argument's type
+refuses then throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)`, "The "data" argument must
+be of type string or an instance of Buffer, TypedArray, or DataView. Received null", and not "data
+must be a string, ArrayBuffer or ArrayBufferView". What the type takes is the same.
+
 Nothing else is written by hand, except once per crate: `src/<crate>/generated_bindgen.rs`
 includes the generated file, the crate root declares `mod generated_bindgen`, and a
 `build.rs` like `src/semver_jsc/build.rs` says where the generated file is, for a `cargo check`
@@ -187,13 +193,14 @@ any other: nothing looks at how many there are.
 | `b.bool`                                         | `bool`                           | a boolean; `.loose` is `ToBoolean`                            |
 | `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number that is an integer in range; see below               |
 | `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
-| `b.string`                                       | `bun_core::String`               | a string; `.loose` is `ToString`                              |
+| `b.string`                                       | `&bun_core::String`              | a string; `.loose` is `ToString`                              |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
 | `b.bufferSource`                                 | `JsLocal<'a, BufferSource>`      | a typed array, `DataView` or `ArrayBuffer` that is not shared |
 | `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same; the bytes of a view are copied                      |
 | `b.bytes(options)`                               | `&'a [u8]`, and others           | see [Bytes](#bytes)                                           |
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
+| `b.classRef(name)`                               | `&'a T`                          | an instance of a class of a `.classes.ts` file; see below     |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
 | `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
@@ -249,9 +256,16 @@ its `toString` runs.
 `bun_core::Utf8Bytes<'static>`, which shares the JS string's buffer when it is 8-bit
 and ASCII and is a transcoded copy otherwise.
 
-`b.string` shares the JS string's storage and can be stored. It belongs to the
+`b.string` shares the JS string's storage. As an argument it is a `&bun_core::String`, which a
+body that keeps it clones. Inside `.optional`, a union or an array, and as the value of a setter,
+it is held by value. The string belongs to the
 JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
 one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
+
+`b.classRef("TCPSocket")` is a `&'a` of the struct that class wraps, `crate::generated_classes::TCPSocket`.
+The argument's slot in the frame holds the instance, so it is only for an argument, alone or in
+`.nullable` or a union. In a function that can run JavaScript the struct must be one whose own
+methods take `&self`, since they can be called while the body holds the `&`.
 
 ### Dictionaries
 
@@ -315,8 +329,8 @@ reports its own error takes every kind: `.loose`, `.wrap`, `.enforceRange`,
 **A value goes to the first alternative, in written order, that takes its kind.** That
 alternative then converts it, and reports what is wrong with it: `1.5` given to
 `b.union({ integer: b.i32, text: b.string })` "must be an integer", not "must be of type integer or string".
-The buffer types and `b.blob` refuse some values of their kinds (a shared buffer, a
-detached `Blob`); those go on to the next alternative that takes the kind and does not
+The buffer types, `b.blob` and `b.classRef` refuse some values of their kinds (a shared buffer, a
+detached `Blob`, an instance that wraps nothing); those go on to the next alternative that takes the kind and does not
 refuse the same. A value no alternative takes throws `ERR_INVALID_ARG_TYPE` listing them all.
 
 So the order only matters between alternatives that overlap, and one that takes every
@@ -369,6 +383,7 @@ fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: &ZlibCompressionOption
 | `from`      | `"string"`, `"buffer"`, `"blob"`                     | what is taken without `ToString`                                       |
 | `otherwise` | **`"throw"`**, `"toString"`                          | anything else                                                          |
 | `refuse`    | `"undefined"`, `"null"`                              | with `"toString"`: these throw, and are not `"undefined"` and `"null"` |
+| `refuse`    | `"stringObject"`                                     | with `"throw"`: `"string"` is only a string                            |
 | `string`    | **`"utf8"`**, `"asIs"`                               | a string is its UTF-8, or stays a `bun_core::String`                   |
 | `shared`    | **`"borrowed"`**, `"copied"`                         | the bytes of a shared buffer                                           |
 | `held`      | **`"borrowed"`**, `"handle"`, `"copied"`, `"pinned"` | what the body gets                                                     |
@@ -417,7 +432,8 @@ bytes of a buffer are read, copied or pinned after every argument is converted. 
 member of a dictionary, a union or an array. Only `held: "borrowed"` can be `.optional` or
 `.nullable`: an `Option<&'a [u8]>`.
 
-An option that cannot apply is a build error: `refuse` without `"toString"`, `string` where no
+An option that cannot apply is a build error: `refuse` of `undefined` or `null` without `"toString"`,
+of a `String` object with it or where no string is taken, `string` where no
 string is taken, `shared` where no buffer is taken or `held: "copied"` copies it anyway. So is
 what no function needs yet, which is not written: `"asIs"` without `"handle"` or that copies a
 shared buffer, `"pinned"` that takes a `Blob` or copies a shared buffer, and a `"pinned"` argument

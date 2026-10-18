@@ -9,7 +9,6 @@ import {
   X509Certificate,
   type webcrypto,
 } from "node:crypto";
-import { once } from "node:events";
 import { BlockList } from "node:net";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
 import { deserialize as v8Deserialize } from "node:v8";
@@ -943,9 +942,14 @@ describe("X25519 CryptoKey through every clone route", () => {
            parentPort.once("messageerror", () => parentPort.postMessage({ workerData, message: "messageerror" }));`,
           { eval: true, workerData: keys },
         );
+        const { promise, resolve, reject } = Promise.withResolvers<{ workerData: CryptoKey[]; message: CryptoKey[] }>();
+        worker.once("message", resolve);
+        worker.once("messageerror", () => reject(new Error("messageerror")));
+        worker.once("error", reject);
+        worker.once("exit", code => reject(new Error(`worker exited (${code}) before it replied`)));
         try {
           worker.postMessage(keys);
-          const [reply] = await once(worker, "message");
+          const reply = await promise;
           return [reply.workerData, reply.message];
         } finally {
           await worker.terminate();

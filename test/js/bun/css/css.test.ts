@@ -7159,6 +7159,51 @@ describe("css tests", () => {
         chrome: Some(95 << 16),
       },
     );
+
+    // `fill`, `stroke`, `all` and `--x` are not in the property name table.
+    // Rules that transition different ones of them do not merge.
+    minify_test(
+      ".a{transition-property:fill}.b{transition-property:stroke}",
+      ".a{transition-property:fill}.b{transition-property:stroke}",
+    );
+    minify_test(".a{transition:fill .3s}.b{transition:all .3s}", ".a{transition:fill .3s}.b{transition:all .3s}");
+    minify_test(
+      ".a{transition-property:--x}.b{transition-property:--y}",
+      ".a{transition-property:--x}.b{transition-property:--y}",
+    );
+    minify_test(".a{transition:--x 1s}.b{transition:--y 1s}", ".a{transition:--x 1s}.b{transition:--y 1s}");
+    minify_test(
+      ".a{transition-property:opacity,fill}.b{transition-property:opacity,stroke}",
+      ".a{transition-property:opacity,fill}.b{transition-property:opacity,stroke}",
+    );
+    // Rules that transition the same one still merge.
+    minify_test(".a{transition-property:fill}.b{transition-property:fill}", ".a,.b{transition-property:fill}");
+    minify_test(".a{transition:--x 1s}.b{transition:--x 1s}", ".a,.b{transition:--x 1s}");
+
+    // A prefixed declaration keeps its own value when the unprefixed one
+    // names a different property.
+    minify_test(
+      ".a{-webkit-transition-property:fill;transition-property:stroke}",
+      ".a{-webkit-transition-property:fill;transition-property:stroke}",
+    );
+    minify_test(".a{-webkit-transition:--x 1s;transition:--y 1s}", ".a{-webkit-transition:--x 1s;transition:--y 1s}");
+    prefix_test(
+      `
+      .a {
+        -webkit-transition-property: fill;
+        transition-property: stroke;
+      }
+    `,
+      `
+      .a {
+        -webkit-transition-property: fill;
+        transition-property: stroke;
+      }
+    `,
+      {
+        chrome: Some(95 << 16),
+      },
+    );
   });
 
   describe("animation", () => {

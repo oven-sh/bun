@@ -119,7 +119,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
     auto scripts = JSON::Array::create();
     for (auto& provider : providers) {
         SourceID sourceID = provider->asID();
-        auto blocks = profiler->getBasicBlocksForSourceIDWithoutFunctionRange(sourceID, vm);
+        auto blocks = profiler->getBasicBlocksForSourceIDWithoutFunctionRange(sourceID, vm, JSC::ControlFlowProfiler::Gaps::With);
         auto functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
         if (blocks.isEmpty() && functionRanges.isEmpty())
             continue;

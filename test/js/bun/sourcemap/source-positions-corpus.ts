@@ -262,6 +262,137 @@ export const cases: Record<string, Case> = {
  1|f();
 `,
   },
+  // What is after a loop runs once, however the loop ends.
+  "iteration.ts": {
+    functions: "2/2",
+    lines: `
+ 9|function g() {}
+ 1|let n = 0;
+ 1|for (const key in { a: 1, b: 2, c: 3 }) {
+ 3|  n++;
+ -|}
+ 1|g();
+ 1|for (const key in {}) {
+ 0|  n++;
+ -|}
+ 1|g();
+ 1|for (const value of [1, 2]) {
+ 2|  n++;
+ -|}
+ 1|g();
+ 1|while (n > 3) {
+ 2|  n--;
+ -|}
+ 1|g();
+ 1|while (n > 3) {
+ 0|  n--;
+ -|}
+ 1|g();
+ 1|outer: for (let i = 0; i < 2; i++) {
+ 2|  for (let j = 0; j < 3; j++) {
+ 4|    if (j === 1) {
+ 2|      continue outer;
+ -|    }
+ 2|    g();
+ -|  }
+ 0|  g();
+ -|}
+ 1|g();
+ 3|function first(list: number[]) {
+ 3|  for (const value of list) {
+ 2|    return value;
+ -|  }
+ 1|  g();
+ -|}
+ 1|first([1]);
+ 1|first([1]);
+ 1|first([]);
+`,
+  },
+  // What is after a statement that control flow left did not run.
+  "leaves.ts": {
+    functions: "7/7",
+    lines: `
+18|function g() {}
+ 3|function afterIf(x: boolean) {
+ 3|  if (x) {
+ 2|    return 1;
+ -|  }
+ 1|  g();
+ 1|  return 2;
+ -|}
+ 1|afterIf(true);
+ 1|afterIf(true);
+ 1|afterIf(false);
+ 3|function nested(x: boolean, y: boolean) {
+ 3|  if (x) {
+ 2|    if (y) {
+ 1|      return;
+ -|    }
+ 1|    g();
+ -|  }
+ 2|  g();
+ -|}
+ 1|nested(true, true);
+ 1|nested(true, false);
+ 1|nested(false, false);
+ 3|function block(x: boolean) {
+ -|  {
+ 3|    if (x) {
+ 2|      return;
+ -|    }
+ 1|    g();
+ -|  }
+ 1|  g();
+ -|}
+ 1|block(true);
+ 1|block(true);
+ 1|block(false);
+ 4|function pick(x: number) {
+ 4|  switch (x) {
+ 1|    case 1:
+ 1|      return 1;
+ 1|    case 2:
+ 1|      g();
+ 3|    case 3:
+ 3|      g();
+ 3|      break;
+ -|    default:
+ 0|      return 4;
+ -|  }
+ 3|  g();
+ -|}
+ 1|pick(1);
+ 1|pick(2);
+ 1|pick(3);
+ 1|pick(3);
+ 3|function cleanup(x: boolean) {
+ 3|  try {
+ 3|    if (x) {
+ 2|      return 1;
+ -|    }
+ 1|    g();
+ -|  } finally {
+ 3|    g();
+ -|  }
+ 1|  g();
+ -|}
+ 1|cleanup(true);
+ 1|cleanup(true);
+ 1|cleanup(false);
+ 1|function rethrows() {
+ 1|  try {
+ 1|    throw new Error();
+ 1|  } catch (e) {
+ 1|    throw e;
+ -|  }
+ 0|  g();
+ -|}
+ 1|try {
+ 1|  rethrows();
+ 1|} catch {}
+`,
+  },
   "generators.ts": {
     functions: "4/4",
     lines: `

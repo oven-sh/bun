@@ -318,6 +318,11 @@ function buildScriptCoverageList(
     const stack: number[] = [];
     let nextFunction = 0;
     for (const block of blocks) {
+      // The script's own, which is not in a function that is the whole script.
+      if (block[0] === 0 && block[1] === sourceLength) {
+        topLevelBlocks.push(block);
+        continue;
+      }
       while (nextFunction < functions.length && functions[nextFunction][0] <= block[0]) {
         stack.push(nextFunction);
         nextFunction++;

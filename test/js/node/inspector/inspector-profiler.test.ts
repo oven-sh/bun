@@ -647,17 +647,22 @@ const url = "file:///whole-script-fixture/virtual.js";
 vm.runInThisContext("function whole() { }", { filename: url });
 whole();
 whole();
+const notCalled = "file:///whole-script-fixture/not-called.js";
+vm.runInThisContext("function never() { }", { filename: notCalled });
 const { result } = await session.post("Profiler.takePreciseCoverage");
 session.disconnect();
-console.log(JSON.stringify(result.find(script => script.url === url).functions.map(({ ranges }) => ranges)));
+console.log(
+  JSON.stringify([url, notCalled].map(url => result.find(script => script.url === url).functions.map(({ ranges }) => ranges))),
+);
 `,
       });
       await using proc = Bun.spawn({ cmd: [bunExe(), "fixture.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
       expect(JSON.parse(stdout.trim())).toEqual([
-        [{ startOffset: 0, endOffset: 20, count: 1 }],
-        [{ startOffset: 0, endOffset: 20, count: 2 }],
+        [[{ startOffset: 0, endOffset: 20, count: 1 }], [{ startOffset: 0, endOffset: 20, count: 2 }]],
+        // The script ran, and only declared the function.
+        [[{ startOffset: 0, endOffset: 20, count: 1 }], [{ startOffset: 0, endOffset: 20, count: 0 }]],
       ]);
     });
 
@@ -873,10 +878,397 @@ console.log(JSON.stringify(result.find(script => script.url === url).functions.m
       // The text between the two functions ran as often as the script: it is not a range,
       // and so nothing but the function's own range is next to "function neverCalled".
       expect(script).toHaveLength(1);
-      expect(called[0][1]).toBe(1);
-      expect(called.slice(1).map(([, count]) => count)).not.toContain(1);
-      expect(called.slice(1).map(([text]) => text)).toContainEqual(expect.stringContaining("return 1;"));
+      expect(called).toEqual([
+        ["function called(x) {\n  if (x) {\n    return 1;\n  }\n  return 2;\n}", 1],
+        ["{\n    return 1;\n  }", 0],
+      ]);
       expect(neverCalled).toEqual([["function neverCalled() {}", 0]]);
+    });
+
+    // A range is between « and », after its count. As in Node 26, but where it says otherwise.
+    const rangesInFunctions: Record<string, string> = {
+      "a return that is last": `
+function f() {
+  return 2;
+}
+f();
+`,
+      "a throw that is last": `
+function f() {
+  throw 1;
+}
+try { f() } catch {}
+`,
+      "after a return": `
+function f() {
+  return 2;«0:
+  f();
+»}
+f();
+`,
+      "a function declaration after a return": `
+function f() {
+  return g();
+  function g() {}
+}
+f();
+`,
+      "after an if that returns": `
+function f(x) {
+  if (x) {
+    return 1;
+  }«0:
+  return 2;
+»}
+f(1);
+`,
+      "an if that is not taken": `
+function f(x) {
+  if (x) «0:{
+    return 1;
+  }»
+  return 2;
+}
+f(0);
+`,
+      "an if that is last": `
+function f(x) {
+  g();
+  if (x) «0:{
+    g();
+  }»
+}
+function g() {}
+f(0);
+`,
+      "else": `
+function f(x) {
+  if (x) {
+    g();
+  }«0: else {
+    g();
+  }»
+  g();
+}
+function g() {}
+f(1);
+`,
+      "else if": `
+function f(x) {
+  if (x === 1) «0:{
+    g();
+  }» else if (x === 2) {
+    g();
+  }«0: else {
+    g();
+  }»
+}
+function g() {}
+f(2);
+`,
+      "an if without braces": `
+function f(x) {
+  if (x)
+    return 1;«0:
+  return 2;
+»}
+f(1);
+`,
+      "an if in an if that is not taken": `
+function f(x, y) {
+  if (x) «0:{
+    if (y) {
+      g();
+    }
+    g();
+  }»
+  g();
+}
+function g() {}
+f(0, 0);
+`,
+      "an if that is last in an if that is last": `
+function f(x, y) {
+  if (x) {
+    g();
+    if (y) «0:{
+      g();
+    }»
+  }
+}
+function g() {}
+f(1, 0);
+`,
+      // Node has the two as one range.
+      "after an if that returns, in an if": `
+function f(x, y) {
+  if (x) {
+    if (y) {
+      return;
+    }«0:
+    g();
+  }»«0:
+  g();
+»}
+function g() {}
+f(1, 1);
+`,
+      "two ifs that return": `
+function f(x, y) {
+  if (x) «0:{
+    return 1;
+  }»
+  g();
+  if (y) {
+    return 2;
+  }«0:
+  g();
+»}
+function g() {}
+f(0, 1);
+`,
+      // Node ends the range before `|| g()` and has what is after it as run.
+      "a part of an expression after an if that returns": `
+function f(x) {
+  if (x) {
+    return 1;
+  }«0:
+  let a = x || g();
+  g();
+»}
+function g() {}
+f(1);
+`,
+      "a break that is last": `
+function f() {
+  for (;;) {
+    break;
+  }
+  g();
+}
+function g() {}
+f();
+`,
+      "a continue that is last": `
+function f() {
+  for (let i = 0; i < 2; i++) «2:{
+    continue;
+  }»
+  g();
+}
+function g() {}
+f();
+`,
+      "a loop that is not entered": `
+function f() {
+  for (let i = 0; i < 0; i++) «0:{
+    g();
+  }»
+}
+function g() {}
+f();
+`,
+      // Node has the last two as one range.
+      "after an if that continues": `
+function f() {
+  for (let i = 0; i < 2; i++) «2:{
+    if (i) «1:{
+      continue;
+    }»«1:
+    g();
+  }»»
+}
+function g() {}
+f();
+`,
+      // Node has no count for the condition.
+      "do while": `
+function f() {
+  let n = 0;
+  do «3:{
+    n++;
+  }»«3: while (n < 3);»
+  g();
+}
+function g() {}
+f();
+`,
+      "for in": `
+function f() {
+  for (const x in {}) «0:{
+    g();
+  }»
+  g();
+}
+function g() {}
+f();
+`,
+      "a switch that returns": `
+function f(x) {
+  switch (x) {
+    case 1:
+      return 1;
+    «0:default:
+      return 2;»
+  }
+}
+f(1);
+`,
+      "a switch that breaks": `
+function f(x) {
+  switch (x) {
+    case 1:
+      g();
+      break;
+    «0:case 2:
+      g();
+      break;»
+  }
+  g();
+}
+function g() {}
+f(1);
+`,
+      "a switch that falls through": `
+function f(x) {
+  switch (x) {
+    «0:case 1:
+      g();»
+    case 2:
+      g();
+  }
+}
+function g() {}
+f(2);
+`,
+      "a try that returns": `
+function f() {
+  try {
+    return 1;
+  } finally {
+  }
+}
+f();
+`,
+      // Node starts the range at `catch`.
+      "try, catch and finally": `
+function f() {
+  try {
+    g();
+  }«0: catch (e) {
+    g();
+  }» finally {
+    g();
+  }
+  g();
+}
+function g() {}
+f();
+`,
+      "after a catch that throws": `
+function f() {
+  try {
+    throw 1;
+  } catch (e) {
+    throw e;
+  }«0:
+  g();
+»}
+function g() {}
+try { f() } catch {}
+`,
+      "after a block that returns": `
+function f() {
+  {
+    return 1;
+  }«0:
+  g();
+»}
+function g() {}
+f();
+`,
+      "a break with a label": `
+function f() {
+  a: for (;;) {
+    for (;;) {
+      break a;
+    }«0:
+    g();
+  }»
+  g();
+}
+function g() {}
+f();
+`,
+      "an arrow function": `
+const f = x => {
+  if (x) {
+    return 1;
+  }«0:
+  return 2;
+»};
+f(1);
+`,
+      "a generator": `
+function* f(x) {
+  if (x) {
+    return 1;
+  }«0:
+  yield 2;
+»}
+[...f(1)];
+`,
+      "the script": `
+var x = 1;
+if (x) {
+  x++;
+}«0: else {
+  x--;
+}»
+for (;;) {
+  break;
+}
+`,
+    };
+
+    test.concurrent("the ranges in a function are the statements that do not have its count", async () => {
+      const scripts = Object.fromEntries(
+        Object.entries(rangesInFunctions).map(([name, marked]) => [name, marked.trim().replace(/«\d+:|»/g, "")]),
+      );
+      using dir = tempDir("inspector-coverage-ranges", {
+        "scripts.json": JSON.stringify(scripts),
+        "fixture.mjs": `
+import { readFileSync } from "node:fs";
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+const scripts = JSON.parse(readFileSync(new URL("./scripts.json", import.meta.url), "utf8"));
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+const url = name => "file:///ranges/" + encodeURIComponent(name);
+for (const name in scripts) vm.runInContext(scripts[name], vm.createContext({}), { filename: url(name) });
+const { result } = await session.post("Profiler.takePreciseCoverage");
+for (const name in scripts) {
+  const ranges = result.find(script => script.url === url(name)).functions.flatMap(({ ranges }) => ranges.slice(1));
+  let marked = "";
+  for (let offset = 0; offset <= scripts[name].length; offset++) {
+    marked += "»".repeat(ranges.filter(range => range.endOffset === offset).length);
+    for (const range of ranges.filter(range => range.startOffset === offset).sort((a, b) => b.endOffset - a.endOffset))
+      marked += "«" + range.count + ":";
+    marked += scripts[name][offset] ?? "";
+  }
+  scripts[name] = marked;
+}
+console.log(JSON.stringify(scripts));
+`,
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "fixture.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout)).toEqual(
+        Object.fromEntries(Object.entries(rangesInFunctions).map(([name, marked]) => [name, marked.trim()])),
+      );
     });
   });
 

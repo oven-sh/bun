@@ -538,14 +538,10 @@ describe("lines of the name and the message that look like stack frames are not 
     ["in the message, without a name", "m" + fake, { beforeRead: e => (e.name = "") }],
     ["in the name", "m", { beforeRead: e => (e.name = "N" + fake) }],
     ["in both", "m" + fake, { beforeRead: e => (e.name = "m" + fake) }],
+    ["in the message, with another name since", "m" + fake, { afterRead: e => (e.name = "Other") }],
+    ["in the message, with another message since", "m" + fake, { afterRead: e => (e.message = "other") }],
     [
-      "none, the message now ends in the line break before the first frame",
-      "m",
-      { afterRead: e => (e.message += "\n") },
-    ],
-    ["none, the name now ends in the first frame", "", { afterRead: e => (e.name += at + "make") }],
-    [
-      "none, the message now ends with the first frame",
+      "none, the message has got the first frame since",
       "m",
       { afterRead: e => (e.message += at + e.stack.split(at)[1]) },
     ],
@@ -558,10 +554,16 @@ describe("lines of the name and the message that look like stack frames are not 
     expect(printedFrames(madeAtTopLevel)).toEqual(["at this file"]);
   });
 
-  test.each([
-    ["message", (err, length) => (err.message = Buffer.alloc(length - "RangeError: ".length, "x").toString())],
-    ["name", (err, length) => ((err.message = ""), (err.name = Buffer.alloc(length, "x").toString()))],
-  ])("none, the %s is now as long as all that is before the first frame with a position", (_, change) => {
+  test("in the message of an error whose first frame is of a native function", () => {
+    function make() {
+      return ["m" + fake].map(Error)[0];
+    }
+    const err = make();
+    err.stack;
+    expect(printedFrames(err)).toEqual(["at map (native:1:11)", "at make (this file)", "at this file"]);
+  });
+
+  test("none, the message of an error from a native function has got the first frame since", () => {
     function make() {
       try {
         "".repeat(-1);
@@ -570,19 +572,15 @@ describe("lines of the name and the message that look like stack frames are not 
       }
     }
     const err = make();
-    change(err, err.stack.indexOf(at + "make"));
+    err.message += at + err.stack.split(at)[1];
     expect(printedFrames(err)).toEqual(["at repeat (unknown:1:1)", "at make (this file)", "at this file"]);
   });
 
-  test("in the message of an error without frames", () => {
-    const origLimit = Error.stackTraceLimit;
-    let withoutFrames;
-    try {
-      Error.stackTraceLimit = 0;
-      withoutFrames = new Error("m" + fake);
-    } finally {
-      Error.stackTraceLimit = origLimit;
-    }
-    expect(printedFrames(withoutFrames)).toEqual([]);
+  test("a stack that was assigned is parsed from its start", () => {
+    const { stack } = make("m", {});
+    expect(printedFrames(make(stack, { afterRead: e => (e.stack = stack) }))).toEqual([
+      "at make (this file)",
+      "at this file",
+    ]);
   });
 });

@@ -469,7 +469,8 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     OrdinalNumber& line,
     OrdinalNumber& column,
     String& sourceURL,
-    JSObject* errorInstance)
+    JSObject* errorInstance,
+    unsigned& headerLength)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String name = "Error"_s;
@@ -482,6 +483,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(
         RETURN_IF_EXCEPTION(scope, {});
     }
 
+    headerLength = name.length() + message.length() + (name.isEmpty() || message.isEmpty() ? 0 : 2);
     RELEASE_AND_RETURN(scope, Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance));
 }
 
@@ -612,9 +614,17 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         }
     }
 
-    String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance);
+    unsigned headerLength;
+    String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, headerLength);
     RETURN_IF_EXCEPTION(scope, {});
-    return jsString(vm, result);
+    JSString* stack = jsString(vm, result);
+    // What prints an error parses the frames out of this string, for as long as it is the `stack`.
+    if (errorInstance->inherits<ErrorInstance>()) {
+        constexpr unsigned attributes = JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly;
+        errorInstance->putDirect(vm, builtinNames(vm).formattedStackPrivateName(), stack, attributes);
+        errorInstance->putDirect(vm, builtinNames(vm).formattedStackHeaderLengthPrivateName(), jsNumber(headerLength), attributes);
+    }
+    return stack;
 }
 
 static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)

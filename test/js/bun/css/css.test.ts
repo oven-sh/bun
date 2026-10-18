@@ -8088,14 +8088,19 @@ describe("css tests", () => {
       expect([
         property("<color>", "light-dark(red, blue)", chrome),
         property("*", "light-dark(red, blue)", chrome),
-        cssInternals.minifyTest(".a { color: light-dark(red, blue) }", "", chrome),
+        // The rule after the `@property` rule is still lowered for the targets.
+        cssInternals.minifyTest(
+          `@property --p { syntax: '<color>'; inherits: false; initial-value: light-dark(red, blue); } .a { color: light-dark(red, blue) }`,
+          "",
+          chrome,
+        ),
         // Each Safari that reads `@property` reads the `x` unit.
         property("<resolution>", "2dppx", safari),
         cssInternals.minifyTest(".a { --r: 2dppx }", "", safari),
       ]).toEqual([
         rule("<color>", "light-dark(red,#00f)"),
         rule("*", "light-dark(red,#00f)"),
-        ".a{color:var(--buncss-light,red)var(--buncss-dark,#00f)}",
+        rule("<color>", "light-dark(red,#00f)") + ".a{color:var(--buncss-light,red)var(--buncss-dark,#00f)}",
         rule("<resolution>", "2x"),
         ".a{--r:2dppx}",
       ]);
@@ -8158,12 +8163,20 @@ describe("css tests", () => {
       expect([
         property("<color>", "red blue"),
         property("<length>", "10px 20px"),
-        property("<transform-list>", "rotate(1turn)foo(1)"),
+        property("<transform-list>", "rotate(1turn) foo(1)"),
       ]).toEqual([
         rule("<color>", "red blue"),
         rule("<length>", "10px 20px"),
         rule("<transform-list>", "rotate(1turn)foo(1)"),
       ]);
+      expect(
+        cssInternals._test(
+          `@property --p { syntax: "<transform-list>"; inherits: false; initial-value: rotate(1turn) foo(1) }`,
+          "",
+        ),
+      ).toBe(
+        `@property --p {\n  syntax: "<transform-list>";\n  inherits: false;\n  initial-value: rotate(1turn) foo(1);\n}\n`,
+      );
     });
 
     test("the descriptors can come in any order", () => {

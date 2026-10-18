@@ -1334,6 +1334,8 @@ compile: {
 
 Without `outfile`, the executable is named after the entrypoint and written to `outdir`, or to the current working directory when there is no `outdir`. This matches `bun build --compile`.
 
+Bun writes the executable into a character device at the output path, such as `/dev/null`, and leaves the device in place.
+
 ### Supported targets
 
 ```ts title="Bun.Build.CompileTarget" icon="/icons/typescript.svg"

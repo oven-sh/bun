@@ -2855,6 +2855,12 @@ pub fn to_executable(
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
+    // Decided before the executable is staged, so a destination that cannot take it costs no copy.
+    #[cfg(not(windows))]
+    let delivery = match Delivery::plan(root_dir, outfile) {
+        Ok(delivery) => delivery,
+        Err(e) => return Ok(CompileResult::Err(e)),
+    };
     let bytes = match to_bytes(
         target,
         module_prefix,
@@ -3014,6 +3020,17 @@ pub fn to_executable(
         let mut outfile_posix_buf = bun_paths::path_buffer_pool::get();
         let outfile_posix = path::resolve_path::z(outfile_basename, &mut outfile_posix_buf);
 
+        if delivery == Delivery::InPlace {
+            // The write can wait for a reader. A build that is stopped then leaves no staged copy.
+            let _ = Syscall::unlink(temp_posix);
+            let written = write_in_place(fd, root_dir, outfile_posix, outfile);
+            fd.close();
+            return Ok(match written {
+                Ok(()) => CompileResult::Success,
+                Err(e) => CompileResult::Err(e),
+            });
+        }
+
         if let Err(e) =
             bun_sys::move_file_z_with_handle(fd, Fd::cwd(), temp_posix, root_dir, outfile_posix)
         {
@@ -3039,6 +3056,120 @@ pub fn to_executable(
         fd.close();
         Ok(CompileResult::Success)
     }
+}
+
+/// How `to_executable` puts the finished executable at the outfile.
+#[cfg(not(windows))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    /// The staged copy is renamed over the name.
+    Replace,
+    /// The name is a character device or a FIFO. A rename would leave a regular file under that
+    /// name, so the staged copy is written into it.
+    InPlace,
+}
+
+#[cfg(not(windows))]
+impl Delivery {
+    fn plan(root_dir: Fd, outfile: &[u8]) -> Result<Delivery, CompileError> {
+        use bun_sys::{FileKind, S};
+
+        let mut basename_buf = bun_paths::path_buffer_pool::get();
+        let basename = path::resolve_path::z(bun_paths::basename(outfile), &mut basename_buf);
+        let kind_of = |stat: &Stat| bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
+
+        let Ok(entry) = bun_sys::lstatat(root_dir, basename) else {
+            return Ok(Delivery::Replace);
+        };
+        let mut kind = kind_of(&entry);
+        if kind == FileKind::SymLink {
+            // A link to a device is written through, like the device.
+            let Ok(target) = bun_sys::fstatat(root_dir, basename) else {
+                return Ok(Delivery::Replace);
+            };
+            kind = kind_of(&target);
+        }
+        if !matches!(
+            kind,
+            FileKind::CharacterDevice
+                | FileKind::NamedPipe
+                | FileKind::UnixDomainSocket
+                | FileKind::BlockDevice
+        ) {
+            return Ok(Delivery::Replace);
+        }
+
+        // Sticky and group- or world-writable, like `/tmp`: another user can own the name there.
+        // The rename refuses to replace it; a write would hand that user the executable.
+        let Ok(dir) = bun_sys::fstatat(root_dir, bun_core::zstr!(".")) else {
+            return Ok(Delivery::Replace);
+        };
+        let dir_mode = dir.st_mode as bun_sys::Mode;
+        // SAFETY: `geteuid` takes no arguments and cannot fail.
+        let euid = unsafe { libc::geteuid() };
+        if dir_mode & S::ISVTX != 0
+            && dir_mode & (S::IWGRP | S::IWOTH) != 0
+            && entry.st_uid != euid
+            && entry.st_uid != dir.st_uid
+        {
+            return Ok(Delivery::Replace);
+        }
+
+        match kind {
+            FileKind::CharacterDevice | FileKind::NamedPipe => Ok(Delivery::InPlace),
+            FileKind::UnixDomainSocket => Err(write_failed(outfile, "it is a socket")),
+            // A write into it would overwrite the start of a disk.
+            _ => Err(write_failed(outfile, "it is a block device")),
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn write_failed(outfile: &[u8], reason: impl core::fmt::Display) -> CompileError {
+    CompileError::fmt(format_args!(
+        "failed to write executable to {}: {}",
+        bun_core::fmt::quote(outfile),
+        reason
+    ))
+}
+
+/// Not `bun_sys::copy_file`: on macOS that is `fcopyfile`, which chmods and truncates its output.
+#[cfg(not(windows))]
+fn write_in_place(
+    staged: Fd,
+    root_dir: Fd,
+    basename: &ZStr,
+    outfile: &[u8],
+) -> Result<(), CompileError> {
+    use bun_sys::{FileKind, O};
+
+    let failed = |e: bun_sys::Error| write_failed(outfile, bstr::BStr::new(e.name()));
+
+    let node = bun_sys::openat(root_dir, basename, O::WRONLY | O::NOCTTY | O::CLOEXEC, 0)
+        .map(bun_sys::File::from_fd)
+        .map_err(failed)?;
+    // The name can point somewhere else since the plan.
+    let stat = node.stat().map_err(failed)?;
+    if !matches!(
+        bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
+        FileKind::CharacterDevice | FileKind::NamedPipe
+    ) {
+        return Err(write_failed(
+            outfile,
+            "it is no longer a character device or a FIFO",
+        ));
+    }
+
+    bun_sys::set_file_offset(staged, 0).map_err(failed)?;
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        let len = bun_sys::read(staged, &mut buf).map_err(failed)?;
+        if len == 0 {
+            break;
+        }
+        node.write_all(&buf[..len]).map_err(failed)?;
+    }
+    node.close().map_err(failed)
 }
 
 impl StandaloneModuleGraph {

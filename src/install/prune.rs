@@ -9,7 +9,7 @@ use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::SEP;
-use bun_paths::typed::{AbsPath, AbsPathBuf, Storage};
+use bun_paths::typed::{AbsPath, AbsPathBuf, Storage, Z};
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use bun_threading::{WaitGroup, WorkPool};
 
@@ -2063,7 +2063,7 @@ fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> 
 /// A workspace's `node_modules` is only checked right before something is written to or removed
 /// from it.
 pub(crate) struct LinkedNodeModules {
-    abs_path: Box<[u8]>,
+    abs_path: Box<AbsPath>,
     /// Empty if the symlink is dangling, and always empty on Windows.
     real_path: Box<[u8]>,
 }
@@ -2075,9 +2075,8 @@ impl LinkedNodeModules {
         Some(sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink)
     }
 
-    /// `node_modules` must be an absolute path.
-    pub(crate) fn at(node_modules: &ZStr) -> Option<LinkedNodeModules> {
-        if Self::is_at(node_modules) != Some(true) {
+    pub(crate) fn at(node_modules: &Z<AbsPath>) -> Option<LinkedNodeModules> {
+        if Self::is_at(node_modules.z()) != Some(true) {
             return None;
         }
         Some(LinkedNodeModules {
@@ -2086,7 +2085,7 @@ impl LinkedNodeModules {
             } else {
                 LinkedMembers::real_path_of(node_modules.as_bytes())
             },
-            abs_path: node_modules.as_bytes().into(),
+            abs_path: (&**node_modules).into(),
         })
     }
 
@@ -2096,14 +2095,12 @@ impl LinkedNodeModules {
     /// On Windows `path` is not rewritten, because a relative link resolves differently behind a
     /// junction than behind a symlink. A link out of this `node_modules` gets an absolute target.
     pub(crate) fn resolve(&self, path: &mut AbsPathBuf<impl Storage<u8>>) -> bool {
-        // BOUNDARY: `at` takes the `z()` of an `AbsPathBuf` and keeps its bytes.
-        let abs_path = AbsPath::from_os(&self.abs_path);
         if self.real_path.is_empty() {
             return path
                 .get()
-                .is_ok_and(|path| path.strip_prefix(abs_path).is_some());
+                .is_ok_and(|path| path.strip_prefix(&self.abs_path).is_some());
         }
-        path.rebase(abs_path, AbsPath::from_os(&self.real_path))
+        path.rebase(&self.abs_path, AbsPath::from_os(&self.real_path))
     }
 
     /// `folders` are the symlinked `node_modules` folders, relative to the project root, that a

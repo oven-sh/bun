@@ -1,16 +1,14 @@
-use core::ops::Deref;
-
-use bun_core::{ZStr, strings};
-use bun_paths::typed::{Path, PathBuf, Pooled, View};
+use bun_core::strings;
+#[cfg(windows)]
+use bun_paths::typed::AbsPath;
+use bun_paths::typed::{AnyPathBuf, Path, RelPath, Scratch, Z};
 use bun_paths::{self, component};
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
-use super::path_error;
-
-pub(crate) struct Symlinker<'a, V: View<Unit = u8> + ?Sized> {
-    pub(crate) dest: &'a mut PathBuf<V, Pooled>,
-    /// Relative to the directory of `dest`. MISFIT: no view is NUL-terminated, so the type is lost.
-    pub(crate) target: &'a ZStr,
+pub(crate) struct Symlinker<'a> {
+    pub(crate) dest: &'a Z<Path>,
+    /// Relative to the directory of `dest`.
+    pub(crate) target: &'a Z<RelPath>,
     /// The directories of `dest` after `dest[..real_len]` may be links that came with the project.
     pub(crate) real_len: usize,
     /// When greater than `real_len`, `dest[..node_modules_len]` is a workspace's `node_modules`. If
@@ -23,20 +21,19 @@ pub(crate) struct Symlinker<'a, V: View<Unit = u8> + ?Sized> {
     /// relative `target`. `LinkedNodeModules::resolve` explains why.
     pub(crate) is_absolute: bool,
     #[cfg(windows)]
-    pub(crate) fallback_junction_target: bun_paths::AbsPath,
+    pub(crate) fallback_junction_target: &'a Z<AbsPath>,
 }
 
-// MISFIT: `View` does not lead to `Path`, so `parent()` is reached through `Deref`.
-impl<V: View<Unit = u8> + Deref<Target = Path> + ?Sized> Symlinker<'_, V> {
+impl Symlinker<'_> {
     /// True if it looked at a directory, which may be gone now.
     fn remove_planted_parents(&mut self) -> bun_sys::Result<bool> {
-        let dest = self.dest.get().map_err(path_error(bun_sys::Tag::lstat))?;
         let Some(parent) =
-            (dest.parent().map(Path::as_bytes)).filter(|dir| dir.len() > self.real_len)
+            (self.dest.parent().map(Path::as_bytes)).filter(|dir| dir.len() > self.real_len)
         else {
             return Ok(false);
         };
         if self.real_len < self.node_modules_len {
+            // MISFIT: only a builder can terminate a prefix in place, so a view's is copied as bytes.
             let mut buf = bun_paths::path_buffer_pool::get();
             let node_modules =
                 bun_paths::resolve_path::z(&parent[..self.node_modules_len], &mut buf);
@@ -53,23 +50,15 @@ impl<V: View<Unit = u8> + Deref<Target = Path> + ?Sized> Symlinker<'_, V> {
     pub(crate) fn symlink(&self) -> bun_sys::Result<()> {
         #[cfg(windows)]
         {
-            // borrowck — `slice_z()` mut-borrows each path to write
-            // the trailing NUL; bind the fallback first so all three borrows
-            // are live disjointly when passed to `symlink_or_junction`.
-            let fallback = self.fallback_junction_target.slice_z();
+            let fallback = self.fallback_junction_target.z();
             if self.is_absolute {
-                return bun_sys::symlink_or_junction(self.dest.slice_z(), fallback, None);
+                return bun_sys::symlink_or_junction(self.dest.z(), fallback, None);
             }
-            return bun_sys::symlink_or_junction(
-                self.dest.slice_z(),
-                self.target.slice_z(),
-                Some(fallback),
-            );
+            return bun_sys::symlink_or_junction(self.dest.z(), self.target.z(), Some(fallback));
         }
         #[cfg(not(windows))]
         {
-            let dest = self.dest.z().map_err(path_error(bun_sys::Tag::symlink))?;
-            return bun_sys::symlink(self.target, dest);
+            return bun_sys::symlink(self.target.z(), self.dest.z());
         }
     }
 
@@ -81,13 +70,13 @@ impl<V: View<Unit = u8> + Deref<Target = Path> + ?Sized> Symlinker<'_, V> {
     /// If `may_retry` is set and `symlink` fails with `EEXIST` right after `readlink` found nothing
     /// at `dest`, this runs once more to check what appeared there.
     fn ensure(&mut self, strategy: Strategy, may_retry: bool) -> bun_sys::Result<bool> {
+        let dest = self.dest;
         match strategy {
             Strategy::ExpectMissing => {
                 self.remove_planted_parents()?;
                 let Err(symlink_err1) = self.symlink() else {
                     return Ok(true);
                 };
-                let dest = self.dest.get().map_err(path_error(bun_sys::Tag::symlink))?;
                 match symlink_err1.get_errno() {
                     Errno::ENOENT => {
                         let Some(dest_parent) = dest.parent() else {
@@ -103,9 +92,8 @@ impl<V: View<Unit = u8> + Deref<Target = Path> + ?Sized> Symlinker<'_, V> {
                 self.symlink().map(|()| true)
             }
             Strategy::ExpectExisting => {
-                let dest = self.dest.z().map_err(path_error(bun_sys::Tag::readlink))?;
                 let mut current_link_buf = bun_paths::path_buffer_pool::get();
-                let current_link_len = match bun_sys::readlink(dest, &mut current_link_buf) {
+                let current_link_len = match bun_sys::readlink(dest.z(), &mut current_link_buf) {
                     Ok(len) => len,
                     Err(readlink_err) => {
                         if self.remove_planted_parents()? {
@@ -117,8 +105,7 @@ impl<V: View<Unit = u8> + Deref<Target = Path> + ?Sized> Symlinker<'_, V> {
                                 if linked
                                     .as_ref()
                                     .is_err_and(|err| err.get_errno() == Errno::ENOENT)
-                                    && let Some(dest_parent) =
-                                        self.dest.get().ok().and_then(|dest| dest.parent())
+                                    && let Some(dest_parent) = dest.parent()
                                 {
                                     let _ = Fd::cwd().make_path(dest_parent.as_bytes());
                                     linked = self.symlink();
@@ -133,23 +120,21 @@ impl<V: View<Unit = u8> + Deref<Target = Path> + ?Sized> Symlinker<'_, V> {
                             }
                             // Kept: the copy `bun patch <pkg>` made, a mount point (EBUSY).
                             _ => {
-                                let mark = self.dest.mark();
-                                let has_package_json = (self.dest.push(component!("package.json")))
-                                    .z()
-                                    .is_ok_and(bun_sys::exists_z);
-                                self.dest.back_to(mark);
-                                if has_package_json {
+                                let mut mem = Scratch::new();
+                                if AnyPathBuf::from_in(&mut mem, dest)
+                                    .push(component!("package.json"))
+                                    .get()
+                                    .is_ok_and(|package_json| bun_sys::exists_z(package_json.z()))
+                                {
                                     return Ok(false);
                                 }
                                 if !self.is_behind_link {
-                                    let dest =
-                                        self.dest.z().map_err(path_error(bun_sys::Tag::rmdir))?;
-                                    if bun_sys::rmdir(dest)
+                                    if bun_sys::rmdir(dest.z())
                                         .is_err_and(|err| err.get_errno() == Errno::EBUSY)
                                     {
                                         return Ok(false);
                                     }
-                                    let _ = Fd::cwd().delete_tree(dest);
+                                    let _ = Fd::cwd().delete_tree(dest.as_bytes());
                                 }
                                 return self.symlink().map(|()| true);
                             }
@@ -161,14 +146,19 @@ impl<V: View<Unit = u8> + Deref<Target = Path> + ?Sized> Symlinker<'_, V> {
                 // libuv adds a trailing slash to junctions.
                 current_link = strings::without_trailing_slash(current_link);
 
-                if !self.is_absolute && strings::eql_long(current_link, self.target, true) {
+                if !self.is_absolute
+                    && strings::eql_long(current_link, self.target.as_bytes(), true)
+                {
                     return Ok(false);
                 }
 
                 #[cfg(windows)]
                 {
-                    if strings::eql_long(current_link, self.fallback_junction_target.slice(), true)
-                    {
+                    if strings::eql_long(
+                        current_link,
+                        self.fallback_junction_target.as_bytes(),
+                        true,
+                    ) {
                         return Ok(false);
                     }
                 }
@@ -178,11 +168,10 @@ impl<V: View<Unit = u8> + Deref<Target = Path> + ?Sized> Symlinker<'_, V> {
                 }
 
                 // The wrong package. On Windows a directory link, dangling or not, needs rmdir.
-                let dest = self.dest.z().map_err(path_error(bun_sys::Tag::unlink))?;
                 if cfg!(not(windows))
-                    || bun_sys::rmdir(dest).is_err_and(|err| err.get_errno() == Errno::EPERM)
+                    || bun_sys::rmdir(dest.z()).is_err_and(|err| err.get_errno() == Errno::EPERM)
                 {
-                    let _ = bun_sys::unlink(dest);
+                    let _ = bun_sys::unlink(dest.z());
                 }
 
                 return self.symlink().map(|()| true);

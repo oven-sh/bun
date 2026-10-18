@@ -15,6 +15,8 @@ use crate::bin;
 use crate::bun_fs::FileSystem;
 use crate::bun_json as JSON;
 use crate::dependency::{Dependency, DependencyExt as _, without_build_tag};
+#[cfg(windows)]
+use crate::isolated_install::hardlinker::OsAbsPathBuf;
 use crate::isolated_install::hardlinker::OsPathBuf;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
 use crate::isolated_install::{FileCopier, build_whole_store};
@@ -1512,26 +1514,16 @@ fn copy_cache_entry(
 
     // BOUNDARY: `to` is raw bytes in this file.
     let mut dest_subpath = OsPathBuf::new_in(Pooled::new());
-    let _ = dest_subpath.join::<platform::Auto>(to);
+    dest_subpath.join::<platform::Auto>(to);
 
     #[cfg(windows)]
-    let src_path: bun_paths::AbsPath<
-        bun_paths::OSPathChar,
-        { bun_paths::path_options::PathSeparators::AUTO },
-    > = 'src_path: {
-        {
-            let mut path_buf = bun_paths::w_path_buffer_pool::get();
-            let abs_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
-
-            let mut sp = bun_paths::AbsPath::<
-                bun_paths::OSPathChar,
-                { bun_paths::path_options::PathSeparators::AUTO },
-            >::from(&*abs_path)
-            .unwrap();
-            sp.append(cache_dir_subpath)?;
-
-            break 'src_path sp;
-        }
+    let src_path = {
+        let mut path_buf = bun_paths::w_path_buffer_pool::get();
+        let cache_dir_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
+        let cache_dir_path = bun_paths::typed::AbsPath::from_os(cache_dir_path);
+        let mut src_path = OsAbsPathBuf::from_in(Pooled::new(), cache_dir_path);
+        src_path.push_names::<platform::Auto>(cache_dir_subpath);
+        src_path
     };
 
     #[cfg(windows)]

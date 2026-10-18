@@ -252,6 +252,19 @@ impl<V: ?Sized> Deref for Z<V> {
         &self.0
     }
 }
+macro_rules! widens_to {
+    ($from:ident => $to:ident) => {
+        impl<C: Unit> AsRef<Z<$to<C>>> for Z<$from<C>> {
+            #[inline(always)]
+            fn as_ref(&self) -> &Z<$to<C>> {
+                // SAFETY: the same units, so the same terminator.
+                unsafe { Z::wrap(&*self.0) }
+            }
+        }
+    };
+}
+widens_to!(AbsPath => Path);
+widens_to!(RelPath => Path);
 impl<V: fmt::Debug + ?Sized> fmt::Debug for Z<V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
@@ -772,6 +785,32 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         this
     }
 
+    /// Holds a copy of the absolute `path`, of either unit.
+    #[inline]
+    pub fn from_abs_in<D: PathUnit>(mem: S, path: &AbsPath<D>) -> Self
+    where
+        V: HoldsAbs,
+        V::Unit: FromUnit<D>,
+    {
+        let mut this = Self::blank(mem);
+        this.set_abs(path);
+        this
+    }
+
+    /// Holds what [`set_from_os`](Self::set_from_os) gets from `fill`.
+    #[inline]
+    pub fn from_os_in<E>(
+        mem: S,
+        fill: impl FnOnce(&mut [MaybeUninit<V::Unit>]) -> Result<usize, E>,
+    ) -> Result<Self, E>
+    where
+        V: HoldsAbs,
+    {
+        let mut this = Self::blank(mem);
+        this.set_from_os(fill)?;
+        Ok(this)
+    }
+
     /// Empty: the base itself.
     #[inline(always)]
     pub fn new_in(mem: S) -> Self
@@ -789,17 +828,21 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
         self.replace(path.units())
     }
 
-    /// [`set`](Self::set) to an absolute path.
+    /// [`set`](Self::set) to an absolute path, of either unit.
     #[inline]
-    pub fn set_abs(&mut self, path: &AbsPath<V::Unit>) -> &mut Self
+    pub fn set_abs<D: PathUnit>(&mut self, path: &AbsPath<D>) -> &mut Self
     where
         V: HoldsAbs,
+        V::Unit: FromUnit<D>,
     {
         self.replace(path.units())
     }
 
     #[inline(always)]
-    fn replace(&mut self, clean: &[V::Unit]) -> &mut Self {
+    fn replace<D: PathUnit>(&mut self, clean: &[D]) -> &mut Self
+    where
+        V::Unit: FromUnit<D>,
+    {
         if self.is_scoped() {
             return self;
         }
@@ -1220,6 +1263,22 @@ impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
 }
 
 impl<C: Unit, S: Storage<C>> PathBuf<AbsPath<C>, S> {
+    /// [`from_abs_in`](Self::from_abs_in). On Windows a path on a drive gets the `\\?\` prefix, with
+    /// which the OS takes the path as it is written, however long.
+    pub fn long_in<D: PathUnit>(mem: S, path: &AbsPath<D>) -> Self
+    where
+        C: FromUnit<D>,
+    {
+        let mut this = Self::blank(mem);
+        #[cfg(windows)]
+        if matches!(path.units(), [_, colon, ..] if colon.eq_ascii(b':')) {
+            this.write(0, false, C::LONG_PATH_PREFIX);
+        }
+        this.write(this.len, false, path.units());
+        this.fence_at_root();
+        this
+    }
+
     /// Moves the path from `from`, or below it, to the same place below `to`, in place. False,
     /// and no change, if it is neither `from` nor below it.
     pub fn rebase(&mut self, from: &AbsPath<C>, to: &AbsPath<C>) -> bool {

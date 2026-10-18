@@ -273,7 +273,7 @@ impl<'a, R: Rule> Cx<'a, R> {
     }
 
     /// Reports `message` about the file as a whole, at no place in it: a diagnostic of oxlint without a label. Where a format
-    /// wants numbers it has line 0 and column 0, and there is no excerpt.
+    /// wants numbers it has line 0 and column 0, and there is no excerpt. With no config it's at the start of the file.
     #[inline]
     pub fn report_file(&self, message: Message) -> Report<'a> {
         let nowhere = Position {

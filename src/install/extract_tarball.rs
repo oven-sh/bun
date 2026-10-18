@@ -326,7 +326,11 @@ impl ExtractTarball {
                                 &mut zlib_pool.list,
                                 libdeflate::Encoding::Gzip,
                             );
-                            if result.status == libdeflate::Status::Success {
+                            // libdeflate only reads the first gzip member, so a tarball with more
+                            // than one member is left to libarchive.
+                            if result.status == libdeflate::Status::Success
+                                && result.read == tgz_bytes.len()
+                            {
                                 decompressed_in_memory = true;
                             }
                         }
@@ -509,7 +513,7 @@ impl ExtractTarball {
                             format_args!(
                                 "Refusing to install \"{}\": tarball root directory \"{}\" is not a valid folder name",
                                 bun_fmt::for_terminal(bstr::BStr::new(name)),
-                                bun_fmt::s(resolved),
+                                bun_fmt::escape_control_chars(resolved),
                             ),
                         );
                         return Err(crate::Error::InstallFailed);

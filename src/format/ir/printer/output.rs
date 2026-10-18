@@ -38,6 +38,11 @@ impl<'o> Out<'o> {
         self.len
     }
 
+    /// Forgets what has been written from `len` on.
+    pub(super) fn truncate(&mut self, len: usize) {
+        self.len = self.len.min(len);
+    }
+
     /// What has been written from `from` on.
     pub(super) fn since(&self, from: usize) -> &[u8] {
         self.buffer.get(from..self.len).unwrap_or_default()

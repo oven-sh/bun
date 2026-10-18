@@ -260,6 +260,23 @@ impl<'s> Checker<'_, 's> {
         self.reported_unreachable_nodes.clear();
     }
 
+    /// Runs `checkSourceFile` on the task's file and throws its diagnostics away. For a file that `check_file` skips because
+    /// it reports no semantic errors (`// @ts-nocheck`, JavaScript without `checkJs`), when lint rules are about to ask for
+    /// its types out of source order. As in `check_statements_ahead`, a diagnostic that belongs to a query stays with
+    /// that query's entry.
+    pub(super) fn check_source_file_and_report_nothing(&mut self, file: FileId) {
+        let (reported, logged) = (self.reported.len(), self.task.diagnostics.len());
+        self.is_type_checked = false;
+        self.save_deferred_diagnostics = true;
+        self.check_source_file(file);
+        self.produce_type_not_iterable_errors(logged);
+        self.is_type_checked = true;
+        self.reported.truncate(reported);
+        let since = self.task.diagnostics.split_off(logged).into_iter();
+        (self.task.diagnostics).extend(since.filter(|(owner, _)| owner.is_some()));
+        self.never_checked.get_mut().clear();
+    }
+
     /// Settles `unvisited_exprs`. A query that computes a type from one checks the whole of it
     /// (`checkDeclarationInitializer`, `checkComputedPropertyName`,
     /// `checkAndAggregateYieldOperandTypes`). What no query has reached by the end of
@@ -2138,7 +2155,7 @@ impl<'s> Checker<'_, 's> {
     /// and whose walk reached the depth limit, reaches it again.
     #[cold]
     fn reach_flow_depth_limit_again(&mut self, file: FileId, e: ExprId) {
-        if self.bound(file).flow_places > super::flow::MAX_FLOW_DEPTH
+        if self.bound(file).can_reach_flow_depth_limit()
             && (self.p.flows_too_deep.get(&self.task, &(file, e))).is_some()
         {
             self.disable_flow_analysis(file);

@@ -9,7 +9,7 @@ use super::static_value::{
 };
 use crate::regex::{Ignore, Mode, Options, escape_source, validate_pattern};
 use crate::utils::text;
-use bun_core::fmt::{FormatDouble, hex_byte_upper, hex_pair_value};
+use bun_core::fmt::{FormatDouble, hex_byte_upper};
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -1008,41 +1008,10 @@ fn hex_value(digits: &[u16]) -> Option<u32> {
     })
 }
 
-/// `Decode`: `decodeURI` and `decodeURIComponent`. The escapes of the characters in `preserved`
-/// stay. It throws for an escape that is incomplete or is not UTF-8.
 fn decode_uri<'a>(text: &[u8], preserved: &[u8]) -> Eval<StaticValue<'a>> {
-    let byte_at = |at: usize| match text.get(at..at + 3) {
-        Some(&[b'%', high, low]) => hex_pair_value(high, low),
-        _ => None,
-    };
-    let mut decoded = Vec::with_capacity(text.len());
-    let mut at = 0;
-    while let Some(&byte) = text.get(at) {
-        if byte != b'%' {
-            decoded.push(byte);
-            at += 1;
-            continue;
-        }
-        let first = byte_at(at).ok_or(Stop::Abort)?;
-        let len = match first {
-            0..0x80 => 1,
-            0xC0..0xE0 => 2,
-            0xE0..0xF0 => 3,
-            0xF0..0xF8 => 4,
-            _ => return Err(Stop::Abort),
-        };
-        let bytes: Option<Vec<u8>> = (0..len).map(|i| byte_at(at + 3 * i)).collect();
-        let bytes = bytes.ok_or(Stop::Abort)?;
-        if std::str::from_utf8(&bytes).is_err() {
-            return Err(Stop::Abort);
-        }
-        match strings::contains_char(preserved, first) {
-            true => decoded.extend_from_slice(&text[at..at + 3]),
-            false => decoded.extend_from_slice(&bytes),
-        }
-        at += 3 * len;
-    }
-    Ok(StaticValue::string(decoded))
+    text::decode_uri(text, preserved)
+        .map(StaticValue::string)
+        .ok_or(Stop::Abort)
 }
 
 fn escape<'a>(text: &[u8]) -> StaticValue<'a> {

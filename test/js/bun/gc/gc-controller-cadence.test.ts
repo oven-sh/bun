@@ -228,7 +228,7 @@ describe("idle release", () => {
             const full = resident();
             const deadline = performance.now() + 8000;
             const timer = setInterval(() => {
-              if (resident() > full - 80 && performance.now() < deadline) return;
+              if (resident() >= full - 80 && performance.now() < deadline) return;
               console.log(JSON.stringify({ full, now: resident() }));
               process.exit(0);
             }, 100);
@@ -328,7 +328,7 @@ describe("idle release", () => {
       const full = resident();
       expect(full).toBeGreaterThan(330);
       const deadline = performance.now() + 6000;
-      while (resident() > full - 250 && performance.now() < deadline) await Bun.sleep(100);
+      while (resident() >= full - 250 && performance.now() < deadline) await Bun.sleep(100);
       expect(resident()).toBeLessThan(full - 250);
       proc.stdin.write("exit\n");
       await proc.stdin.flush();

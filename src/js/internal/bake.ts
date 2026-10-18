@@ -320,10 +320,12 @@ async function start() {
     // Cannot listen at an address that the export of `app/server.ts` did not give (a flag, `PORT`,
     // or the default): no change to a file fixes it. Any other error comes from the export, which
     // an edit can fix.
+    // The export's only when no flag set any part of it.
     const addressFromExport =
       useUnix ||
-      (flags.port === undefined && exportedPort !== undefined) ||
-      (flags.hostname === undefined && exportedHostname !== undefined);
+      (flags.port === undefined &&
+        flags.hostname === undefined &&
+        (exportedPort !== undefined || exportedHostname !== undefined));
     if (error?.syscall === "listen" && !addressFromExport) exitWith(error);
     throw error;
   }

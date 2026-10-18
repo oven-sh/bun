@@ -408,7 +408,9 @@ describe("endpoint.close() with an unsent stateless reset", () => {
 // code 0 that went through lsquic_conn_abort_error (an application close, or
 // a transport close with a reason) went out as transport INTERNAL_ERROR (0x1).
 describe("session close with error code 0", () => {
-  const tp = { maxIdleTimeout: 30 };
+  // An idle timeout also resolves the peer's `closed`. Keep it past the test
+  // timeout so only a CONNECTION_CLOSE frame can make a test pass.
+  const tp = { maxIdleTimeout: 600 };
   const sniOpt = { "*": { keys: [key], certs: [cert] } };
 
   /** How the peer of a session closed with `close` sees that close. */
@@ -464,13 +466,23 @@ describe("session close with error code 0", () => {
     });
   });
 
-  test("a transport close with code 0 resolves the peer's closed", async () => {
+  test("destroy(undefined, { code: 0n, type: 'transport' }) resolves the peer's closed", async () => {
     expect(await peerView(s => s.destroy(undefined, { code: 0n, type: "transport" }))).toBe("resolved");
+  });
+
+  test("close({ code: 0n, type: 'transport' }) resolves the peer's closed", async () => {
+    expect(await peerView(s => s.close({ code: 0n, type: "transport" }).catch(() => {}))).toBe("resolved");
   });
 
   // With a reason the close goes through the same lsquic path as an
   // application close, so it hit the same INTERNAL_ERROR fallback.
-  test("a transport close with code 0 and a reason resolves the peer's closed", async () => {
+  test("destroy(undefined, { code: 0n, type: 'transport', reason }) resolves the peer's closed", async () => {
     expect(await peerView(s => s.destroy(undefined, { code: 0n, type: "transport", reason: "bye" }))).toBe("resolved");
+  });
+
+  test("close({ code: 0n, type: 'transport', reason }) resolves the peer's closed", async () => {
+    expect(await peerView(s => s.close({ code: 0n, type: "transport", reason: "bye" }).catch(() => {}))).toBe(
+      "resolved",
+    );
   });
 });

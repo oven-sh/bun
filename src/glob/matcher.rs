@@ -4183,7 +4183,7 @@ struct Masks {
     skips: u64,
     /// The skip of a globstar that ends the pattern. It also takes a last segment without a separator.
     trailing_skips: u64,
-    /// The globstar of a pattern that ends with `**/*`. It doesn't match at the end of the path.
+    /// The globstar of a pattern that ends with `**/*` or `{**,a}/*`. It doesn't match at the end of the path.
     not_at_end: u64,
     /// Nodes that can't match in a closed segment. See `is_closed_segment_at`.
     wildcards: u64,
@@ -4640,6 +4640,7 @@ impl Program {
                         Some(group) if alternative_end == after => group.outside as usize,
                         _ => after,
                     };
+                    let is_before_last_star = &glob[outside..] == b"/*";
                     // `**/**` is the last `**`.
                     if at > i {
                         let first = node!(i);
@@ -4649,7 +4650,10 @@ impl Program {
                     i = after;
                     // `{**,a}/b`: the `/` that makes this a globstar comes after the group.
                     if starts_segment && outside > after && glob.get(outside) == Some(&b'/') {
-                        let node = node!(at);
+                        let node = match is_before_last_star {
+                            true => node!(at, not_at_end),
+                            false => node!(at),
+                        };
                         waiting.push((outside as u32, node));
                         to.imply_node(node);
                         node!(at + 1, skips, wildcards);
@@ -4660,7 +4664,7 @@ impl Program {
                     if (after.saturating_sub(part_start) < 3 || glob[after - 3] == b'/')
                         && (is_last || glob[after] == b'/')
                     {
-                        let node = match !is_last && &glob[after..] == b"/*" {
+                        let node = match is_before_last_star {
                             true => node!(at, not_at_end),
                             false => node!(at),
                         };
@@ -4706,6 +4710,13 @@ impl Program {
                     i = end;
                 }
                 b'/' => {
+                    // `{**,a}/*`: its globstar doesn't match at the end of the path, so on `x/` the skip can't go on with it
+                    // after the separator. It matches wherever this `/` does instead, which is how any other alternative ends.
+                    if &glob[i..] == b"/*" {
+                        for it in waiting.iter().rev().take_while(|it| it.0 as usize == i) {
+                            to.imply_node(it.1 + 1);
+                        }
+                    }
                     node!(i, separators);
                     while let Some(it) = waiting.last().filter(|it| it.0 as usize == i) {
                         to.imply_node(it.1);

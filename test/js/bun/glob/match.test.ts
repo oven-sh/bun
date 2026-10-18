@@ -2436,6 +2436,65 @@ describe("Glob.match", () => {
     }
   });
 
+  // A pattern that ends with `**/*` doesn't match `a/`. Neither does one that ends with `/*` after a group that has an
+  // alternative ending with `**`.
+  test.each([
+    ["a/{**,b}/*", ["a/x", "a/x/", "a/x/y", "a/x/y/", "a/b/z", "a/b/"], ["a/", "a"]],
+    ["a/{b,**}/*", ["a/x", "a/x/", "a/b/z"], ["a/", "a"]],
+    ["a/{**}/*", ["a/x", "a/x/", "a/b/z"], ["a/", "a"]],
+    ["a/{**/**,b}/*", ["a/x", "a/x/", "a/b/z"], ["a/", "a"]],
+    ["a/{{**,c},b}/*", ["a/x", "a/x/", "a/b/z"], ["a/", "a"]],
+    ["{a/{**,b},c}/*", ["a/x", "a/x/", "c/x"], ["a/", "a"]],
+    ["{**,b}/*", ["x", "x/", "b/x"], [""]],
+    ["{a/**,b}/*", ["a/x", "a/x/", "a/x/y", "b/x"], ["a/", "a", "b"]],
+    ["a/{x/**,b}/*", ["a/x/y", "a/x/y/", "a/b/z"], ["a/x/", "a/x", "a/"]],
+    // Two alternatives that end with `**`, in one group and in two.
+    ["a/{x/**,y/**}/*", ["a/x/q/", "a/y/q/", "a/x/q"], ["a/x/", "a/y/", "a/"]],
+    ["a/{x/**,{y/**,z}}/*", ["a/x/q/", "a/y/q/", "a/z/q"], ["a/x/", "a/y/"]],
+    ["x*/{**,b}/*", ["xy/z", "xy/z/"], ["xy/", "xy"]],
+    // The path that ends where the `**` starts has no `/` at its end.
+    ["a{**/**}/*", ["a/x", "ab/x"], ["a"]],
+    ["a/@(**|b)/*", ["a/x", "a/x/", "a/b/z"], ["a/", "a"]],
+    ["a/?(**)/*", ["a/x", "a/x/", "a/b/z"], ["a/", "a"]],
+    ["a/*(**|b)/*", ["a/x", "a/x/", "a/b/z"], ["a/", "a"]],
+    ["a/+(**|b)/*", ["a/x", "a/x/", "a/b/z"], ["a/", "a"]],
+    ["!a/{**,b}/*", ["a/", "a"], ["a/x", "a/x/"]],
+    // `!(a)` matches what `*` matches and `@(a)` doesn't.
+    ["*/!(x/**)/*", ["a/x/", "a/y/", "a/y/f"], ["a/x/f", "a/x"]],
+    // Only a pattern that ends with `/*`. Before any other tail, and with the `/*` inside a group, `a/` matches as it does
+    // with the `**` written out: `a/**/**`, `a/**/*{,c}`, and `{a/**/*,b}` below.
+    ["a/{**,b?}/**", ["a/", "a/x", "a/bc/x"], ["a"]],
+    ["a/{**,b}/*{,c}", ["a/", "a/x", "a/x/"], ["a"]],
+    ["{a/{**,b}/*,c}", ["a/", "a/x", "a/x/", "c"], ["a"]],
+  ])("a `**` that ends an alternative before `/*`: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
+    // The pattern has more than 64 bytes, and the `**` and the `/` after the group are not among the same 64.
+    ["in a long pattern", Buffer.alloc(56, "x").toString(), (name: string) => `{${name}/**,bbbbbbbb}/*`],
+    // A path of 512 bytes or more gets a cache on the first match.
+    ["on a long path", Buffer.alloc(600, "x").toString(), (name: string) => `${name}/{**,b}/*`],
+  ])("a `**` that ends an alternative before `/*`, %s", (_, name, make) => {
+    const pattern = make(name);
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      const matched = [`${name}/`, `${name}/y`, `${name}/y/`, name].map(
+        path => [glob.match(path), new Glob(pattern).match(path)] as const,
+      );
+      expect(matched).toEqual([
+        [false, false],
+        [true, true],
+        [true, true],
+        [false, false],
+      ]);
+    }
+  });
+
   test.each([
     ["{src/**,lib/**}", ["src/a", "lib/a/b.ts", "src/"], ["src", "test/a", "a/src/b"]],
     ["{**/*.ts,**/*.js}", ["a.ts", "src/a/b.js"], ["a.css", "src/a.tsx"]],

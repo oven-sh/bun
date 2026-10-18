@@ -7,6 +7,7 @@ import {
   bunExe,
   expectRssDeltaBelow,
   isASAN,
+  isDebug,
   isLinux,
   isMacOS,
   isWindows,
@@ -476,6 +477,8 @@ it("reload() works with new dirs/files", () => {
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
 });
 
+const notFound = expect.objectContaining({ code: "ERR_MODULE_NOT_FOUND" });
+
 it("reload() finds a directory that was deleted and created again", () => {
   const { dir } = make(["a/b/one.tsx", "keep.tsx"]);
   const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
@@ -514,14 +517,27 @@ it("reload() throws while the root directory is gone and lists it again when it 
   expect(router.match("/a/b/two")!.filePath).toBe(`${dir}/a/b/two.tsx`);
 });
 
+it("reload() drops what the resolver cached for a route directory that was deleted", () => {
+  const { dir } = make(["a/one.tsx", "a/b/two.tsx", "keep.tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  expect(Object.keys(router.routes).sort()).toEqual(["/a/b/two", "/a/one", "/keep"]);
+
+  rmSync(`${dir}/a`, { recursive: true, force: true });
+  router.reload();
+  expect(Object.keys(router.routes)).toEqual(["/keep"]);
+  expect(() => Bun.resolveSync("./a/b/two.tsx", dir)).toThrow(notFound);
+  expect(() => Bun.resolveSync("./a/one.tsx", dir)).toThrow(notFound);
+  expect(Bun.resolveSync("./keep.tsx", dir).replaceAll("\\", "/")).toBe(`${dir}/keep.tsx`);
+});
+
 it("reload() finds what is new in a directory that the resolver cached before the router listed it", () => {
   const { dir } = make(["keep.tsx"]);
   const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
   expect(Object.keys(router.routes)).toEqual(["/keep"]);
 
   // Each failed lookup leaves a "not found" record for the directory.
-  expect(() => Bun.resolveSync("./n/one.tsx", dir)).toThrow();
-  expect(() => Bun.resolveSync("./n/m/two.tsx", dir)).toThrow();
+  expect(() => Bun.resolveSync("./n/one.tsx", dir)).toThrow(notFound);
+  expect(() => Bun.resolveSync("./n/m/two.tsx", dir)).toThrow(notFound);
   createTree(dir, ["n/one.tsx", "n/m/two.tsx"]);
 
   // This lookup leaves a listing of `seen` that has only `one.tsx`.
@@ -576,7 +592,7 @@ it("reload() lists what is on disk after random changes to the directories", () 
     // What a failed import leaves in the resolver's cache for a directory.
     function failedResolve() {
       const from = `${anyDir()}/d${int(3)}`;
-      expect(() => Bun.resolveSync("./missing.tsx", dir + from)).toThrow();
+      expect(() => Bun.resolveSync("./missing.tsx", dir + from)).toThrow(notFound);
       return `resolve in ${from}`;
     },
   ];
@@ -1110,6 +1126,8 @@ it("reload() while Bun.build() resolves the same directory", async () => {
   // runs on the bundler thread) share the process-global directory-entry cache.
   // Run in a subprocess so a crash is observable as a signal instead of taking
   // down the test runner.
+  // 40 rounds take about 60 s on a debug build.
+  const rounds = isDebug ? 10 : 40;
   const files: Record<string, string> = {
     "fixture.ts": /* ts */ `
       import path from "path";
@@ -1131,7 +1149,7 @@ it("reload() while Bun.build() resolves the same directory", async () => {
       await Bun.build({ entrypoints, target: "bun", throw: false });
       let matches = 0;
       let buildsOk = true;
-      for (let round = 0; round < 40; round++) {
+      for (let round = 0; round < ${rounds}; round++) {
         const builds = Array.from({ length: 4 }, () =>
           Bun.build({ entrypoints, target: "bun", throw: false }),
         );
@@ -1165,7 +1183,7 @@ it("reload() while Bun.build() resolves the same directory", async () => {
     stderr: normalizeBunSnapshot(stderr, String(dir)),
     exitCode,
     signalCode: proc.signalCode,
-  }).toEqual({ stdout: "matches 2000 builds-ok true", stderr: "", exitCode: 0, signalCode: null });
+  }).toEqual({ stdout: `matches ${rounds * 50} builds-ok true`, stderr: "", exitCode: 0, signalCode: null });
 }, 60_000);
 
 it("loads routes from a directory already cached by Bun.build()", async () => {

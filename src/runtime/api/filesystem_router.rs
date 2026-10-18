@@ -83,6 +83,7 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     }
 }
 
+/// Drops the resolver's records for `path` and for each directory below it that a cached listing names.
 fn bust_dir_cache(resolver: &mut Resolver<'_>, path: &[u8]) {
     #[cfg(windows)]
     let normalized = WIN32_NORMALIZE_BUF.with_borrow_mut(|buf| {
@@ -92,7 +93,32 @@ fn bust_dir_cache(resolver: &mut Resolver<'_>, path: &[u8]) {
     });
     #[cfg(windows)]
     let path = normalized.as_slice();
-    let _ = resolver.bust_dir_cache(strings::paths::without_trailing_slash_windows_path(path));
+    let path = strings::paths::without_trailing_slash_windows_path(path);
+
+    let listed: Vec<*mut Fs::Entry> = {
+        let rfs = &mut Fs::FileSystem::instance().fs;
+        let _entries_lock = rfs.entries_mutex.lock_guard();
+        match rfs.entries.get(path) {
+            Some(Fs::EntriesOption::Entries(entries)) => entries.data.values().copied().collect(),
+            _ => Vec::new(),
+        }
+    };
+    let _ = resolver.bust_dir_cache(path);
+
+    for entry_ptr in listed {
+        // SAFETY: the EntryStore owns `entry_ptr` for the life of the process.
+        let entry = unsafe { &*entry_ptr };
+        let base = entry.base();
+        if base.first() == Some(&b'.') || Router::BANNED_DIRS.contains(&base) {
+            continue;
+        }
+        // SAFETY: the RealFS is process-global, and `kind` serializes its lazy stat on `Entry.mutex`.
+        let kind = unsafe { entry.kind(&raw mut Fs::FileSystem::instance().fs, false) };
+        if kind == Fs::EntryKind::Dir {
+            let child = Fs::FileSystem::get().abs(&[entry.dir(), base]).to_vec();
+            bust_dir_cache(resolver, &child);
+        }
+    }
 }
 
 // `js.routesSetCached` codegen accessor — emitted by the `.classes.ts`

@@ -590,6 +590,12 @@ describe("lines of the name and the message that look like stack frames are not 
     ]);
   });
 
+  test("what is kept of the stack for this is not compared by toMatchObject()", () => {
+    const [a, b] = [make("m", {}), make("m", {})];
+    expect(a.stack).not.toBe(b.stack);
+    expect(a).toMatchObject(b);
+  });
+
   test("a stack that was assigned is parsed from its start", () => {
     const { stack } = make("m", {});
     expect(printedFrames(make(stack, { afterRead: e => (e.stack = stack) }))).toEqual([

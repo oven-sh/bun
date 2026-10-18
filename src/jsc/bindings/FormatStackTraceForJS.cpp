@@ -460,7 +460,6 @@ WTF::String formatStackTrace(
     return sb.toString();
 }
 
-// error.stack calls this function
 static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

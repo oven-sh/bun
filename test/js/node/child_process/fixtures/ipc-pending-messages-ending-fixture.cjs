@@ -30,7 +30,6 @@ if (role === undefined) {
   };
   Promise.all(rows.map(run)).then(lines => console.log(lines.join("\n")));
 } else if (role === "parent") {
-  // With every stdio a pipe, Bun emits 'exit' before 'disconnect'.
   const options = row.includes("'exit'") ? { silent: true } : { stdio: ["ignore", "inherit", "ignore", "ipc"] };
   const child = fork(
     row.includes("ES module") ? __dirname + "/ipc-pending-messages-ending-fixture.mjs" : __filename,
@@ -41,8 +40,9 @@ if (role === undefined) {
     child.on("internalMessage", ({ cmd }) => cmd === "NODE_ready" && sendAll(child));
     child.on("exit", code => console.log("child exit code", code));
   } else if (row.includes("'exit'")) {
+    child.on("disconnect", () => console.log("disconnect", child.channel));
     child.on("exit", () => {
-      console.log("exit");
+      console.log("exit", child.channel);
       child.on("message", late);
     });
     child.on("close", () => console.log("close"));

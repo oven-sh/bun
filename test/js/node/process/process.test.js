@@ -1845,6 +1845,26 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(42);
   });
 
+  it("the second warning of --unhandled-rejections=warn has the stack of the reason", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--unhandled-rejections=warn",
+        "-e",
+        `const reason = new Error("boom");
+         process.on("warning", warning => console.log(warning.stack === reason.stack, warning.stack.split("\\n")[0]));
+         Promise.reject(reason);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // node (v26.7.0) has identical output
+    expect(stdout).toBe("false UnhandledPromiseRejectionWarning: Error: boom\ntrue Error: boom\n");
+    expect(exitCode).toBe(0);
+  });
+
   it("delivers many unhandledRejections in order, including ones queued from the handler", async () => {
     // Pins the observable behaviour: order is preserved, late .catch()
     // suppresses delivery, and a rejection raised from inside the handler is
@@ -3299,4 +3319,33 @@ it("no socket close handler runs after the 'exit' event", async () => {
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("exit\n");
   expect(exitCode).toBe(0);
+});
+
+it("process.emit() throws what a listener throws, and does not call the listeners after it", () => {
+  const calls = [];
+  const first = () => {
+    calls.push("first");
+    throw new Error("from the listener");
+  };
+  const second = () => calls.push("second");
+  process.on("emit throws", first).on("emit throws", second);
+  try {
+    expect(() => process.emit("emit throws")).toThrow("from the listener");
+    expect(calls).toEqual(["first"]);
+  } finally {
+    process.off("emit throws", first).off("emit throws", second);
+  }
+});
+
+it("process.on() throws what a 'newListener' listener throws, and does not add the listener", () => {
+  const onNewListener = name => {
+    if (name === "on throws") throw new Error("from 'newListener'");
+  };
+  process.on("newListener", onNewListener);
+  try {
+    expect(() => process.on("on throws", () => {})).toThrow("from 'newListener'");
+    expect(process.listenerCount("on throws")).toBe(0);
+  } finally {
+    process.off("newListener", onNewListener);
+  }
 });

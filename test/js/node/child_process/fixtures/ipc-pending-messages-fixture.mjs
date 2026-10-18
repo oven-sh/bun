@@ -6,6 +6,7 @@ import { createServer } from "node:net";
 const throws = "a listener that throws";
 const throwsBeforeAnother = "a listener that throws, added before another";
 const throwsThenOtherEvent = "a listener that throws, then a listener for another event";
+const throwsFromTheStart = "listeners from the start, the first throws";
 const variants = [
   "a late listener",
   "a handle",
@@ -16,6 +17,8 @@ const variants = [
   "added and removed in one tick",
   "disconnect() in the tick that adds it",
   "removeAllListeners('newListener')",
+  "emit() replaced",
+  throwsFromTheStart,
 ];
 process.on("uncaughtException", error => {
   if (error.message !== throws) throw error;
@@ -49,11 +52,15 @@ function receive(target, variant, whenWritten) {
     listen();
     target.send("more");
   };
-  // In a child this is also what opens the channel, so that it is read with no 'message' listener.
-  target.send("ready");
   const throwAtFirst = message => {
     if (message === "first") throw new Error(throws);
   };
+  if (variant === throwsFromTheStart) {
+    target.on("message", throwAtFirst);
+    listen();
+  }
+  // In a child this is also what opens the channel, so that it is read with no 'message' listener.
+  target.send("ready");
   // Two turns of the loop after the sender's callback ran, the channel has been read.
   whenWritten(() =>
     setImmediate(setImmediate, () => {
@@ -70,6 +77,15 @@ function receive(target, variant, whenWritten) {
           target.on("another event", () => {});
           setImmediate(() => target.send("more"));
         });
+      } else if (variant === throwsFromTheStart) {
+        target.send("more");
+      } else if (variant === "emit() replaced") {
+        const { emit } = target;
+        target.emit = function (name, message) {
+          if (name === "message") got.push(`emit(${message})`);
+          return emit.apply(this, arguments);
+        };
+        listenAndAskForTheEnd();
       } else if (variant === "once") {
         target.once("message", message => got.push(message));
         setImmediate(listenAndAskForTheEnd);

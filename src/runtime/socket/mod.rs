@@ -99,16 +99,8 @@ pub(crate) use windows_named_pipe_context::WindowsNamedPipeContext;
 
 /// LAYERING: `udp_socket.rs` is the canonical body. It is mounted as
 /// `udp_socket_draft` above (legacy name retained for existing callers); the
-/// public `udp_socket` module below is a thin re-export façade so both
-/// `generated_classes.rs` (`crate::socket::udp_socket::UDPSocket`) and
-/// `generated_js2native.rs` (`crate::socket::udp_socket::udp_socket::js_connect`)
-/// resolve against the real struct, not an opaque placeholder.
+/// public `udp_socket` module below is a thin re-export façade for `generated_classes.rs`.
 pub(crate) mod udp_socket {
-    /// `generated_js2native.rs` lowers `$rust(udp_socket.rs, UDPSocket.jsConnect)`
-    /// to `crate::socket::udp_socket::udp_socket::js_connect`. The inner
-    /// `udp_socket` segment is the snake-cased struct name; aliasing the type
-    /// lets the associated-fn path resolve directly.
-    pub(crate) use super::udp_socket_draft::UDPSocket as udp_socket;
     pub(crate) use super::udp_socket_draft::*;
 }
 pub(crate) use udp_socket::UDPSocket;
@@ -122,9 +114,9 @@ pub(crate) use udp_socket::UDPSocket;
 /// the name the generator expects rather than special-casing the generator.
 pub(crate) mod socket {
     pub(crate) use super::socket_body::{
-        js_check_server_identity_in_handshake, js_create_socket_pair, js_first_flight_before_fin,
-        js_get_buffered_amount, js_is_named_pipe_socket, js_release_held_flight,
-        js_set_socket_options, js_upgrade_duplex_to_tls, js_upgrade_tls_deferred, testing_ap_is,
+        check_server_identity_in_handshake, first_flight_before_fin, get_buffered_amount,
+        is_named_pipe_socket, js_create_socket_pair, js_set_socket_options,
+        js_upgrade_duplex_to_tls, release_held_flight, testing_ap_is, upgrade_tls_deferred,
     };
 }
 

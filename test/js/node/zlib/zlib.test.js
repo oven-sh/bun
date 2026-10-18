@@ -991,5 +991,7 @@ describe("crc32", () => {
     expect(() => zlib.crc32(undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     // Omitted second arg defaults to value=0.
     expect(zlib.crc32("hello")).toBe(zlib.crc32("hello", 0));
+    // So does an explicit undefined, as a default parameter does in Node.
+    expect(zlib.crc32("hello", undefined)).toBe(zlib.crc32("hello", 0));
   });
 });

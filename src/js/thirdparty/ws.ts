@@ -15,7 +15,7 @@ const {
   setRef,
   streamClosed,
 } = $cpp("JSWebSocket.cpp", "createWebSocketBindingForWs") as NativeClientBinding;
-const upgradeWebSocket = $newRustFunction("node_http_binding.rs", "upgradeNodeHTTPResponseToWebSocket", 7) as (
+const upgradeWebSocket = $bindgen("node_http_binding.bind.ts", "upgradeNodeHTTPResponseToWebSocket") as (
   response: unknown,
   websocket: WebSocket,
   handlers: ServerHandlers,
@@ -24,7 +24,7 @@ const upgradeWebSocket = $newRustFunction("node_http_binding.rs", "upgradeNodeHT
   flags: number,
   deflate: NativeStreamOptions["deflate"],
 ) => NativeServer | undefined;
-const serverSendFrame = $newRustFunction("node_http_binding.rs", "sendWebSocketFrame", 5) as (
+const serverSendFrame = $bindgen("node_http_binding.bind.ts", "sendWebSocketFrame") as (
   handle: NativeServer,
   data: string | Buffer | Blob,
   opcode: number,

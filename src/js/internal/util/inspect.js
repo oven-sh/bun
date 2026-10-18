@@ -138,10 +138,9 @@ const ONLY_ENUMERABLE = 2;
  *
  * @type {(value: string) => string[] | undefined}
  */
-const extractedSplitNewLinesFastPathStringsOnly = $newRustFunction(
-  "node_util_binding.rs",
+const extractedSplitNewLinesFastPathStringsOnly = $bindgen(
+  "node_util_binding.bind.ts",
   "extractedSplitNewLinesFastPathStringsOnly",
-  1,
 );
 
 const isAsyncFunction = v =>

@@ -10,6 +10,7 @@ use bun_boringssl_sys as boring_sys;
 use bun_core::{EncodedSlice, String as BunString};
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -66,6 +67,7 @@ fn with_ssl_ctx_cache<R>(
 // embedded `group` is linked into the loop's intrusive list at its final
 // address before this call, so the `Box::new`-then-move that the `#[JsClass]`
 // `to_js(self)` impl does would invalidate that link).
+use crate::generated_bindgen::listener::{ServerContext, ServerHandle};
 use crate::generated_classes::js_Listener;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -1745,46 +1747,20 @@ fn connect_finish<const IS_SSL: bool>(
     Ok(promise_value)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-
-    let [listener, hostname, tls] = frame.arguments_as_array::<3>();
-    if frame.arguments_count() < 3 {
-        return Err(global.throw_not_enough_arguments(
-            "addServerName",
-            3,
-            frame.arguments_count() as usize,
-        ));
-    }
-    if let Some(this) = listener.as_class_ref::<Listener>() {
-        return Listener::add_server_name(this, global, hostname, tls);
-    }
-    Err(global.throw(format_args!("Expected a Listener instance")))
+pub(crate) fn add_server_name<'a>(
+    cx: &mut JsScope<'a>,
+    listener: &'a Listener,
+    hostname: JsLocal<'a>,
+    tls: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    Listener::add_server_name(listener, cx.global(), hostname.to_js(), tls.to_js())
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn js_set_secure_context(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-
-    let [listener, secure_context] = frame.arguments_as_array::<2>();
-    if frame.arguments_count() < 2 {
-        return Err(global.throw_not_enough_arguments(
-            "setSecureContext",
-            2,
-            frame.arguments_count() as usize,
-        ));
-    }
-    // A cluster worker's `_handle` is no `Listener`: JS wraps its connections.
-    match (
-        listener.as_class_ref::<Listener>(),
-        secure_context.as_class_ref::<SecureContext>(),
-    ) {
-        (Some(this), Some(sc)) => Ok(Listener::set_secure_context(this, sc)),
-        _ => Ok(JSValue::UNDEFINED),
+pub(crate) fn set_secure_context(listener: ServerHandle<'_>, secure_context: ServerContext<'_>) {
+    if let (ServerHandle::Listener(this), ServerContext::SecureContext(sc)) =
+        (listener, secure_context)
+    {
+        Listener::set_secure_context(this, sc);
     }
 }
 

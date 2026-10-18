@@ -110,6 +110,8 @@ struct BytesOptions {
     bool toStringOtherwise { false };
     bool refuseUndefined { false };
     bool refuseNull { false };
+    // With `fromString`: only a string, as IDLStrictString.
+    bool refuseStringObject { false };
 };
 
 // `Sink` is JSBytesView, where a string is its UTF-8, or JSBlobOrStringOrBuffer, where it is the WTF::String.
@@ -134,6 +136,15 @@ struct IDLRawInterface : WebCore::IDLType<JSClass*> {
     using NullableType = JSClass*;
     using NullableInnerParameterType = JSClass*;
     static JSClass* nullValue() { return nullptr; }
+};
+
+// An instance of a class of a `.classes.ts` file, as what it wraps. The caller's frame keeps the cell alive.
+template<typename JSClass, auto name>
+struct IDLClassRef : WebCore::IDLType<void*> {
+    using SequenceStorageType = void;
+    using NullableType = void*;
+    using NullableInnerParameterType = void*;
+    static void* nullValue() { return nullptr; }
 };
 
 }

@@ -699,9 +699,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           if (encoding) {
-            (assertEncodingForWindows ?? $newRustFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(
-              encoding,
-            );
+            (assertEncodingForWindows ?? $bindgen("types.bind.ts", "assertEncodingValid"))(encoding);
           }
         }
         // This function is ported 1:1 from node.js, to emulate how it is unable to
@@ -820,9 +818,7 @@ const realpath: typeof import("node:fs").realpath =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           if (encoding) {
-            (assertEncodingForWindows ?? $newRustFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(
-              encoding,
-            );
+            (assertEncodingForWindows ?? $bindgen("types.bind.ts", "assertEncodingValid"))(encoding);
           }
         }
         if (p instanceof URL) {

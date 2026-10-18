@@ -550,14 +550,16 @@ export class UnitType extends Type {
 
 // ───────────────────────────── strings, values, buffers ─────────────────────────────
 
-/** An owned `bun_core::String` sharing the JS string's `StringImpl`. */
+/** A `bun_core::String` sharing the JS string's `StringImpl`. */
 export class StringType extends Type {
   readonly idlType: string;
   readonly #valueKinds: ValueKinds;
-  constructor(idlType = "Bun::Bindgen::IDLStrictString", valueKinds: ValueKinds = ["string"]) {
+  readonly isOwned: boolean;
+  constructor(idlType = "Bun::Bindgen::IDLStrictString", valueKinds: ValueKinds = ["string"], isOwned = false) {
     super();
     this.idlType = idlType;
     this.#valueKinds = valueKinds;
+    this.isOwned = isOwned;
   }
   get tsType(): string {
     return this.valueKinds === "any" ? "any" : "string";
@@ -578,8 +580,13 @@ export class StringType extends Type {
     assert(this.valueKinds !== "any", ".loose already takes a String object");
     return new StringType("Bun::Bindgen::IDLStrictStringOrStringObject", ["string", "stringObject"]);
   }
-  /** `&[u8]`, UTF-8, for the duration of the call, instead of an owned string. Also takes a `String` object. */
+  /** As an argument: the body gets the string itself, to keep or to return, and not a `&`. */
+  get owned(): StringType {
+    return new StringType(this.idlType, this.#valueKinds, true);
+  }
+  /** `&[u8]`, UTF-8, for the duration of the call, instead of a string. Also takes a `String` object. */
   get utf8(): Utf8Type {
+    assert(!this.isOwned, ".utf8 comes before .owned");
     return new Utf8Type(this.valueKinds === "any");
   }
   get nullRepresentation() {
@@ -617,6 +624,9 @@ export class OwnedUtf8Type extends StringType {
   get allowStringObject(): never {
     throw new TypeError("b.string.utf8.owned already takes a String object");
   }
+  get owned(): never {
+    throw new TypeError("b.string.utf8.owned is already owned");
+  }
   get utf8(): never {
     throw new TypeError("b.string.utf8.owned is already UTF-8");
   }
@@ -650,8 +660,8 @@ export class Utf8Type extends Type {
   /** `bun_core::Utf8Bytes<'static>`, for a body that stores the string. */
   get owned(): OwnedUtf8Type {
     return this.isLoose
-      ? new OwnedUtf8Type("WebCore::IDLDOMString", "any")
-      : new OwnedUtf8Type("Bun::Bindgen::IDLStrictStringOrStringObject", this.valueKinds);
+      ? new OwnedUtf8Type("WebCore::IDLDOMString", "any", true)
+      : new OwnedUtf8Type("Bun::Bindgen::IDLStrictStringOrStringObject", this.valueKinds, true);
   }
   get valueKinds(): ValueKinds {
     return this.isLoose ? "any" : ["string", "stringObject"];
@@ -705,7 +715,7 @@ const sharedBuffers = "shared buffers";
 export interface BytesOptions {
   from: readonly ("string" | "buffer" | "blob")[];
   otherwise?: "throw" | "toString";
-  refuse?: readonly ("undefined" | "null")[];
+  refuse?: readonly ("undefined" | "null" | "stringObject")[];
   string?: "utf8" | "asIs";
   shared?: "borrowed" | "copied";
   held?: "borrowed" | "handle" | "copied" | "pinned";
@@ -721,7 +731,16 @@ export class BytesType extends Type {
     assert(from.length > 0, "from: it takes nothing");
     assertDistinct(from, "kinds");
     assertDistinct(refuse, "refused values");
-    assert(refuse.length === 0 || otherwise === "toString", 'refuse: without otherwise: "toString" they throw already');
+    const refusesStringObject = refuse.includes("stringObject");
+    assert(
+      refuse.length === +refusesStringObject || otherwise === "toString",
+      'refuse: without otherwise: "toString" undefined and null throw already',
+    );
+    assert(
+      !refusesStringObject || from.includes("string"),
+      'refuse: without from: "string" a String object throws already',
+    );
+    assert(!refusesStringObject || otherwise === "throw", 'refuse: "stringObject" is only with otherwise: "throw"');
     assert(string === "utf8" || from.includes("string") || otherwise === "toString", "string: it takes no string");
     assert(shared === "borrowed" || from.includes("buffer"), "shared: it takes no buffer");
     assert(shared === "borrowed" || held !== "copied", 'held: "copied" copies every buffer');
@@ -745,6 +764,7 @@ export class BytesType extends Type {
       toStringOtherwise: otherwise === "toString",
       refuseUndefined: refuse.includes("undefined"),
       refuseNull: refuse.includes("null"),
+      refuseStringObject: refuse.includes("stringObject"),
     };
     const members = Object.entries(options).flatMap(([name, value]) => (value ? [`.${name} = true`] : []));
     const sink = this.#isView ? "JSBytesView" : "JSBlobOrStringOrBuffer";
@@ -964,6 +984,47 @@ export class RefType extends Type {
   }
   rustFromExtern(expr: string): string {
     return `bun_core::ExternalShared::<${this.pointee}>::adopt(${expr}.cast())`;
+  }
+}
+
+/** What an instance of a class of a `.classes.ts` file wraps, borrowed as `JSValue::as_class_ref` borrows it. */
+export class ClassRefType extends Type {
+  readonly tsType = "object";
+  readonly cpp: string;
+  readonly idlType: string;
+  readonly rustPath: string;
+  constructor(name: string, rustPath: string) {
+    super();
+    this.cpp = `WebCore::JS${name}`;
+    this.idlType = `Bun::Bindgen::IDLClassRef<${this.cpp}, std::to_array("${name}")>`;
+    this.rustPath = rustPath;
+  }
+  get valueKinds(): ValueKinds {
+    return [this];
+  }
+  get refuses() {
+    return "instances that wrap nothing";
+  }
+  get holdsJSValue(): boolean {
+    return true;
+  }
+  get nullRepresentation() {
+    return "pointer" as const;
+  }
+  getHeaders(out: Set<string>): void {
+    out.add("ZigGeneratedClasses.h");
+  }
+  layout(): Layout {
+    return { size: 8, align: 8 };
+  }
+  rustExternType(): string {
+    return "*mut core::ffi::c_void";
+  }
+  rustType(): string {
+    return `&'a ${this.rustPath}`;
+  }
+  rustFromExtern(expr: string): string {
+    return `bindgen::class_ref_from_extern::<${this.rustPath}>(${expr}, heap)`;
   }
 }
 

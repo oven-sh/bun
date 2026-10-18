@@ -187,13 +187,15 @@ any other: nothing looks at how many there are.
 | `b.bool`                                         | `bool`                           | a boolean; `.loose` is `ToBoolean`                            |
 | `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number that is an integer in range; see below               |
 | `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
-| `b.string`                                       | `bun_core::String`               | a string; `.loose` is `ToString`                              |
+| `b.string`                                       | `&bun_core::String`              | a string; `.loose` is `ToString`                              |
+| `b.string.owned`                                 | `bun_core::String`               | as `b.string`                                                 |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
 | `b.bufferSource`                                 | `JsLocal<'a, BufferSource>`      | a typed array, `DataView` or `ArrayBuffer` that is not shared |
 | `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same; the bytes of a view are copied                      |
 | `b.bytes(options)`                               | `&'a [u8]`, and others           | see [Bytes](#bytes)                                           |
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
+| `b.classRef(name, rustPath)`                     | `&'a T`                          | an instance of a class of a `.classes.ts` file                |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
 | `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
@@ -249,7 +251,8 @@ its `toString` runs.
 `bun_core::Utf8Bytes<'static>`, which shares the JS string's buffer when it is 8-bit
 and ASCII and is a transcoded copy otherwise.
 
-`b.string` shares the JS string's storage and can be stored. It belongs to the
+`b.string` shares the JS string's storage. As an argument it is a `&bun_core::String`;
+`b.string.owned` is the `bun_core::String` itself, for a body that keeps or returns it. It belongs to the
 JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
 one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
 
@@ -369,6 +372,7 @@ fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: &ZlibCompressionOption
 | `from`      | `"string"`, `"buffer"`, `"blob"`                     | what is taken without `ToString`                                       |
 | `otherwise` | **`"throw"`**, `"toString"`                          | anything else                                                          |
 | `refuse`    | `"undefined"`, `"null"`                              | with `"toString"`: these throw, and are not `"undefined"` and `"null"` |
+| `refuse`    | `"stringObject"`                                     | with `"throw"`: `"string"` is only a string                            |
 | `string`    | **`"utf8"`**, `"asIs"`                               | a string is its UTF-8, or stays a `bun_core::String`                   |
 | `shared`    | **`"borrowed"`**, `"copied"`                         | the bytes of a shared buffer                                           |
 | `held`      | **`"borrowed"`**, `"handle"`, `"copied"`, `"pinned"` | what the body gets                                                     |
@@ -417,7 +421,8 @@ bytes of a buffer are read, copied or pinned after every argument is converted. 
 member of a dictionary, a union or an array. Only `held: "borrowed"` can be `.optional` or
 `.nullable`: an `Option<&'a [u8]>`.
 
-An option that cannot apply is a build error: `refuse` without `"toString"`, `string` where no
+An option that cannot apply is a build error: `refuse` of `undefined` or `null` without `"toString"`,
+of a `String` object with it or where no string is taken, `string` where no
 string is taken, `shared` where no buffer is taken or `held: "copied"` copies it anyway. So is
 what no function needs yet, which is not written: `"asIs"` without `"handle"` or that copies a
 shared buffer, `"pinned"` that takes a `Blob` or copies a shared buffer, and a `"pinned"` argument

@@ -70,6 +70,16 @@ test("maxHeaderSize", async () => {
   (http as any).maxHeaderSize = originalMaxHeaderSize;
 });
 
+test("maxHeaderSize given as a string is not wrapped to 32 bits", () => {
+  const originalMaxHeaderSize = http.maxHeaderSize;
+  try {
+    (http as any).maxHeaderSize = "5000000000";
+    expect(http.maxHeaderSize).toBe(5000000000);
+  } finally {
+    (http as any).maxHeaderSize = originalMaxHeaderSize;
+  }
+});
+
 test("server.maxHeaderSize assigned after construction is not narrowed to a smaller limit", async () => {
   // server.maxHeaderSize is a plain property and only the constructor option is validated.
   // Node casts the number to uint64_t. On x64, -1 became 2^64 - 1 here too, and the parser

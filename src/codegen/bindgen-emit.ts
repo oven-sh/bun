@@ -24,6 +24,7 @@ import {
   rustIdent,
   type RustScope,
   Signature,
+  StringType,
   snakeCase,
   type Type,
   UnionType,
@@ -993,9 +994,11 @@ function rustArgumentName(arg: { name: string }): string {
   return rustIdent(name);
 }
 
-/** A dictionary stays in the frame of the thunk, and the body borrows it. */
-const rustBorrow = (type: Type) =>
-  (type instanceof DefaultType ? type.inner : type) instanceof DictionaryType ? "&" : "";
+/** A dictionary or a string stays in the frame of the thunk, and the body borrows it. */
+function rustBorrow(type: Type) {
+  const inner = type instanceof DefaultType ? type.inner : type;
+  return inner instanceof DictionaryType || (inner instanceof StringType && !inner.isOwned) ? "&" : "";
+}
 const rustParameters = (signature: Signature, scope: RustScope) =>
   signature.args.map(arg => `${rustArgumentName(arg)}: ${rustBorrow(arg.type)}${arg.type.rustType(scope)}`);
 const rustExternParameters = (signature: Signature, scope: RustScope) =>

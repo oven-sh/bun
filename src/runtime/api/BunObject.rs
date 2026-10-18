@@ -244,7 +244,6 @@ pub(crate) mod bun_object {
         BunObject_callback_file => crate::webcore::blob::construct_bun_file,
         BunObject_callback_jest => Jest::call,
         BunObject_callback_listen => super::static_adapters::listener_listen,
-        BunObject_callback_registerMacro => super::register_macro,
         BunObject_callback_resolve => super::resolve,
         BunObject_callback_resolveSync => super::resolve_sync,
         BunObject_callback_serve => super::serve,
@@ -339,10 +338,9 @@ pub(crate) fn gc_from_js(cx: &mut JsScope<'_>, force: bool) -> usize {
     cx.global().bun_vm().as_mut().garbage_collect_from_js(force)
 }
 
-#[allow(clippy::needless_pass_by_value)] // the generated thunk hands over the string it owns
 pub(crate) fn braces(
     cx: &mut JsScope<'_>,
-    brace_str: BunString,
+    brace_str: &BunString,
     opts: &BracesOptions,
 ) -> JsResult<JSValue> {
     let global = cx.global();
@@ -399,7 +397,7 @@ pub(crate) fn braces(
     }
 
     if expansion_count == 0 {
-        return bun_string_jsc::to_js_array(global, core::slice::from_ref(&brace_str));
+        return bun_string_jsc::to_js_array(global, core::slice::from_ref(brace_str));
     }
 
     // Hard cap before preallocation: `calculate_expanded_amount` saturates to
@@ -649,25 +647,23 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
     fun
 }
 
-#[bun_jsc::host_fn]
-fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
-    if arguments.len() < 2 || !arguments[0].is_number() {
-        return Err(global_object.throw_invalid_arguments(format_args!(
-            "Internal error registering macros: invalid args"
-        )));
-    }
-    let id = arguments[0].to_int32();
+pub(crate) fn register_macro<'a>(
+    heap: &JsHeap<'a>,
+    id: f64,
+    callback: JsLocal<'a>,
+) -> bindgen::Result<'a, ()> {
+    let id = id as i32;
     if id == -1 || id == 0 {
-        return Err(global_object.throw_invalid_arguments(format_args!(
-            "Internal error registering macros: invalid id"
-        )));
+        return Err(heap.error_with_code(
+            ErrorCode::INVALID_ARG_TYPE,
+            format_args!("Internal error registering macros: invalid id"),
+        ));
     }
 
-    if !arguments[1].is_cell() || !arguments[1].is_callable() {
-        // TODO: add "toTypeOf" helper
-        return Err(global_object.throw(format_args!("Macro must be a function")));
+    if callback.as_callable().is_none() {
+        return Err(heap.error(format_args!("Macro must be a function")));
     }
+    let callback = callback.to_js();
 
     // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
     let get_or_put_result = VirtualMachine::get()
@@ -679,10 +675,10 @@ fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         get_or_put_result.value_ptr.unprotect();
     }
 
-    arguments[1].protect();
-    *get_or_put_result.value_ptr = arguments[1];
+    callback.protect();
+    *get_or_put_result.value_ptr = callback;
 
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
 fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

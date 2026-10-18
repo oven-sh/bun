@@ -593,6 +593,12 @@ describe("util", () => {
       });
     }
 
+    it("reports -0 with its sign", () => {
+      expect(() => util.getSystemErrorName(-0)).toThrow(
+        'The value of "err" is out of range. It must be a negative integer. Received -0',
+      );
+    });
+
     // Batch all node lookups into a single subprocess instead of one per code (was 74 spawns).
     const negativeSpaceCodes = [];
     for (let i = -4095; i <= -4023; i++) negativeSpaceCodes.push(i);

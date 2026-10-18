@@ -118,7 +118,13 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.bytes({ from: [] })).toThrow("from: it takes nothing");
   expect(() => b.bytes({ from: ["string", "string"] })).toThrow("two kinds are both string");
   expect(() => b.bytes({ from: ["string"], refuse: ["null"] })).toThrow(
-    'refuse: without otherwise: "toString" they throw already',
+    'refuse: without otherwise: "toString" undefined and null throw already',
+  );
+  expect(() => b.bytes({ from: ["buffer"], refuse: ["stringObject"] })).toThrow(
+    'refuse: without from: "string" a String object throws already',
+  );
+  expect(() => b.bytes({ from: ["string"], otherwise: "toString", refuse: ["stringObject"] })).toThrow(
+    'refuse: "stringObject" is only with otherwise: "throw"',
   );
   expect(() => b.bytes({ from: ["buffer"], string: "asIs", held: "handle" })).toThrow("string: it takes no string");
   expect(() => b.bytes({ from: ["string"], shared: "copied" })).toThrow("shared: it takes no buffer");
@@ -1204,6 +1210,11 @@ describe("a string or a buffer, as bytes", () => {
     expect(bindgen.bytesOfString(new String("abc"))).toEqual(utf8("abc"));
     for (const value of [...notBytes, bytes, bytes.buffer, blob]) {
       expect(() => bindgen.bytesOfString(value)).toThrow(refusal("a string"));
+    }
+    expect(bindgen.bytesOfStringNotObject("abc")).toEqual(utf8("abc"));
+    expect(bindgen.bytesOfStringNotObject(bytes)).toEqual(eight);
+    for (const value of [...notBytes, new String("abc"), blob]) {
+      expect(() => bindgen.bytesOfStringNotObject(value)).toThrow(refusal("a string, ArrayBuffer or ArrayBufferView"));
     }
     expect(bindgen.bytesOfBufferOrBlob(bytes)).toEqual(eight);
     expect(bindgen.bytesOfBufferOrBlob(bytes.buffer)).toEqual(eight);

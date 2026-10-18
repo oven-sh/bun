@@ -778,6 +778,10 @@ static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
 pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+pub(crate) fn get_use_system_ca() -> bool {
+    Bun__Node__UseSystemCA.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing

@@ -8,6 +8,7 @@ import {
   type BytesOptions,
   BytesType,
   type ClassOptions,
+  ClassRefType,
   ClassType,
   type DictionaryOptions,
   DictionaryType,
@@ -60,6 +61,9 @@ export const blob = new RefType(
   [{ cpp: "WebCore::JSBlob" }],
   "detached Blobs",
 );
+
+/** An instance of the class `name` of a `.classes.ts` file, as a `&'a` of the Rust struct at `rustPath`. */
+export const classRef = (name: string, rustPath: string) => new ClassRefType(name, rustPath);
 
 const null_ = new UnitType("null");
 

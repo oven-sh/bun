@@ -391,6 +391,18 @@ impl<'a> JsLocal<'a, BufferSource> {
     }
 }
 
+/// # Safety
+/// `wrapped` is the `T` that a cell wraps, and something holds that cell for the call `heap` belongs to.
+#[doc(hidden)]
+#[inline(always)]
+pub unsafe fn class_ref_from_extern<'a, T>(
+    wrapped: *mut core::ffi::c_void,
+    _: &JsHeap<'a>,
+) -> &'a T {
+    // SAFETY: forwarded.
+    unsafe { &*wrapped.cast::<T>() }
+}
+
 /// `b.bytes` with `held: "handle"`, for a function that can run JavaScript, which can detach, resize or free a buffer.
 #[derive(Clone, Copy)]
 pub struct JsBytes<'a> {

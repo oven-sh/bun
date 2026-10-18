@@ -278,6 +278,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   bytesOf: $bindgen("bindgen_test.bind.ts", "bytesOf"),
   bytesOfOrToString: $bindgen("bindgen_test.bind.ts", "bytesOfOrToString"),
   bytesOfString: $bindgen("bindgen_test.bind.ts", "bytesOfString"),
+  bytesOfStringNotObject: $bindgen("bindgen_test.bind.ts", "bytesOfStringNotObject"),
   bytesOfBufferOrBlob: $bindgen("bindgen_test.bind.ts", "bytesOfBufferOrBlob"),
   bytesOfRefusingUndefined: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingUndefined"),
   bytesOfThen: $bindgen("bindgen_test.bind.ts", "bytesOfThen"),
@@ -316,7 +317,7 @@ export const Dequeue = require("internal/fifo");
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
 // so the node edge cases are handled here.
-const rustNormalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
+const rustNormalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
 const nodeKEmptyObject = require("internal/shared").kEmptyObject;
 function nodeNormalizeEncoding(enc) {
   if (enc == null) return "utf8";
@@ -618,14 +619,14 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 
 export const timerInternals = {
   timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
-  monotonicNowMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.monotonicNowMs", 0),
+  monotonicNowMs: $bindgen("Timer.bind.ts", "monotonicNowMs"),
 };
 
 // Raw datagram descriptor helpers for tests that need an unbound fd (which
 // the internal/dgram UDP wrap does not expose — it binds on create).
 export const dgramInternals = {
-  newRawSocketFd: $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2),
-  closeRawFd: $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1),
+  newRawSocketFd: $bindgen("udp_socket.bind.ts", "dgramNewSocketFd"),
+  closeRawFd: $bindgen("udp_socket.bind.ts", "dgramCloseFd"),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(

@@ -1497,9 +1497,13 @@ impl SendQueue {
 
     fn update_ref(&self) {
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L868-L874
+        let waiting_for_ack = self.waiting_for_ack.get().is_some();
         // Node has no version packet, and on Windows its write ends after the channel was started.
-        let sending = self.waiting_for_ack.get().is_some()
-            || (self.queue.get().iter()).any(|message| !message.is_version_packet(self.mode));
+        let queue = self.queue.get();
+        let sending = waiting_for_ack
+            || queue
+                .iter()
+                .any(|message| !message.is_version_packet(self.mode));
         if sending != self.control.sending.replace(sending) {
             self.add_refs(if sending { 1 } else { -1 });
         }

@@ -987,6 +987,10 @@ wcsnlen                     [AVX, AVX2]
 # one such table, the 9 RVAs of its `switch`, follows its `ret`. Each table
 # lies inside its function's symbol range, so the decoder's restart at
 # symbol starts does not skip it.
+#
+# The PDB marks the first byte of each of these tables with an unnamed
+# S_LDATA32 record inside the function's S_GPROC32. The scan does not read
+# those records, so the four functions need this group.
 # (4 symbols)
 # ----------------------------------------------------------------------------
 _powf_special

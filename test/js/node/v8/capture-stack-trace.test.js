@@ -2170,9 +2170,13 @@ test("a SyntaxError gets an `at <parse>` line only if it has a source", async ()
   expect(Object.keys(withoutSource).filter(name => withoutSource[name].stack.includes("<parse>"))).toEqual([]);
 
   const limit = Error.stackTraceLimit;
-  Error.stackTraceLimit = 1;
-  const { stack } = new SyntaxError("m");
-  Error.stackTraceLimit = limit;
+  let stack;
+  try {
+    Error.stackTraceLimit = 1;
+    ({ stack } = new SyntaxError("m"));
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
   expect(stack.split("\n").length).toBe(2);
 
   using dir = tempDir("syntax-error-parse-line", { "bad-regex.cjs": `/* line 1 */\n"".test(/[a-0]/);\n` });

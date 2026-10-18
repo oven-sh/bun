@@ -376,8 +376,7 @@ pub(crate) enum FailureReport {
     Errored,
 }
 
-/// The download of a package failed, and the registry has not said yet whether the manifest that
-/// named its tarball still holds. See `enqueue::revalidate_failed_tarball`.
+/// A failed download that waits for the registry's manifest: `enqueue::revalidate_failed_tarball`.
 pub(crate) struct HeldTarballFailure {
     pub(crate) task_id: Task::Id,
     pub(crate) dependency_id: DependencyID,
@@ -385,11 +384,9 @@ pub(crate) struct HeldTarballFailure {
     pub(crate) name: Box<[u8]>,
     /// What the failure logs if it is final.
     pub(crate) msgs: Vec<bun_ast::Msg>,
-    /// What the extract task logged. `run_tasks` prints the log of a task when the task ends, so
-    /// this one is printed when the failure is reported.
+    /// What the extract task logged. It is printed when the failure is reported.
     pub(crate) task_log: bun_ast::Log,
-    /// For `fail_update_requests`, if the download is required: no attempt got an answer about
-    /// the package.
+    /// For `fail_update_requests`: no attempt got an answer about the package.
     pub(crate) is_unanswered: bool,
 }
 

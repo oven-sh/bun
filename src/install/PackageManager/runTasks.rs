@@ -262,15 +262,12 @@ impl ErasedCallbacks {
         None
     }
 
-    /// Whether a failed download may wait for the registry's manifest. A linker and the runtime's
-    /// module queue act on the failure at once.
+    /// A linker and the runtime's module queue act on a failed download at once.
     fn revalidates_tarballs(&self) -> bool {
         !self.has_on_extract && !self.has_on_package_download_error
     }
 
-    /// A tarball could not be downloaded or extracted. `log` adds the message, as an error if the
-    /// flag it gets is set. A download that the registry may name another tarball for is started
-    /// again, or held until the registry has answered: `enqueue::revalidate_failed_tarball`.
+    /// Reports a failed tarball, unless `enqueue::revalidate_failed_tarball` redoes or holds it.
     fn fail_tarball(
         &self,
         manager: &mut PackageManager,
@@ -352,8 +349,7 @@ impl ErasedCallbacks {
             is_unanswered && is_required,
         );
 
-        // Void-callback fallback (resolve phase): drain the `task_queue` entry too so a later
-        // install-phase `enqueuePackageForDownload` doesn't wedge on `found_existing`.
+        // A later install-phase enqueue of this task must not wait on `found_existing`.
         let _ = manager.task_queue.remove(&task_id);
         Ok(())
     }
@@ -365,13 +361,11 @@ struct TarballFailure<'a> {
     tarball: &'a ExtractTarball,
     err: crate::Error,
     url: &'a [u8],
-    /// The tarball is not where the manifest says, or does not have the hash that the manifest
-    /// says. An archive that has that hash and cannot be extracted is neither.
+    /// The tarball is missing, or its hash is not the one that the manifest has.
     manifest_may_be_stale: bool,
     /// No response arrived, or one with a status that says to try again later.
     got_no_answer: bool,
-    /// For `fail_update_requests`, if the download is required: no attempt got an answer about
-    /// the package.
+    /// For `fail_update_requests`: no attempt got an answer about the package.
     is_unanswered: bool,
     /// What the extract task logged, if that has not been printed.
     task_log: Option<&'a mut bun_ast::Log>,
@@ -382,9 +376,7 @@ fn print_task_log(manager: &mut PackageManager, log: &mut bun_ast::Log) -> crate
     if log.msgs.is_empty() {
         return Ok(());
     }
-    // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
-    // not `&mut Writer` (the underlying `Writer` is the FFI shape).
-    // Propagate the write error (WriteFailed) out of `run_tasks`.
+    // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`, not for `&mut Writer`.
     log.print(std::ptr::from_mut(Output::error_writer()))?;
     if log.errors > 0 {
         manager.any_failed_to_install = true;
@@ -1228,9 +1220,7 @@ fn run_tasks_erased(
                             url: &task.url_buf,
                             manifest_may_be_stale: true,
                             got_no_answer: retry,
-                            // The manifest just listed this version, so an error status for its
-                            // tarball counts as no answer: it says nothing about the package's
-                            // other versions.
+                            // An error status for a listed version counts as no answer.
                             is_unanswered: true,
                             task_log: None,
                         },
@@ -1319,8 +1309,7 @@ fn run_tasks_erased(
         let holds_log = task.tag == Task::Tag::PackageManifest
             && task.status == Task::Status::Fail
             && !cb.has_on_package_manifest_error;
-        // The registry may have packed the version again. `fail_tarball` prints what the task
-        // logged, unless the registry names another tarball.
+        // `fail_tarball` prints this log, unless the registry has packed the version again.
         let defers_log = task.tag == Task::Tag::Extract
             && task.status == Task::Status::Fail
             && task.err == Some(crate::Error::IntegrityCheckFailed)

@@ -913,7 +913,6 @@ fn enqueue_manifest_download(
 }
 
 /// A stale edge confirms a stale manifest with a 304. True while this run's one full request runs.
-/// `why` is for `--verbose`.
 fn refetch_stale_manifest(
     this: &mut PackageManager,
     name: &[u8],
@@ -946,8 +945,7 @@ fn refetch_stale_manifest(
 pub(crate) enum Revalidation {
     /// The failure counts.
     Final,
-    /// The registry is being asked for the manifest of this package. The failure waits in
-    /// `PackageManager::held_tarball_failures` for the answer.
+    /// The failure waits in `PackageManager::held_tarball_failures` for the manifest.
     Held(PackageID),
     /// The registry names another tarball or another hash, and that download has started.
     Redone,
@@ -991,11 +989,7 @@ fn manifest_answer(this: &PackageManager, name: &[u8]) -> ManifestAnswer {
     }
 }
 
-/// The download of an npm package failed for good. The URL and the hash of its tarball may come
-/// from a copy of the manifest that the registry has replaced since: a registry other than
-/// registry.npmjs.org can move its tarballs, or pack a version again. So before the failure
-/// counts, the registry is asked for the manifest once, without conditional headers. What bun.lock
-/// says about a package is never asked about: `DedupeMapEntry::from_manifest`.
+/// A registry can move a tarball or pack a version again, so it is asked for the manifest once.
 #[cold]
 #[inline(never)]
 pub(crate) fn revalidate_failed_tarball(
@@ -1138,9 +1132,7 @@ fn redo_tarball(
     Revalidation::Redone
 }
 
-/// The URL and the hash that the registry's document has for a package, if they are not the
-/// package's own and the document describes the same package otherwise. A version that was
-/// published again with other dependencies is not what this run resolved.
+/// The registry's URL and hash, if they differ and the document describes the same package.
 fn registry_dist(
     this: &mut PackageManager,
     manifest: &Npm::PackageManifest,
@@ -1167,8 +1159,7 @@ fn registry_dist(
         return None;
     }
 
-    // `from_npm` appends the rows of the package that the document describes. They are compared
-    // and dropped again.
+    // `from_npm` appends the rows of the described package. They are compared, then dropped.
     let log_level = this.options.log_level;
     let lockfile = &mut *this.lockfile;
     let rows = lockfile.buffers.dependencies.len();
@@ -1224,17 +1215,14 @@ fn set_dist(this: &mut PackageManager, package_id: PackageID, url: &[u8], integr
     packages.items_meta_mut()[package_id as usize].integrity = *integrity;
 }
 
-/// The registry's document is in memory because a download failed. The other packages of that
-/// name which this run resolved from the copy in the cache, and did not download, get the URL and
-/// the hash of the document as well: bun.lock is written from them.
+/// Packages of that name which this run resolved and did not download get the registry's URL too.
 fn correct_packages_without_download(
     this: &mut PackageManager,
     manifest: &Npm::PackageManifest,
     name: &[u8],
     failed: PackageID,
 ) {
-    // `Some` while `bun install` resolves. Only then does `loaded_package_count` tell which
-    // packages bun.lock gave, and only `bun install` writes a lockfile.
+    // `Some` while `bun install` resolves: only then is `loaded_package_count` what bun.lock gave.
     if this.held_messages.is_none() {
         return;
     }

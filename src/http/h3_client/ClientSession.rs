@@ -229,8 +229,7 @@ impl ClientSession {
             if abort || !request_body_done {
                 qs.reset();
             } else {
-                // The stream stays open for what is left of the response (its
-                // trailers, its FIN). Nothing releases a held window after this.
+                // Trailers and the FIN still arrive on this stream, and nothing else releases it.
                 qs.hold_window(false);
             }
         }

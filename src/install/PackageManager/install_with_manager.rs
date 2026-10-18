@@ -636,12 +636,17 @@ pub fn install_with_manager(
     direct_deps_before.redirect_dependents(&mut manager.lockfile, direct_only);
     transitive.redirect_dependents(&mut manager.lockfile);
     redirect_moved_edges(&mut manager.lockfile, &named.moved, direct_only);
-    match manager.subcommand {
-        Subcommand::Dedupe => {}
-        // `bun audit fix` moved its rows to the fixed versions on purpose.
-        Subcommand::Audit => crate::dedupe::collapse_appended_peers(manager),
-        _ => crate::dedupe::collapse_appended(manager),
-    }
+    collapse_appended(
+        manager,
+        &root,
+        log_level,
+        match manager.subcommand {
+            Subcommand::Dedupe => |_| {},
+            // `bun audit fix` moved its rows to the fixed versions on purpose.
+            Subcommand::Audit => crate::dedupe::collapse_appended_peers,
+            _ => crate::dedupe::collapse_appended,
+        },
+    )?;
     manager.log_held();
     transitive.print_plan(manager, &direct_deps_before, &named.moved);
     print_kept_patched(manager);
@@ -1776,6 +1781,40 @@ fn resolve_peers_of_failed_providers(manager: &mut PackageManager) -> bool {
     !rows.is_empty()
 }
 
+/// Runs `collapse`, then resolves `RemotePackages::held` for the packages that it kept. What that
+/// adds is collapsed again.
+fn collapse_appended(
+    manager: &mut PackageManager,
+    root: &lockfile::Package,
+    log_level: Options::LogLevel,
+    collapse: fn(&mut PackageManager),
+) -> crate::Result<()> {
+    loop {
+        collapse(manager);
+        let held = core::mem::take(&mut manager.remote_packages.held);
+        if held.is_empty() {
+            return Ok(());
+        }
+        let all = reachable::Options::all(0);
+        let kept = reachable::packages(
+            &manager.lockfile,
+            &manager.lockfile.buffers.resolutions,
+            all,
+        );
+        for row in held {
+            let owner = manager.lockfile.get_parent_pkg_of_dependency(row);
+            if let Some(owner) = owner.filter(|&owner| kept.is_set(owner as usize)) {
+                manager.lockfile.unmark_only_peers(owner);
+                enqueue_row(manager, row);
+            }
+        }
+        manager.drain_dependency_list();
+        if manager.pending_task_count() > 0 {
+            resolve_pending_tasks(manager, root, log_level, &mut NamedUpdates::default())?;
+        }
+    }
+}
+
 #[derive(Default)]
 struct NamedUpdates {
     /// Invalidated rows paired with the package they resolved to, for redirect_moved_edges.
@@ -2485,7 +2524,12 @@ fn reresolve_rows_outside_overrides(
         resolve_pending_tasks(manager, root, log_level, &mut NamedUpdates::default())?;
     }
     redirect_moved_edges(&mut manager.lockfile, &moved, false);
-    crate::dedupe::collapse_appended_peers(manager);
+    collapse_appended(
+        manager,
+        root,
+        log_level,
+        crate::dedupe::collapse_appended_peers,
+    )?;
     manager.log_held();
     if manager.log_mut().has_errors() {
         manager.crash();

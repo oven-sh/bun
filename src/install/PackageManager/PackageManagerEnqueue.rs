@@ -190,6 +190,17 @@ pub(crate) fn advance(this: &mut PackageManager) {
                 && (this.lockfile).is_row_only_for_peers(head.rows.begin(), false);
             for id in head.rows.begin()..head.rows.end() {
                 let dependency = queued_row(this, id, head).clone();
+                if may_be_dropped
+                    && matches!(
+                        dependency.version.tag,
+                        dependency::version::Tag::Git
+                            | dependency::version::Tag::Github
+                            | dependency::version::Tag::Tarball
+                    )
+                {
+                    this.remote_packages.held.push(id);
+                    continue;
+                }
                 let resolution = this.lockfile.buffers.resolutions[id as usize];
                 let log_mark = this.log_mut().msgs.len();
                 match bind_row(

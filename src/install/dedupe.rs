@@ -13,7 +13,7 @@ use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::{
     Dependency, DependencyID, DependencyVersionTag, Features, GetJsonResult, PackageID,
-    PackageManager, ResolutionTag, dependency, invalid_package_id,
+    PackageManager, PackageNameHash, ResolutionTag, dependency, invalid_package_id,
 };
 
 struct Pass<'a> {
@@ -433,10 +433,35 @@ impl<'a> Pass<'a> {
     ///   for a package below itself.
     ///
     /// If only peers hold the versions of bun.lock, a peer of the project keeps the version it got.
-    fn find_spare(&mut self, cur: &[PackageID], live: &DynamicBitSet) {
+    fn find_spare(&mut self, cur: &[PackageID]) {
         let Some(below) = self.frozen_below else {
             return;
         };
+        let lockfile = self.lockfile;
+        if lockfile.only_peers.bit_length() == 0 {
+            return;
+        }
+        // The hoister binds a peer to the copy that the project depends on, so what the peer is
+        // resolved to may not stay, nor the peers below that.
+        let deps = lockfile.buffers.dependencies.as_slice();
+        let root = lockfile.packages.items_dependencies()[0];
+        let mut of_project: Vec<(PackageNameHash, PackageID)> = (root.begin() as usize
+            ..root.end() as usize)
+            .filter(|&row| !deps[row].behavior.is_peer() && cur[row] != invalid_package_id)
+            .map(|row| (deps[row].name_hash, cur[row]))
+            .collect();
+        of_project.sort_unstable();
+        let mut cur = cur.to_vec();
+        for (target, dep) in cur.iter_mut().zip(deps) {
+            if dep.behavior.is_peer()
+                && *target != invalid_package_id
+                && let Ok(i) = of_project.binary_search_by_key(&dep.name_hash, |&(name, _)| name)
+            {
+                *target = of_project[i].1;
+            }
+        }
+        let cur = cur.as_slice();
+        let live = reachable(lockfile, cur, self.frozen_below);
         live.copy_into(&mut self.voters);
         self.collect_edges(cur);
         for (g, group) in self.groups.iter().enumerate() {
@@ -718,7 +743,7 @@ fn dedupe_lockfile(
                 moves_only_peers,
                 max_edges,
             );
-            pass.find_spare(&cur, &live);
+            pass.find_spare(&cur);
             loop {
                 cur = pass.settle(&cur, &live);
                 let after = reachable(lockfile, &cur, frozen_below);

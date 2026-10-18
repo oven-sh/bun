@@ -4993,6 +4993,46 @@ it("what the version that a peer gets depends on fails the install", async () =>
   expect(code).toBe(1);
 });
 
+describe("z@2.0.0, which is in the range of a peer, depends on a tarball", () => {
+  async function serve() {
+    const manifests: Manifests = {
+      a: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      t: { "1.0.0": { dependencies: { u: "^1.0.0" }, peerDependencies: { v: "^1.0.0" } } },
+      u: { "1.0.0": {} },
+      v: { "1.0.0": {}, "1.1.0": {} },
+      z: { "1.0.0": {}, "2.0.0": {} },
+    };
+    const registry = await serveRegistry(manifests);
+    manifests.z["2.0.0"].dependencies = { t: `${registry.origin}/t-1.0.0.tgz` };
+    return registry;
+  }
+
+  it("the tarball is not downloaded if the peer shares another version", async () => {
+    using registry = await serve();
+    using dir = projectOnRegistry(registry, workspaceWithOlderZ);
+    await installWithOwnCache(String(dir));
+    expect(registry.requests).not.toContain("/t-1.0.0.tgz");
+    const lock = await file(join(String(dir), "bun.lock")).text();
+    expect({ ...instancesOf(lock, "t"), ...instancesOf(lock, "z") }).toEqual({ "z": "z@1.0.0" });
+  });
+
+  it.each(["hoisted", "isolated"])("the tarball is installed if the peer gets z@2.0.0, %s", async linker => {
+    using registry = await serve();
+    using dir = projectOnRegistry(registry, { "package.json": { name: "foo", dependencies: { a: "1.0.0" } } });
+    const cwd = String(dir);
+    await installWithOwnCache(cwd, "--linker", linker);
+    const lock = await file(join(cwd, "bun.lock")).text();
+    expect(Object.assign({}, ...["t", "u", "v", "z"].map(name => instancesOf(lock, name)))).toEqual({
+      "t": `t@${registry.origin}/t-1.0.0.tgz`,
+      "u": "u@1.0.0",
+      "v": "v@1.1.0",
+      "z": "z@2.0.0",
+    });
+    await installWithOwnCache(cwd, "--linker", linker, "--frozen-lockfile");
+    expect(await file(join(cwd, "bun.lock")).text()).toBe(lock);
+  });
+});
+
 it("a peer of the version that an edited override asks for shares the version above it", async () => {
   using registry = await serveRegistry({
     p: { "1.0.0": {}, "1.0.1": { peerDependencies: { z: "^2.0.0" } } },
@@ -5052,6 +5092,29 @@ it("`bun update <name>` gives a peer that shares a version outside its range a v
   const { err, code } = await runWithOwnCache(cwd, "update", "z");
   expect(err).not.toContain("error:");
   expect(instancesOf(await file(join(cwd, "bun.lock")).text(), "z")).toEqual({ "z": "z@1.1.0", "b/z": "z@2.0.0" });
+  expect(code).toBe(0);
+});
+
+// x's peer still resolves to i@1.0.0 after the update, but the hoister binds it to the project's
+// i@2.0.0. So i@1.0.0 goes, and with it d, the only package that b@2.0.0 suits.
+it("a peer of the new version does not share what only a package below the old version asked for", async () => {
+  using registry = await serveRegistry({
+    b: { "2.0.0": {}, "2.3.0": {} },
+    d: { "1.0.0": { peerDependencies: { b: "2.0.0" } } },
+    i: { "1.0.0": { dependencies: { d: "1.0.0" } }, "2.0.0": { peerDependencies: { b: "^2.3.0" } } },
+    x: { "1.0.0": { peerDependencies: { i: "^1.0.0" } } },
+  });
+  using dir = projectOnRegistry(registry, {
+    "package.json": { name: "foo", dependencies: { i: "^1.0.0", x: "1.0.0" } },
+  });
+  const cwd = String(dir);
+  await installWithOwnCache(cwd);
+  expect(instancesOf(await file(join(cwd, "bun.lock")).text(), "b")).toEqual({ "b": "b@2.0.0" });
+
+  const { err, code } = await runWithOwnCache(cwd, "update", "i", "--latest");
+  expect(err).not.toContain("error:");
+  const lock = await file(join(cwd, "bun.lock")).text();
+  expect({ ...instancesOf(lock, "b"), ...instancesOf(lock, "i") }).toEqual({ "b": "b@2.3.0", "i": "i@2.0.0" });
   expect(code).toBe(0);
 });
 

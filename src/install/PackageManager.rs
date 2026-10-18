@@ -427,6 +427,9 @@ pub(crate) struct RemotePackages {
     /// The downloaded packages whose turn has not come, by the task that fetched them.
     pub(crate) arrived:
         HashMap<Task::Id, ArrivedPackage, bun_collections::IdentityContext<Task::Id>>,
+    /// The dependencies of `Lockfile::only_peers` packages on such a package. Nothing is fetched
+    /// for them before `dedupe::collapse_appended` has kept their package.
+    pub(crate) held: Vec<DependencyID>,
 }
 
 /// Which package `append_next_remote_package` may add.

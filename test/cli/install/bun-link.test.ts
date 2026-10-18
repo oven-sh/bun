@@ -1006,13 +1006,13 @@ describe("global bin dir", () => {
     "dist/cli.js": "#!/usr/bin/env node\n",
   });
 
-  async function run(command: "link" | "unlink", pkg: string, bunInstall: string) {
+  async function run(command: "link" | "unlink", pkg: string, bunInstall: string, binDir?: string) {
     await using proc = spawn({
       cmd: [bunExe(), command],
       cwd: pkg,
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...env, BUN_INSTALL: bunInstall },
+      env: { ...env, BUN_INSTALL: bunInstall, ...(binDir && { BUN_INSTALL_BIN: binDir }) },
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { out, err, exitCode };
@@ -1141,6 +1141,64 @@ describe("global bin dir", () => {
     expect(await readFile(join(binDir, binEntry("adir"), "inner.txt"), "utf8")).toBe("keep");
     if (!isWindows) expect(await readlink(join(binDir, "foreign"))).toBe(join(String(bunInstall), "elsewhere.txt"));
     expect(result.exitCode).toBe(0);
+  });
+
+  // On POSIX a `\` is part of a name, and the kernel resolves the text of a link. On Windows it
+  // separates, and a bin is a shim.
+  describe.skipIf(isWindows)("below a directory with a backslash in its name", () => {
+    // Out of that directory and out of `bin`: two directories, however many `\` the name has.
+    const linkTargetFrom = (pkg: string, ...file: string[]) => join("..", linkTarget(pkg, ...file));
+
+    it("bun link links, keeps, moves and unlinks a bin", async () => {
+      using bunInstall = tempDir("link-global", {});
+      using pkg = tempDir("link-pkg", pkgFiles("strict-bin", { "strict-bin": "cli.js" }));
+      const binDir = join(String(bunInstall), "bin", "a\\b\\c");
+      await mkdir(binDir, { recursive: true });
+      const bin = join(binDir, "strict-bin");
+
+      let result = await run("link", String(pkg), String(bunInstall), binDir);
+      expect(result.err).toBe("");
+      expect(bin).toBeValidBin(linkTargetFrom("strict-bin", "cli.js"));
+      // The kernel resolves it.
+      expect(await readFile(bin, "utf8")).toBe("#!/usr/bin/env node\n");
+      expect(result.exitCode).toBe(0);
+
+      // The link is in place.
+      result = await run("link", String(pkg), String(bunInstall), binDir);
+      expect(result.err).toBe("");
+      expect(bin).toBeValidBin(linkTargetFrom("strict-bin", "cli.js"));
+      expect(result.exitCode).toBe(0);
+
+      await writeFile(
+        join(String(pkg), "package.json"),
+        pkgFiles("strict-bin", { "strict-bin": "dist/cli.js" })["package.json"],
+      );
+      result = await run("link", String(pkg), String(bunInstall), binDir);
+      expect(result.err).toBe("");
+      expect(bin).toBeValidBin(linkTargetFrom("strict-bin", "dist", "cli.js"));
+      expect(result.exitCode).toBe(0);
+
+      result = await run("unlink", String(pkg), String(bunInstall), binDir);
+      expect(result.out).toContain('success: unlinked package "strict-bin"');
+      expect(await readdirSorted(binDir)).toEqual([]);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("bun link leaves a link that leads elsewhere", async () => {
+      using bunInstall = tempDir("link-global", { "elsewhere.txt": "" });
+      using pkg = tempDir("link-pkg", pkgFiles("taken-name", { foreign: "cli.js", "taken-name": "cli.js" }));
+      const binDir = join(String(bunInstall), "bin", "a\\b\\c");
+      await mkdir(binDir, { recursive: true });
+      // `<bunInstall>/elsewhere.txt` for the kernel, `<bunInstall>/bin/a/elsewhere.txt` with a `\` as a separator.
+      const foreignText = join("..", "..", "elsewhere.txt");
+      await symlink(foreignText, join(binDir, "foreign"));
+
+      const result = await run("link", String(pkg), String(bunInstall), binDir);
+      expect(result.err).toContain("failed to link bin due to error EEXIST");
+      expect(await readlink(join(binDir, "foreign"))).toBe(foreignText);
+      expect(join(binDir, "taken-name")).toBeValidBin(linkTargetFrom("taken-name", "cli.js"));
+      expect(result.exitCode).toBe(1);
+    });
   });
 });
 

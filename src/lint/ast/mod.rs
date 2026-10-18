@@ -224,6 +224,8 @@ pub struct File<'a> {
     pub(crate) inferred_from: Cell<Option<&'a dyn crate::linter::globals::InferredGlobals>>,
     pub(crate) inferred_globals: OnceCell<Option<crate::linter::globals::ProgramGlobals<'a>>>,
     is_later_script: Cell<bool>,
+    /// [`File::in_language`]
+    parsed: Option<(&'a crate::languages::Parsed, crate::source::LineBreaks)>,
     language: &'a LanguageOptions,
     body: hir::IdList<hir::StmtId>,
     path: &'a [u8],
@@ -283,8 +285,31 @@ impl<'a> File<'a> {
             inferred_from: Cell::new(None),
             inferred_globals: OnceCell::new(),
             is_later_script: Cell::new(false),
+            parsed: None,
             path,
         }
+    }
+
+    /// Turns a `File` that was built from an empty `hir` into a file in another [language](crate::languages). `text` is
+    /// the file's text, which isn't JavaScript, and `parsed` is what the language parsed it into.
+    pub fn in_language(
+        mut self,
+        text: &'a [u8],
+        parsed: &'a crate::languages::Parsed,
+        line_breaks: crate::source::LineBreaks,
+    ) -> File<'a> {
+        self.parsed = Some((parsed, line_breaks));
+        self.with_text(text)
+    }
+
+    #[inline]
+    pub(crate) fn parsed(&self) -> Option<&'a crate::languages::Parsed> {
+        Some(self.parsed?.0)
+    }
+
+    #[inline]
+    pub(crate) fn line_breaks(&self) -> crate::source::LineBreaks {
+        self.parsed.map_or_else(Default::default, |it| it.1)
     }
 
     /// It is a script in a `.vue`, `.svelte` or `.astro` file, and there is a script before it. oxlint lints each as a program of
@@ -614,8 +639,8 @@ impl<'a> File<'a> {
     }
 
     /// `/** @type {T} */ (e)`, `/** @satisfies {T} */ (e)`: if `id` is the `e as T` that the HIR has
-    /// in these parentheses, the `e`. The source has no such node, and neither has a handle: it
-    /// takes exactly the place of `e` and the parentheses that `e` has of its own.
+    /// in these parentheses, the `e`. The source has no such node, and only [`Expr::with_jsdoc_cast`]
+    /// has a handle for it: it takes exactly the place of `e` and the parentheses that `e` has of its own.
     #[inline]
     pub(crate) fn jsdoc_cast_operand(&self, id: hir::ExprId) -> Option<hir::ExprId> {
         match self.hides_casts {
@@ -657,6 +682,22 @@ impl<'a> File<'a> {
             }
             _ => None,
         }
+    }
+
+    /// `id`, or the outermost of the casts around it that are synthesized from JSDoc comments.
+    #[inline]
+    pub(crate) fn with_jsdoc_casts(&self, mut id: hir::ExprId) -> hir::ExprId {
+        while let Some(cast) = self.jsdoc_cast_around(id) {
+            id = cast;
+        }
+        id
+    }
+
+    /// Whether `/** @type {T} */ (e)` has the type `T`, as it has for tsgolint. typescript-eslint asks for the type
+    /// of `e`: its tree has no parentheses, and the cast is in those for TypeScript 6.
+    #[inline]
+    pub(crate) fn types_follow_jsdoc_casts(&self) -> bool {
+        self.hides_casts && (self.language.is_oxlint || self.language.stands_alone)
     }
 
     /// `id`, or what is in it if it is a cast that is synthesized from a JSDoc comment.

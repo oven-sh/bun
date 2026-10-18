@@ -7,7 +7,7 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
         global_object,
         [
             ("init", PostgresSQLContext::init, 0),
-            ("createQuery", PostgresSQLQuery::call, 6),
+            ("createQuery", PostgresSQLQuery::call, 5),
             ("createConnection", postgres_sql_connection::call, 2),
         ]
     )

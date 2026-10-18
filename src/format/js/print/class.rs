@@ -1,5 +1,5 @@
 use super::decorators::FormatDecorators;
-use super::function::{FormatFunctionBody, should_group_function_parameters};
+use super::function::{FormatFunctionBody, write_parameters_and_return_type};
 use super::function_type::write_accessor_keyword;
 use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
@@ -797,22 +797,18 @@ pub(crate) fn format_grouped_parameters_with_return_type_for_method<'a>(
         let format_parameters = FormatFormalParameters(func).memoized();
         let format_return_type = func.return_type().map(FormatTypeAnnotation).memoized();
 
-        // The parameters have to be formatted before the return type, which
-        // `should_group_function_parameters` may do.
-        format_parameters.inspect(f);
-
-        let should_break_parameters = should_break_function_parameters(func);
-        let should_group_parameters = should_break_parameters
-            || should_group_function_parameters(func, &format_return_type, f);
-
-        match should_group_parameters {
+        match should_break_function_parameters(func) {
             true => write!(
                 f,
-                group(&format_parameters).should_expand(should_break_parameters)
+                [
+                    group(&format_parameters).should_expand(true),
+                    format_return_type
+                ]
             ),
-            false => write!(f, format_parameters),
+            false => {
+                write_parameters_and_return_type(func, &format_parameters, &format_return_type, f)
+            }
         }
-        write!(f, format_return_type);
     }))
     .fmt(f);
 }

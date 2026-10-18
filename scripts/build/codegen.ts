@@ -10,10 +10,6 @@
  * configure time via `globAllSources()`. The expanded
  * paths are baked into build.ninja; adding a file picks up on next configure.
  *
- * bindgenv2 is special: its output set is dynamic (depends on which types
- * the .bindv2.ts files export). We invoke it with `--command=list-outputs`
- * at CONFIGURE time to get the actual output paths.
- *
  * ## Undeclared outputs
  *
  * Every generated file that is compiled or #included must be a declared
@@ -22,7 +18,7 @@
  * depfile entry does that within the same run only if it names a declared
  * output, which ninja re-stats after the step ran. A file no edge declares
  * is stat'd once at startup, so a compile that includes it picks up a rerun
- * of the step one build late. That is why emitBindgen/emitBindgenV2 declare
+ * of the step one build late. That is why emitBindgen declares
  * the per-file Generated*.h headers and not just the .cpp that gets compiled.
  *
  * Files nothing compiles may stay undeclared (bundle-modules' eval/ dir,
@@ -32,8 +28,7 @@
  * reached through the PCH.
  */
 
-import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
@@ -245,8 +240,8 @@ export interface CodegenOutputs {
   cppHeaders: string[];
 
   /**
-   * ALL cpp-relevant codegen outputs — the union of cppHeaders, cppSources,
-   * bindgenV2Cpp. cxx compilation order-depends on THIS (not `all`): cxx
+   * ALL cpp-relevant codegen outputs — the union of cppHeaders and
+   * cppSources. cxx compilation order-depends on THIS (not `all`): cxx
    * doesn't need bake.*.js, runtime.out.js, or any other rust-side embedded
    * outputs: those are inputs of the Rust crates, not of any C++ object.
    *
@@ -255,9 +250,6 @@ export interface CodegenOutputs {
    * here, so they still run before any cxx compile.
    */
   cppAll: string[];
-
-  /** The bindgenv2 .cpp outputs (compiled separately from handwritten C++). */
-  bindgenV2Cpp: string[];
 
   /**
    * The InternalModuleRegistryConstants.S path — compiled via cc() in bun.ts
@@ -299,7 +291,6 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): Cod
     cppSources: [],
     cppHeaders: [],
     cppAll: [],
-    bindgenV2Cpp: [],
     internalModulesAsm: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.S"),
     internalModulesBin: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.bin"),
     rootInstall,
@@ -335,7 +326,6 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): Cod
   emitCppBind(ctx);
   emitJsModules(ctx);
   emitBakeCodegen(ctx);
-  emitBindgenV2(ctx);
   emitBindgen(ctx);
   emitJsSink(ctx);
   emitObjectLuts(ctx);
@@ -347,7 +337,7 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): Cod
   n.blank();
 
   // Assemble cppAll — the cxx-relevant subset. See field docstring.
-  o.cppAll = [...new Set([...o.cppHeaders, ...o.cppSources, ...o.bindgenV2Cpp])];
+  o.cppAll = [...new Set([...o.cppHeaders, ...o.cppSources])];
 
   return o;
 }
@@ -880,7 +870,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
       desc: "JS modules (bundle-modules)",
       // Note: arg is BUILD_PATH (buildDir), not CODEGEN_PATH. The script
       // derives CODEGEN_DIR = join(BUILD_PATH, "codegen") internally.
-      args: shJoin(cfg, ["run", script, debugFlag(cfg), cfg.buildDir, cfg.typesDir]),
+      args: shJoin(cfg, ["run", script, debugFlag(cfg), cfg.buildDir, cfg.typesDir, typesOnlyFlag(cfg, sources)]),
     },
   });
 
@@ -909,7 +899,7 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "bake.server.js"),
     resolve(cfg.codegenDir, "bake.error.js"),
   ];
-  // The enums of dev_server/mod.rs as TypeScript, written beside the runtime sources that import it. It is the
+  // The enums of dev_server/protocol.rs as TypeScript, written beside the runtime sources that import it. It is the
   // same in every profile, like the declarations in cfg.typesDir.
   const generatedTs = resolve(cfg.cwd, "src", "runtime", "bake", "generated.ts");
 
@@ -931,99 +921,85 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(...outputs);
 }
 
-/** Exported (with emitBindgen) for test/internal/build-codegen-declared-outputs.test.ts. */
-export function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
-  const script = resolve(cfg.cwd, "src", "codegen", "bindgenv2", "script.ts");
-
-  // The script's output set depends on which NamedTypes the .bindv2.ts files
-  // export. We run `--command=list-outputs` SYNCHRONOUSLY at configure time
-  // to get the real list. This is a configure-time dependency on the
-  // sources — same tradeoff CMake makes with execute_process().
-  //
-  // It runs with cfg.jsRuntime, the runtime that runs configure. It is a
-  // child process, not an import: in this process, node would print
-  // MODULE_TYPELESS_PACKAGE_JSON for the .ts files under src/. cfg.jsRuntime
-  // is a shell command prefix, so the command goes through the host shell.
-  //
-  // If list-outputs fails (e.g. syntax error in a .bindv2.ts file), we fail
-  // configure immediately with a clear error. Better to catch that here than
-  // get a cryptic "multiple rules generate <unknown>" from ninja.
-  const sourcesArg = sources.bindgenV2.join(",");
-  const listArgs = [script, "--command=list-outputs", `--sources=${sourcesArg}`, `--codegen-path=${cfg.codegenDir}`];
-  const listResult = spawnSync(`${cfg.jsRuntime} ${shJoin(cfg, listArgs)}`, {
-    cwd: cfg.cwd,
-    encoding: "utf8",
-    shell: true,
-  });
-  if (listResult.status !== 0) {
-    throw new BuildError(`bindgenv2 list-outputs failed (exit ${listResult.status})`, {
-      file: script,
-      hint: listResult.stderr?.trim(),
-    });
-  }
-  // Output is semicolon-separated (CMake list format).
-  const allOutputs = listResult.stdout
-    .trim()
-    .split(";")
-    .filter(p => p.length > 0);
-
-  assert(allOutputs.length > 0, "bindgenv2 list-outputs returned no files");
-
-  const cppOutputs = allOutputs.filter(p => p.endsWith(".cpp"));
-  const headerOutputs = allOutputs.filter(p => p.endsWith(".h"));
-  const other = allOutputs.filter(p => !p.endsWith(".cpp") && !p.endsWith(".h"));
-  assert(other.length === 0, `bindgenv2 emitted unexpected output type: ${other.join(", ")}`);
-
-  n.build({
-    outputs: allOutputs,
-    rule: "codegen",
-    inputs: [script, ...sources.bindgenV2, ...sources.bindgenV2Internal],
-    orderOnlyInputs: [dirStamp],
-    vars: {
-      cwd: cfg.cwd,
-      desc: "bindgenv2",
-      args: shJoin(cfg, [script, "--command=generate", `--codegen-path=${cfg.codegenDir}`, `--sources=${sourcesArg}`]),
-    },
-  });
-
-  o.all.push(...allOutputs);
-  o.bindgenV2Cpp.push(...cppOutputs);
-  o.cppHeaders.push(...headerOutputs);
+/** A `*_test.bind.ts` binds what exists for tests. Only a build where Rust has `debug_assertions` has it, and none ships. */
+function isCompiled(cfg: CodegenFields, src: string): boolean {
+  return cfg.debug || cfg.assertions || !src.endsWith("_test.bind.ts");
 }
 
+function typesOnlyFlag(cfg: CodegenFields, sources: Sources): string {
+  return `--types-only=${sources.bindgen
+    .filter(src => !isCompiled(cfg, src))
+    .map(src => basename(src))
+    .join(",")}`;
+}
+
+/** Exported for test/internal/build-codegen-declared-outputs.test.ts. */
 export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
+  const crates = new Map(sources.bindgen.map(src => [src, crateOf(src)]));
+  const compiled = sources.bindgen.filter(src => isCompiled(cfg, src));
 
-  const cppOut = resolve(cfg.codegenDir, "GeneratedBindings.cpp");
-  // Plus one header per .bind.ts (node_os.bind.ts → GeneratedNodeOs.h), which
-  // hand-written .cpp files include; see "Undeclared outputs" above.
-  const headers = sources.bindgen.map(src =>
-    resolve(cfg.codegenDir, `Generated${pascalCase(basename(src, ".bind.ts"))}.h`),
+  // What bindgen.ts writes follows from the names and places of its inputs alone.
+  const outputNames = compiled.map(src => `Generated${pascalCase(basename(src, ".bind.ts"))}`);
+  outputNames.forEach((name, i) => {
+    const first = outputNames.indexOf(name);
+    if (first !== i) throw new BuildError(`${compiled[first]} and ${compiled[i]} both generate ${name}.h`);
+  });
+  const cpp = outputNames.map(name => resolve(cfg.codegenDir, `${name}.cpp`));
+  const headers = [
+    ...outputNames.map(name => resolve(cfg.codegenDir, `${name}.h`)),
+    resolve(cfg.codegenDir, "GeneratedBindings+Tables.h"),
+    resolve(cfg.codegenDir, "GeneratedBindings+Counts.h"),
+  ];
+  const rust = [...new Set(compiled.map(src => crates.get(src)))].map(crate =>
+    resolve(cfg.codegenDir, `generated_bindgen_${crate}.rs`),
   );
+  const types = resolve(cfg.typesDir, "Bindgen.d.ts");
 
-  // bindgen.ts scans src/ for .bind.ts files itself; this list only tells
-  // ninja the inputs and which headers come out. New .bind.ts files need a
-  // reconfigure to be picked up (next glob gets them).
   n.build({
-    outputs: [cppOut, ...headers],
-    rule: "codegen_bun",
-    inputs: [script, ...sources.bindgen],
+    outputs: [...cpp, ...headers, ...rust, types],
+    rule: "codegen",
+    inputs: [...sources.bindgen, ...sources.bindgenCodegen],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: ".bind.ts → GeneratedBindings.cpp",
-      args: shJoin(cfg, ["run", script, debugFlag(cfg), `--codegen-root=${cfg.codegenDir}`]),
+      desc: ".bind.ts → Generated*.{cpp,h}, generated_bindgen_*.rs",
+      args: shJoin(cfg, [
+        script,
+        // Every schema: build/types is shared by every profile, so Bindgen.d.ts describes them all.
+        `--sources=${sources.bindgen.map(src => `${crates.get(src)}=${src}`).join(",")}`,
+        typesOnlyFlag(cfg, sources),
+        `--codegen-path=${cfg.codegenDir}`,
+        `--types-path=${cfg.typesDir}`,
+      ]),
     },
   });
 
-  o.all.push(cppOut, ...headers);
-  o.cppSources.push(cppOut);
+  o.all.push(...cpp, ...headers, ...rust, types);
+  o.generatedTypes.push(types);
+  o.rustInputs.push(...rust);
+  o.cppSources.push(...cpp);
   o.cppHeaders.push(...headers);
 }
 
-/** Same transform as `pascal()` in src/codegen/bindgen-lib-internal.ts: `node_os` → `NodeOs`. */
+/** `node_os` → `NodeOs`. A copy of `pascalCase()` in src/codegen/bindgen-lib-internal.ts, which node warns about importing here (MODULE_TYPELESS_PACKAGE_JSON). build-codegen-declared-outputs.test.ts holds the two together. */
 function pascalCase(s: string): string {
-  return s[0]!.toUpperCase() + s.slice(1).replace(/[_-](\w)?/g, (_, c?: string) => c?.toUpperCase() ?? "");
+  return s
+    .split(/[^A-Za-z0-9]+/)
+    .filter(part => part.length > 0)
+    .map(part => part[0]!.toUpperCase() + part.slice(1))
+    .join("");
+}
+
+/** The Cargo package whose directory contains `file`. */
+function crateOf(file: string): string {
+  for (let dir = dirname(file); dir !== dirname(dir); dir = dirname(dir)) {
+    const manifest = resolve(dir, "Cargo.toml");
+    if (!existsSync(manifest)) continue;
+    const name = /^\s*name\s*=\s*"([^"]+)"/m.exec(readFileSync(manifest, "utf8"));
+    if (name) return name[1]!;
+  }
+  throw new BuildError(`${file} is not inside a Cargo package`);
 }
 
 function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {

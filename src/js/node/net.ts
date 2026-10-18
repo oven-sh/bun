@@ -205,10 +205,16 @@ function uv() {
 }
 const isWindows = process.platform === "win32";
 
-const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
-const setDefaultAutoSelectFamily = $rust("node_net_binding.rs", "setDefaultAutoSelectFamily");
-const getDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
-const setDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const getDefaultAutoSelectFamily = $bindgen("node_net_binding.bind.ts", "getDefaultAutoSelectFamily");
+const setDefaultAutoSelectFamily = $bindgen("node_net_binding.bind.ts", "setDefaultAutoSelectFamily");
+const getDefaultAutoSelectFamilyAttemptTimeout = $bindgen(
+  "node_net_binding.bind.ts",
+  "getDefaultAutoSelectFamilyAttemptTimeout",
+);
+const setDefaultAutoSelectFamilyAttemptTimeout = $bindgen(
+  "node_net_binding.bind.ts",
+  "setDefaultAutoSelectFamilyAttemptTimeout",
+);
 
 /**
  * `--tls-keylog=<file>`: every TLS socket appends its NSS key-log lines here,
@@ -262,29 +268,23 @@ let BlockList, SocketAddress;
 function lazyBlockList() {
   return (BlockList ??= $rust("node_net_binding.rs", "BlockList"));
 }
-const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
+const newDetachedSocket = $bindgen("node_net_binding.bind.ts", "newDetachedSocket");
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 
-const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
+const addServerName = $bindgen("Listener.bind.ts", "addServerName");
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
 // tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
-const upgradeTLSDeferred = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeTLSDeferred", 2);
-const checkServerIdentityInHandshake = $newRustFunction(
-  "runtime/socket/socket.rs",
-  "jsCheckServerIdentityInHandshake",
-  2,
-);
+const upgradeTLSDeferred = $bindgen("socket_body.bind.ts", "upgradeTLSDeferred");
+const checkServerIdentityInHandshake = $bindgen("socket_body.bind.ts", "checkServerIdentityInHandshake");
 // destroy() in the handshake callback: drops the handshake flight that the native layer holds.
-const releaseHeldFlight = $newRustFunction("runtime/socket/socket.rs", "jsReleaseHeldFlight", 1);
-const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
-const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
+const releaseHeldFlight = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
+const isNamedPipeSocket = $bindgen("socket_body.bind.ts", "isNamedPipeSocket");
+const getBufferedAmount = $bindgen("socket_body.bind.ts", "getBufferedAmount");
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const { owner_symbol } = require("internal/async_hooks").symbols;
 
-// In the order of the index that guessHandleType() returns.
-const handleTypes = ["TCP", "TTY", "UDP", "FILE", "PIPE", "UNKNOWN"];
 // libuv's value on every platform.
 const UV_EOF = -4095;
 let guessHandleType;
@@ -294,8 +294,8 @@ let pipeWrap;
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L183-L199
 // No other kind of fd has a handle of that shape yet. For those the socket stays without a handle.
 function createPipeHandle(fd) {
-  guessHandleType ??= $newRustFunction("node_util_binding.rs", "guessHandleType", 1);
-  if (handleTypes[guessHandleType(fd)] !== "PIPE") return null;
+  guessHandleType ??= $bindgen("node_util_binding.bind.ts", "guessHandleType");
+  if (guessHandleType(fd) !== "PIPE") return null;
   pipeWrap ??= process.binding("pipe_wrap");
   const handle = new pipeWrap.Pipe(pipeWrap.constants.SOCKET);
   const err = handle.open(fd);

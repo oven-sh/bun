@@ -70,15 +70,34 @@ fn is_npm_alias(version: &dependency::Version) -> bool {
     version.tag == VersionTag::Npm && version.npm().is_alias
 }
 
+/// How the range in a `name@<range>` key is compared with the range that a dependency declares.
+#[derive(Clone, Copy)]
+enum Selects {
+    /// The key matches if the two ranges overlap. npm and pnpm do this.
+    Overlapping,
+    /// The key matches only if the two ranges are the same text. yarn does this.
+    SameRange,
+}
+
 /// Whether a rule keyed `name@<range>` selects a dependency declared as `declared`.
-fn range_selects(range: &dependency::Version, declared: &dependency::Version, buf: &[u8]) -> bool {
+fn range_selects(
+    range: &dependency::Version,
+    declared: &dependency::Version,
+    selects: Selects,
+    buf: &[u8],
+) -> bool {
     match (range.tag, declared.tag) {
         (VersionTag::Npm, VersionTag::Npm) => {
+            let is_same_text = dependency::without_npm_protocol(range.literal.slice(buf))
+                == dependency::without_npm_protocol(declared.literal.slice(buf));
             let (range, declared) = (range.npm(), declared.npm());
             // An alias key selects aliases of the same package. A plain key never selects an alias.
             range.is_alias == declared.is_alias
                 && (!range.is_alias || range.name.eql(declared.name, buf, buf))
-                && range.version.intersects(buf, &declared.version, buf)
+                && match selects {
+                    Selects::Overlapping => range.version.intersects(buf, &declared.version, buf),
+                    Selects::SameRange => is_same_text,
+                }
         }
         (VersionTag::Catalog, VersionTag::Catalog) => {
             CatalogMap::same_name(range.catalog().slice(buf), declared.catalog().slice(buf))
@@ -129,12 +148,19 @@ pub struct OverrideMap {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Field {
+pub(crate) enum Field {
     Overrides,
     Resolutions,
 }
 
 impl Field {
+    /// Only one of the two fields is read: `"resolutions"` is ignored if `"overrides"` exists.
+    pub(crate) fn of(root: &Expr) -> Option<(Field, bun_ast::expr::Query)> {
+        [Field::Overrides, Field::Resolutions]
+            .into_iter()
+            .find_map(|field| Some((field, root.as_property(field.json_name().as_bytes())?)))
+    }
+
     fn label(self) -> &'static str {
         match self {
             Field::Overrides => "override",
@@ -142,7 +168,7 @@ impl Field {
         }
     }
 
-    fn json_name(self) -> &'static str {
+    pub(crate) fn json_name(self) -> &'static str {
         match self {
             Field::Overrides => "overrides",
             Field::Resolutions => "resolutions",
@@ -160,7 +186,9 @@ impl Field {
 struct Ambiguous;
 
 /// Scoped rules must not redirect every edge of the target name, so their `npm:` values are never registered as known aliases.
-struct NoAliases;
+/// The dependencies that `clean_with_logger` copies are not registered again either: the project's
+/// aliases were already registered when its package.json files were parsed.
+pub(crate) struct NoAliases;
 
 impl NpmAliasRegistry for NoAliases {
     #[inline]
@@ -174,9 +202,6 @@ fn is_comment_key(key: &[u8]) -> bool {
 
 struct ParseContext<'a, 'b> {
     field: Field,
-    /// Parsing appends or replaces in place: the rules of `"overrides"` are the first this many.
-    overrides_flat: usize,
-    overrides_scoped: usize,
     pm: &'a mut PackageManager,
     lockfile_dependencies: &'a [Dependency],
     root_package: &'a Package,
@@ -208,6 +233,24 @@ impl OverrideMap {
         self.lookup_declared(lockfile, dependency_id, name_hash, declared)
     }
 
+    /// Like `lookup`, but a `name@<range>` key only matches a dependency that declares exactly that
+    /// range, as in yarn.
+    pub(crate) fn lookup_as_yarn(
+        &self,
+        lockfile: &Lockfile,
+        dependency_id: DependencyID,
+        name_hash: PackageNameHash,
+    ) -> Option<OverrideRule<'_>> {
+        let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
+        self.lookup_selecting(
+            lockfile,
+            dependency_id,
+            name_hash,
+            declared,
+            Selects::SameRange,
+        )
+    }
+
     /// `declared` is the version being resolved. `enqueue_pinned` resolves another one than the row's.
     pub(crate) fn lookup_declared(
         &self,
@@ -216,9 +259,28 @@ impl OverrideMap {
         name_hash: PackageNameHash,
         declared: &dependency::Version,
     ) -> Option<OverrideRule<'_>> {
+        self.lookup_selecting(
+            lockfile,
+            dependency_id,
+            name_hash,
+            declared,
+            Selects::Overlapping,
+        )
+    }
+
+    fn lookup_selecting(
+        &self,
+        lockfile: &Lockfile,
+        dependency_id: DependencyID,
+        name_hash: PackageNameHash,
+        declared: &dependency::Version,
+        selects: Selects,
+    ) -> Option<OverrideRule<'_>> {
         scoped_log!(OverrideMap, "looking up override for {:x}", name_hash);
         if !self.scoped.is_empty() && self.scoped_names.contains(&name_hash) {
-            if let Some(rule) = self.scoped_rule_for(lockfile, dependency_id, name_hash, declared) {
+            if let Some(rule) =
+                self.scoped_rule_for(lockfile, dependency_id, name_hash, declared, selects)
+            {
                 return Some(OverrideRule::Scoped(rule));
             }
         }
@@ -240,6 +302,7 @@ impl OverrideMap {
         dependency_id: DependencyID,
         name_hash: PackageNameHash,
         declared: &dependency::Version,
+        selects: Selects,
     ) -> Option<&'s ScopedOverride> {
         let buf = lockfile.buffers.string_bytes.as_slice();
         let mut owner: Option<Option<(PackageNameHash, Option<SemverVersion>)>> = None;
@@ -282,7 +345,7 @@ impl OverrideMap {
                 if best.is_some_and(|(_, best_tier)| best_tier > tier + 1) {
                     continue;
                 }
-                if !range_selects(&rule.target_range, declared, buf) {
+                if !range_selects(&rule.target_range, declared, selects, buf) {
                     continue;
                 }
                 tier += 1;
@@ -392,6 +455,40 @@ impl OverrideMap {
             if rule.dep.version.tag == VersionTag::Catalog {
                 out.push(rule.dep.name_hash);
             }
+        }
+    }
+
+    /// Warns about each `catalog:` rule whose package is not in the catalog, because the
+    /// dependencies that the rule applies to then have no version to resolve.
+    pub(crate) fn warn_missing_catalog_entries(
+        &self,
+        catalogs: &CatalogMap,
+        buf: &[u8],
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
+        root: &Expr,
+        has_workspaces: bool,
+    ) {
+        let rules = (self.map.values().iter()).chain(self.scoped.iter().map(|rule| &rule.dep));
+        for dep in rules.filter(|dep| dep.version.tag == VersionTag::Catalog) {
+            if (catalogs.get_ref(buf, *dep.version.catalog(), dep.name)).is_some() {
+                continue;
+            }
+            let name = dep.name.slice(buf);
+            log.add_range_warning_fmt(
+                Some(source),
+                source.range_of_string(rule_loc(root, name)),
+                format_args!(
+                    "{}@{} not in catalog{}",
+                    bun_core::fmt::escape_control_chars(name),
+                    bun_core::fmt::escape_control_chars(dep.version.literal.slice(buf)),
+                    if has_workspaces {
+                        ""
+                    } else {
+                        ": catalogs require a \"workspaces\" field in the root package.json"
+                    },
+                ),
+            );
         }
     }
 
@@ -537,13 +634,8 @@ impl OverrideMap {
 
     /// Replaces the rule with the same (parent, parent range, target, target range); `buf` is the buffer `rule` was appended into.
     pub(crate) fn push_scoped(&mut self, rule: ScopedOverride, buf: &[u8]) {
-        self.put_scoped(rule, buf, 0);
-    }
-
-    /// `push_scoped`, except that a matching rule among the first `keep` wins over `rule`.
-    fn put_scoped(&mut self, rule: ScopedOverride, buf: &[u8], keep: usize) {
         if self.scoped_names.contains(&rule.dep.name_hash) {
-            if let Some(index) = self.scoped.iter().position(|existing| {
+            if let Some(existing) = self.scoped.iter_mut().find(|existing| {
                 existing.dep.name_hash == rule.dep.name_hash
                     && match (&existing.parent, &rule.parent) {
                         (None, None) => true,
@@ -558,9 +650,7 @@ impl OverrideMap {
                         .literal
                         .eql(rule.target_range.literal, buf, buf)
             }) {
-                if index >= keep {
-                    self.scoped[index] = rule;
-                }
+                *existing = rule;
                 return;
             }
         } else {
@@ -650,10 +740,7 @@ impl OverrideMap {
         expr: Expr,
         builder: &mut StringBuilder,
     ) {
-        for field in [Field::Overrides, Field::Resolutions] {
-            let Some(property) = expr.as_property(field.json_name().as_bytes()) else {
-                continue;
-            };
+        if let Some((field, property)) = Field::of(&expr) {
             property.expr.for_each_property(|key, _key_loc, value| {
                 if is_comment_key(key) {
                     return;
@@ -704,7 +791,6 @@ impl OverrideMap {
         }
     }
 
-    /// The map must be empty. Where both fields define a selector, the `"overrides"` rule wins.
     pub(crate) fn parse_append(
         &mut self,
         pm: &mut PackageManager,
@@ -717,10 +803,11 @@ impl OverrideMap {
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         debug_assert!(self.map.count() == 0 && self.scoped.is_empty()); // only call parse once
+        let Some((field, rules)) = Field::of(&expr) else {
+            return Ok(());
+        };
         let mut ctx = ParseContext {
-            field: Field::Overrides,
-            overrides_flat: 0,
-            overrides_scoped: 0,
+            field,
             pm,
             lockfile_dependencies,
             root_package,
@@ -729,13 +816,9 @@ impl OverrideMap {
             workspace_names,
             builder,
         };
-        if let Some(overrides) = expr.as_property(b"overrides") {
-            self.parse_from_overrides(&mut ctx, overrides.expr)?;
-            (ctx.overrides_flat, ctx.overrides_scoped) = (self.map.count(), self.scoped.len());
-        }
-        if let Some(resolutions) = expr.as_property(b"resolutions") {
-            ctx.field = Field::Resolutions;
-            self.parse_from_resolutions(&mut ctx, resolutions.expr)?;
+        match field {
+            Field::Overrides => self.parse_from_overrides(&mut ctx, rules.expr)?,
+            Field::Resolutions => self.parse_from_resolutions(&mut ctx, rules.expr)?,
         }
         scoped_log!(
             OverrideMap,
@@ -780,7 +863,10 @@ impl OverrideMap {
                 ctx.log.add_warning_fmt(
                     Some(ctx.source),
                     value_loc,
-                    format_args!("Invalid override value for \"{}\"", bstr::BStr::new(k)),
+                    format_args!(
+                        "Invalid override value for \"{}\"",
+                        bun_core::fmt::escape_control_chars(k)
+                    ),
                 );
                 return Ok(());
             }
@@ -815,7 +901,7 @@ impl OverrideMap {
                         child_value_loc,
                         format_args!(
                             "Invalid override value for \"{}\"",
-                            bstr::BStr::new(child_key)
+                            bun_core::fmt::escape_control_chars(child_key)
                         ),
                     );
                     return Ok(());
@@ -889,7 +975,10 @@ impl OverrideMap {
                 ctx.log.add_warning_fmt(
                     Some(ctx.source),
                     value_loc,
-                    format_args!("Invalid resolution value for \"{}\"", bstr::BStr::new(k)),
+                    format_args!(
+                        "Invalid resolution value for \"{}\"",
+                        bun_core::fmt::escape_control_chars(k)
+                    ),
                 );
                 return Ok(());
             };
@@ -946,15 +1035,6 @@ impl OverrideMap {
 
         let name_hash = SemverBuilder::string_hash(target.name);
         let is_flat = parent.is_none() && target.range.is_empty();
-        // Before parsing the value, which registers a flat `npm:` alias; a skipped rule must not.
-        if is_flat
-            && self
-                .map
-                .get_index(&name_hash)
-                .is_some_and(|index| index < ctx.overrides_flat)
-        {
-            return Ok(());
-        }
         let Some(dep) =
             parse_override_value(ctx, value_loc, target.name, name_hash, value, is_flat)?
         else {
@@ -968,18 +1048,25 @@ impl OverrideMap {
         if is_flat {
             self.map.put_assume_capacity(dep.name_hash, dep);
         } else {
-            self.put_scoped(
+            self.push_scoped(
                 ScopedOverride {
                     parent: parent.cloned(),
                     target_range,
                     dep,
                 },
                 ctx.builder.string_bytes.as_slice(),
-                ctx.overrides_scoped,
             );
         }
         Ok(())
     }
+}
+
+/// The location of the top-level rule for `name` in the root package.json. If there is none, the
+/// location of the `"overrides"` or `"resolutions"` field.
+fn rule_loc(root: &Expr, name: &[u8]) -> bun_ast::Loc {
+    Field::of(root).map_or(bun_ast::Loc::EMPTY, |(_, rules)| {
+        (rules.expr.as_property(name)).map_or(rules.loc, |rule| rule.loc)
+    })
 }
 
 /// A parent is selected by its installed version. A target is selected by how it is declared.
@@ -1070,7 +1157,10 @@ fn warn_selector_error(
         SelectorError::InvalidName => ctx.log.add_warning_fmt(
             source,
             key_loc,
-            format_args!("Invalid package name \"{}\"", bstr::BStr::new(key)),
+            format_args!(
+                "invalid package name \"{}\"",
+                bun_core::fmt::escape_control_chars(key)
+            ),
         ),
         SelectorError::TooDeep => ctx.log.add_warning_fmt(
             source,
@@ -1083,7 +1173,10 @@ fn warn_selector_error(
         SelectorError::EmptyRange => ctx.log.add_warning_fmt(
             source,
             key_loc,
-            format_args!("Missing version range after \"{}\"", bstr::BStr::new(key)),
+            format_args!(
+                "Missing version range after \"{}\"",
+                bun_core::fmt::escape_control_chars(key)
+            ),
         ),
     }
 }
@@ -1132,8 +1225,10 @@ fn parse_range(
                 key_loc,
                 format_args!(
                     "Invalid version range \"{}\" for \"{}\"",
-                    bstr::BStr::new(range),
-                    bstr::BStr::new(name.slice(ctx.builder.string_bytes.as_slice()))
+                    bun_core::fmt::escape_control_chars(range),
+                    bun_core::fmt::escape_control_chars(
+                        name.slice(ctx.builder.string_bytes.as_slice())
+                    )
                 ),
             );
             None
@@ -1165,7 +1260,7 @@ fn parse_override_value(
             loc,
             format_args!(
                 "Removing \"{}\" with \"-\" is not supported",
-                bstr::BStr::new(key)
+                bun_core::fmt::escape_control_chars(key)
             ),
         );
         return Ok(None);
@@ -1209,8 +1304,8 @@ fn parse_override_value(
                         loc,
                         format_args!(
                             "Could not resolve \"{}\": \"{}\" is not in dependencies",
-                            bstr::BStr::new(value),
-                            bstr::BStr::new(ref_name),
+                            bun_core::fmt::escape_control_chars(value),
+                            bun_core::fmt::escape_control_chars(ref_name),
                         ),
                     );
                     return Ok(None);
@@ -1221,8 +1316,8 @@ fn parse_override_value(
                         loc,
                         format_args!(
                             "Could not resolve \"{}\": workspaces declare different versions of \"{}\"",
-                            bstr::BStr::new(value),
-                            bstr::BStr::new(ref_name),
+                            bun_core::fmt::escape_control_chars(value),
+                            bun_core::fmt::escape_control_chars(ref_name),
                         ),
                     );
                     return Ok(None);
@@ -1250,7 +1345,11 @@ fn parse_override_value(
         ctx.log.add_warning_fmt(
             Some(ctx.source),
             loc,
-            format_args!("Invalid {} value \"{}\"", field, bstr::BStr::new(value)),
+            format_args!(
+                "Invalid {} value \"{}\"",
+                field,
+                bun_core::fmt::escape_control_chars(value)
+            ),
         );
         return Ok(None);
     };

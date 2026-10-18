@@ -4130,22 +4130,29 @@ fn peer_provided_from_above(
     loop {
         let mut above = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
         let mut any_above = false;
-        for (parent, list) in lists.iter().enumerate() {
-            if seen.is_set(parent)
-                || !(list.begin() as usize..list.end() as usize).any(|id| {
-                    !deps[id].behavior.is_peer()
-                        && level.is_set_allow_out_of_bound(resolutions[id] as usize, false)
-                })
-            {
-                continue;
+        // A package that's only installed for a peer dependency is below the packages that have
+        // that peer dependency.
+        for follows_peers in [false, true] {
+            for (parent, list) in lists.iter().enumerate() {
+                if seen.is_set(parent)
+                    || !(list.begin() as usize..list.end() as usize).any(|id| {
+                        (follows_peers || !deps[id].behavior.is_peer())
+                            && level.is_set_allow_out_of_bound(resolutions[id] as usize, false)
+                    })
+                {
+                    continue;
+                }
+                let provided = named(parent, false).or_else(|| named(parent, true));
+                if provided.is_some() {
+                    return provided;
+                }
+                seen.set(parent);
+                above.set(parent);
+                any_above = true;
             }
-            let provided = named(parent, false).or_else(|| named(parent, true));
-            if provided.is_some() {
-                return provided;
+            if any_above {
+                break;
             }
-            seen.set(parent);
-            above.set(parent);
-            any_above = true;
         }
         if !any_above {
             return None;

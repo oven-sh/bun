@@ -2515,8 +2515,6 @@ test.concurrent.each(["hoisted", "isolated"] as const)(
   },
 );
 
-// The host bundles no-deps@1.0.0, which is what peer-deps-fixed (peer no-deps@^1.0.0) finds next to
-// itself under the host. At the root it would find 2.0.0.
 // `a` (or `zz`) has a peer dependency on `host@1`, and nothing provides it. The project already uses `host@2`.
 describe.concurrent("adding an unrelated package doesn't split a plugin from its host", () => {
   const plugin = (optional: boolean) => ({
@@ -2548,6 +2546,17 @@ describe.concurrent("adding an unrelated package doesn't split a plugin from its
       { holder: "1.0.0", tg: "1.0.0" },
       "a",
       ["a@1.0.0", "cx@1.0.0", "holder@1.0.0", "host@2.1.0", "tg@1.0.0"],
+    ],
+    [
+      // As in pnpm, plug belongs to the project and not to n, so it loads the host at the top.
+      "but a plugin that's only installed for a peer dependency goes to the top",
+      {
+        n: { "1.0.0": { dependencies: { host: "^2.1.0" }, peerDependencies: { plug: "1.0.0" } } },
+        plug: { "1.0.0": { peerDependencies: { host: ">=1.0.0" } } },
+      },
+      { n: "1.0.0" },
+      "a",
+      ["a@1.0.0", "host@1.5.0", "n@1.0.0", "n/host@2.1.0", "plug@1.0.0"],
     ],
   ])("%s", async (_, graph, dependencies, unrelated, expected) => {
     using server = await serveGraph({
@@ -2639,6 +2648,39 @@ test.concurrent("peers whose ranges don't overlap are resolved without a request
   expect(layout(dir)).toEqual(["holder@1.0.0", "host@2.1.0", "hostdom@2.1.0", "lib@1.0.0"]);
 });
 
+// server is only installed for client's peer dependency, and the project's compiler@7 is out of its range. It still uses
+// that version, so no other version is looked up or downloaded.
+test.concurrent("a package that's installed for a peer dependency uses the version that the project has", async () => {
+  using graph = await serveGraph({
+    compiler: { "5.9.3": {}, "7.0.2": {} },
+    client: { "1.0.0": { peerDependencies: { server: "1.0.0" } } },
+    server: { "1.0.0": { peerDependencies: { compiler: "^5.0.0" } } },
+  });
+  const requested: string[] = [];
+  using server = Bun.serve({
+    port: 0,
+    fetch: request => {
+      const { pathname } = new URL(request.url);
+      requested.push(pathname);
+      return fetch(new URL(pathname, graph.url));
+    },
+  });
+  using tmp = tempDir("hoist-peer-of-installed-peer", {
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({ name: "root", devDependencies: { compiler: "^7.0.0" } }),
+  });
+  const dir = String(tmp);
+  await run(dir, "install");
+
+  requested.length = 0;
+  await rm(join(dir, ".bun-cache"), { recursive: true, force: true });
+  await run(dir, "add", "client@1.0.0");
+  expect(requested.sort()).toEqual(["/client", "/server"]);
+  expect(layout(dir)).toEqual(["client@1.0.0", "compiler@7.0.2", "server@1.0.0"]);
+});
+
+// The host bundles no-deps@1.0.0, which is what peer-deps-fixed (peer no-deps@^1.0.0) finds next to
+// itself under the host. At the root it would find 2.0.0.
 test.concurrent("a package stays under the host that bundles the version that its peer accepts", async () => {
   const host = {
     name: "host",

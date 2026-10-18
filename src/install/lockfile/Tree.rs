@@ -567,12 +567,13 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
 /// The peers of the package that's being hoisted, each with the in-range copy that the package
 /// loads from the highest folder checked so far. An optional peer is only listed if the package's
 /// owner provides it. The bit sets cache which packages have peers, and which packages a regular
-/// dependency resolves to.
+/// dependency resolves to. The flag is true if the package is hoisted for a peer dependency.
 #[derive(Default)]
 pub(crate) struct PeerProbes(
     Vec<(DependencyID, Option<PackageID>)>,
     Option<DynamicBitSet>,
     Option<DynamicBitSet>,
+    bool,
 );
 
 impl PeerProbes {
@@ -584,8 +585,10 @@ impl PeerProbes {
         resolutions: &[PackageID],
         owner_deps: DependencyIDSlice,
         package_id: PackageID,
+        is_for_peer: bool,
     ) {
         self.0.clear();
+        self.3 = is_for_peer;
         if package_id == invalid_package_id {
             return;
         }
@@ -660,7 +663,8 @@ impl PeerProbes {
     /// loading the copy of a peer that it loads now. That's the case if the tree has:
     /// - an out-of-range version of a required peer, or
     /// - a different version that was only installed for another package's peer dependency. Adding
-    ///   an unrelated package to a project must not split a plugin from its host.
+    ///   an unrelated package to a project must not split a plugin from its host. This doesn't apply
+    ///   to a package that's hoisted for a peer dependency. As in pnpm, it belongs to the project.
     fn is_hidden_by(
         &mut self,
         lockfile: &Lockfile,
@@ -695,6 +699,7 @@ impl PeerProbes {
                 Some(provided)
                     if in_range
                         && held != provided
+                        && !self.3
                         && !(self.2)
                             .get_or_insert_with(|| regular_targets(lockfile, deps, resolutions))
                             .is_set(held as usize) =>
@@ -1962,6 +1967,7 @@ impl Tree {
                     &*builder.resolutions,
                     input_dep_range,
                     package_id,
+                    dependency.behavior.is_peer(),
                 );
             }
             let id = Tree::hoist_dependency::<false, METHOD>(

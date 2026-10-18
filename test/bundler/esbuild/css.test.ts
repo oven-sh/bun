@@ -954,6 +954,33 @@ describe("bundler", () => {
     },
   });
 
+  // A `url()` after `from` is a `url()` token, as in any unknown declaration.
+  itBundled("css/ComposesInPlainCSSFromURLIsAURLToken", {
+    files: {
+      "/entry.css": /* css */ `
+        .k { composes: g from url(./g.png) }
+        .u { unknown-property: g from url(./g.png) }
+      `,
+      "/g.png": Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    },
+    outdir: "/out",
+    metafile: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* entry.css */
+        .k {
+          composes: g from url("data:image/png;base64,iVBORw0KGgo=");
+        }
+
+        .u {
+          unknown-property: g from url("data:image/png;base64,iVBORw0KGgo=");
+        }
+        "
+      `);
+      expect(metafileImports(api)).toEqual({ "entry.css": ["url-token g.png", "url-token g.png"], "g.png": [] });
+    },
+  });
+
   itBundled("css/ComposesInPlainCSSWithAtImportOfTheSameFile", {
     files: {
       "/entry.css": /* css */ `
@@ -1065,6 +1092,42 @@ describe("bundler", () => {
       },
     });
   }
+
+  // A stylesheet that a plugin loads with the `css` loader is a CSS module
+  // only when its path ends in `.module.css`.
+  itBundled("css/ComposesInPluginLoadedCSSThatIsNotACSSModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import styles from "./a.module.scss";
+        console.log(styles);
+      `,
+      "/a.module.scss": `.btn { composes: base from "./b.module.scss"; color: blue }`,
+      "/b.module.scss": `.base { font-size: 16px }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    metafile: true,
+    plugins(builder) {
+      builder.onLoad({ filter: /\.scss$/ }, async args => ({
+        contents: await Bun.file(args.path).text(),
+        loader: "css",
+      }));
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* a.module.scss */
+        .btn {
+          composes: base from "./b.module.scss";
+          color: #00f;
+        }
+        "
+      `);
+      expect(metafileImports(api)).toEqual({
+        "entry.js": ["import-statement a.module.scss"],
+        "a.module.scss": [],
+      });
+    },
+  });
 
   // `bun build --no-bundle` parses a stylesheet with no import record list.
   itBundled("css/ComposesInPlainCSSNoBundle", {

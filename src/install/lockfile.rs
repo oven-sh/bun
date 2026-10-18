@@ -1094,22 +1094,14 @@ impl Lockfile {
         })
     }
 
-    /// Does this tree id belong to a workspace (including workspace root)?
-    /// TODO(dylan-conway) fix!
-    pub(crate) fn is_workspace_tree_id(&self, id: tree::Id) -> bool {
-        id == 0
-            || self.buffers.dependencies[self.buffers.trees[id as usize].dependency_id as usize]
-                .behavior
-                .is_workspace()
-    }
-
     /// A `file:` folder's folder dependencies are top-level relative, not package-relative.
     pub(crate) fn is_folder_tree_id(&self, id: tree::Id) -> bool {
         self.tree_owner_tag(id) == Some(ResolutionTag::Folder)
     }
 
-    /// Whether tree `id` is the `node_modules` of the project or of a workspace. Users sometimes
-    /// make that folder a symlink to another volume or to a store.
+    /// Whether tree `id` is the `node_modules` of the project or of a workspace, under whichever
+    /// name the tree reaches the workspace. Users sometimes make that folder a symlink to another
+    /// volume or to a store.
     pub(crate) fn is_importer_tree_id(&self, id: tree::Id) -> bool {
         id == 0 || self.tree_owner_tag(id) == Some(ResolutionTag::Workspace)
     }

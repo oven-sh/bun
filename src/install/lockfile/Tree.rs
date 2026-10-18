@@ -519,6 +519,128 @@ fn places_of(
     places
 }
 
+/// Which trees are one `node_modules` on disk. A tree is a `node_modules/<name>/node_modules/...`
+/// path, and two of them are one directory where `<name>` is a link: to a workspace that has two
+/// names or that a self-contained workspace links to again, to a `link:` package, or to the project
+/// itself. The trees below those, under the same names, are one directory as well.
+///
+/// This is read from the lockfile alone. It does not see a link that somebody made by hand.
+#[derive(Default)]
+pub(crate) struct Folders {
+    /// For each tree, the lowest id of the trees with its directory. Empty if no two trees have one.
+    first: Vec<Id>,
+    /// The trees whose directory another tree has too.
+    shared: DynamicBitSet,
+}
+
+impl Folders {
+    pub(crate) fn init(lockfile: &Lockfile) -> Folders {
+        let trees = lockfile.buffers.trees.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let packages = lockfile.packages.items_resolution();
+        // The package that the tree's folder is a link to.
+        let link_target = |tree: &Tree| -> Option<PackageID> {
+            let package_id = *resolutions.get(tree.dependency_id as usize)?;
+            matches!(
+                packages.get(package_id as usize)?.tag,
+                crate::resolution::Tag::Workspace
+                    | crate::resolution::Tag::Symlink
+                    | crate::resolution::Tag::Root
+            )
+            .then_some(package_id)
+        };
+
+        // Most projects link no package twice. They stop here, with nothing allocated for a
+        // project that has no tree below a link.
+        let mut linked: Option<DynamicBitSet> = None;
+        let mut links_twice = false;
+        for target in trees.iter().skip(1).filter_map(&link_target) {
+            let linked = linked.get_or_insert_with(|| {
+                let mut linked = DynamicBitSet::init_empty(packages.len()).unwrap_or_oom();
+                // Tree 0 is the project's.
+                linked.set(0);
+                linked
+            });
+            if linked.is_set(target as usize) {
+                links_twice = true;
+                break;
+            }
+            linked.set(target as usize);
+        }
+        if !links_twice {
+            return Folders::default();
+        }
+
+        let mut folders = Folders {
+            first: (0..trees.len() as Id).collect(),
+            shared: DynamicBitSet::init_empty(trees.len()).unwrap_or_oom(),
+        };
+
+        let mut by_target: bun_collections::HashMap<PackageID, Id> = Default::default();
+        by_target.insert(0, 0);
+        for (id, tree) in trees.iter().enumerate().skip(1) {
+            if let Some(target) = link_target(tree) {
+                let lowest = *by_target.entry(target).or_insert_with(|| id as Id);
+                folders.pair(id as Id, lowest);
+            }
+        }
+
+        // Below a shared directory, a name is one directory again. A tree comes after its parent,
+        // so `first` of the parent is final when its children are reached.
+        let mut by_name: bun_collections::HashMap<(Id, PackageNameHash), Id> = Default::default();
+        let mut below_shared = DynamicBitSet::init_empty(trees.len()).unwrap_or_oom();
+        if folders.is_shared(0) {
+            below_shared.set(0);
+        }
+        for (id, tree) in trees.iter().enumerate().skip(1) {
+            if link_target(tree).is_some() {
+                if folders.is_shared(id as Id) {
+                    below_shared.set(id);
+                }
+                continue;
+            }
+            if !below_shared.is_set_allow_out_of_bound(tree.parent as usize, false) {
+                continue;
+            }
+            let Some(owner) = dependencies.get(tree.dependency_id as usize) else {
+                continue;
+            };
+            below_shared.set(id);
+            let key = (folders.first(tree.parent), owner.name_hash);
+            let lowest = *by_name.entry(key).or_insert_with(|| id as Id);
+            // Two dependency groups of one package can give one name two trees in one parent.
+            // One of the two is installed: they are no pair.
+            if trees[lowest as usize].parent != tree.parent {
+                folders.pair(id as Id, lowest);
+            }
+        }
+
+        folders
+    }
+
+    fn pair(&mut self, id: Id, lowest: Id) {
+        if lowest != id {
+            self.first[id as usize] = lowest;
+            self.shared.set(id as usize);
+            self.shared.set(lowest as usize);
+        }
+    }
+
+    /// The lowest id of the trees that are the directory of tree `id`. It is a key for that
+    /// directory: an install that skips dependencies may not walk the tree with that id.
+    #[inline]
+    pub(crate) fn first(&self, id: Id) -> Id {
+        self.first.get(id as usize).copied().unwrap_or(id)
+    }
+
+    /// Whether another tree is the directory of tree `id` too.
+    #[inline]
+    pub(crate) fn is_shared(&self, id: Id) -> bool {
+        self.shared.is_set_allow_out_of_bound(id as usize, false)
+    }
+}
+
 // `manager` and the three fields from `workspace_filters` on: only for `METHOD == .Filter`.
 pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) list: MultiArrayList<BuilderEntry>,

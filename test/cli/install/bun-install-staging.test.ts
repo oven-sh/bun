@@ -722,9 +722,14 @@ const keepsItsDirectory = [
 ].join("; ");
 
 // The script is POSIX sh; on Windows lifecycle scripts run in bun's own shell.
-test.concurrent.skipIf(isWindows)(
-  "hoisted linker: the second install of a doubly aliased package leaves a running lifecycle script its directory",
-  async () => {
+// `--force` moves a package aside before it links it again, but not one that the first walk of
+// the same install has linked.
+test.concurrent.skipIf(isWindows).each([
+  ["a first install", []],
+  ["--force", ["--force"]],
+] as [string, string[]][])(
+  "hoisted linker: the second install of a doubly aliased package leaves a running lifecycle script its directory (%s)",
+  async (_, args) => {
     const depTarball = await new Bun.Archive(
       {
         "package/package.json": JSON.stringify({
@@ -760,7 +765,7 @@ test.concurrent.skipIf(isWindows)(
     });
     const root = String(dir);
 
-    const { stderr, exitCode } = await install(root, [], {
+    const { stderr, exitCode } = await install(root, args, {
       ...installEnv,
       STAGING_TEST_MARKERS: join(root, "markers"),
       STAGING_TEST_DEP_DIR: join(root, "packages", "inner", "node_modules", "dep"),

@@ -396,6 +396,7 @@ pub(crate) fn install_hoisted_packages(
 
             let pkg_len = this.lockfile.packages.len();
             let trees_count = this.lockfile.buffers.trees.len();
+            let folders = tree::Folders::init(&lockfile_ref);
             let trusted_deps = this.find_trusted_dependencies_from_update_requests();
 
             break 'brk PackageInstaller {
@@ -411,7 +412,7 @@ pub(crate) fn install_hoisted_packages(
                 tree_dir: None,
                 // Windows: the hardlink backend has one queue of its own. A batch keeps up to 64 directories open.
                 deferred: (cfg!(not(windows)) && !FileSystem::instance().fs.need_to_close_files())
-                    .then(|| DeferredLinks::init(&lockfile_ref)),
+                    .then(|| DeferredLinks::init(&lockfile_ref, &folders)),
                 node: &mut install_node,
                 node_modules: NodeModulesFolder {
                     path: strings::without_trailing_slash(FileSystem::instance().top_level_dir())
@@ -422,7 +423,9 @@ pub(crate) fn install_hoisted_packages(
                 progress: unsafe { core::ptr::addr_of_mut!((*mgr_ptr).progress) },
                 skip_verify_installed_version_number,
                 skip_delete,
-                workspaces_seen: Vec::new(),
+                folders,
+                linked_in_shared_folders: Default::default(),
+                outlived_shared_folders: Vec::new(),
                 summary: &mut summary,
                 successfully_installed: Bitset::init_empty(pkg_len)?,
                 command_ctx: ctx,

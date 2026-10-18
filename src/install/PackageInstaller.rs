@@ -61,8 +61,15 @@ pub struct PackageInstaller<'a> {
 
     pub(crate) skip_verify_installed_version_number: bool,
     pub(crate) skip_delete: bool,
-    /// For `set_outlived_root`: the workspaces whose first tree the install has reached.
-    pub(crate) workspaces_seen: Vec<PackageID>,
+    /// The trees that are one `node_modules` on disk.
+    pub(crate) folders: lockfile::tree::Folders,
+    /// What this install has linked into a `node_modules` that several trees are: the directory
+    /// (`Folders::first`) and the name, with the package. See `has_linked`.
+    pub(crate) linked_in_shared_folders:
+        bun_collections::HashMap<(lockfile::tree::Id, PackageNameHash), PackageID>,
+    /// For `set_outlived_root`: each such `node_modules` of a workspace that the install has
+    /// reached, with the answer.
+    pub(crate) outlived_shared_folders: Vec<(lockfile::tree::Id, bool)>,
     pub(crate) root_node_modules_folder: Dir,
     /// Taken for the first package that is linked: an install with nothing to link takes none.
     pub(crate) staging_lock: Option<package_install::StagingLock>,
@@ -155,39 +162,54 @@ impl DeferredLinks {
     /// Each is an open directory.
     const MAX_TREES: usize = 64;
 
-    pub(crate) fn init(lockfile: &Lockfile) -> DeferredLinks {
+    pub(crate) fn init(lockfile: &Lockfile, folders: &lockfile::tree::Folders) -> DeferredLinks {
         let trees = lockfile.buffers.trees.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let resolutions = lockfile.packages.items_resolution();
-        // The package whose `node_modules` a tree is, if its folder can be a link to it.
-        let local_package = |tree: &Tree| -> Option<usize> {
+        // The `file:` folder whose `node_modules` a tree is. It is a link only where a package
+        // ships the folder inside itself, which `folders` does not know: here two trees of one
+        // folder count as one directory.
+        let folder_package = |tree: &Tree| -> Option<usize> {
             let package_id =
                 *(lockfile.buffers.resolutions.as_slice()).get(tree.dependency_id as usize)?;
-            let resolution = resolutions.get(package_id as usize)?;
-            (!resolution.tag.can_enqueue_install_task()).then_some(package_id as usize)
+            let tag = resolutions.get(package_id as usize)?.tag;
+            (!tag.can_enqueue_install_task()
+                && !matches!(
+                    tag,
+                    resolution::Tag::Workspace | resolution::Tag::Symlink | resolution::Tag::Root
+                ))
+            .then_some(package_id as usize)
         };
 
-        let mut seen = Bitset::init_empty(resolutions.len()).unwrap_or_oom();
-        let mut seen_twice = Bitset::init_empty(resolutions.len()).unwrap_or_oom();
-        // The root's is tree 0.
-        if !resolutions.is_empty() {
-            seen.set(0);
-        }
-        for package_id in trees.iter().filter_map(&local_package) {
+        let mut seen: Option<(Bitset, Bitset)> = None;
+        for package_id in trees.iter().filter_map(&folder_package) {
+            let (seen, seen_twice) = seen.get_or_insert_with(|| {
+                (
+                    Bitset::init_empty(resolutions.len()).unwrap_or_oom(),
+                    Bitset::init_empty(resolutions.len()).unwrap_or_oom(),
+                )
+            });
             if seen.is_set(package_id) {
                 seen_twice.set(package_id);
             }
             seen.set(package_id);
         }
+        let seen_twice = seen.map(|(_, seen_twice)| seen_twice);
 
-        // A parent comes before its children.
+        // A parent comes before its children. The root's own tree stays with the pool: what a
+        // link to the project installs waits for the pool's packages (`DeferredEvent::Install`).
         let mut shared_trees = Bitset::init_empty(trees.len()).unwrap_or_oom();
         for tree in trees {
-            if (tree.parent != lockfile::tree::INVALID_ID
-                && (shared_trees.is_set(tree.parent as usize)
-                    || may_fold(tree.folder_name(dependencies, string_buf))))
-                || local_package(tree).is_some_and(|package_id| seen_twice.is_set(package_id))
+            if tree.parent == lockfile::tree::INVALID_ID {
+                continue;
+            }
+            if shared_trees.is_set(tree.parent as usize)
+                || may_fold(tree.folder_name(dependencies, string_buf))
+                || folders.is_shared(tree.id)
+                || folder_package(tree).is_some_and(|package_id| {
+                    (seen_twice.as_ref()).is_some_and(|twice| twice.is_set(package_id))
+                })
             {
                 shared_trees.set(tree.id as usize);
             }
@@ -1474,19 +1496,41 @@ impl<'a> PackageInstaller<'a> {
         if !self.skip_delete || tree.parent == lockfile::tree::INVALID_ID {
             return;
         }
-        let outlived = if lockfile.is_importer_tree_id(tree_id) {
-            // A workspace that is depended on under two names has two trees for one folder. What the
-            // second tree finds there is what this install linked for the first.
-            let workspace = lockfile.buffers.resolutions[tree.dependency_id as usize];
-            let is_first_tree = !self.workspaces_seen.contains(&workspace);
-            if is_first_tree {
-                self.workspaces_seen.push(workspace);
-            }
-            is_first_tree && bun_sys::directory_exists_at(Fd::cwd(), path).unwrap_or(true)
-        } else {
+        let outlived = if !lockfile.is_importer_tree_id(tree_id) {
             self.trees[tree.parent as usize].outlived_root
+        } else if self.folders.is_shared(tree_id) {
+            // Each tree of the folder gets the answer of the one that is reached first. What this
+            // install has linked there by then stays: see `has_linked`.
+            let folder = self.folders.first(tree_id);
+            let reached = (self.outlived_shared_folders.iter()).find(|(id, _)| *id == folder);
+            match reached {
+                Some(&(_, outlived)) => outlived,
+                None => {
+                    let outlived = bun_sys::directory_exists_at(Fd::cwd(), path).unwrap_or(true);
+                    self.outlived_shared_folders.push((folder, outlived));
+                    outlived
+                }
+            }
+        } else {
+            bun_sys::directory_exists_at(Fd::cwd(), path).unwrap_or(true)
         };
         self.trees[tree_id as usize].outlived_root = outlived;
+    }
+
+    /// Whether this install has linked `package_id` where the current tree places `dependency_id`,
+    /// for another tree with the same `node_modules`. It is then linked in place, as in a folder
+    /// that this install made. Removed first, it would take along what the other tree has nested
+    /// in it and the directory of a lifecycle script that runs there.
+    fn has_linked(&self, dependency_id: DependencyID, package_id: PackageID) -> bool {
+        let tree_id = self.current_tree_id;
+        self.folders.is_shared(tree_id) && {
+            let dependencies = self.lockfile().buffers.dependencies.as_slice();
+            let place = (
+                self.folders.first(tree_id),
+                dependencies[dependency_id as usize].name_hash,
+            );
+            self.linked_in_shared_folders.get(&place) == Some(&package_id)
+        }
     }
 
     /// Trees are visited in id order, so the parent's `replaced` is complete.
@@ -1865,7 +1909,7 @@ impl<'a> PackageInstaller<'a> {
 
                 // transitive folder dependencies are not hoisted
                 let is_transitive =
-                    !is_workspace && !self.lockfile().is_workspace_tree_id(self.current_tree_id);
+                    !is_workspace && !self.lockfile().is_importer_tree_id(self.current_tree_id);
                 if is_transitive
                     && (folder.len() >= self.folder_path_buf.len()
                         || (bin::bin_target_escapes_package_dir(folder)
@@ -2167,7 +2211,8 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
             let destination_dir = Dir::borrow(&destination_fd);
-            let skip_delete = self.skip_delete && !outlived_root;
+            let skip_delete =
+                (self.skip_delete && !outlived_root) || self.has_linked(dependency_id, package_id);
 
             let install_result: package_install::InstallResult = match resolution.tag {
                 resolution::Tag::Symlink | resolution::Tag::Workspace => {
@@ -2181,7 +2226,7 @@ impl<'a> PackageInstaller<'a> {
 
                     if resolution.tag == resolution::Tag::Root
                         || (resolution.tag == resolution::Tag::Folder
-                            && !self.lockfile().is_workspace_tree_id(self.current_tree_id))
+                            && !self.lockfile().is_importer_tree_id(self.current_tree_id))
                     {
                         // This is a transitive folder dependency. It is not hoisted.
                         //
@@ -2421,6 +2466,16 @@ impl<'a> PackageInstaller<'a> {
 
         match install_result {
             package_install::InstallResult::Success => {
+                // First: what follows can start the installs of another tree.
+                if self.folders.is_shared(self.current_tree_id) {
+                    let dependencies = self.lockfile().buffers.dependencies.as_slice();
+                    let place = (
+                        self.folders.first(self.current_tree_id),
+                        dependencies[dependency_id as usize].name_hash,
+                    );
+                    self.linked_in_shared_folders.insert(place, package_id);
+                }
+
                 let is_duplicate = self.successfully_installed.is_set(package_id as usize);
                 self.summary.success += (!is_duplicate) as u32;
                 self.successfully_installed.set(package_id as usize);

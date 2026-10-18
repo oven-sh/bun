@@ -5274,3 +5274,212 @@ test("a package in the older node_modules of a workspace is replaced, not added 
   await install();
   expect(await readdirSorted(installed)).toEqual([".bun-tag", "only-in-3.0.0.js", "package.json"]);
 });
+
+// A self-contained workspace links its siblings into its own node_modules, and a workspace can be
+// depended on under a second name. Two trees of bun.lock are then one node_modules on disk. Here
+// `packages/x/node_modules` is also `packages/z/node_modules/@p/x/node_modules`.
+describe("two trees of bun.lock that are one node_modules", () => {
+  async function bun(cwd: string, env: Record<string, string | undefined>, ...args: string[]) {
+    await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  async function install(cwd: string, env: Record<string, string | undefined>, ...args: string[]) {
+    const result = await bun(cwd, env, "install", ...args);
+    expect(result.stderr).not.toContain("error:");
+    expect(result.exitCode).toBe(0);
+    return result;
+  }
+  const version = (...path: string[]) => {
+    const packageJson = join(...path, "package.json");
+    return existsSync(packageJson) ? JSON.parse(readFileSync(packageJson, "utf8")).version : "not installed";
+  };
+  const removeNodeModules = (cwd: string, ...of: string[]) =>
+    Promise.all(of.map(folder => rm(join(cwd, folder, "node_modules"), { recursive: true, force: true })));
+
+  // x's own tree puts dragon-test-7-b@1.0.0 into packages/x/node_modules and nests its
+  // dragon-test-7-c@1.0.0 below it, because the root has 2.0.0 of both. z's tree puts
+  // dragon-test-7-b@1.0.0 there again with nothing below it: z's node_modules has that
+  // dragon-test-7-c@1.0.0.
+  const siblings = {
+    "package.json": JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: { packages: ["packages/*"], selfContained: ["packages/z"] },
+      dependencies: { "dragon-test-7-c": "2.0.0" },
+    }),
+    "packages/a/package.json": JSON.stringify({
+      name: "@p/a",
+      version: "1.0.0",
+      dependencies: { "dragon-test-7-b": "2.0.0" },
+    }),
+    "packages/x/package.json": JSON.stringify({
+      name: "@p/x",
+      version: "1.0.0",
+      dependencies: { "dragon-test-7-b": "1.0.0" },
+    }),
+    "packages/z/package.json": JSON.stringify({
+      name: "@p/z",
+      version: "1.0.0",
+      dependencies: { "@p/a": "workspace:*", "@p/x": "workspace:*" },
+    }),
+  };
+  const installedIn = (cwd: string) => ({
+    "root": version(cwd, "node_modules", "dragon-test-7-c"),
+    "x": version(cwd, "packages", "x", "node_modules", "dragon-test-7-b"),
+    "below x's": version(cwd, "packages", "x", "node_modules", "dragon-test-7-b", "node_modules", "dragon-test-7-c"),
+    "z": version(cwd, "packages", "z", "node_modules", "dragon-test-7-b"),
+    "z's": version(cwd, "packages", "z", "node_modules", "dragon-test-7-c"),
+  });
+  const everyVersion = { "root": "2.0.0", "x": "1.0.0", "below x's": "1.0.0", "z": "2.0.0", "z's": "1.0.0" };
+
+  type Reinstall = (cwd: string, env: Record<string, string>) => Promise<unknown>;
+  const reinstalls: Record<string, Reinstall> = {
+    "a first install": async () => {},
+    "--force": (cwd, env) => install(cwd, env, "--force"),
+    "--force, no node_modules left": async (cwd, env) => {
+      await removeNodeModules(cwd, "", "packages/a", "packages/x", "packages/z");
+      await install(cwd, env, "--force");
+    },
+    "--force, the project's node_modules removed": async (cwd, env) => {
+      await removeNodeModules(cwd, "");
+      await install(cwd, env, "--force");
+    },
+    "the project's node_modules removed": async (cwd, env) => {
+      await removeNodeModules(cwd, "");
+      await install(cwd, env);
+    },
+    "a switch from the isolated linker": async (cwd, env) => {
+      await removeNodeModules(cwd, "", "packages/a", "packages/x", "packages/z");
+      await verdaccio.writeBunfig(cwd, { linker: "isolated" });
+      await install(cwd, env);
+      await verdaccio.writeBunfig(cwd, { linker: "hoisted" });
+      await install(cwd, env);
+    },
+    // Both trees wait for the same download, and both link the package when it is there.
+    "a package that is downloaded again": async (cwd, env) => {
+      await rm(join(cwd, "packages", "x", "node_modules", "dragon-test-7-b"), { recursive: true });
+      const cached = (await readdirSorted(env.BUN_INSTALL_CACHE_DIR)).filter(entry =>
+        entry.startsWith("dragon-test-7-b@1.0.0@"),
+      );
+      expect(cached).toHaveLength(1);
+      await rm(join(env.BUN_INSTALL_CACHE_DIR, cached[0]), { recursive: true });
+      await install(cwd, env);
+    },
+  };
+
+  test.concurrent.each(Object.keys(reinstalls))("each tree keeps what the other has put there: %s", async name => {
+    using ctx = await setupTest();
+    const { packageDir: cwd, env } = ctx;
+    await Promise.all(Object.entries(siblings).map(([path, json]) => write(join(cwd, path), json)));
+    await install(cwd, env);
+    expect(installedIn(cwd)).toEqual(everyVersion);
+
+    await reinstalls[name](cwd, env);
+    expect(installedIn(cwd)).toEqual(everyVersion);
+  });
+
+  test.concurrent("--force still replaces what an older install has left there", async () => {
+    using ctx = await setupTest();
+    const { packageDir: cwd, env } = ctx;
+    await Promise.all(Object.entries(siblings).map(([path, json]) => write(join(cwd, path), json)));
+    await install(cwd, env);
+    const installed = join(cwd, "packages", "x", "node_modules", "dragon-test-7-b");
+    await write(join(installed, "left-by-an-older-install.js"), "");
+
+    await install(cwd, env, "--force");
+    expect(await readdirSorted(installed)).toEqual(["index.js", "node_modules", "package.json"]);
+    expect(installedIn(cwd)).toEqual(everyVersion);
+  });
+
+  // Only x's own tree puts dragon-test-7-b@1.0.0 into packages/x/node_modules, and only z's tree
+  // puts no-deps@1.0.0 there. With the project's node_modules gone, the install links every
+  // package again, and takes every folder that it finds for one of an older install.
+  test.concurrent("each tree replaces its package in the older node_modules of a workspace", async () => {
+    using ctx = await setupTest();
+    const { packageDir: cwd, env } = ctx;
+    await Promise.all([
+      write(
+        join(cwd, "package.json"),
+        JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces: { packages: ["packages/*"], selfContained: ["packages/z"] },
+          dependencies: { "no-deps": "1.0.0", "dragon-test-7-b": "2.0.0" },
+        }),
+      ),
+      write(
+        join(cwd, "packages", "a", "package.json"),
+        JSON.stringify({ name: "@p/a", version: "1.0.0", dependencies: { "no-deps": "2.0.0" } }),
+      ),
+      write(
+        join(cwd, "packages", "x", "package.json"),
+        JSON.stringify({
+          name: "@p/x",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0", "dragon-test-7-b": "1.0.0" },
+        }),
+      ),
+      write(join(cwd, "packages", "z", "package.json"), siblings["packages/z/package.json"]),
+    ]);
+    const inX = join(cwd, "packages", "x", "node_modules");
+    const installedInX = async () => ({
+      "node_modules": await readdirSorted(inX),
+      "dragon-test-7-b": [version(inX, "dragon-test-7-b"), ...(await readdirSorted(join(inX, "dragon-test-7-b")))],
+      "no-deps": [version(inX, "no-deps"), ...(await readdirSorted(join(inX, "no-deps")))],
+    });
+    const asPublished = {
+      "node_modules": ["dragon-test-7-b", "no-deps"],
+      "dragon-test-7-b": ["1.0.0", "index.js", "package.json"],
+      "no-deps": ["1.0.0", "index.js", "package.json"],
+    };
+
+    await install(cwd, env);
+    expect(await installedInX()).toEqual(asPublished);
+
+    await Promise.all(
+      ["dragon-test-7-b", "no-deps"].map(name => write(join(inX, name, "left-by-an-older-install.js"), "")),
+    );
+    await removeNodeModules(cwd, "");
+    await install(cwd, env);
+    expect(await installedInX()).toEqual(asPublished);
+  });
+
+  // The second tree of `inner` is no tree of a package from the registry: `file:` is a folder of
+  // the project there too.
+  test.concurrent.each([
+    [
+      "a second name",
+      { workspaces: ["packages/*"] },
+      { name: "other", version: "1.0.0", dependencies: { "inner-again": "workspace:inner@*" } },
+    ],
+    [
+      "a link in a self-contained workspace",
+      { workspaces: { packages: ["packages/*"], selfContained: ["packages/other"] } },
+      { name: "other", version: "1.0.0", dependencies: { inner: "workspace:*" } },
+    ],
+  ])("a workspace with %s keeps its file: dependency", async (_, rootJson, other) => {
+    using dir = tempDir("workspace-file-dependency-two-trees", {
+      "package.json": JSON.stringify({ name: "root", private: true, ...rootJson }),
+      "packages/inner/package.json": JSON.stringify({
+        name: "inner",
+        version: "1.0.0",
+        dependencies: { vendored: "file:./vendored" },
+      }),
+      "packages/inner/vendored/package.json": JSON.stringify({ name: "vendored", version: "1.0.0" }),
+      "packages/other/package.json": JSON.stringify(other),
+    });
+    const cwd = String(dir);
+    const env = { ...baseEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") };
+    const installed = () =>
+      file(join(cwd, "packages", "inner", "node_modules", "vendored", "package.json"))
+        .json()
+        .catch(() => "not installed");
+
+    await install(cwd, env, "--linker=hoisted");
+    expect(await installed()).toEqual({ name: "vendored", version: "1.0.0" });
+
+    await install(cwd, env, "--linker=hoisted", "--force");
+    expect(await installed()).toEqual({ name: "vendored", version: "1.0.0" });
+  });
+});

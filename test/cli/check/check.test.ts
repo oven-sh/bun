@@ -667,6 +667,108 @@ module.exports = { scope };
     }
   });
 
+  // `a.ts`, `b.ts` and `c.ts` import each other, and the type of `routes` depends on itself. What tsc reports depends on where
+  // it enters that cycle: here from `0first.ts`, which doesn't import those files. It gets there through a declaration that
+  // a file outside the import cycle makes visible to everyone.
+  describe("reports a circular type the same way on every thread count when the first file reaches it through", () => {
+    const fromC = `import type { routes } from "./c";\n`;
+    const inGlobal = (declaration: string) => ({ "g.ts": `${fromC}declare global { ${declaration} }\nexport {};\n` });
+    const never = (value: string) => `const w: never = ${value};\nexport {};\n`;
+    const remote = `typeof import("./c").routes`;
+    test.concurrent.each([
+      ["a global var", inGlobal("var G: typeof routes;"), never("G"), {}],
+      ["a global const", inGlobal("const G: typeof routes;"), never("G"), {}],
+      ["a global function", inGlobal("function G(): typeof routes;"), never("G()"), {}],
+      ["a global class", inGlobal("class G { r: typeof routes; }"), never("new G().r"), {}],
+      ["a global namespace", inGlobal("namespace N { var G: typeof routes; }"), never("N.G"), {}],
+      ["a global interface", inGlobal("interface GI { r: typeof routes; }"), never(`null! as GI["r"]`), {}],
+      ["a global type alias", inGlobal("type GT = typeof routes;"), never("null! as GT"), {}],
+      ["a member added to Array", inGlobal("interface Array<T> { r: typeof routes; }"), never("[1].r"), {}],
+      ["globalThis", inGlobal("var G: typeof routes;"), never("globalThis.G"), {}],
+      [
+        "a global two imports away",
+        {
+          "h.ts": `export type { routes } from "./c";\n`,
+          "g.ts": `import type { routes } from "./h";\ndeclare global { var G: typeof routes; }\nexport {};\n`,
+        },
+        never("G"),
+        {},
+      ],
+      [
+        "an ambient module",
+        { "g.d.ts": `declare module "virtual" { export const G: ${remote}; }\n` },
+        `import { G } from "virtual";\nconst w: never = G;\n`,
+        {},
+      ],
+      [
+        "a wildcard module",
+        { "g.d.ts": `declare module "*.tbl" { const G: ${remote}; export default G; }\n` },
+        `import G from "x.tbl";\nconst w: never = G;\n`,
+        {},
+      ],
+      [
+        "a module augmentation",
+        {
+          "0p.ts": `export interface P { id: string }\n`,
+          "g.ts": `${fromC}declare module "./0p" { interface P { r: typeof routes; } }\n`,
+        },
+        `import type { P } from "./0p";\nconst w: never = null! as P["r"];\n`,
+        {},
+      ],
+      ["a declaration file that is a script", { "g.d.ts": `declare var G: ${remote};\n` }, never("G"), {}],
+      ["a TypeScript script", { "g.ts": `var G: ${remote} = null!;\n` }, never("G"), {}],
+      [
+        "a JavaScript script",
+        { "g.js": `/** @type {${remote}} */\nvar G = /** @type {any} */ (null);\n` },
+        never("G"),
+        { allowJs: true, checkJs: true },
+      ],
+      [
+        "a UMD global",
+        { "g.d.ts": `${fromC}export declare const G: typeof routes;\nexport as namespace U;\n` },
+        never("null! as typeof U.G"),
+        {},
+      ],
+      [
+        "a package in `types`",
+        { "node_modules/@types/gg/index.d.ts": `declare var G: typeof import("../../../c").routes;\n` },
+        never("G"),
+        { types: ["gg"] },
+      ],
+    ] as const)("%s", async (_, files, first, options) => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, ...options } }),
+        "0first.ts": first,
+        "a.ts": `${fromC}export interface Page { id: string; title?: string }
+export interface Link { id: string; to?: keyof typeof routes }
+export type Entry = Page | Link;
+`,
+        "b.ts": `import type { Entry } from "./a";
+declare const other: { id: string };
+type Cond<X> = X extends { id: string } ? Partial<X> : never;
+export function load<T extends Entry>(x?: T & Cond<T>) { return x ?? other; }
+`,
+        "c.ts": `import { load } from "./b";
+declare const given: any;
+export const routes = { home: load(given) };
+const whole: never = routes;
+`,
+        ...files,
+      });
+      const threads = [1, 2, 2, 2, 8, 8, 8];
+      for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+        const [inFirst, ...others] = stdout.split("\n").filter(line => !line.includes("TS2686"));
+        expect(inFirst).toEndWith("error TS2322: Type '{ home: { id: string; }; }' is not assignable to type 'never'.");
+        expect(others).toEqual([
+          "a.ts(3,37): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.",
+          "c.ts(3,14): error TS7022: 'routes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
+          "c.ts(4,7): error TS2322: Type 'any' is not assignable to type 'never'.",
+        ]);
+        expect(exitCode).toBe(1);
+      }
+    });
+  });
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

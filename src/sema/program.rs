@@ -220,7 +220,9 @@ pub struct Module<'s> {
     pub is_leaf: bool,
     /// It adds no globally visible declarations, so it `is_leaf` if no file refers to it.
     adds_nothing: bool,
-    /// True for a module that declares nothing global: only files that import it can refer to its declarations.
+    /// True if only files that import this module can refer to its declarations. Neither the module nor any file that
+    /// imports it, directly or through other files, is a script or declares a global, an ambient module, a module
+    /// augmentation or a UMD global.
     pub(crate) is_closed: bool,
     /// Whether it contains a conditional or a mapped type node.
     has_conditional_or_mapped_type: bool,
@@ -5950,6 +5952,15 @@ impl<'s> Files<'s> {
         let beside: [&(dyn Fn() + Sync); 2] = [&find_components, &end_resolution];
         let declares_for_all = |file: &FileId| notes[file.idx()].declares_for_all;
         let declaring: Vec<FileId> = order.iter().copied().filter(declares_for_all).collect();
+        // A declaration that every file can see can refer to anything its file imports, so every file can reach those
+        // files too.
+        let (mut is_exposed, mut pending) = (vec![false; files.modules.len()], declaring.clone());
+        while let Some(file) = pending.pop() {
+            if !std::mem::replace(&mut is_exposed[file.idx()], true) {
+                files.modules[file.idx()].is_closed = false;
+                pending.extend(&notes[file.idx()].targets);
+            }
+        }
         host.parallel_while(beside.len(), &|at| beside[at](), &mut || {
             files.merge(host, &declaring);
         });

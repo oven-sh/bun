@@ -616,6 +616,23 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `instantiateTypeWithAlias`
     pub fn instantiate(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
+        self.instantiate_as::<false>(ty, mapper)
+    }
+
+    /// Same as `instantiate`, but caches the result in `Program::instantiations` if it's slow to compute again. Use it
+    /// where tsgo caches the result permanently: the type of an instantiated symbol (`links.resolvedType`) and a type
+    /// alias instantiation (`links.instantiations`). A program can re-read more of these than `recent_instantiations`
+    /// holds, and from other files, which another checker may check.
+    fn instantiate_and_cache(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
+        self.instantiate_as::<true>(ty, mapper)
+    }
+
+    #[inline(always)]
+    fn instantiate_as<const IS_CACHED_BY_TSGO: bool>(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+    ) -> TypeId {
         if mapper == MapperId::IDENTITY {
             return ty;
         }
@@ -653,7 +670,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId(known);
         }
         self.instantiation_count += 1;
-        self.instantiate_cached(ty, mapper, serial)
+        self.instantiate_cached(ty, mapper, serial, IS_CACHED_BY_TSGO)
     }
 
     /// `instantiate(ty, mapper)`, if nothing has to be computed for it.
@@ -690,7 +707,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId(known);
         }
         let (count, computed) = (self.instantiation_count, self.instantiations_computed);
-        let ty = self.instantiate(declared, mapper);
+        let ty = self.instantiate_and_cache(declared, mapper);
         if self.instantiations_computed == computed && self.instantiation_count < 5_000_000 {
             self.instantiation_count = count;
         }
@@ -777,16 +794,22 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return known;
         }
-        self.instantiate(declared, mapper)
+        self.instantiate_and_cache(declared, mapper)
     }
 
     /// `instantiate` for a type that mentions type parameters, is not one itself and is not in the
     /// cache of recent results.
     /// `serial`: of the activation of `mapper`, or 0 if it is not active.
     #[inline(never)]
-    fn instantiate_cached(&mut self, ty: TypeId, mapper: MapperId, serial: u32) -> TypeId {
+    fn instantiate_cached(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+        serial: u32,
+        is_cached_by_tsgo: bool,
+    ) -> TypeId {
         let mut absent = None;
-        let is_kept_by_its_own_key = self.is_instantiation_kept_by_its_own_key(ty);
+        let skips_table = self.skips_instantiations_table(ty, is_cached_by_tsgo);
         if let Some(innermost) = self.index_infos_in_instantiation.last() {
             if let Some(&(known, is_marked)) = innermost.instantiations.get(&(ty, mapper)) {
                 // A cache hit records the same marks as recomputing it would.
@@ -795,7 +818,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 return known;
             }
-        } else if !is_kept_by_its_own_key {
+        } else if !skips_table {
             match self.p.instantiations.get_or_hash(&self.task, &(ty, mapper)) {
                 Ok(known) => {
                     self.recent_instantiations
@@ -871,7 +894,7 @@ impl<'p, 's> Checker<'p, 's> {
                     false => stored,
                 };
                 match absent {
-                    _ if is_kept_by_its_own_key => {}
+                    _ if skips_table => {}
                     Some(spread) => table.rewrite_absent(&self.task, spread, key, result, stored),
                     None => table.rewrite(&self.task, key, result, stored),
                 }
@@ -906,16 +929,22 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether `Program::instantiations` has nothing about `ty`. A union is put together again from its instantiated
-    /// members, which takes long and is asked for again and again, and a synthesized object type is copied. For any
-    /// other type the parts are instantiated and what has them is looked up, as in `getObjectTypeInstantiation` and
-    /// `getConditionalTypeInstantiation`: that lookup is the only one.
+    /// Returns true if instantiations of `ty` skip `Program::instantiations`.
+    ///
+    /// - A reference, object type, function type or conditional type always skips it. Instantiating one maps its type
+    ///   arguments and looks up the type that has them, as `getObjectTypeInstantiation` and
+    ///   `getConditionalTypeInstantiation` do. A second cache in front of that lookup costs more than it saves.
+    /// - A union never skips it: rebuilding one is slow and the same unions are requested often. A synthesized object
+    ///   type is copied, so it doesn't skip it either.
+    /// - Anything else skips it unless `is_cached_by_tsgo`: see `instantiate_and_cache`.
     #[inline]
-    fn is_instantiation_kept_by_its_own_key(&self, ty: TypeId) -> bool {
-        !matches!(
-            self.data(ty),
-            TypeData::Union(_) | TypeData::Synth(_) | TypeData::ReverseMapped { .. }
-        )
+    fn skips_instantiations_table(&self, ty: TypeId, is_cached_by_tsgo: bool) -> bool {
+        match self.data(ty) {
+            TypeData::Ref { .. } | TypeData::Fns { .. } | TypeData::Cond { .. } => true,
+            TypeData::Anon { origin, .. } if !matches!(origin, Origin::Mapped(..)) => true,
+            TypeData::Union(_) | TypeData::Synth(_) | TypeData::ReverseMapped { .. } => false,
+            _ => !is_cached_by_tsgo,
+        }
     }
 
     /// Whether `getOuterTypeParameters` of the object literal that `written` is a property of

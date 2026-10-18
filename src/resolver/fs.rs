@@ -610,6 +610,7 @@ impl DirEntry {
 
     /// Looks up a cached entry by name. Takes a `&'static [u8]` that is
     /// already lowercase, so no per-call lowercasing buffer is needed.
+    #[inline]
     pub(crate) fn get_comptime_query<'a>(
         &'a self,
         query_lower: &'static [u8],
@@ -623,6 +624,7 @@ impl DirEntry {
     }
 
     /// True if a cached entry exists for the given already-lowercase name.
+    #[inline]
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
         Self::debug_assert_entries_mutex_held();
         self.data.contains_key(query_lower)

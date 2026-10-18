@@ -42,11 +42,13 @@ Bun determines which version to install as follows:
 2. Otherwise, use `latest`.
 3. Look for a `bun.lock` file in the [project root](#project-root). If the lockfile has a version of `"foo"` that satisfies the range, use that version.
 
+If a `package.json` lists `"foo"` only with values that Bun cannot use as a version, Bun looks further up, and then for a workspace package of that name. If it finds neither, the import fails. It does not fall back to `latest`.
+
 The dependencies of a package that comes from the lockfile also load the versions in the lockfile.
 
-A `workspace:`, `file:`, or `link:` dependency loads from its folder on disk, and so does a workspace package that a range matches. Nothing is copied. A tarball (a `file:` path or a URL) is extracted into the cache.
+A `workspace:`, `file:`, or `link:` dependency loads from its folder on disk. So does a workspace package that a range matches, and one that the `package.json` of the project root lists by a tag such as `latest`. A `catalog:` dependency counts as the version that the catalog has for it. Nothing is copied. A tarball (a `file:` path or a URL) is extracted into the cache.
 
-Without a lockfile, Bun reads `overrides`, `resolutions`, `catalog`, `catalogs`, and `workspaces` from the `package.json` of the project root. A peer dependency of an auto-installed package loads the version that this `package.json` lists, if it lists one.
+Without a lockfile, Bun reads `overrides`, `resolutions`, `catalog`, `catalogs`, and `workspaces` from the `package.json` of the project root. A peer dependency of an auto-installed package that no resolved package satisfies loads what this `package.json` lists for it, if it lists it: a version, or a folder as above.
 
 ---
 

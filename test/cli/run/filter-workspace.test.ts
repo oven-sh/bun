@@ -986,6 +986,68 @@ describe("selectors", () => {
     });
   });
 
+  // The dependencies of a package.json come from its rows, wherever its folder is and whatever
+  // the version says.
+  test("'foo...' follows devDependencies of a workspace that is below a node_modules folder", () => {
+    using dir = tempDir("filter-below-node-modules", {
+      node_modules: {
+        ws: {
+          packages: {
+            app: {
+              "package.json": JSON.stringify({
+                name: "app",
+                devDependencies: { devlib: "workspace:*" },
+                scripts: { present: "echo out-app" },
+              }),
+            },
+            devlib: {
+              "package.json": JSON.stringify({ name: "devlib", scripts: { present: "echo out-devlib" } }),
+            },
+          },
+          "package.json": JSON.stringify({
+            name: "ws",
+            workspaces: ["packages/*"],
+            scripts: { present: "echo out-root" },
+          }),
+        },
+      },
+    });
+    runInCwdSuccess({
+      cwd: join(String(dir), "node_modules", "ws"),
+      pattern: "app...",
+      target_pattern: [/out-app/, /out-devlib/],
+      antipattern: [/out-root/],
+    });
+  });
+
+  test("'foo...' follows a dependency whose version is not one that bun can read", () => {
+    using dir = tempDir("filter-unreadable-version", {
+      packages: {
+        app: {
+          "package.json": JSON.stringify({
+            name: "app",
+            dependencies: { lib: "htps://example.com/lib.tgz" },
+            scripts: { present: "echo out-app" },
+          }),
+        },
+        lib: {
+          "package.json": JSON.stringify({ name: "lib", scripts: { present: "echo out-lib" } }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+        scripts: { present: "echo out-root" },
+      }),
+    });
+    runInCwdSuccess({
+      cwd: String(dir),
+      pattern: "app...",
+      target_pattern: [/out-app/, /out-lib/],
+      antipattern: [/out-root/],
+    });
+  });
+
   test("a negated relation subtracts the whole group", () => {
     runInCwdSuccess({
       cwd: graph_root,

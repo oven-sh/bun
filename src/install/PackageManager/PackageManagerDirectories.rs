@@ -426,6 +426,21 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> sys::Maybe<Dir> {
     }
 }
 
+/// The directory that `ensure_cache_directory` opens if it can make it.
+pub(crate) fn planned_cache_directory_path(this: &PackageManager) -> Option<Vec<u8>> {
+    if !this.options.enable.contains(Enable::CACHE) {
+        let top_level_dir = FileSystem::instance().top_level_dir();
+        let path = path::resolve_path::join_abs_string::<path::platform::Auto>(
+            top_level_dir,
+            &[b"node_modules", b".cache"],
+        );
+        return Some(path.to_vec());
+    }
+    fetch_cache_directory_path(this.env_mut(), Some(this.options.cache_directory))
+        .ok()
+        .map(|dir| dir.path)
+}
+
 pub struct CacheDir {
     pub path: Vec<u8>,
     /// Nothing names a cache directory: `path` is below the working directory, whoever owns that.

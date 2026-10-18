@@ -94,7 +94,7 @@ pub struct InitOptions {
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
+    /// `--install=...`
     pub global_cache: bun_options_types::global_cache::GlobalCache,
     pub smol: bool,
     pub eval_mode: bool,

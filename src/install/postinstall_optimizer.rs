@@ -165,48 +165,21 @@ impl List {
             .unwrap_or(false)
     }
 
-    pub(crate) fn should_ignore_lifecycle_scripts(
-        &self,
-        pkg_info: &PkgInfo<'_>,
-        resolutions: &[PackageID],
-        metas: &[Meta],
-        target_cpu: npm::Architecture,
-        target_os: npm::OperatingSystem,
-        target_libc: npm::Libc,
-    ) -> bool {
+    /// What stands in for the lifecycle scripts of a package. `None`: nothing does, they run.
+    /// `Ignore`: they never run. `NativeBinlink`: they do not run if the bin linker links the
+    /// bins of the package into its platform package. Only the linker knows that: a platform
+    /// package in the lockfile may be left out of the install, fail to download, or not have
+    /// the bin. In each of those cases the package needs its own scripts.
+    pub(crate) fn script_mode(&self, pkg_info: &PkgInfo<'_>) -> Option<PostinstallOptimizer> {
         // The feature flag defaults to false; see note on the binlinker flag above.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS
             .get()
             .unwrap_or(false)
         {
-            return false;
+            return None;
         }
 
-        let Some(mode) = self.get(pkg_info) else {
-            return false;
-        };
-
-        match mode {
-            PostinstallOptimizer::NativeBinlink => {
-                // Not a plain name-hash lookup: package versions without a
-                // platform optionalDependency (e.g. old esbuild) must still run
-                // their postinstall. See test/integration/esbuild/esbuild.test.ts.
-                //
-                // Tree position doesn't matter here; the `.bin` linker redirects
-                // nested copies to the platform package as well (see
-                // `find_native_binlink_target_tree`).
-                PostinstallOptimizer::get_native_binlink_replacement_package_id(
-                    resolutions,
-                    metas,
-                    target_cpu,
-                    target_os,
-                    target_libc,
-                )
-                .is_some()
-            }
-
-            PostinstallOptimizer::Ignore => true,
-        }
+        self.get(pkg_info)
     }
 
     fn from_default(pkg_info: &PkgInfo<'_>) -> Option<PostinstallOptimizer> {

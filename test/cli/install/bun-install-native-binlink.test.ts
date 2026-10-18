@@ -544,6 +544,164 @@ describe.concurrent("native binlink optimization", () => {
       ).toEqual({ hoisted: true, nested: true });
     });
   });
+
+  // The platform package stands in for the lifecycle scripts of a nativeDependencies package only
+  // when the bins are linked into it. In every other case the package needs its own scripts. The
+  // postinstall of esbuild, for example, fetches the binary when the platform package is missing.
+  describe("runs the lifecycle scripts when the bins are not linked into the platform package", () => {
+    async function setup(opts: {
+      linker: "hoisted" | "isolated";
+      name: string;
+      version: string;
+      registry?: TestRegistry;
+      extraEnv?: object;
+    }) {
+      const registry = opts.registry ?? verdaccio;
+      const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: opts.linker } });
+      const env: NodeJS.Dict<string> = { ...bunEnv, ...opts.extraEnv };
+      env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+      env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "test-app",
+          version: "1.0.0",
+          dependencies: { [opts.name]: opts.version },
+          nativeDependencies: [opts.name],
+          trustedDependencies: [opts.name],
+        }),
+      );
+
+      async function install(...args: string[]) {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", ...args],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      }
+
+      // `bin` is what the command in `node_modules/.bin` prints.
+      async function installed(platformPackage: string, binName?: string) {
+        const nodeModules = join(packageDir, "node_modules");
+        const pkg = realpathSync(join(nodeModules, opts.name));
+        let bin: string | undefined;
+        if (binName) {
+          await using proc = spawn({
+            cmd: [binEntry(join(nodeModules, ".bin"), binName)],
+            cwd: packageDir,
+            stdout: "pipe",
+            stdin: "ignore",
+            stderr: "inherit",
+            env,
+          });
+          [bin] = await Promise.all([proc.stdout.text(), proc.exited]);
+        }
+        return {
+          // Both linkers put a dependency beside the package that depends on it.
+          platformPackage: existsSync(join(pkg, "..", platformPackage, "package.json")),
+          postinstallRan: existsSync(join(pkg, "postinstall-ran")),
+          bin: bin?.trim(),
+        };
+      }
+
+      return { packageDir, install, installed };
+    }
+
+    for (const linker of ["hoisted", "isolated"] as const) {
+      test(`--omit=optional, then --offline, leave the platform package out (${linker})`, async () => {
+        const { packageDir, install, installed } = await setup({
+          linker,
+          name: "test-postinstall-skip",
+          version: "2.0.0",
+        });
+        const expected = { platformPackage: false, postinstallRan: true, bin: "shim v2.0.0" };
+
+        await install("--omit=optional");
+        expect(await installed("test-postinstall-skip-native", "skip-test-cmd")).toEqual(expected);
+
+        // The cache does not have the platform package, so `--offline` cannot place it.
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        await install("--offline");
+        expect(await installed("test-postinstall-skip-native", "skip-test-cmd")).toEqual(expected);
+      });
+
+      test(`the platform package fails to download (${linker})`, async () => {
+        using registry = new TestRegistry({
+          intercept: request =>
+            request.url.endsWith("/test-postinstall-skip-native-2.0.0.tgz")
+              ? new Response("not found", { status: 404 })
+              : undefined,
+        }).start();
+        const { install, installed } = await setup({
+          linker,
+          registry,
+          name: "test-postinstall-skip",
+          version: "2.0.0",
+        });
+
+        await install();
+        expect(await installed("test-postinstall-skip-native", "skip-test-cmd")).toEqual({
+          platformPackage: false,
+          postinstallRan: true,
+          bin: "shim v2.0.0",
+        });
+      });
+
+      test(`the platform package does not have the bin (${linker})`, async () => {
+        const { install, installed } = await setup({
+          linker,
+          name: "test-native-binlink-scripts",
+          version: "1.0.0",
+        });
+
+        await install();
+        expect(await installed("test-native-binlink-target", "scripts-test-cmd")).toEqual({
+          platformPackage: true,
+          postinstallRan: true,
+          bin: "shim v1.0.0",
+        });
+      });
+
+      // Without a bin, no link shows that the platform package is usable.
+      test(`the package has no bin (${linker})`, async () => {
+        const { install, installed } = await setup({
+          linker,
+          name: "test-native-binlink-scripts",
+          version: "2.0.0",
+        });
+
+        await install();
+        expect(await installed("test-native-binlink-target")).toEqual({
+          platformPackage: true,
+          postinstallRan: true,
+          bin: undefined,
+        });
+      });
+
+      test(`BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER=1 (${linker})`, async () => {
+        const { install, installed } = await setup({
+          linker,
+          name: "test-postinstall-skip",
+          version: "2.0.0",
+          extraEnv: { BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER: "1" },
+        });
+
+        await install();
+        expect(await installed("test-postinstall-skip-native", "skip-test-cmd")).toEqual({
+          platformPackage: true,
+          postinstallRan: true,
+          bin: "shim v2.0.0",
+        });
+      });
+    }
+  });
 });
 
 // Regression for `bunx @anthropic-ai/claude-code` silently exiting / the

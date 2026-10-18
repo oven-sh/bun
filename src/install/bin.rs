@@ -948,13 +948,14 @@ impl<'a> Linker<'a> {
         })
     }
 
+    /// Returns true if the link or shim at `abs_dest` is in place.
     fn link_bin_or_create_shim(
         &mut self,
         abs_target: &ZStr,
         abs_dest: &ZStr,
         global: bool,
         target_needs_resolved_containment_check: bool,
-    ) {
+    ) -> bool {
         debug_assert!(path::is_absolute(abs_target.as_bytes()));
         debug_assert!(path::is_absolute(abs_dest.as_bytes()));
         debug_assert!(abs_target.as_bytes()[abs_target.as_bytes().len() - 1] != SEP);
@@ -964,7 +965,7 @@ impl<'a> Linker<'a> {
             // Skip seen destinations for this tree
             // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
             if seen.contains_key(abs_dest.as_bytes()) {
-                return;
+                return false;
             }
         }
 
@@ -973,18 +974,18 @@ impl<'a> Linker<'a> {
         #[cfg(not(windows))]
         let Ok(target_stat) = sys::stat(abs_target) else {
             self.skipped_due_to_missing_bin = true;
-            return;
+            return false;
         };
         #[cfg(windows)]
         if !sys::exists(abs_target) {
             self.skipped_due_to_missing_bin = true;
-            return;
+            return false;
         }
 
         if target_needs_resolved_containment_check {
             #[cfg(not(windows))]
             if self.resolved_target_parent_escapes_package_dir(abs_target) {
-                return;
+                return false;
             }
         }
 
@@ -1019,7 +1020,7 @@ impl<'a> Linker<'a> {
             if let Some(seen) = self.seen.as_deref_mut() {
                 seen.remove(abs_dest.as_bytes());
             }
-            return;
+            return false;
         }
 
         #[cfg(not(windows))]
@@ -1030,6 +1031,7 @@ impl<'a> Linker<'a> {
             }
             Self::try_normalize_shebang(abs_target, target_stat.st_size as u64);
         }
+        true
     }
 
     #[cfg(not(windows))]
@@ -1670,13 +1672,15 @@ impl<'a> Linker<'a> {
 
     // target: what the symlink points to
     // destination: where the symlink exists on disk
-    pub fn link(&mut self, global: bool) {
+    /// Returns true if at least one bin is linked. A bin whose name another package has taken
+    /// in this `.bin` is not linked, and sets neither `err` nor `skipped_due_to_missing_bin`.
+    pub fn link(&mut self, global: bool) -> bool {
         let (Some(package_dir_len), Some(dest_dir_len)) = (
             self.build_target_package_dir(),
             self.build_destination_dir(global),
         ) else {
             self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-            return;
+            return false;
         };
         let is_redirect = self.is_native_binlink_redirect();
         let (bin, string_buf, extern_string_buf) =
@@ -1688,6 +1692,7 @@ impl<'a> Linker<'a> {
         let mut resolved_target_pool_buf = path::path_buffer_pool::get();
         let resolved_target_buf = resolved_target_pool_buf.as_mut_slice();
 
+        let mut linked = false;
         // Returns false if the name doesn't fit.
         let mut link_named = |this: &mut Self, name: &[u8], target: &[u8]| -> bool {
             if name.is_empty() || target.is_empty() || bin_target_escapes_package_dir(target) {
@@ -1706,7 +1711,7 @@ impl<'a> Linker<'a> {
                 this.skipped_due_to_missing_bin = true;
                 return true;
             };
-            this.link_bin_or_create_shim(
+            linked |= this.link_bin_or_create_shim(
                 abs_target,
                 abs_dest,
                 global,
@@ -1732,14 +1737,14 @@ impl<'a> Linker<'a> {
                     let name = normalized_bin_name(extern_string_buf[i as usize].slice(string_buf));
                     let target = extern_string_buf[(i + 1) as usize].slice(string_buf);
                     if !link_named(self, name, target) {
-                        return;
+                        return linked;
                     }
                 }
             }
             Tag::Dir => {
                 let target = bin.dir().slice(string_buf);
                 if target.is_empty() || bin_target_escapes_package_dir(target) {
-                    return;
+                    return false;
                 }
                 let Some(abs_target_dir) = join_z_checked::<PlatformAuto>(
                     &self.abs_target_buf[0..package_dir_len],
@@ -1747,7 +1752,7 @@ impl<'a> Linker<'a> {
                     &[target],
                 ) else {
                     self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                    return;
+                    return false;
                 };
 
                 let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
@@ -1755,11 +1760,11 @@ impl<'a> Linker<'a> {
                     // https://github.com/npm/cli/blob/366c07e2f3cb9d1c6ddbd03e624a4d73fbd2676e/node_modules/bin-links/lib/link-gently.js#L43
                     Err(err) if err.get_errno() == sys::Errno::ENOENT => {
                         self.skipped_due_to_missing_bin = true;
-                        return;
+                        return false;
                     }
                     Err(err) => {
                         self.err = Some(err.into());
-                        return;
+                        return false;
                     }
                 };
 
@@ -1779,12 +1784,13 @@ impl<'a> Linker<'a> {
                         continue;
                     };
                     let Some(abs_dest) = self.append_dest(dest_dir_len, entry_name) else {
-                        return;
+                        return linked;
                     };
-                    self.link_bin_or_create_shim(abs_target, abs_dest, global, true);
+                    linked |= self.link_bin_or_create_shim(abs_target, abs_dest, global, true);
                 }
             }
         }
+        linked
     }
 
     pub fn unlink(&mut self, global: bool) {

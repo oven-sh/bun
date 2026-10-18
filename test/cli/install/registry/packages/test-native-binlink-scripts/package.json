@@ -1,0 +1,48 @@
+{
+  "_id": "test-native-binlink-scripts",
+  "name": "test-native-binlink-scripts",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "test-native-binlink-scripts",
+      "version": "1.0.0",
+      "bin": {
+        "scripts-test-cmd": "./bin/cmd.js"
+      },
+      "scripts": {
+        "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
+      },
+      "optionalDependencies": {
+        "test-native-binlink-target": "1.0.0"
+      },
+      "_id": "test-native-binlink-scripts@1.0.0",
+      "_hasInstallScript": true,
+      "hasInstallScript": true,
+      "dist": {
+        "integrity": "sha512-+OefVghnEY8Tlmf3RlvR9/GVOQJaUBxne8GTUPaiY20mDGXkN8n3jNk/kboKZgrQ/idGfSxvGvYKuswwcnVgvQ==",
+        "shasum": "5c49929dbfeb586a8857631dfed592e8cd58858b",
+        "tarball": "http://localhost:4873/test-native-binlink-scripts/-/test-native-binlink-scripts-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "test-native-binlink-scripts",
+      "version": "2.0.0",
+      "scripts": {
+        "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
+      },
+      "optionalDependencies": {
+        "test-native-binlink-target": "1.0.0"
+      },
+      "_id": "test-native-binlink-scripts@2.0.0",
+      "_hasInstallScript": true,
+      "hasInstallScript": true,
+      "dist": {
+        "integrity": "sha512-HJ6xtCzK+BTmQwRdFDi27R1JSYAWq0KKdB6fIVjhHlnr8OwcuSBivnisM0nIqxFE+UkVq1bNtmu9imtkn2/9bw==",
+        "shasum": "cb2081cbb62cda894bf0f7bbd94c30ae42f4079d",
+        "tarball": "http://localhost:4873/test-native-binlink-scripts/-/test-native-binlink-scripts-2.0.0.tgz"
+      }
+    }
+  }
+}

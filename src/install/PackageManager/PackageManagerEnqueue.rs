@@ -1892,7 +1892,7 @@ pub(crate) fn bind_row(
                         Err(err) => {
                             let log_mark = this.log_mut().msgs.len();
                             let from_cache =
-                                lacks_version_in_cache(this, id, dependency, name, &err);
+                                lacks_version_in_cache(this, id, dependency, name, err);
                             let fails_request = from_cache == Some(true);
                             report_resolve_error(
                                 this,
@@ -2506,8 +2506,7 @@ fn fails_update_request(
     }
     // `fail_update_requests` reads this list to see who needs the manifest.
     task_callback_list(this, task_id).push(TaskCallbackContext::Dependency(id));
-    run_tasks::fail_update_requests(this, task_id, name, None, false);
-    this.update_requests.iter().any(|request| request.failed)
+    run_tasks::fail_update_requests(this, task_id, name, None, false)
 }
 
 /// `err` is "no version in range" for an optional `dependency`, from a manifest that is not the
@@ -2520,7 +2519,7 @@ fn lacks_version_in_cache(
     id: DependencyID,
     dependency: &Dependency,
     name: SemverString,
-    err: &crate::Error,
+    err: crate::Error,
 ) -> Option<bool> {
     use crate::network_task::ManifestOrigin;
     if dependency.behavior.is_required() || !matches!(err, crate::Error::NoMatchingVersion) {

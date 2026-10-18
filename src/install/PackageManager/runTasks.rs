@@ -1984,15 +1984,16 @@ pub(crate) fn begin_linking_for_bunx(root_package_json_path: &bun_core::ZStr, ha
 
 /// `bun add` / `bun update <name>` exits 1 and saves nothing when a download for the request fails.
 /// `unanswered`: the download is required, and no attempt got an answer about the package.
+/// Returns whether the download was for a request.
 pub(crate) fn fail_update_requests(
     this: &mut PackageManager,
     task_id: Task::Id,
     package_name: &[u8],
     tarball_dependency_id: Option<DependencyID>,
     unanswered: bool,
-) {
+) -> bool {
     if this.subcommand == Subcommand::Remove {
-        return;
+        return false;
     }
     // Every package in `bunx`'s install directory is there for the one tool that it was asked to
     // run.
@@ -2048,6 +2049,7 @@ pub(crate) fn fail_update_requests(
             REQUEST_GOT_NO_ANSWER.store(true, Ordering::Relaxed);
         }
     }
+    any_failed
 }
 
 /// Once per pass. Not under auto-install: the number is `fetch()`'s too.

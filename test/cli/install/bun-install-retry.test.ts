@@ -1829,6 +1829,25 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
     expect(await p.installed("node_modules", "leaf")).toBe("1.1.0");
   });
 
+  // `other` is a new entry that has no manifest in the cache either. The failed request for leaf is not its fault.
+  it("`bun update <name> --offline` blames only the entry that it names", async () => {
+    const releases = { ...LEAF, other: { "1.0.0": {} }, parent: { "1.0.0": { dependencies: { other: "1.0.0" } } } };
+    const root = { dependencies: { parent: "1.0.0" }, ...OPTIONAL_LEAF };
+    using p = await project(root, releases);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+
+    const both = { optionalDependencies: { leaf: "^1.0.0", other: "^1.0.0" } };
+    await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...root, ...both }, null, 2));
+    const before = await p.written();
+    rmSync(p.path(".bun-cache"), { recursive: true, force: true });
+    expect(await p.run("update", "leaf", "--offline")).toMatchObject({
+      ...unchanged,
+      errors: [notCached],
+      exitCode: 1,
+    });
+    expect(await p.written()).toEqual(before);
+  });
+
   // An online `bun update` moves bun.lock to 1.1.0 and package.json to ^1.1.0. The manifest in the cache is older
   // than that: it lists 1.0.0 only, so it has no version in the range, and --offline cannot ask for a newer one.
   // The entry keeps its package, as it does without a manifest. An update that names the entry fails, and so does
@@ -1888,8 +1907,8 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
     expect(await p.run("install", "--frozen-lockfile")).toMatchObject({ errors: [], exitCode: 0 });
   });
 
-  // An update also reads the entries of the workspaces that it does not target. What it prints for those is not
-  // pinned here.
+  // An update may also ask about the entries of the workspaces that it does not target. If it does, it warns about
+  // the entry as well, and if it does not, it prints nothing.
   it.each<[string, string, string[], boolean]>([
     ["with -r", "", ["-r"], true],
     ["inside the workspace", "packages/pkg1", [], true],
@@ -1913,7 +1932,8 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
     p.refuse("leaf", 404);
     const updated = await p.runIn(cwd, "update", ...args);
     expect(updated).toMatchObject({ errors: [], saved: false, exitCode: 0 });
-    if (targeted) expect(updated.warnings).toEqual(notChecked(p.refused(404)));
+    const kept = notChecked(p.refused(404));
+    expect(targeted ? [kept] : [kept, []]).toContainEqual(updated.warnings);
     expect(await p.written("packages/pkg1", "packages/pkg2")).toEqual(before);
     expect(await p.locked("leaf")).toEqual(["1.1.0"]);
   });

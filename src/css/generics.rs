@@ -589,8 +589,6 @@ mod inherent_bridge {
     bridge_eql!(BorderImage);
 
     use crate::properties::border_radius::BorderRadius;
-    // BorderRadius has an inherent deep_clone (Size2D<T> lacks a
-    // Clone derive — see border_radius.rs).
     bridge_deep_clone!(BorderRadius);
     bridge_eql_partialeq!(BorderRadius);
 

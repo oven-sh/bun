@@ -12,8 +12,6 @@ use crate::css_values::size::Size2D;
 use bun_alloc::ArenaVecExt as _;
 
 /// A value for the [border-radius](https://www.w3.org/TR/css-backgrounds-3/#border-radius) property.
-// `Size2D<T>` has no `Clone` derive (it exposes an inherent `deep_clone`),
-// so `BorderRadius` can't `#[derive(Clone)]` either.
 #[derive(PartialEq)]
 pub struct BorderRadius {
     /// The x and y radius values for the top left corner.

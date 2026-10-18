@@ -126,24 +126,16 @@ impl TextDecoder {
             }
         }
 
-        let mut i: usize = 0;
-
-        while i < remain.len().saturating_sub(1) {
+        let (pairs, rest) = remain.as_chunks::<2>();
+        for &[first, second] in pairs {
             self.process_code_unit_utf16(
                 &mut output,
                 &mut saw_error,
-                Self::code_unit_from_bytes_utf16::<BIG_ENDIAN>(
-                    u16::from(remain[i]),
-                    u16::from(remain[i + 1]),
-                ),
+                Self::code_unit_from_bytes_utf16::<BIG_ENDIAN>(u16::from(first), u16::from(second)),
             );
-            i += 2;
         }
-
-        if !remain.is_empty() && i == remain.len() - 1 {
-            self.lead_byte = Some(remain[i]);
-        } else {
-            assert!(i == remain.len());
+        if let [lead_byte] = *rest {
+            self.lead_byte = Some(lead_byte);
         }
 
         if FLUSH {

@@ -950,6 +950,7 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     ...outputNames.map(name => resolve(cfg.codegenDir, `${name}.h`)),
     resolve(cfg.codegenDir, "GeneratedBindings+Tables.h"),
     resolve(cfg.codegenDir, "GeneratedBindings+Counts.h"),
+    resolve(cfg.codegenDir, "GeneratedBindings+Classes.h"),
   ];
   const rust = [...new Set(compiled.map(src => crates.get(src)))].map(crate =>
     resolve(cfg.codegenDir, `generated_bindgen_${crate}.rs`),

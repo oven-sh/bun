@@ -1913,7 +1913,7 @@ export class ClassType extends NamedType {
   /** The schema's, then those of `cache: true` getters. */
   readonly internalFields: readonly string[];
   readonly configurable: boolean;
-  /** Index in `Tables::classes`. Set by the generator. */
+  /** Index in `AdditionsToGlobalObject::m_classes`. Set by the generator. */
   classIndex = -1;
   constructor(options: ClassOptions) {
     super();

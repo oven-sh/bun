@@ -673,7 +673,7 @@ struct ${name}Traits {
     static void finalize(void* payload) { ${classSymbolName(type, "finalize")}(payload); }
 };
 using JS${name} = JSWrapper<${name}Traits>;
-extern const ClassDefinition JS${name}ClassDefinition;
+void setup${name}ClassStructure(JSC::LazyClassStructure::Initializer&);
 }
 template<> struct Bun::IDLHumanReadableName<${type.idlType}> : Bun::BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("${name}");
@@ -823,30 +823,32 @@ ${cppCallBody(construct, classSymbolName(type, "construct"), ["structure"])}
 `
     : ""
 }
-${table(`JS${name}PrototypeTableValues`, prototypeRows)}${table(`JS${name}ConstructorTableValues`, constructorRows)}${
-    privateFunctions.length > 0
-      ? `static void finish${name}PrototypeCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
+${table(`JS${name}PrototypeTableValues`, prototypeRows)}${table(`JS${name}ConstructorTableValues`, constructorRows)}
+void Bun::Bindgen::Generated::setup${name}ClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
-    auto& names = WebCore::builtinNames(vm);
+    JSC::VM& vm = init.vm;
+    JSC::JSGlobalObject* globalObject = init.global;
+    JSC::JSObject* prototype = Bun::Bindgen::createClassPrototype(vm, globalObject, ${type.cpp}::info(), ${span(`JS${name}PrototypeTableValues`, prototypeRows)});
+${
+  privateFunctions.length > 0
+    ? `    auto& names = WebCore::builtinNames(vm);
 ${privateFunctions
   .map(
     fn =>
       `    prototype->putDirect(vm, names.${privateSymbol(fn)}PrivateName(), JSC::JSFunction::create(vm, globalObject, ${fn.length}, ${asciiLiteral(fn.name)}, ${methodHostFunctionName(type, fn)}, JSC::ImplementationVisibility::Private), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);`,
   )
   .join("\n")}
-}
 `
-      : ""
-  }
-const Bun::Bindgen::ClassDefinition Bun::Bindgen::Generated::JS${name}ClassDefinition = {
-    .info = ${type.cpp}::info(),
-    .createStructure = ${type.cpp}::createStructure,
-    .prototypeTableValues = ${span(`JS${name}PrototypeTableValues`, prototypeRows)},
-    .constructorTableValues = ${span(`JS${name}ConstructorTableValues`, constructorRows)},
-    .finishPrototypeCreation = ${privateFunctions.length > 0 ? `finish${name}PrototypeCreation` : "nullptr"},
-    .construct = ${construct ? `construct${name}` : "nullptr"},
-    .constructorLength = ${construct ? (construct.length ?? construct.requiredCount) : 0},
-};
+    : ""
+}    Bun::putToStringTagWithoutTransition(vm, prototype, ${type.cpp}::info());
+    init.setPrototype(prototype);
+    init.setStructure(${type.cpp}::createStructure(vm, globalObject, prototype));
+${
+  construct
+    ? `    init.setConstructor(Bun::Bindgen::JSClassConstructor::create(vm, globalObject, ${asciiLiteral(name)}, construct${name}, ${construct.length ?? construct.requiredCount}, ${span(`JS${name}ConstructorTableValues`, constructorRows)}, prototype));
+`
+    : ""
+}}
 
 extern "C" JSC::JSCell* ${symbolName(type, "create")}(JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
 {
@@ -992,25 +994,28 @@ export function cppTables(tables: Tables): string {
 #include <array>
 #include <wtf/text/ASCIILiteral.h>
 
-namespace Bun::Bindgen {
-struct ClassDefinition;
-}
-
-namespace Bun::Bindgen::Generated {
-${tables.classes.map(type => `extern const ClassDefinition JS${type.name}ClassDefinition;`).join("\n")}
-}
-
 namespace Bun::Bindgen::Tables {
 
 ${array("WTF::ASCIILiteral", "memberNames", tables.memberNames.map(asciiLiteral))}
 
 ${array("WTF::ASCIILiteral", "enumerationValues", tables.enumerationValues.map(asciiLiteral))}
 
-${array(
-  "const ClassDefinition*",
-  "classes",
-  tables.classes.map(type => `&Generated::JS${type.name}ClassDefinition`),
-)}
+}
+`;
+}
+
+export function cppClasses(tables: Tables): string {
+  return `${banner(null)}#pragma once
+#include <JavaScriptCore/LazyClassStructureInlines.h>
+
+namespace Bun::Bindgen::Generated {
+
+${tables.classes.map(type => `void setup${type.name}ClassStructure(JSC::LazyClassStructure::Initializer&);`).join("\n")}
+
+inline void initializeClasses(JSC::LazyClassStructure* classes)
+{
+${tables.classes.map(type => `    classes[${type.classIndex}].initLater([](JSC::LazyClassStructure::Initializer& init) { setup${type.name}ClassStructure(init); });`).join("\n")}
+}
 
 }
 `;

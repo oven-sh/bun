@@ -40,19 +40,6 @@ struct InheritsTraits<Bun::Bindgen::JSWrapper<Traits>> {
 
 namespace Bun::Bindgen {
 
-// One per class, defined by generated code.
-struct ClassDefinition {
-    const JSC::ClassInfo* info;
-    JSC::Structure* (*createStructure)(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
-    std::span<const JSC::HashTableValue> prototypeTableValues;
-    std::span<const JSC::HashTableValue> constructorTableValues;
-    // Properties a static table cannot describe (private names). May be null.
-    void (*finishPrototypeCreation)(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototype);
-    // Null: `new` from JavaScript is not allowed, and there is no constructor object.
-    JSC::NativeFunction construct;
-    unsigned constructorLength;
-};
-
 // Reports each field that holds a cell to a heap snapshot, as a property of that name.
 void analyzeInternalFields(JSC::JSCell*, JSC::HeapAnalyzer&, std::span<const JSC::WriteBarrier<JSC::Unknown>>, std::span<const WTF::ASCIILiteral> names);
 
@@ -163,15 +150,16 @@ public:
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
-    static JSClassConstructor* create(JSC::VM&, JSC::JSGlobalObject*, const ClassDefinition&, JSC::JSObject* prototype);
+    static JSClassConstructor* create(JSC::VM&, JSC::JSGlobalObject*, WTF::ASCIILiteral name, JSC::NativeFunction construct, unsigned length, std::span<const JSC::HashTableValue>, JSC::JSObject* prototype);
 
 private:
     JSClassConstructor(JSC::VM&, JSC::Structure*, JSC::NativeFunction construct);
 };
 
-// By index into Tables::classes (GeneratedBindings+Tables.h).
+// A plain object with the properties of the table.
+JSC::JSObject* createClassPrototype(JSC::VM&, JSC::JSGlobalObject*, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>);
+
 JSC::Structure* structureForClass(JSC::JSGlobalObject*, unsigned classIndex);
-void setupClassStructure(JSC::LazyClassStructure::Initializer&, unsigned classIndex);
 JSC::JSObject* constructorForClass(JSC::JSGlobalObject*, unsigned classIndex);
 // The class's own, or one for `new.target` (a subclass, Reflect.construct). May throw.
 JSC::Structure* structureForNewTarget(JSC::JSGlobalObject*, JSC::CallFrame*, unsigned classIndex);

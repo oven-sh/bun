@@ -55,13 +55,10 @@ fn error_instance(slice: &EncodedSlice<'_>, global: &JSGlobalObject, kind: Error
 /// JSC conversions for `bun_core::EncodedSlice`.
 pub trait EncodedSliceJsc: Sized {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_dom_exception_instance(&self, global: &JSGlobalObject, code: DOMExceptionCode)
     -> JSValue;
-    /// Copies into a GC-managed `JSString` (or hands over an external value
-    /// if globally allocated).
+    /// Copies into a GC-managed `JSString`.
     fn to_js(&self, global: &JSGlobalObject) -> JSValue;
     /// Transfers ownership of a globally-allocated buffer to JSC's
     /// external-string finalizer.
@@ -85,14 +82,8 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         error_instance(self, global, ErrorKind::Error)
     }
-    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        error_instance(self, global, ErrorKind::TypeError)
-    }
     fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         error_instance(self, global, ErrorKind::SyntaxError)
-    }
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        error_instance(self, global, ErrorKind::RangeError)
     }
     fn to_dom_exception_instance(
         &self,
@@ -102,7 +93,6 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
         EncodedSlice__toDOMExceptionInstance(self, global, code as u8)
     }
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        debug_assert!(!self.is_globally_allocated());
         EncodedSlice__toValueGC(self, global)
     }
     fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {

@@ -7,7 +7,7 @@
 #include <wtf/dtoa.h>
 #include <wtf/DateMath.h>
 #include <wtf/NumberOfCores.h>
-#include <JavaScriptCore/ParseInt.h>
+#include <JavaScriptCore/JSDateMath-v8.h>
 #include <atomic>
 #include <cassert>
 
@@ -230,12 +230,6 @@ extern "C" double WTF__parseDouble(const Latin1Character* string, size_t length,
     return WTF::parseDouble({ string, length }, *position);
 }
 
-// bun_core::fmt::parse_power_of_two_radix_digits. The same function JSC's lexer and parseInt use.
-extern "C" double JSC__parsePowerOfTwoRadixDigits(const Latin1Character* digits, size_t length, int radix)
-{
-    return JSC::parseIntOverflow(std::span<const Latin1Character> { digits, length }, radix);
-}
-
 extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, size_t inputDataBufferSize,
     char* __restrict destinationDataBuffer,
     size_t destinationDataBufferSize)
@@ -244,10 +238,11 @@ extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, s
     return simdutf::binary_to_base64(inputDataBuffer, inputDataBufferSize, destinationDataBuffer, simdutf::base64_url);
 }
 
-extern "C" double WTF__parseES5Date(const Latin1Character* string, size_t length)
+// JS `Date.parse` with no VM, except that a date-time with no time zone reads as UTC.
+extern "C" double Bun__parseDateTimeString(const Latin1Character* string, size_t length)
 {
-    bool isLocalTime;
-    return WTF::parseES5Date({ string, length }, isLocalTime);
+    bool isLocalTime = false;
+    return v8::TimeClip(v8::ParseDateTimeString(byteCast<uint8_t>(string), length, isLocalTime));
 }
 
 namespace Bun {

@@ -14,7 +14,7 @@ const OFFSETS = [0, 1, 13];
 // Deterministic filler that never contains the values we plant (top bit set).
 function filler(len: number, offset: number): Uint8Array;
 function filler<T extends Uint8Array | Uint16Array>(len: number, offset: number, ctor: { new (n: number): T }): T;
-function filler(len: number, offset: number, ctor: Uint8ArrayConstructor | Uint16ArrayConstructor = Uint8Array) {
+function filler(len: number, offset: number, ctor: { new (n: number): Uint8Array | Uint16Array } = Uint8Array) {
   const backing = new ctor(len + offset + 16);
   const bits = backing.BYTES_PER_ELEMENT * 8;
   let x = 0x9e3779b9 ^ len ^ (offset << 8);
@@ -332,5 +332,165 @@ describe("highway byte-search kernels", () => {
     }
     expect(Buffer.alloc(0).indexOf(1)).toBe(-1);
     expect(Buffer.alloc(0).lastIndexOf(1)).toBe(-1);
+  });
+});
+
+describe("scannerRunStops", () => {
+  const isNameByte = (b: number) =>
+    (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a) || b === 0x5f || b === 0x24;
+  // One per bitmap, in the kernel's order.
+  const STOPS = [
+    (b: number) => !isNameByte(b),
+    (b: number) => b !== 0x20 && b !== 0x09,
+    (b: number) => b === 0x22 || b === 0x27 || b === 0x60 || b === 0x24 || b === 0x5c || b < 0x20 || b >= 0x80,
+  ];
+
+  function expectStops(text: Uint8Array, at: string) {
+    const planeLen = Math.ceil(text.length / 64) * 8;
+    const expected = new Uint8Array(planeLen * 3);
+    STOPS.forEach((stops, plane) => {
+      for (let i = 0; i < planeLen * 8; i++) {
+        // The end of the text stops every run.
+        if (i >= text.length || stops(text[i])) expected[plane * planeLen + (i >> 3)] |= 1 << (i & 7);
+      }
+    });
+    const out = new Uint8Array(planeLen * 3);
+    expect(hw("scannerRunStops", text, out), at).toBe(0);
+    expect(out.toHex(), at).toBe(expected.toHex());
+  }
+
+  it("classifies every byte value in every lane", () => {
+    for (let shift = 0; shift < 64; shift++) {
+      expectStops(
+        Uint8Array.from({ length: 256 + shift }, (_, i) => (i + 256 - shift) & 0xff),
+        `shift=${shift}`,
+      );
+    }
+  });
+
+  it("sets the bits past the end of the text", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        for (const byte of [0x61, 0x20, 0x22, 0x00, 0xff]) {
+          expectStops(new Uint8Array(len + off).fill(byte).subarray(off), `len=${len} off=${off} byte=${byte}`);
+        }
+      }
+    }
+  });
+
+  it("finds one stop at every interesting position", () => {
+    for (const len of LENGTHS) {
+      for (const pos of positions(len)) {
+        for (const [run, stop] of [
+          [0x61, 0x2e],
+          [0x24, 0xc3],
+          [0x20, 0x61],
+          [0x09, 0x0a],
+          [0x2d, 0x27],
+          [0x7f, 0x5c],
+          [0x5f, 0x60],
+        ]) {
+          const text = new Uint8Array(len + 1).fill(run).subarray(1);
+          text[pos] = stop;
+          expectStops(text, `len=${len} pos=${pos} run=${run} stop=${stop}`);
+        }
+      }
+    }
+  });
+
+  it("rejects a buffer that is too small", () => {
+    expect(() => hw("scannerRunStops", new Uint8Array(65), new Uint8Array(3 * 8))).toThrow(RangeError);
+  });
+});
+
+describe("lineStarts", () => {
+  function expectLineStarts(text: Uint8Array, at: string) {
+    const expected: number[] = [];
+    text.forEach((byte, i) => byte === 0x0a && expected.push(i + 1));
+    // One more than there are line feeds, to see that the kernel stops.
+    const out = new Uint32Array(expected.length + 1).fill(0xdeadbeef);
+    expect(hw("lineStarts", text, new Uint8Array(out.buffer)), at).toBe(expected.length);
+    expect([...out], at).toEqual([...expected, 0xdeadbeef]);
+  }
+
+  it("no line feed, and nothing but line feeds", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        // The others differ from a line feed in one bit, or are what the last block is padded with.
+        for (const byte of [0x0a, 0x61, 0x00, 0x0b, 0x08, 0x0d, 0x1a, 0x2a, 0x8a]) {
+          expectLineStarts(new Uint8Array(len + off).fill(byte).subarray(off), `len=${len} off=${off} byte=${byte}`);
+        }
+      }
+    }
+  });
+
+  it("one line feed at every interesting position", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        for (const pos of positions(len)) {
+          const text = filler(len, off);
+          text[pos] = 0x0a;
+          expectLineStarts(text, `len=${len} off=${off} pos=${pos}`);
+        }
+      }
+    }
+  });
+
+  it("lines of every length up to 130", () => {
+    const lines = Array.from({ length: 131 }, (_, length) => Buffer.alloc(length, "a").toString() + "\n");
+    expectLineStarts(enc(lines.join("")), "ascending");
+    expectLineStarts(enc(lines.reverse().join("") + "no line feed at the end"), "descending");
+  });
+
+  it("rejects a buffer that is too small", () => {
+    expect(() => hw("lineStarts", enc("a\nb\n"), new Uint8Array(4))).toThrow(RangeError);
+  });
+});
+
+describe("oddBlocks", () => {
+  const isPlain = (b: number) => (b >= 0x20 && b <= 0x7e && b !== 0x5c) || b === 0x09 || b === 0x0a || b === 0x0d;
+  // Both sides of a block of 64 bytes and of a word of 64 blocks.
+  const LENGTHS = [0, 1, 63, 64, 65, 127, 128, 129, 4031, 4032, 4033, 4095, 4096, 4097, 4159, 4160, 4161, 8192, 9000];
+
+  function expectOddBlocks(text: Uint8Array, at: string) {
+    const words = Math.ceil(text.length / 4096);
+    const expected = new BigUint64Array(words + 1);
+    text.forEach((byte, i) => {
+      if (!isPlain(byte)) expected[i >> 12] |= 1n << BigInt((i >> 6) & 63);
+    });
+    // One word more than the kernel may write, to see that it stops.
+    expected[words] = 0xaaaaaaaaaaaaaaaan;
+    const out = new BigUint64Array(words + 1).fill(0xaaaaaaaaaaaaaaaan);
+    expect(hw("oddBlocks", text, new Uint8Array(out.buffer)), at).toBe(0);
+    expect([...out], at).toEqual([...expected]);
+  }
+
+  it("classifies every byte value", () => {
+    for (let byte = 0; byte < 256; byte++) {
+      for (const pos of [0, 63, 64, 100, 129]) {
+        const text = new Uint8Array(130).fill(0x61);
+        text[pos] = byte;
+        expectOddBlocks(text, `byte=${byte} pos=${pos}`);
+      }
+    }
+  });
+
+  it("marks the block of an odd byte, and no other", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        expectOddBlocks(new Uint8Array(len + off).fill(0x20).subarray(off), `len=${len} off=${off} plain`);
+        expectOddBlocks(new Uint8Array(len + off).fill(0x5c).subarray(off), `len=${len} off=${off} odd`);
+        for (const pos of [0, 1, 62, 63, 64, 65, 4031, 4032, 4095, 4096, 4097, len - 65, len - 64, len - 2, len - 1]) {
+          if (pos < 0 || pos >= len) continue;
+          const text = new Uint8Array(len + off).fill(0x7e).subarray(off);
+          text[pos] = 0x7f;
+          expectOddBlocks(text, `len=${len} off=${off} pos=${pos}`);
+        }
+      }
+    }
+  });
+
+  it("rejects a buffer that is too small", () => {
+    expect(() => hw("oddBlocks", new Uint8Array(4097), new Uint8Array(8))).toThrow(RangeError);
   });
 });

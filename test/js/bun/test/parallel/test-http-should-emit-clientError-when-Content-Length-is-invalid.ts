@@ -1,7 +1,7 @@
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import http from "node:http";
-import { connect } from "node:net";
+import { connect, type AddressInfo } from "node:net";
 const { expect } = createTest(import.meta.path);
 
 const { promise, resolve, reject } = Promise.withResolvers();
@@ -15,14 +15,14 @@ server.on("clientError", (err, socket) => {
 server.listen(0);
 await once(server, "listening");
 
-const client = connect(server.address().port, () => {
+const client = connect((server.address() as AddressInfo).port as any, () => {
   // HTTP request with invalid Content-Length
   // The Content-Length says 10 but the actual body is 20 bytes
   // Send the request
   client.write(
-    `POST /test HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nContent-Type: text/plain\r\nContent-Length: invalid\r\n\r\n`,
+    `POST /test HTTP/1.1\r\nHost: localhost:${(server.address() as AddressInfo).port}\r\nContent-Type: text/plain\r\nContent-Length: invalid\r\n\r\n`,
   );
 });
 
-const err = (await promise) as Error;
+const err = (await promise) as NodeJS.ErrnoException;
 expect(err.code).toBe("HPE_UNEXPECTED_CONTENT_LENGTH");

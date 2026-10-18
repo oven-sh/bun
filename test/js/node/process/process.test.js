@@ -2868,7 +2868,7 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
   const workerEvents = ["", "beforeExit", "exit"];
   async function runWorker(body) {
     const shared = new SharedArrayBuffer(64);
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve, reject } = Promise.withResolvers();
     new Worker(
       `
       const { workerData } = require("worker_threads");
@@ -2885,7 +2885,9 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
       };
       ${body}`,
       { eval: true, workerData: shared },
-    ).on("exit", resolve);
+    )
+      .on("error", reject)
+      .on("exit", resolve);
     const exitCode = await promise;
     const log = new Int32Array(shared);
     const events = [];

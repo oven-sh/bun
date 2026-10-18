@@ -796,8 +796,16 @@ impl<'a> ImportScanner<'a> {
     }
 }
 
-/// For `import a = b.c` that is not exported: the symbols of `a` and of `b`.
-fn ts_import_equals_alias_and_root(local: &S::Local) -> Option<(Ref, Ref)> {
+/// An `import a = b.c` that is not exported.
+struct TsImportEqualsAlias<'a> {
+    alias: Ref,
+    /// `b`
+    root: Ref,
+    /// `c`, when `b.c` was recorded as a property read off an import (`E::Dot::is_import_property_use`).
+    import_property_use: Option<&'a [u8]>,
+}
+
+fn ts_import_equals_alias<'a>(local: &S::Local) -> Option<TsImportEqualsAlias<'a>> {
     if !local.origin.is_ts_import_equals() || local.is_export {
         return None;
     }
@@ -812,17 +820,24 @@ fn ts_import_equals_alias_and_root(local: &S::Local) -> Option<(Ref, Ref)> {
 
     // Skip to the underlying reference
     let mut value = decl.value?;
+    let mut import_property_use = None;
     while let js_ast::ExprData::EDot(dot) = value.data {
+        import_property_use = dot.is_import_property_use.then(|| dot.name.slice());
         value = dot.target;
     }
 
     // Is this an identifier reference and not a require() call?
-    match value.data {
-        js_ast::ExprData::EIdentifier(root) => Some((alias.r#ref, root.ref_)),
+    let root = match value.data {
+        js_ast::ExprData::EIdentifier(root) => root.ref_,
         // An import binding, or a property of `import * as ns` that the bundler made an import item.
-        js_ast::ExprData::EImportIdentifier(root) => Some((alias.r#ref, root.ref_)),
-        _ => None,
-    }
+        js_ast::ExprData::EImportIdentifier(root) => root.ref_,
+        _ => return None,
+    };
+    Some(TsImportEqualsAlias {
+        alias: alias.r#ref,
+        root,
+        import_property_use,
+    })
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -845,8 +860,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 for i in (0..stmts.len()).rev() {
                     let stmt = stmts[i];
                     if let js_ast::StmtData::SLocal(local) = stmt.data {
-                        if let Some((alias, root)) = ts_import_equals_alias_and_root(&local) {
+                        if let Some(TsImportEqualsAlias {
+                            alias,
+                            root,
+                            import_property_use,
+                        }) = ts_import_equals_alias(&local)
+                        {
                             if self.symbols[alias.inner_index() as usize].use_count_estimate == 0 {
+                                if let Some(name) = import_property_use {
+                                    self.forget_import_property_use(root, name);
+                                }
                                 self.ignore_usage(root);
                                 // tsc does not count a removed alias as a use of `b`. `ignore_usage` keeps this count.
                                 let ts_uses = &mut self.ts_use_counts[root.inner_index() as usize];

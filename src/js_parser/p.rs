@@ -6752,7 +6752,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return false;
         };
         use_.subtract(1);
-        // note: this use is not removed as we assume it exists later
 
         let gop = self
             .import_symbol_property_uses
@@ -6765,6 +6764,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         inner_use.count_estimate += 1;
         inner_use.is_call_target |= opts.is_call_target() || opts.is_template_tag();
         true
+    }
+
+    /// Undoes one `record_import_property_use` of `base.name` in the current part:
+    /// the read of `base` is a plain part use again.
+    pub(crate) fn forget_import_property_use(&mut self, base: Ref, name: &[u8]) {
+        let Some(uses) = self.import_symbol_property_uses.get_ptr_mut(&base) else {
+            return;
+        };
+        let Some(use_) = uses.get_mut(name) else {
+            return;
+        };
+        use_.count_estimate -= 1;
+        if use_.count_estimate == 0 {
+            uses.remove(name);
+        }
+        if uses.is_empty() {
+            self.import_symbol_property_uses.swap_remove(&base);
+        }
+        self.part_use(base).add_scoped(1);
     }
 
     pub(crate) fn ignore_usage(&mut self, r#ref: Ref) {

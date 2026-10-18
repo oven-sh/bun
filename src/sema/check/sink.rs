@@ -333,37 +333,12 @@ impl super::Program<'_> {
         }
     }
 
-    /// Returns the key of that entry in `Log::of_nodes`.
-    fn key_of_entry(&self, q: Query) -> Option<[u32; 3]> {
-        use crate::table::{NodeKey, Publish};
-        fn key<'s>(table: &dyn Publish<'s>, key: impl NodeKey) -> Option<[u32; 3]> {
-            Some([table.slot(), key.file().0, key.index()])
-        }
-        match q {
-            Query::Expr(file, e) => key(&self.expr_types, (file, e)),
-            Query::Call(file, e) => key(&self.calls, (file, e)),
-            Query::Symbol(symbol) => key(&self.symbol_types, symbol),
-            Query::Declared(symbol) => key(&self.declared_types, symbol),
-            Query::Bases(symbol) => key(&self.base_types, symbol),
-            Query::BaseConstructor(symbol) => key(&self.base_constructor_types, symbol),
-            Query::Return(file, func) | Query::ReturnAtFirstLook(file, func) => {
-                key(&self.fn_return_types, (file, func))
-            }
-            Query::Pat(file, pat) | Query::ParameterSymbol(file, pat) => {
-                key(&self.pat_types, (file, pat))
-            }
-            Query::LiteralProp(file, prop) => key(&self.literal_prop_types, (file, prop)),
-            Query::TypeNode(file, node) => key(&self.type_node_types, (file, node)),
-            _ => None,
-        }
-    }
-
     /// At a commit, under its mutex, before it stores. What was reported while a query was evaluated belongs to the entry
     /// that the query stores. If another task has stored that entry, this task's loses: every reader goes by the
     /// other one, and what belongs to it is what its task has reported. `is_own`: whether a commit is one of this task.
     ///
-    /// Only for a diagnostic in the file that the query is about. Every task logs such a one (`is_reported_in_time`), so
-    /// the winner has logged it if there was anything to log. Whether one in another file is logged depends on the task.
+    /// Only for a diagnostic in the file that the query is about. A task of that file or of an earlier one logs it, so such
+    /// a winner has logged it if there was anything to log. A task of a later file doesn't.
     pub(super) fn drop_diagnostics_of_losers(
         &self,
         reported: &mut Logged,
@@ -372,7 +347,13 @@ impl super::Program<'_> {
         reported.retain(|(owner, diagnostic)| {
             !owner.is_some_and(|q| {
                 let winner = self.commit_of_entry(q);
-                q.syntax() == Some(diagnostic.file) && winner.is_some_and(|commit| !is_own(commit))
+                // A task of a later file hasn't logged it.
+                let has_logged_it = |commit: u32| {
+                    let rank = self.commits.rank_of(commit);
+                    rank <= Some(self.files.rank_of_file(diagnostic.file))
+                };
+                q.syntax() == Some(diagnostic.file)
+                    && winner.is_some_and(|commit| !is_own(commit) && has_logged_it(commit))
             })
         });
     }
@@ -542,8 +523,34 @@ impl Checker<'_, '_> {
         }
     }
 
+    /// Notes the files whose own tasks have to evaluate what led to an error in `file`: that file, and the files that the
+    /// queries in progress are about. See `View::hides`.
+    #[cold]
+    pub(super) fn note_error_in(&mut self, file: FileId) {
+        let about = self.stack.iter().filter_map(|q| q.syntax());
+        let others = about.chain([file]).filter(|&it| self.task.file != Some(it));
+        self.files_with_errors.extend(others);
+    }
+
+    /// True if this task doesn't report an error in `file`, because it checks a later file. tsc never collects such an error:
+    /// it's reported after `file` was checked. If the check of `file`, or of a file before it, gets to the error too, its
+    /// own task reports it.
+    /// - An entry under a record is shared whoever stores it, so its errors go with it.
+    /// - tsc's check of a file resolves every alias the file declares. Here that happens on demand, so whoever is first
+    ///   reports.
+    fn is_left_to_an_earlier_file(&self, owner: Option<Query>, file: FileId) -> bool {
+        let is_late = |visited: FileId| !self.is_checked_no_later_than(visited, file);
+        self.task.file.is_some_and(is_late)
+            && match owner {
+                Some(Query::AliasTarget(alias)) => is_late(alias.file),
+                Some(q) if q.syntax().is_none() => !self.is_reported_in_time(owner, file),
+                _ => true,
+            }
+    }
+
     /// `c.addDiagnostic`
     pub(super) fn add_diagnostic(&mut self, diagnostic: Reported) -> &mut Reported {
+        self.note_error_in(diagnostic.file);
         // "Discard diagnostics created while at the maximum number of recursive TypeToString invocations."
         if self.serialization_level >= MAX_SERIALIZATION_LEVEL {
             // For a diagnostic in another file, tsgo's result depends on file order. Mark the innermost query non-cacheable so that
@@ -802,14 +809,10 @@ impl Checker<'_, '_> {
         diagnostic.by_emit |= self.is_emitting;
         if diagnostic.file != NOWHERE.0
             && !diagnostic.by_emit
-            && !self.is_reported_in_time(owner, diagnostic.file)
+            && self.is_left_to_an_earlier_file(owner, diagnostic.file)
         {
-            // tsc never collects this diagnostic, because it's reported after its file was checked. But the task that
-            // checks that file may run `owner` too, and must report it. A cache hit would skip the report, so don't
-            // share the entry.
-            let key = owner.and_then(|q| self.p.key_of_entry(q));
-            self.unshared_entries.extend(key);
-            return;
+            // Not every error comes through `add_diagnostic`.
+            return self.note_error_in(diagnostic.file);
         }
         if self.task.is_planned() {
             self.task.diagnostics.push((owner, diagnostic));

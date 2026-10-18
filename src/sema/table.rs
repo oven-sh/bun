@@ -910,7 +910,13 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         match task.view() {
             None => self.published_at(at),
             // Before the look: a miss is a look at the file too.
-            Some(view) => self.seen_up_to(view.snapshot_of(FileId(file)), at),
+            Some(view) => {
+                let raw = self.seen_up_to(view.snapshot_of(FileId(file)), at);
+                match raw != 0 && view.hides(FileId(file), self.stamp_at(at)) {
+                    true => 0,
+                    false => raw,
+                }
+            }
         }
     }
 
@@ -978,13 +984,9 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         if !Self::has_a_whole_row(task, file) {
             return;
         }
-        let snapshot = task.view().map(|view| view.snapshot_of(FileId(file)));
         let mut has_seeds = false;
         for at in nodes.clone() {
-            let raw = match snapshot {
-                None => self.published_at(at),
-                Some(snapshot) => self.seen_up_to(snapshot, at),
-            };
+            let raw = self.seen_at(task, file, at);
             if raw == 0 {
                 continue;
             }
@@ -1512,8 +1514,6 @@ where
 
 /// The interface of a `Buffered` table that a commit uses.
 pub(crate) trait Publish<'s>: Sync {
-    fn slot(&self) -> u32;
-
     /// Runs in a commit of `task`, on its thread, under the mutex of the commits, while other tasks read the table.
     /// `key`: from the `Log` of the task. `number`: of the commit. Stores the entry that the task has under `key` in the
     /// shared part, unless it is bound or there is one. Returns whether it has. The task keeps its entry.
@@ -1524,7 +1524,6 @@ pub(crate) trait Publish<'s>: Sync {
 /// is one number: the index of the node in the concatenation of all nodes, or the number of the id.
 pub(crate) trait Dense: Sync {
     type Value: Packed<Cell = AtomicU32>;
-    fn table_slot(&self) -> u32;
     /// 0: nothing.
     fn load(&self, key: u32) -> u32;
     /// Precondition: the cell is empty, and the caller is the only thread that writes to the table.
@@ -1542,10 +1541,6 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
     for ByNode<K, V, Buffered<W>, A>
 {
     type Value = V;
-
-    fn table_slot(&self) -> u32 {
-        self.slot
-    }
 
     #[inline]
     fn load(&self, key: u32) -> u32 {
@@ -1596,10 +1591,6 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
     for ById<I, V, Buffered<W>, A>
 {
     type Value = V;
-
-    fn table_slot(&self) -> u32 {
-        self.slot
-    }
 
     #[inline]
     fn load(&self, key: u32) -> u32 {
@@ -1664,10 +1655,6 @@ fn store_logged_handle<D: Dense<Value = Handle>>(
 
 /// A table whose values fit in a cell.
 impl<'s, D: Dense<Value: Follow>> Publish<'s> for D {
-    fn slot(&self) -> u32 {
-        self.table_slot()
-    }
-
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool {
         store_logged_cell(self, task, key, number)
     }
@@ -1676,10 +1663,6 @@ impl<'s, D: Dense<Value: Follow>> Publish<'s> for D {
 impl<'s, K: NodeKey, T: Follow + Send + Sync + 's, W: Location, A: Alloc> Publish<'s>
     for ByNodeIndirect<K, T, Buffered<W>, A>
 {
-    fn slot(&self) -> u32 {
-        self.handles.slot
-    }
-
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool {
         store_logged_handle(&self.handles, task, key, number)
     }
@@ -1688,10 +1671,6 @@ impl<'s, K: NodeKey, T: Follow + Send + Sync + 's, W: Location, A: Alloc> Publis
 impl<'s, I: Id + Follow, T: Follow + Send + Sync + 's, W: Location, A: Alloc> Publish<'s>
     for ByIdIndirect<I, T, Buffered<W>, A>
 {
-    fn slot(&self) -> u32 {
-        self.handles.slot
-    }
-
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool {
         store_logged_handle(&self.handles, task, key, number)
     }
@@ -1709,10 +1688,6 @@ where
     K: std::hash::Hash + Eq + Clone + Follow + Send + Sync + 's,
     V: Copy + Follow + Send + Sync + 's,
 {
-    fn slot(&self) -> u32 {
-        self.slot.number()
-    }
-
     /// `key`: the place of the entry in the `Hashed` of the task.
     fn store_logged(&self, task: &Task<'s>, key: u64, _: u32) -> bool {
         let own = task.buffer().typed(&self.slot);

@@ -1331,6 +1331,8 @@ impl Checker<'_, '_> {
             if *self.unknown_symbols.entry(e).or_insert(is_discarded) {
                 return;
             }
+        } else {
+            self.note_error_in(file);
         }
         self.unresolved_identifiers.push((file, e, name));
     }

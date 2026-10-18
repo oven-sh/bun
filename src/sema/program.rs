@@ -6824,6 +6824,11 @@ impl<'s> Files<'s> {
     /// `fileIndexMap`: the index of `file` among the files of the program, which `compareNodes`
     /// uses.
     #[inline]
+    /// `rank_of_file`, by file.
+    pub(crate) fn ranks(&self) -> &'s [u32] {
+        self.ranks
+    }
+
     pub fn rank_of_file(&self, file: FileId) -> u32 {
         self.ranks[file.idx()]
     }

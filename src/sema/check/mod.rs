@@ -569,7 +569,8 @@ impl<'s> Program<'s> {
             session,
             closed_a_cycle: Default::default(),
             serial_variances: Guarded::default(),
-            commits: commit::Commits::new_in(session.arena()),
+            commits: commit::Commits::new_in(session.arena())
+                .for_files(files.ranks(), session.arena()),
             properties_referenced_before: Default::default(),
             emit_helper_errors_of_earlier_files: Default::default(),
             auto_array_type,
@@ -964,7 +965,7 @@ impl<'s> Program<'s> {
             unresolved_identifiers: Vec::new(),
             unknown_symbols: Default::default(),
             withheld_until_the_file_ends: Vec::new(),
-            unshared_entries: Default::default(),
+            files_with_errors: Default::default(),
             alias_targets_reported: Default::default(),
             alias_targets_in_progress: Vec::new(),
             is_deferred_node: Default::default(),
@@ -1861,8 +1862,8 @@ pub struct Checker<'p, 's> {
     unknown_symbols: FxHashMap<ExprId, bool>,
     /// See the function of that name: entries of `Log::of_nodes`.
     withheld_until_the_file_ends: Vec<[u32; 3]>,
-    /// Keys of `Log::of_nodes` that commits skip. See `log_diagnostic`.
-    unshared_entries: crate::util::FxHashSet<[u32; 3]>,
+    /// The other files in which this task has found an error. See `View::hides`.
+    files_with_errors: crate::util::FxHashSet<FileId>,
     /// The aliases that `check_target_of_alias_symbol` has reported on since `check_file` began:
     /// `aliasSymbolLinks.aliasTarget != nil`, or `resolveAlias` is in progress.
     alias_targets_reported: crate::util::FxHashSet<Sym>,

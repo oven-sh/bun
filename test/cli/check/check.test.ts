@@ -1038,6 +1038,109 @@ let x: Intl.DateTimeFormatPart['type'];
     },
   );
 
+  // The check of `dep.ts` first gets to `takesNumber("two")` two error messages deep, from `g1`. TypeScript discards an error
+  // that is created there, and never resolves that call again. `user.ts` and `caller.ts` get to the call too, and two
+  // threads start with the larger files. What they find out about `dep.ts` must not change what `dep.ts` reports.
+  test("reports what tsc reports in a file, whichever file's check gets to its errors first", async () => {
+    const filler = (prefix: string, lines: number) =>
+      Array.from(
+        { length: lines },
+        (_, i) => `const ${prefix}${i} = [${i}, "${i}"].map(it => typeof it).join("");\n`,
+      ).join("");
+    using dir = project({
+      "big.ts": filler("b", 400) + "export {};\n",
+      "caller.ts": `import { f2 } from "./dep";\nexport const r = f2();\n` + filler("r", 30),
+      "dep.ts": `declare function takesNumber(n: number): number;
+export function g1() { return takesNumber({ g: g2 }); }
+export function g2() { return takesNumber({ g: f2 }); }
+export function f2() { return takesNumber("two"); }
+export function f1() { return takesNumber({ g: f2 }); }
+export const api = { f1 };
+`,
+      "user.ts": `import { api } from "./dep";\nexport const n: number = api;\n` + filler("u", 60),
+    });
+    const threads = [1, 2, 2, 2, 3, 3, 3, 8, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(
+        [
+          "dep.ts(2,43): error TS2345: Argument of type '{ g: () => number; }' is not assignable to parameter of type 'number'.",
+          "dep.ts(3,43): error TS2345: Argument of type '{ g: () => number; }' is not assignable to parameter of type 'number'.",
+          "dep.ts(5,43): error TS2345: Argument of type '{ g: () => number; }' is not assignable to parameter of type 'number'.",
+          "user.ts(2,14): error TS2322: Type '{ f1: () => number; }' is not assignable to type 'number'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  // Nothing in `base.js` asks for the type of `args`. `x.js` does, and it comes before `base.js` in program order, because the
+  // two import each other: so tsc reports the error. `u.js` asks too, but it comes later, where tsc ignores the error.
+  // `u.js` is larger, so it's checked first, and `x.js` must not take its answer.
+  // This held before, because entries with a dropped error weren't shared. It fails if only the file's own task ignores
+  // later files' entries.
+  test("reports an error that an earlier file causes, when a later file gets there first", async () => {
+    const filler = (prefix: string, lines: number) =>
+      Array.from(
+        { length: lines },
+        (_, i) => `const ${prefix}${i} = [${i}, "${i}"].map(it => typeof it).join("");\n`,
+      ).join("");
+    using dir = project({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, allowJs: true, checkJs: true },
+        files: ["base.js", "x.js", "u.js", "big.js"],
+      }),
+      "base.js": `const helper = require("./x");
+class Base {
+  constructor() {
+    this.args = null;
+  }
+}
+module.exports = Base;
+`,
+      "x.js":
+        filler("a", 80) +
+        `const Base = require("./base");\nclass User extends Base {\n  run() { return this.args; }\n}\nmodule.exports = User;\n`,
+      "u.js": `const Base = require("./base");\nmodule.exports = new Base().args;\n` + filler("u", 120),
+      "big.js": filler("b", 400) + "module.exports = 1;\n",
+    });
+    const threads = [1, 2, 2, 2, 3, 3, 3, 8, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe("base.js(4,5): error TS7008: Member 'args' implicitly has an 'any' type.");
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  // The same for a name that doesn't resolve. `caller.ts` is larger, so it's checked first, but it comes later in program
+  // order, because the two import each other. An unresolved name in another file is left to that file's own check, which first
+  // gets to it two error messages deep, where TypeScript discards the error.
+  test("reports no unresolved name that tsc discards, when a later file gets there first", async () => {
+    const filler = Array.from(
+      { length: 400 },
+      (_, i) => `function pad${i}() { return [${i}, "${i}"].map(it => typeof it).join(""); }\n`,
+    );
+    using dir = project({
+      "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["caller.ts", "holder.ts"] }),
+      "caller.ts": `import { f2 } from "./holder";\nexport const r = f2();\nexport type Back = 1;\n` + filler.join(""),
+      "holder.ts": `import type { Back } from "./caller";
+declare function takesNumber(n: number): number;
+export function g1() { return takesNumber({ g: g2 }); }
+export function g2() { return takesNumber({ g: f2 }); }
+export function f2() { return missing; }
+export type Forth = Back;
+`,
+    });
+    const threads = [1, 2, 2, 2, 3, 3, 3, 8, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(
+        [
+          "holder.ts(3,43): error TS2345: Argument of type '{ g: () => number; }' is not assignable to parameter of type 'number'.",
+          "holder.ts(4,43): error TS2345: Argument of type '{ g: () => any; }' is not assignable to parameter of type 'number'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    }
+  });
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

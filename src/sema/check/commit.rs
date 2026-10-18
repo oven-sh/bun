@@ -55,9 +55,12 @@
 //!   diagnostic (`Program::drop_diagnostics_of_losers`). What the walk of a file reports belongs to the file, and goes when a
 //!   commit follows the end of the file. So does what the task has stored under the nodes of the file
 //!   (`Checker::withhold_until_the_file_ends`), with what was reported for it.
-//! - **An entry isn't shared if this task dropped one of its diagnostics as too late** (`Checker::unshared_entries`). tsc
-//!   ignores an error that a later file causes in an earlier one. The earlier file's own task still has to report it, and a
-//!   cache hit would skip that.
+//! - **The first task in program order that gets to an error decides whether it's reported.** tsc ignores an error that a
+//!   later file causes in an earlier one, so a task only reports in its own file and in later files
+//!   (`Checker::is_left_to_an_earlier_file`). And whether tsc reports an error can depend on the context in which it first
+//!   gets there. So a task ignores what a task of a later file has stored under a file, if the later task found an error
+//!   there and this task would still report it (`View::hides`). A task only moves forward in program order, so it
+//!   never finds such entries of its own. This covers the entries under nodes, not those under records.
 //! - **What a task stores about an expression of the file that it visits never leaves the task**
 //!   (`crate::table::Location::KEEPS_THE_VISITED_FILE`). It is most of what a check stores, and hardly anybody else asks for it.
 //!   It is neither logged nor a `Task::hold_back`.
@@ -93,6 +96,11 @@ pub(super) struct Commits<'s> {
     claims: Claims,
     /// The commits of the tasks that `Task::close_ring` has believed, by number.
     rings: Guarded<Vec<Ring>>,
+    /// `Files::rank_of_file`, by file.
+    ranks_of_files: &'s [u32],
+    /// One bit for each file: a task that was checking another file has found an error while it evaluated something about
+    /// this one, and has committed. See `View::hides`.
+    with_errors: &'s [AtomicU32],
     /// `tables_written_at_once`
     at_once: u128,
 }
@@ -105,6 +113,9 @@ struct Numbers {
     stored: AtomicU32,
     /// The number of the newest commit of a task that `Task::close_ring` has believed.
     with_a_ring: AtomicU32,
+    /// For each commit, by number: the highest `Files::rank_of_file` of the files its task was checking. [0] is unused.
+    /// `Commits` frees it: nothing drops what is in an arena.
+    ranks: Guarded<Vec<u32>>,
 }
 
 /// A commit of a task that `Task::close_ring` has believed.
@@ -125,6 +136,12 @@ struct Committing {
     walked: Vec<(u32, FileId, Node)>,
 }
 
+impl Drop for Commits<'_> {
+    fn drop(&mut self) {
+        *self.numbers.ranks.lock() = Vec::new();
+    }
+}
+
 impl<'s> Commits<'s> {
     pub(super) fn new_in(arena: &'s Arena) -> Commits<'s> {
         Commits {
@@ -133,12 +150,15 @@ impl<'s> Commits<'s> {
                 begun: AtomicU32::new(0),
                 stored: AtomicU32::new(0),
                 with_a_ring: AtomicU32::new(0),
+                ranks: Guarded::new(vec![0]),
             }),
             claims: Claims {
                 table: Guarded::default(),
                 has_changed: Condvar::new(),
             },
             rings: Guarded::default(),
+            ranks_of_files: &[],
+            with_errors: &[],
             at_once: tables_written_at_once(),
         }
     }
@@ -148,12 +168,28 @@ impl<'s> Commits<'s> {
         *self.committing.get_mut() = Committing::default();
         *self.claims.table.get_mut() = FxHashMap::default();
         *self.rings.get_mut() = Vec::new();
+        *self.numbers.ranks.lock() = Vec::new();
+    }
+
+    /// `ranks`: `Files::rank_of_file`, by file. Without this call no task hides anything: see `View::hides`.
+    pub(super) fn for_files(mut self, ranks: &'s [u32], arena: &'s Arena) -> Commits<'s> {
+        let words = (0..ranks.len().div_ceil(32)).map(|_| AtomicU32::new(0));
+        (self.ranks_of_files, self.with_errors) = (ranks, arena.alloc_slice_fill_iter(words));
+        self
+    }
+
+    /// Returns the highest `Files::rank_of_file` of the files that the task of `commit` was checking.
+    pub(super) fn rank_of(&self, commit: u32) -> Option<u32> {
+        self.numbers.ranks.lock().get(commit as usize).copied()
     }
 
     /// For a task that begins. `files`: how many the program has.
     pub(super) fn view(&self, files: usize) -> View<'s> {
         View {
             numbers: self.numbers,
+            ranks_of_files: self.ranks_of_files,
+            with_errors: self.with_errors,
+            rank: Cell::new(0),
             of_files: vec![Cell::new(0); files].into_boxed_slice(),
             touched: RefCell::default(),
             pinned: Cell::new(NO_FILE),
@@ -206,6 +242,11 @@ const NO_FILE: u32 = u32::MAX;
 /// What a task has of `Commits`: which entries under nodes and symbols exist for it.
 pub(crate) struct View<'s> {
     numbers: &'s Numbers,
+    /// See `Commits`.
+    ranks_of_files: &'s [u32],
+    with_errors: &'s [AtomicU32],
+    /// `ranks_of_files` of `pinned`.
+    rank: Cell<u32>,
     /// By file: one more than the number of the last commit that the task sees there. 0: the task has not looked at the
     /// file since `forget`.
     of_files: Box<[Cell<u32>]>,
@@ -272,8 +313,41 @@ impl View<'_> {
         self.forget();
         let snapshot = self.snapshot_of(file);
         self.pinned.set(file.0);
+        self.rank
+            .set(self.ranks_of_files.get(file.idx()).copied().unwrap_or(0));
         self.compared_with_pinned.set(snapshot);
         self.oldest_pin.set(self.oldest_pin.get().min(snapshot));
+    }
+
+    /// True if the task ignores what `commit` stored under `file`.
+    ///
+    /// tsc checks the files in program order, and whether it reports an error can depend on the context in which it first
+    /// gets there. The first task in program order that gets to an error decides. So once a task has found an error while
+    /// it evaluated something about another file, the tasks that would still report in that file ignore what tasks of
+    /// later files stored under it: they run into the same cache misses as on one thread. Files without errors lose
+    /// nothing.
+    #[inline]
+    pub(crate) fn hides(&self, file: FileId, commit: u32) -> bool {
+        let word = self.with_errors.get(file.idx() / 32);
+        word.is_some_and(|it| it.load(Ordering::Relaxed) >> (file.0 % 32) & 1 != 0)
+            && self.hides_a_later_commit(file, commit)
+    }
+
+    #[cold]
+    fn hides_a_later_commit(&self, file: FileId, commit: u32) -> bool {
+        let rank = self.rank.get();
+        // This task doesn't report in an earlier file.
+        let reports_there = self
+            .ranks_of_files
+            .get(file.idx())
+            .is_some_and(|&it| it >= rank);
+        reports_there
+            && self
+                .numbers
+                .ranks
+                .lock()
+                .get(commit as usize)
+                .is_some_and(|&it| it > rank)
     }
 
     /// See `Task::is_beside_a_ring`.
@@ -577,8 +651,14 @@ impl<'s> Checker<'_, 's> {
         let (of_records, of_nodes) = self.task.logged_since_rest();
         let rings = self.p.commits.rings.lock();
         let from = rings.partition_point(|ring| ring.number <= at_rest.min(compared));
+        let is_of_later_file = |commit: u32| {
+            let rank = self.p.commits.rank_of(commit);
+            (self.task.file).is_some_and(|file| rank > Some(self.p.files.rank_of_file(file)))
+        };
         let has_missed = rings[from..].iter().any(|ring| {
-            ring.number > compared && ring.of_nodes.iter().any(|key| key[1] == view.pinned.get())
+            ring.number > compared
+                && ring.of_nodes.iter().any(|key| key[1] == view.pinned.get())
+                && !is_of_later_file(ring.number)
                 || ring.number > at_rest
                     && (of_records
                         .iter()
@@ -650,6 +730,11 @@ impl<'s> Checker<'_, 's> {
         if self.task.is_lost() {
             return false;
         }
+        let ranks = self.task.files_in_doubt.iter();
+        let rank = ranks
+            .map(|&file| p.files.rank_of_file(file))
+            .max()
+            .unwrap_or(0);
         let mut log = self.task.buffer().take_log();
         let ring = self.task.take_has_closed_a_ring().map(|[records, nodes]| {
             let of_records = log.of_records.get(records..).unwrap_or(&log.of_records);
@@ -677,6 +762,13 @@ impl<'s> Checker<'_, 's> {
         }
         let number = committing.number + 1;
         committing.number = number;
+        // Before the commit stores: whoever finds one of its entries finds these too.
+        for file in self.files_with_errors.drain() {
+            if let Some(word) = p.commits.with_errors.get(file.idx() / 32) {
+                word.fetch_or(1 << (file.0 % 32), Ordering::Relaxed);
+            }
+        }
+        p.commits.numbers.ranks.lock().push(rank);
         p.register_notes(&mut self.task, &mut committing, number);
         let task = &self.task;
         p.drop_diagnostics_of_losers(&mut reported, |commit| {
@@ -706,9 +798,6 @@ impl<'s> Checker<'_, 's> {
     /// has: to evaluate an expression is also to leave notes for the later passes over the file, like
     /// `unresolved_identifiers`, and whoever finds an entry leaves none.
     fn withhold_until_the_file_ends(&mut self, log: &mut Log, is_between_files: bool) {
-        if !self.unshared_entries.is_empty() {
-            (log.of_nodes).retain(|entry| !self.unshared_entries.contains(entry));
-        }
         let withheld = &mut self.withheld_until_the_file_ends;
         if is_between_files {
             log.of_nodes.append(withheld);

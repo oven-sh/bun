@@ -3,7 +3,7 @@
 use bun_paths::strings;
 
 use bun_ast as Log;
-use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
+use bun_core::{EncodedSlice, Utf8Bytes};
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
@@ -15,13 +15,13 @@ use bun_ptr::BackRef;
 use bun_http_types::URLPath;
 use bun_resolver::Resolver;
 use bun_resolver::fs as Fs;
-use bun_router::{self as Router, Match as RouterMatch, RouteConfig};
+use bun_router::{self as Router, RouteConfig};
 use bun_url::{CombinedScanner, QueryStringMap, URL, route_param};
 
 use crate::api::bun_object;
 use crate::generated_bindgen::filesystem_router::{
     FileSystemRouterClass, FileSystemRouterInternalFields as _, FileSystemRouterOptions,
-    MatchedRouteClass, Routable, RouteKind,
+    MatchedRouteClass, Routable, RouteKind, RouterStyle,
 };
 
 // Note: `FrameworkFileSystemRouter` is declared in this file's
@@ -58,21 +58,58 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     }
 }
 
-pub(crate) struct FileSystemRouter {
-    // BACKREF — interned `RefString`s live in the VM cache and outlive this
-    // router (we hold +1 via `claim` in `constructor`, released in `drop`).
-    origin: Option<BackRef<RefString>>,
-    base_dir: BackRef<RefString>,
-    router: Router::Router,
-    asset_prefix: Option<BackRef<RefString>>,
+/// A ref on a string of the VM's interning cache.
+struct Interned(BackRef<RefString>);
+
+impl Interned {
+    fn new(vm: &mut VirtualMachine, bytes: &[u8]) -> Self {
+        let string = vm.ref_counted_string::<true>(bytes, None);
+        let string = BackRef::from(core::ptr::NonNull::new(string).expect("ref_counted_string"));
+        // The cache adds no ref on a hit.
+        string.ref_();
+        Self(string)
+    }
+
+    fn bytes(&self) -> &[u8] {
+        self.0.leak()
+    }
 }
 
-/// The routes of `config.dir`. To `reload` is to read it from the disk again, and to let warnings pass.
+impl Clone for Interned {
+    fn clone(&self) -> Self {
+        self.0.ref_();
+        Self(self.0)
+    }
+}
+
+impl Drop for Interned {
+    fn drop(&mut self) {
+        // `get()`: a bare `deref()` is `<BackRef as Deref>::deref`.
+        self.0.get().deref();
+    }
+}
+
+pub(crate) struct FileSystemRouter {
+    origin: Option<Interned>,
+    base_dir: Interned,
+    router: Router::Router,
+    asset_prefix: Option<Interned>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Load {
+    /// From the resolver's cache of the directory. A warning is an error.
+    Cached,
+    /// From the disk. Warnings pass.
+    FromDisk,
+}
+
+/// The routes of `config.dir`, or `None` if there is no such directory.
 fn load_router(
     global: &JSGlobalObject,
     config: RouteConfig,
-    reload: bool,
-) -> JsResult<(Router::Router, bun_resolver::DirInfoRef)> {
+    load: Load,
+) -> JsResult<Option<(Router::Router, bun_resolver::DirInfoRef)>> {
     let mut log = Log::Log::new();
     // SAFETY: the VM and its resolver outlive this call, and this is dropped before `log`.
     let _restore_log = unsafe {
@@ -81,20 +118,16 @@ fn load_router(
             core::ptr::NonNull::from(&mut log),
         )
     };
-    let without_slash = strings::paths::without_trailing_slash_windows_path(&config.dir);
-    if reload {
-        FileSystemRouter::bust_dir_cache_recursive(without_slash);
+    if load == Load::FromDisk {
+        FileSystemRouter::bust_dir_cache_recursive(
+            strings::paths::without_trailing_slash_windows_path(&config.dir),
+        );
     }
 
     let resolver = &mut VirtualMachine::get().as_mut().transpiler.resolver;
     let root_dir_info = match resolver.read_dir_info(&config.dir) {
         Ok(Some(info)) => info,
-        Ok(None) => {
-            return Err(global.throw(format_args!(
-                "Unable to find directory: {}",
-                bstr::BStr::new(if reload { &*config.dir } else { without_slash })
-            )));
-        }
+        Ok(None) => return Ok(None),
         Err(_) => {
             let error = log.to_js(global, format_args!("reading root directory"))?;
             return Err(global.throw_value(error));
@@ -109,11 +142,11 @@ fn load_router(
         &mut RouterResolver(resolver),
         &config_dir,
     );
-    if loaded.is_err() || (!reload && log.errors + log.warnings > 0) {
+    if loaded.is_err() || (load == Load::Cached && log.errors + log.warnings > 0) {
         let error = log.to_js(global, format_args!("loading routes"))?;
         return Err(global.throw_value(error));
     }
-    Ok((router, root_dir_info))
+    Ok(Some((router, root_dir_info)))
 }
 
 impl FileSystemRouter {
@@ -245,16 +278,18 @@ impl FileSystemRouterClass for FileSystemRouter {
         if extensions.is_empty() {
             extensions = DEFAULT_EXTENSIONS.iter().map(|s| Box::from(*s)).collect();
         }
-        let asset_prefix = options.asset_prefix.unwrap_or_default();
 
         let config = RouteConfig {
             // Ends with the native separator (`\` on Windows).
             dir: strings::paths::clone_normalizing_separators(root_dir_path).into_boxed_slice(),
             extensions: extensions.into(),
-            asset_prefix_path: Box::from(asset_prefix),
-            ..Default::default()
         };
-        let (mut router, root_dir_info) = load_router(global, config, false)?;
+        let Some((mut router, root_dir_info)) = load_router(global, config, Load::Cached)? else {
+            return Err(cx.heap.error(format_args!(
+                "Unable to find directory: {}",
+                bstr::BStr::new(root_dir_path)
+            )));
+        };
 
         let base_dir_str = if !root_dir_info.abs_real_path.is_empty() {
             root_dir_info.abs_real_path
@@ -263,34 +298,26 @@ impl FileSystemRouterClass for FileSystemRouter {
         };
 
         let vm = global.bun_vm().as_mut();
-        // The interning cache adds no ref on a hit, so each router takes its own. `drop` releases it.
-        let mut claim = |bytes: &[u8]| -> BackRef<RefString> {
-            let p = vm.ref_counted_string::<true>(bytes, None);
-            let r = BackRef::from(core::ptr::NonNull::new(p).expect("ref_counted_string"));
-            r.ref_();
-            r
+        let base_dir = Interned::new(vm, base_dir_str);
+        router.config.dir = Box::from(base_dir.bytes());
+        let mut interned = |bytes: Option<&[u8]>| {
+            let bytes = bytes.filter(|bytes| !bytes.is_empty())?;
+            Some(Interned::new(vm, bytes))
         };
-        let base_dir = claim(base_dir_str);
-        router.config.dir = Box::from(base_dir.leak());
         Ok(FileSystemRouter {
-            origin: options
-                .origin
-                .filter(|origin| !origin.is_empty())
-                .map(&mut claim),
+            origin: interned(options.origin),
             base_dir,
-            asset_prefix: Some(asset_prefix)
-                .filter(|prefix| !prefix.is_empty())
-                .map(&mut claim),
+            asset_prefix: interned(options.asset_prefix),
             router,
         })
     }
 
     fn asset_prefix(&self) -> Option<impl AsRef<[u8]>> {
-        self.asset_prefix.as_ref().map(|prefix| prefix.leak())
+        self.asset_prefix.as_ref().map(Interned::bytes)
     }
 
     fn r#match<'a>(
-        &mut self,
+        &self,
         heap: &JsHeap<'a>,
         input: Routable<'a>,
     ) -> bindgen::Result<'a, Option<JsWrapper<'a, MatchedRoute>>> {
@@ -322,16 +349,8 @@ impl FileSystemRouterClass for FileSystemRouter {
             return Ok(None);
         }
 
-        // SAFETY: self-ref construction prelude — `route` below borrows these bytes via
-        // `URLPath`, and `path` is then MOVED into the same `MatchedRoute` that stores
-        // `route`. Borrowck can't see that the allocation travels with the borrow, so we
-        // detach the slice from `path`'s ownership here. The bytes stay valid: `path` is
-        // never dropped on any path between here and `MatchedRoute::init` taking ownership
-        // (early returns above this point already dropped/replaced `path`), except when
-        // `URLPath::parse` percent-decoded — in that case nothing borrows `path_bytes`
-        // anymore and `path` is swapped for the decode buffer below.
-        let path_bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(path.slice()) };
-        let mut url_path = match URLPath::parse(path_bytes) {
+        // `url_path`, `route` and `params_list` borrow `path`, or the decoded buffer that takes its place below.
+        let mut url_path = match URLPath::parse(path.slice()) {
             Ok(v) => v,
             Err(err) => {
                 return Err(heap.error(format_args!(
@@ -341,9 +360,9 @@ impl FileSystemRouterClass for FileSystemRouter {
                 )));
             }
         };
-        let mut params = route_param::List::default();
+        let mut params_list = route_param::List::default();
         let Some(route) =
-            (self.router.routes).match_page_with_allocator(b"", &url_path, &mut params)
+            (self.router.routes).match_page_with_allocator(b"", &url_path, &mut params_list)
         else {
             return Ok(None);
         };
@@ -359,26 +378,38 @@ impl FileSystemRouterClass for FileSystemRouter {
             path = Utf8Bytes::Owned(decoded.into_vec());
         }
 
-        let matched =
-            MatchedRoute::init(route, path, self.origin, self.asset_prefix, self.base_dir);
+        debug_assert!(core::ptr::eq(route.pathname, path.slice()));
+        let matched = MatchedRoute {
+            name: route.name,
+            file_path: route.file_path,
+            query_start: route.pathname.len() - route.query_string.len(),
+            pathname: path,
+            params_list,
+            param_map: JsCell::new(None),
+            origin: self.origin.clone(),
+            asset_prefix: self.asset_prefix.clone(),
+            base_dir: self.base_dir.clone(),
+        };
         Ok(Some(matched.into_js(heap)))
     }
 
     fn origin(&self) -> Option<impl AsRef<[u8]>> {
-        self.origin.as_ref().map(|origin| origin.leak())
+        self.origin.as_ref().map(Interned::bytes)
     }
 
     fn reload<'a>(
         this: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
     ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
-        let config = this.with(&cx.payloads, |this| RouteConfig {
-            dir: this.router.config.dir.clone(),
-            extensions: this.router.config.extensions.clone(),
-            asset_prefix_path: this.router.config.asset_prefix_path.clone(),
-            ..Default::default()
-        });
-        let (router, _) = load_router(cx.global(), config, true)?;
+        let config = this.with(&cx.payloads, |this| this.router.config.clone());
+        let Some((router, _)) = load_router(cx.global(), config, Load::FromDisk)? else {
+            return Err(this.with(&cx.payloads, |this| {
+                cx.heap.error(format_args!(
+                    "Unable to find directory: {}",
+                    bstr::BStr::new(&*this.router.config.dir)
+                ))
+            }));
+        };
         this.with_mut(&mut cx.payloads, |this| this.router = router);
         this.set_routes_field(&cx.heap, JsLocal::UNDEFINED);
         Ok(this)
@@ -393,118 +424,58 @@ impl FileSystemRouterClass for FileSystemRouter {
             name_strings_slice[i] = EncodedSlice::from_bytes(name);
             paths_strings[i] = EncodedSlice::from_bytes(paths[i]);
         }
-        // SAFETY: makes an object of strings.
+        // SAFETY: the object is new and plain, and its properties are defined and not set.
         let global = unsafe { heap.global() };
         let routes = JSValue::from_entries(global, name_strings_slice, paths_strings, true)?;
         Ok(JsLocal::new(heap, routes))
     }
 
-    fn style(&self) -> BunString {
-        BunString::static_("nextjs")
-    }
-}
-
-impl Drop for FileSystemRouter {
-    fn drop(&mut self) {
-        // Note: `BackRef` Derefs to `&RefString`; use `.get()` to avoid
-        // resolving to `<BackRef as Deref>::deref`.
-        if let Some(p) = self.asset_prefix.take() {
-            p.get().deref();
-        }
-        if let Some(p) = self.origin.take() {
-            p.get().deref();
-        }
-        self.base_dir.get().deref();
+    fn style(&self) -> RouterStyle {
+        RouterStyle::Nextjs
     }
 }
 
 pub(crate) struct MatchedRoute {
-    // Note: `Match<'a>` borrows (a) the resolver's process-lifetime DirnameStore for
-    // `name`/`file_path`/`basename`/`path` and (b) `self.pathname_backing` for
-    // `pathname`/`query_string`/param values. Both are stable for `Self`'s lifetime, so
-    // the stored `'static` is the standard self-referential erasure — see `init`.
-    /// `params` is null: they are `self.params_list`.
-    route: RouterMatch<'static>,
-    // Lazily populated by `query`/`params`, which take `&self`.
-    query_string_map: JsCell<Option<QueryStringMap>>,
-    param_map: JsCell<Option<QueryStringMap>>,
+    /// Of the route. The resolver's DirnameStore holds them for the life of the process.
+    name: &'static [u8],
+    file_path: &'static [u8],
+    /// Decoded, with the query string.
+    pathname: Utf8Bytes<'static>,
+    /// Where the query string starts in `pathname`.
+    query_start: usize,
+    /// Its values borrow `pathname`.
     params_list: route_param::List<'static>,
-    /// What `route.pathname`, `route.query_string` and the values in `params_list` borrow.
-    #[expect(dead_code, reason = "held for what borrows it")]
-    pathname_backing: Utf8Bytes<'static>,
-    // BACKREF — interned `RefString`s; we hold +1 (bumped in `init`, released in
-    // `drop`). The interned allocation outlives every `MatchedRoute`.
-    origin: Option<BackRef<RefString>>,
-    asset_prefix: Option<BackRef<RefString>>,
-    base_dir: BackRef<RefString>,
+    /// Made by the first of `params` and `query` to need it. It borrows `pathname`.
+    param_map: JsCell<Option<QueryStringMap>>,
+    origin: Option<Interned>,
+    asset_prefix: Option<Interned>,
+    base_dir: Interned,
 }
 
 impl MatchedRoute {
-    fn init(
-        match_: RouterMatch<'_>,
-        pathname_backing: Utf8Bytes<'static>,
-        origin: Option<BackRef<RefString>>,
-        asset_prefix: Option<BackRef<RefString>>,
-        base_dir: BackRef<RefString>,
-    ) -> MatchedRoute {
-        // SAFETY: what it borrows is the DirnameStore or `pathname_backing`, which is stored with it.
-        let mut route: RouterMatch<'static> = unsafe { match_.detach_lifetime() };
-        // SAFETY: the caller's live list, which it does not read again.
-        let params_list = unsafe { core::mem::take(&mut *route.params) };
-        route.params = core::ptr::null_mut();
-
-        base_dir.ref_();
-        if let Some(o) = origin {
-            o.ref_();
-        }
-        if let Some(p) = asset_prefix {
-            p.ref_();
-        }
-        MatchedRoute {
-            route,
-            query_string_map: JsCell::new(None),
-            param_map: JsCell::new(None),
-            params_list,
-            pathname_backing,
-            origin,
-            asset_prefix,
-            base_dir,
-        }
+    fn pathname_without_leading_slash(&self) -> &[u8] {
+        strings::trim_left(self.pathname.slice(), b"/")
     }
 
-    fn create_query_object(ctx: &JSGlobalObject, map: &mut QueryStringMap) -> JsResult<JSValue> {
+    fn create_query_object(ctx: &JSGlobalObject, map: &QueryStringMap) -> JsResult<JSValue> {
         struct QueryObjectCreator<'a> {
-            query: &'a mut QueryStringMap,
+            query: &'a QueryStringMap,
         }
         impl<'a> ObjectInitializer for QueryObjectCreator<'a> {
             fn create(&mut self, obj: &mut JSObject, global: &JSGlobalObject) -> JsResult<()> {
-                // Stack scratch — 256 × 16-byte fat ptr × 2 ≈ 8 KiB, well within Bun's
-                // JS-thread stack budget. A `RefCell<[&'static [u8]; 256]>` TLS slot
-                // would be unsound: `iter.next()` writes QueryStringMap-lifetime
-                // slices into it, and once the map drops the TLS slot is left
-                // holding dangling `&'static [u8]` — invalid-value UB the next time
-                // `with_borrow_mut` produces a `&mut` over it. A stack array lets
-                // inference tie the element lifetime to `iter` and dies with this
-                // frame.
                 let mut values_buf: [&[u8]; 256] = [b""; 256];
                 let mut refs_buf: [EncodedSlice; 256] = [EncodedSlice::EMPTY; 256];
 
                 let mut iter = self.query.iter();
                 while let Some(entry) = iter.next(&mut values_buf) {
-                    let entry_name = entry.name;
-                    let mut str = EncodedSlice::from_bytes(entry_name);
+                    let mut name = EncodedSlice::from_bytes(entry.name);
 
                     debug_assert!(!entry.values.is_empty());
-                    if entry.values.len() > 1 {
-                        let values = &mut refs_buf[0..entry.values.len()];
-                        for (i, value) in entry.values.iter().enumerate() {
-                            values[i] = EncodedSlice::from_bytes(value);
-                        }
-                        obj.put_record(global, &mut str, values)?;
-                    } else {
-                        refs_buf[0] = EncodedSlice::from_bytes(entry.values[0]);
-                        obj.put_record(global, &mut str, &mut refs_buf[0..1])?;
+                    let values = &mut refs_buf[..entry.values.len()];
+                    for (slot, value) in values.iter_mut().zip(entry.values) {
+                        *slot = EncodedSlice::from_bytes(value);
                     }
+                    obj.put_record(global, &mut name, values)?;
                 }
                 Ok(())
             }
@@ -517,27 +488,15 @@ impl MatchedRoute {
     }
 }
 
-impl Drop for MatchedRoute {
-    fn drop(&mut self) {
-        if let Some(p) = self.origin.take() {
-            p.get().deref();
-        }
-        if let Some(p) = self.asset_prefix.take() {
-            p.get().deref();
-        }
-        self.base_dir.get().deref();
-    }
-}
-
 impl MatchedRouteClass for MatchedRoute {
     type Error<'a> = JsError;
 
     fn file_path(&self) -> impl AsRef<[u8]> {
-        self.route.file_path
+        self.file_path
     }
 
     fn kind(&self) -> RouteKind {
-        let name = self.route.name;
+        let name = self.name;
         if strings::contains(name, b"[[...") {
             RouteKind::OptionalCatchAll
         } else if strings::contains(name, b"[...") {
@@ -550,11 +509,11 @@ impl MatchedRouteClass for MatchedRoute {
     }
 
     fn name(&self) -> impl AsRef<[u8]> {
-        self.route.name
+        self.name
     }
 
     fn params<'a>(&self, heap: &JsHeap<'a>) -> JsResult<JsLocal<'a>> {
-        // SAFETY: makes an object of strings.
+        // SAFETY: the object is new and plain, and its properties are defined and not set.
         let global = unsafe { heap.global() };
         if self.params_list.is_empty() {
             return Ok(JsLocal::new(heap, JSValue::create_empty_object(global, 0)));
@@ -563,54 +522,44 @@ impl MatchedRouteClass for MatchedRoute {
         if self.param_map.get().is_none() {
             let scanner = CombinedScanner::init(
                 b"",
-                self.route.pathname_without_leading_slash(),
-                self.route.name,
+                self.pathname_without_leading_slash(),
+                self.name,
                 &self.params_list,
             );
             self.param_map
                 .set(QueryStringMap::init_with_scanner(scanner)?);
         }
 
-        let params = self
-            .param_map
-            .with_mut(|m| Self::create_query_object(global, m.as_mut().unwrap()))?;
+        let params = Self::create_query_object(global, self.param_map.get().as_ref().unwrap())?;
         Ok(JsLocal::new(heap, params))
     }
 
     fn pathname(&self) -> impl AsRef<[u8]> {
-        self.route.pathname
+        self.pathname.slice()
     }
 
     fn query<'a>(&self, heap: &JsHeap<'a>) -> JsResult<JsLocal<'a>> {
-        // SAFETY: makes an object of strings.
+        // SAFETY: the object is new and plain, and its properties are defined and not set.
         let global = unsafe { heap.global() };
-        let route = &self.route;
-        if route.query_string.is_empty() && self.params_list.is_empty() {
-            return Ok(JsLocal::new(heap, JSValue::create_empty_object(global, 0)));
-        } else if route.query_string.is_empty() {
+        let query_string = &self.pathname.slice()[self.query_start..];
+        if query_string.is_empty() {
             return self.params(heap);
         }
 
-        if self.query_string_map.get().is_none() {
-            if !self.params_list.is_empty() {
-                let scanner = CombinedScanner::init(
-                    route.query_string,
-                    route.pathname_without_leading_slash(),
-                    route.name,
-                    &self.params_list,
-                );
-                self.query_string_map
-                    .set(QueryStringMap::init_with_scanner(scanner)?);
-            } else {
-                self.query_string_map
-                    .set(QueryStringMap::init(route.query_string)?);
-            }
-        }
-
-        let query = self.query_string_map.with_mut(|m| match m {
-            Some(map) => Self::create_query_object(global, map),
-            None => Ok(JSValue::create_empty_object(global, 0)),
-        })?;
+        let map = if self.params_list.is_empty() {
+            QueryStringMap::init(query_string)?
+        } else {
+            QueryStringMap::init_with_scanner(CombinedScanner::init(
+                query_string,
+                self.pathname_without_leading_slash(),
+                self.name,
+                &self.params_list,
+            ))?
+        };
+        let query = match &map {
+            Some(map) => Self::create_query_object(global, map)?,
+            None => JSValue::create_empty_object(global, 0),
+        };
         Ok(JsLocal::new(heap, query))
     }
 
@@ -620,20 +569,15 @@ impl MatchedRouteClass for MatchedRoute {
 
     fn src(&self) -> impl AsRef<[u8]> {
         let mut src: Vec<u8> = Vec::new();
-        let origin_url = if let Some(ref origin) = self.origin {
-            URL::parse(origin.leak())
-        } else {
-            URL::default()
-        };
+        let origin_url = self
+            .origin
+            .as_ref()
+            .map(|origin| URL::parse(origin.bytes()));
         bun_object::get_public_path_with_asset_prefix(
-            self.route.file_path,
-            self.base_dir.leak(),
-            &origin_url,
-            if let Some(ref prefix) = self.asset_prefix {
-                prefix.leak()
-            } else {
-                b""
-            },
+            self.file_path,
+            self.base_dir.bytes(),
+            &origin_url.unwrap_or_default(),
+            self.asset_prefix.as_ref().map_or(b"", Interned::bytes),
             &mut src,
             path::Platform::Posix,
         );

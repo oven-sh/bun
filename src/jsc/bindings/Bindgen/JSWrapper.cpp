@@ -2,6 +2,7 @@
 #include "Bindgen/JSWrapper.h"
 #include "GeneratedBindings+Tables.h"
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
 
 namespace Bun::Bindgen {
@@ -9,6 +10,15 @@ using namespace JSC;
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSClassConstructor, InternalFunction);
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSClassConstructor);
+
+void analyzeInternalFields(JSCell* cell, HeapAnalyzer& analyzer, std::span<const WriteBarrier<Unknown>> fields, std::span<const ASCIILiteral> names)
+{
+    VM& vm = cell->vm();
+    for (size_t i = 0; i < fields.size(); ++i) {
+        if (JSValue value = fields[i].get(); value.isCell())
+            analyzer.analyzePropertyNameEdge(cell, value.asCell(), Identifier::fromString(vm, names[i]).impl());
+    }
+}
 
 const ClassInfo JSClassConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSClassConstructor) };
 

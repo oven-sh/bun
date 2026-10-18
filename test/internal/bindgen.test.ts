@@ -1,5 +1,6 @@
 import { bindgen as bindings } from "bun:internal-for-testing";
 import { describe as describeAlways, expect, it as itAlways } from "bun:test";
+import { runWithError } from "harness";
 import { BlockList, SocketAddress } from "node:net";
 import { rustIdent } from "../../src/codegen/bindgen-lib-internal.ts";
 import * as b from "../../src/codegen/bindgen-lib.ts";
@@ -392,11 +393,8 @@ describe("strings", () => {
   const thrower =
     (f: (...args: any[]) => unknown) =>
     (...args: unknown[]) => {
-      try {
-        f(...args);
-      } catch (error: any) {
-        return `${error.name} ${error.code}: ${error.message}`;
-      }
+      const error: any = runWithError(() => f(...args));
+      return error && `${error.name} ${error.code}: ${error.message}`;
     };
 
   it("expected: a value of the wrong type throws Node's ERR_INVALID_ARG_TYPE", () => {
@@ -414,7 +412,7 @@ describe("strings", () => {
   });
 
   it("expected: a string is the whole message, and a dictionary is reported as the argument", () => {
-    const f = bindgen.expectedByNodeInCpp;
+    const f = bindgen.expectedMessage;
     expect(f(new Uint8Array(2))).toBe(2);
     expect(f(new Uint8Array(2), null, { flag: 1 })).toBe(3);
     expect(f(new Uint8Array(2), { flag: 1 }, { flag: 1 })).toBe(4);
@@ -1590,7 +1588,6 @@ describe("classes", () => {
       "count",
       "label",
       "tag",
-      "sameTag",
       "increment",
       "add",
       "forgetTag",
@@ -1672,16 +1669,19 @@ describe("classes", () => {
     expect(untouched.tag).toEqual([5]);
   });
 
-  it("two cached getters can return one field", () => {
+  it("a heap snapshot names the internal fields", () => {
     const counter = new TestCounter(3);
-    expect(counter.sameTag).toBe(counter.tag);
-    const other = new TestCounter(4);
-    expect(other.tag).toBe(other.sameTag);
-    other.forgetTag();
-    expect(other.sameTag).toEqual([4]);
-    expect(() => b.class({ rustPath: "crate::X", proto: { a: { getter: b.i32, cache: "absent" } } })).toThrow(
-      "a: there is no internal field absent",
-    );
+    counter.listen(() => {});
+    counter.tag;
+    const { nodes, nodeClassNames, edges, edgeTypes, edgeNames } = Bun.generateHeapSnapshot();
+    const counters = new Set<number>();
+    for (let i = 0; i < nodes.length; i += 4)
+      if (nodeClassNames[nodes[i + 2]] === "TestCounter") counters.add(nodes[i]);
+    const names = new Set<string>();
+    for (let i = 0; i < edges.length; i += 4) {
+      if (counters.has(edges[i]) && edgeTypes[edges[i + 2]] === "Property") names.add(edgeNames[edges[i + 3]]);
+    }
+    expect([...names].sort()).toEqual(["listener", "tag"]);
   });
 
   it("checks the receiver", () => {

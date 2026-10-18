@@ -24,13 +24,15 @@ bool checkInMemoryBlob(JSGlobalObject& globalObject, JSValue value)
     return true;
 }
 
-std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value)
+static std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value, bool& isShared)
 {
     std::span<const uint8_t> bytes;
     if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
         bytes = view->span();
+        isShared = view->isShared();
     } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value)) {
         bytes = buffer->impl()->span();
+        isShared = buffer->isShared();
     } else {
         const uint8_t* data = nullptr;
         size_t length = 0;
@@ -43,20 +45,36 @@ std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value)
     return bytes;
 }
 
-static bool isSharedBuffer(JSValue value)
+std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value)
 {
-    if (auto* view = dynamicDowncast<JSArrayBufferView>(value))
-        return view->isShared();
-    if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value))
-        return buffer->isShared();
-    return false;
+    bool isShared = false;
+    return bytesOfBlobOrBuffer(value, isShared);
 }
 
 void JSBytesView::copyIfShared(JSGlobalObject& globalObject, JSValue argument, std::optional<MallocSpan<uint8_t>>& copy)
 {
-    if (!m_isBlobOrBuffer || !isSharedBuffer(argument))
+    if (!m_isBlobOrBuffer)
         return;
-    m_bytes = bytesOfBlobOrBuffer(argument);
+    bool isShared = false;
+    auto bytes = bytesOfBlobOrBuffer(argument, isShared);
+    if (!isShared)
+        return;
+    m_bytes = bytes;
+    copyBytes(globalObject, copy);
+}
+
+void JSBytesView::readCopyingShared(JSGlobalObject& globalObject, JSValue argument, std::optional<MallocSpan<uint8_t>>& copy)
+{
+    if (!m_isBlobOrBuffer)
+        return;
+    bool isShared = false;
+    m_bytes = bytesOfBlobOrBuffer(argument, isShared);
+    if (isShared)
+        copyBytes(globalObject, copy);
+}
+
+void JSBytesView::copyBytes(JSGlobalObject& globalObject, std::optional<MallocSpan<uint8_t>>& copy)
+{
     if (m_bytes.empty())
         return;
     // Not a Vector, which holds less than a buffer can.

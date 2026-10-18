@@ -2,7 +2,7 @@ use crate::generated_bindgen::text_decoder::{
     TextDecodeOptions, TextDecoderClass, TextDecoderOptions,
 };
 use crate::webcore::EncodingLabel;
-use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSValue, JsError};
 use bun_core::AllocError;
 use bun_core::strings;
 use bun_jsc::HostReturn as _;
@@ -17,9 +17,9 @@ use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
 
 #[derive(Default, Clone, Copy)]
-pub(crate) struct Buffered {
-    pub(crate) buf: [u8; 3],
-    pub(crate) len: u8,
+struct Buffered {
+    buf: [u8; 3],
+    len: u8,
 }
 
 impl Buffered {
@@ -31,11 +31,11 @@ impl Buffered {
 #[derive(Default)]
 pub(crate) struct TextDecoder {
     // used for utf8 decoding
-    pub(crate) buffered: Buffered,
+    buffered: Buffered,
 
     // used for utf16 decoding
-    pub(crate) lead_byte: Option<u8>,
-    pub(crate) lead_surrogate: Option<u16>,
+    lead_byte: Option<u8>,
+    lead_surrogate: Option<u16>,
 
     // https://encoding.spec.whatwg.org/#textdecoder-bom-seen-flag
     // True once the stream's BOM decision is made: its first scalar was either
@@ -54,9 +54,9 @@ pub(crate) struct TextDecoder {
     // be fed again (encoding_rs panics).
     codec: Option<encoding_rs::Decoder>,
 
-    pub(crate) ignore_bom: bool,
-    pub(crate) fatal: bool,
-    pub(crate) encoding: EncodingLabel,
+    ignore_bom: bool,
+    fatal: bool,
+    encoding: EncodingLabel,
 }
 
 impl TextDecoder {
@@ -67,9 +67,7 @@ impl TextDecoder {
         saw_error: &mut bool,
         code_unit: u16,
     ) -> Result<(), AllocError> {
-        if let Some(lead_surrogate) = self.lead_surrogate {
-            self.lead_surrogate = None;
-
+        if let Some(lead_surrogate) = self.lead_surrogate.take() {
             if u16_is_trail(code_unit) {
                 // TODO: why is this here?
                 // const code_point = strings.u16GetSupplementary(lead_surrogate, code_unit);
@@ -96,10 +94,7 @@ impl TextDecoder {
     }
 
     #[inline(always)]
-    pub(crate) fn code_unit_from_bytes_utf16<const BIG_ENDIAN: bool>(
-        first: u16,
-        second: u16,
-    ) -> u16 {
+    fn code_unit_from_bytes_utf16<const BIG_ENDIAN: bool>(first: u16, second: u16) -> u16 {
         if BIG_ENDIAN {
             (first << 8) | second
         } else {
@@ -107,7 +102,7 @@ impl TextDecoder {
         }
     }
 
-    pub(crate) fn decode_utf16<const BIG_ENDIAN: bool, const FLUSH: bool>(
+    fn decode_utf16<const BIG_ENDIAN: bool, const FLUSH: bool>(
         &mut self,
         bytes: &[u8],
     ) -> Result<(Vec<u16>, bool), AllocError> {
@@ -217,15 +212,13 @@ impl TextDecoder {
         Ok(decoded)
     }
 
-    /// https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2: a
-    /// decode() after a flushing one starts a new stream, with a new decoder
-    /// and its BOM not yet seen.
     fn decode_chunk(
         &mut self,
         global_this: &JSGlobalObject,
         chunk: &[u8],
         stream: bool,
-    ) -> JsResult<JSValue> {
+    ) -> Result<JSValue, DecodeError> {
+        // https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2: what follows a flush is a new stream.
         if !core::mem::replace(&mut self.do_not_flush, stream) {
             self.bom_seen = false;
             self.codec = None;
@@ -241,7 +234,7 @@ impl TextDecoder {
         &mut self,
         global_this: &JSGlobalObject,
         buffer_slice: &[u8],
-    ) -> JsResult<JSValue> {
+    ) -> Result<JSValue, DecodeError> {
         match self.encoding {
             EncodingLabel::LATIN1 => {
                 if strings::is_all_ascii(buffer_slice) {
@@ -260,7 +253,7 @@ impl TextDecoder {
                 let out = strings::copy_cp1252_into_utf16(buf, buffer_slice);
                 // SAFETY: the copy above initialized `out.written` (≤ `out_length`) units.
                 unsafe { units.set_len(out.written as usize) };
-                bun_string_jsc::owned_utf16_into_js(global_this, units)
+                Ok(bun_string_jsc::owned_utf16_into_js(global_this, units)?)
             }
             EncodingLabel::Utf8 => {
                 // Prepend the partial UTF-8 sequence carried over from the
@@ -305,25 +298,16 @@ impl TextDecoder {
                 let maybe_decode_result = match maybe_decode_result {
                     Ok(v) => v,
                     Err(err) => {
-                        // `joined_owned` drops at scope exit.
-                        if self.fatal {
-                            if matches!(err, strings::ToUTF16Error::InvalidByteSequence) {
-                                return Err(global_this
-                                    .err(
-                                        jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
-                                        format_args!(
-                                            "The encoded data was not valid for encoding utf-8"
-                                        ),
-                                    )
-                                    .throw());
-                            }
+                        if self.fatal && matches!(err, strings::ToUTF16Error::InvalidByteSequence) {
+                            return Err(DecodeError::InvalidData);
                         }
 
                         debug_assert!(matches!(err, strings::ToUTF16Error::OutOfMemory));
                         return Err(bun_string_jsc::throw_utf16_transcode_failure(
                             global_this,
                             input,
-                        ));
+                        )
+                        .into());
                     }
                 };
 
@@ -335,7 +319,6 @@ impl TextDecoder {
                 }
 
                 if let Some((decoded, leftover, leftover_len)) = maybe_decode_result {
-                    // `joined_owned` drops at scope exit.
                     debug_assert!(self.buffered.len == 0);
                     if !FLUSH {
                         if leftover_len != 0 {
@@ -345,7 +328,7 @@ impl TextDecoder {
                             };
                         }
                     }
-                    return bun_string_jsc::owned_utf16_into_js(global_this, decoded);
+                    return Ok(bun_string_jsc::owned_utf16_into_js(global_this, decoded)?);
                 }
 
                 // All-ASCII input needed no conversion. `EncodedSlice::latin1(..).to_js`
@@ -379,17 +362,7 @@ impl TextDecoder {
                 };
 
                 if saw_error && self.fatal {
-                    drop(decoded);
-                    return Err(global_this
-                        .err(
-                            jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
-                            // Node formats the message with the lowercase canonical label.
-                            format_args!(
-                                "The encoded data was not valid for encoding {}",
-                                if big_endian { "utf-16be" } else { "utf-16le" }
-                            ),
-                        )
-                        .throw());
+                    return Err(DecodeError::InvalidData);
                 }
 
                 // https://encoding.spec.whatwg.org/#concept-td-serialize: only the
@@ -406,7 +379,7 @@ impl TextDecoder {
                     }
                 }
 
-                bun_string_jsc::owned_utf16_into_js(global_this, decoded)
+                Ok(bun_string_jsc::owned_utf16_into_js(global_this, decoded)?)
             }
 
             // Every other encoding goes through encoding_rs.
@@ -419,39 +392,54 @@ impl TextDecoder {
                         .encoding_rs()
                         .new_decoder_without_bom_handling()
                 });
-                let result =
-                    Self::decode_with_encoding_rs::<FLUSH>(self.fatal, decoder, buffer_slice);
+                let decoded =
+                    match Self::decode_with_encoding_rs::<FLUSH>(self.fatal, decoder, buffer_slice)
+                    {
+                        Ok(decoded) => decoded,
+                        Err(strings::ToUTF16Error::InvalidByteSequence) => {
+                            // With what it had pending, so a later `{stream: true}` chunk does not go on from the bad byte.
+                            self.codec = None;
+                            return Err(DecodeError::InvalidData);
+                        }
+                        Err(strings::ToUTF16Error::OutOfMemory) => {
+                            return Err(global_this.throw_memory_allocation_failed().into());
+                        }
+                    };
 
-                // A fatal error discards the decoder along with whatever it had
-                // pending (a lead byte, the ISO-2022-JP mode), so a later
-                // `{stream: true}` chunk starts over instead of continuing from
-                // the bad byte. A flushing decode leaves it to `decode_chunk`.
-                if matches!(result, Err(strings::ToUTF16Error::InvalidByteSequence)) {
-                    self.codec = None;
-                }
-
-                let decoded = match result {
-                    Ok(decoded) => decoded,
-                    Err(strings::ToUTF16Error::InvalidByteSequence) => {
-                        return Err(global_this
-                            .err(
-                                jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
-                                format_args!(
-                                    "The encoded data was not valid for encoding {}",
-                                    bstr::BStr::new(EncodingLabel::get_label(self.encoding))
-                                ),
-                            )
-                            .throw());
-                    }
-                    Err(strings::ToUTF16Error::OutOfMemory) => {
-                        return Err(global_this.throw_memory_allocation_failed());
-                    }
-                };
-
-                bun_string_jsc::owned_utf16_into_js(global_this, decoded)
+                Ok(bun_string_jsc::owned_utf16_into_js(global_this, decoded)?)
             }
         }
     }
+}
+
+enum DecodeError {
+    /// The decoder is `fatal`. Not thrown: to throw can run a debugger's JavaScript, which can reach the decoder.
+    InvalidData,
+    Thrown(JsError),
+}
+
+impl From<JsError> for DecodeError {
+    fn from(error: JsError) -> Self {
+        Self::Thrown(error)
+    }
+}
+
+impl From<AllocError> for DecodeError {
+    fn from(error: AllocError) -> Self {
+        Self::Thrown(error.into())
+    }
+}
+
+/// What [`DecodeError::InvalidData`] throws.
+#[cold]
+fn invalid_data(global: &JSGlobalObject, encoding: EncodingLabel) -> JSValue {
+    jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA.fmt(
+        global,
+        format_args!(
+            "The encoded data was not valid for encoding {}",
+            bstr::BStr::new(encoding.get_label())
+        ),
+    )
 }
 
 impl TextDecoderClass for TextDecoder {
@@ -489,10 +477,16 @@ impl TextDecoderClass for TextDecoder {
         input: Option<&'a [u8]>,
         options: &TextDecodeOptions,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
-        // SAFETY: decoding makes a string or throws, and what throws returns without reading `input` again.
+        // SAFETY: decoding makes a string. Only a failed allocation throws, and then nothing reads `self` or `input`.
         let global = unsafe { heap.global() };
-        let decoded = self.decode_chunk(global, input.unwrap_or_default(), options.stream)?;
-        Ok(JsLocal::new(heap, decoded))
+        match self.decode_chunk(global, input.unwrap_or_default(), options.stream) {
+            Ok(decoded) => Ok(JsLocal::new(heap, decoded)),
+            Err(DecodeError::InvalidData) => {
+                let error = invalid_data(global, self.encoding);
+                Err(bindgen::Error::from_value(JsLocal::new(heap, error)))
+            }
+            Err(DecodeError::Thrown(error)) => Err(error.into()),
+        }
     }
 
     fn encoding<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
@@ -609,6 +603,17 @@ pub(crate) extern "C" fn TextDecoder__decodeForStream(
         // escape this call.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
-    // SAFETY: `this` is the live decoder owned by the calling JS cell, and decoding runs no JS that could reach it.
-    unsafe { (*this).decode_chunk(global, slice, stream) }.or_pending_exception()
+    // SAFETY: `this` is the live decoder owned by the calling JS cell. Only a failed allocation throws inside.
+    let (decoded, encoding) = unsafe {
+        (
+            (*this).decode_chunk(global, slice, stream),
+            (*this).encoding,
+        )
+    };
+    decoded
+        .map_err(|error| match error {
+            DecodeError::InvalidData => global.throw_value(invalid_data(global, encoding)),
+            DecodeError::Thrown(error) => error,
+        })
+        .or_pending_exception()
 }

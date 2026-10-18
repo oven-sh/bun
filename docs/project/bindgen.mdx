@@ -67,8 +67,9 @@ A function of a `node:*` module names what Node's own source expects of an argum
 refuses then throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)`, "The "data" argument must
 be of type string or an instance of Buffer, TypedArray, or DataView. Received null", and not "data
 must be a string, ArrayBuffer or ArrayBufferView". What the type takes is the same. A string in the
-place of the list is the whole message, as Node's C++ writes its own out. A dictionary named in
-`expected` reports what is not an object as the argument, and not under the dictionary's name.
+place of the list is the whole message: Node's C++ writes its own out that way, and so do the Bun APIs
+that have a message of their own. A dictionary named in `expected` reports what is not an object as the
+argument, and not under the dictionary's name.
 
 Nothing else is written by hand, except once per crate: `src/<crate>/generated_bindgen.rs`
 includes the generated file, the crate root declares `mod generated_bindgen`, and a
@@ -78,7 +79,7 @@ not compile.
 
 To reach the function:
 
-- from `src/js`: `$bindgen("bindgen_test.bind.ts", "add")`, which is typed from the schema. An argument's type is what it takes, so one that coerces (`.loose`, `.wrap`, `.enforceRange()`) is `any`;
+- from `src/js`: `$bindgen("bindgen_test.bind.ts", "add")`, which is typed from the schema. An argument's type is what it takes, so one that coerces (`.loose`, `.wrap`, `.enforceRange()`) is `any`. A `.nullable` result, and a `.nullable` getter without a setter, is `T | null`;
 - from a C++ static property table: `Bun::Bindgen::Generated::BindgenTest::jsAdd` in `GeneratedBindgenTest.h`.
 
 ### Namespaces
@@ -141,8 +142,8 @@ let global = unsafe { heap.global() };
 
 `throws: true` makes the return type a `Result`. The error is a
 `bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
-`heap.range_error(..)`, `heap.error_with_code(ErrorCode::OUT_OF_RANGE, ..)`, `heap.invalid_arguments(..)` or
-`bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any type that
+`heap.range_error(..)`, `heap.error_with_code(ErrorCode::OUT_OF_RANGE, ..)`, `heap.invalid_arguments(..)`,
+`heap.illegal_constructor()` or `bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any type that
 implements `bindgen::IntoError` (`bun_sys::Error`, `SystemError`, `JsError` and a `Box` of
 one do), which lets a `capability: "none"` function fail too.
 
@@ -513,6 +514,10 @@ outside the object: there is no `estimatedSize` yet.
 Code that has the global object and no capability makes one with
 `payload.into_js_value(global)`, which returns a `JSValue`.
 
+A class that JavaScript names but cannot make, like `Crypto`, declares
+`construct: { capability: "heap", throws: true }`, and its `constructor` returns
+`Err(heap.illegal_constructor())`.
+
 A property of `proto` is one of:
 
 | Property                                    | What it is                                                               |
@@ -572,12 +577,11 @@ allocating or viewing a buffer inside the closure is fine.
 `&mut self` method that needs them asks for the wrapper too, with `passThis: true`.
 The wrapper reaches the internal fields and not the payload.
 
-Every field starts as `undefined`.
+Every field starts as `undefined`. A heap snapshot shows what it holds as a property of its name.
 
 A getter with `cache: true` declares a field of its own name, with the same two functions, and
 returns it. While the field is `undefined` the getter calls Rust and stores the result, so
 `this.set_tag_field(heap, JsLocal::UNDEFINED)` makes the next read of `tag` compute it again.
-`cache: "tag"` on another getter returns that same field.
 
 ### Staying alive
 

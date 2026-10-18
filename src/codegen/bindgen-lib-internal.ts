@@ -798,16 +798,13 @@ export class BytesType extends Type {
   }
   cppReadLast(target: string, value: string): string[] {
     if (!this.#isView) return [];
-    return [
-      ...(this.#options.held === "borrowed" ? [`${target}.read(${value});`] : []),
-      ...(this.#options.shared === "copied"
-        ? [
-            `std::optional<WTF::MallocSpan<uint8_t>> ${target}Copy;`,
-            `${target}.copyIfShared(*globalObject, ${value}, ${target}Copy);`,
-            `RETURN_IF_EXCEPTION(scope, {});`,
-          ]
-        : []),
-    ];
+    if (this.#options.shared === "copied")
+      return [
+        `std::optional<WTF::MallocSpan<uint8_t>> ${target}Copy;`,
+        `${target}.${this.#options.held === "borrowed" ? "readCopyingShared" : "copyIfShared"}(*globalObject, ${value}, ${target}Copy);`,
+        `RETURN_IF_EXCEPTION(scope, {});`,
+      ];
+    return this.#options.held === "borrowed" ? [`${target}.read(${value});`] : [];
   }
   layout(): Layout {
     const converted = this.#isView ? { size: 16, align: 8 } : { size: 8, align: 8 };
@@ -1770,8 +1767,8 @@ export interface GetterField {
   getter: Type;
   /** Also generate a setter, which takes `&mut self` (or the wrapper, with `capability: "js"`). */
   setter?: true;
-  /** Returns an internal field, of this name or the one named, and computes it while that is `undefined`. */
-  cache?: true | string;
+  /** Returns the internal field of its name, and computes it while that is `undefined`. */
+  cache?: true;
   capability?: Capability;
   throws?: boolean;
   /** As a function's. */
@@ -1835,12 +1832,9 @@ export class Getter {
   readonly capability: Capability;
   readonly throws: boolean;
   readonly hasSetter: boolean;
-  /** The internal field it returns. */
-  readonly internalField: string | undefined;
+  readonly cached: boolean;
   readonly isStatic: boolean;
   readonly rustName: string;
-  /** Of `internalField`. Set by its class. */
-  internalFieldIndex = -1;
   constructor(name: string, options: GetterField, isStatic = false) {
     this.name = name;
     this.isStatic = isStatic;
@@ -1855,7 +1849,7 @@ export class Getter {
       !this.type.holdsJSValue || this.capability !== "none",
       `${name}: returning a JS value takes capability: "heap" or "js"`,
     );
-    this.internalField = options.cache === true ? name : options.cache;
+    this.cached = options.cache ?? false;
   }
 }
 
@@ -1949,15 +1943,10 @@ export class ClassType extends NamedType {
     assert(this.construct || this.staticMembers.length === 0, "static members need a constructor object");
     this.internalFields = [
       ...(options.internalFields ?? []),
-      ...getters.filter(getter => getter.internalField === getter.name).map(getter => getter.name),
+      ...getters.filter(getter => getter.cached).map(getter => getter.name),
     ];
     for (const field of this.internalFields)
       assert(/^[a-z][A-Za-z0-9]*$/.test(field), `${field}: an internal field is named in camelCase`);
-    for (const getter of getters) {
-      if (getter.internalField === undefined) continue;
-      getter.internalFieldIndex = this.internalFields.indexOf(getter.internalField);
-      assert(getter.internalFieldIndex >= 0, `${getter.name}: there is no internal field ${getter.internalField}`);
-    }
     assertDistinct(
       [
         "constructor",

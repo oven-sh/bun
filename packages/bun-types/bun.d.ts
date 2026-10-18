@@ -8177,15 +8177,15 @@ declare module "bun" {
       /**
        * User CPU time used by the process, in microseconds.
        */
-      user: number;
+      user: bigint;
       /**
        * System CPU time used by the process, in microseconds.
        */
-      system: number;
+      system: bigint;
       /**
        * Total CPU time used by the process, in microseconds.
        */
-      total: number;
+      total: bigint;
     };
     /**
      * The maximum resident set size (in bytes) used by the process during its lifetime.
@@ -9221,14 +9221,14 @@ declare module "bun" {
     // todo: URL
     match(input: string | Request | Response): MatchedRoute | null;
 
-    /** The `assetPrefix` option, or `null` without one */
+    /** The `assetPrefix` option, or `null` if it was absent or empty */
     readonly assetPrefix: string | null;
-    /** The `origin` option, or `null` without one */
+    /** The `origin` option, or `null` if it was absent or empty */
     readonly origin: string | null;
-    readonly style: string;
+    readonly style: "nextjs";
     readonly routes: Record<string, string>;
 
-    reload(): void;
+    reload(): this;
   }
 
   interface MatchedRoute {

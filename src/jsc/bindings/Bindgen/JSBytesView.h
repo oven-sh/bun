@@ -43,6 +43,7 @@ public:
     // The bytes of a shared buffer become those of `copy`. Allocating it can throw.
     // Optional: ~MallocSpan calls free, of null too.
     void copyIfShared(JSC::JSGlobalObject&, JSC::JSValue argument, std::optional<WTF::MallocSpan<uint8_t>>& copy);
+    void readCopyingShared(JSC::JSGlobalObject&, JSC::JSValue argument, std::optional<WTF::MallocSpan<uint8_t>>& copy);
 
     // Null data for a Blob or a buffer that was neither read nor copied: Rust reads it, each time it borrows the bytes.
     std::span<const uint8_t> bytes() const LIFETIME_BOUND
@@ -51,6 +52,8 @@ public:
     }
 
 private:
+    void copyBytes(JSC::JSGlobalObject&, std::optional<WTF::MallocSpan<uint8_t>>& copy);
+
     JSStringUTF8View m_string;
     std::span<const uint8_t> m_bytes;
     bool m_isBlobOrBuffer { false };

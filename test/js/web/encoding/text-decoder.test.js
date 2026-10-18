@@ -6,6 +6,7 @@ import {
   isASAN,
   normalizeBunSnapshot,
   rss,
+  runWithError,
   tempDir,
   withoutAggressiveGC,
 } from "harness";
@@ -328,6 +329,11 @@ describe("TextDecoder", () => {
     }).not.toThrow();
   });
 
+  it("has the lengths of the IDL", () => {
+    expect(TextDecoder.length).toBe(0);
+    expect(TextDecoder.prototype.decode.length).toBe(0);
+  });
+
   // https://webidl.spec.whatwg.org/#es-dictionary step 1:
   // "If Type(V) is not Undefined, Null or Object, then throw a TypeError."
   describe("options WebIDL dictionary conversion", () => {
@@ -368,20 +374,8 @@ describe("TextDecoder", () => {
 
     it("shows a lone surrogate in refused options as it is", () => {
       const message = `The "options" argument must be of type object. Received type string ('a\ud800')`;
-      const messageOf = fn => {
-        try {
-          fn();
-        } catch (error) {
-          return error.message;
-        }
-      };
-      expect(messageOf(() => new TextDecoder("utf-8", "a\ud800"))).toBe(message);
-      expect(messageOf(() => new TextDecoder().decode(new Uint8Array(), "a\ud800"))).toBe(message);
-    });
-
-    it("has the lengths of the IDL", () => {
-      expect(TextDecoder.length).toBe(0);
-      expect(TextDecoder.prototype.decode.length).toBe(0);
+      expect(runWithError(() => new TextDecoder("utf-8", "a\ud800"))?.message).toBe(message);
+      expect(runWithError(() => new TextDecoder().decode(new Uint8Array(), "a\ud800"))?.message).toBe(message);
     });
 
     it("refuses options before it looks up the label", () => {

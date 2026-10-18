@@ -37,8 +37,8 @@ export const Crypto = b.class({
   configurable: false,
   construct: { capability: "heap", throws: true },
   proto: {
-    /** What is not an integer typed array throws a `DOMException`, as in Node. */
-    getRandomValues: { args: { typedArray: b.any }, returns: b.any, capability: "js", throws: true },
+    /** What is not an integer typed array throws WebCrypto's `TypeMismatchError`, which no type here throws. */
+    getRandomValues: { args: { array: b.any }, returns: b.any, capability: "js", throws: true },
     randomUUID: { returns: b.string },
     timingSafeEqual: equal,
   },

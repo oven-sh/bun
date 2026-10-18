@@ -257,7 +257,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   stringEcho: $bindgen("bindgen_test.bind.ts", "stringEcho"),
   stringLength: $bindgen("bindgen_test.bind.ts", "stringLength"),
   expectedByNode: $bindgen("bindgen_test.bind.ts", "expectedByNode"),
-  expectedByNodeInCpp: $bindgen("bindgen_test.bind.ts", "expectedByNodeInCpp"),
+  expectedMessage: $bindgen("bindgen_test.bind.ts", "expectedMessage"),
   nextColor: $bindgen("bindgen_test.bind.ts", "nextColor"),
   optionsEcho: $bindgen("bindgen_test.bind.ts", "optionsEcho"),
   describeValue: $bindgen("bindgen_test.bind.ts", "describeValue"),

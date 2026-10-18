@@ -35,7 +35,7 @@ export const expectedByNode = b.fn({
   returns: b.usize,
 });
 export const TestFlag = b.dictionary({ flag: b.bool.loose.default(false) });
-export const expectedByNodeInCpp = b.fn({
+export const expectedMessage = b.fn({
   args: { data: b.bytes({ from: ["buffer"] }), options: TestFlag.nullable.default({}), more: TestFlag.default({}) },
   expected: { data: "data is not a buffer.", options: ["object"] },
   returns: b.usize,
@@ -185,7 +185,6 @@ export const TestCounter = b.class({
     count: { getter: b.i32 },
     label: { getter: b.string.utf8, setter: true },
     tag: { getter: b.any, capability: "heap", cache: true, throws: true },
-    sameTag: { getter: b.any, capability: "heap", cache: "tag", throws: true },
     increment: { args: { by: b.i32.default(1) }, returns: b.i32, mutates: true },
     /** By a number, or by the length of a string, as many times. */
     add: [

@@ -99,11 +99,11 @@ private:
     const JSC::JSValue m_actual;
 };
 
-// A value of the wrong type throws `ERR_INVALID_ARG_TYPE` with a message of its own, as Node's C++ does.
-struct NodeArgumentMessageContext : Detail::ContextBase<NodeArgumentMessageContext> {
-    using ElementContext = Detail::ElementOf<NodeArgumentMessageContext>;
+// A value of the wrong type throws `ERR_INVALID_ARG_TYPE` with the schema's own message, which says nothing of the value.
+struct ArgumentMessageContext : Detail::ContextBase<ArgumentMessageContext> {
+    using ElementContext = Detail::ElementOf<ArgumentMessageContext>;
 
-    consteval NodeArgumentMessageContext(WTF::ASCIILiteral name, WTF::ASCIILiteral message)
+    consteval ArgumentMessageContext(WTF::ASCIILiteral name, WTF::ASCIILiteral message)
         : m_name(name)
         , m_message(message)
     {

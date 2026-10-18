@@ -53,16 +53,25 @@ struct ClassDefinition {
     unsigned constructorLength;
 };
 
+// Reports each field that holds a cell to a heap snapshot, as a property of that name.
+void analyzeInternalFields(JSC::JSCell*, JSC::HeapAnalyzer&, std::span<const JSC::WriteBarrier<JSC::Unknown>>, std::span<const WTF::ASCIILiteral> names);
+
 // JSDestructibleObject | WriteBarrier internalFields[numberOfInternalFields] | the Rust payload
 template<typename Traits>
 class JSWrapper final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr unsigned numberOfInternalFields = Traits::numberOfInternalFields;
+    static constexpr unsigned numberOfInternalFields = Traits::internalFieldNames.size();
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
+
+    static void analyzeHeap(JSC::JSCell* cell, JSC::HeapAnalyzer& analyzer)
+    {
+        Base::analyzeHeap(cell, analyzer);
+        analyzeInternalFields(cell, analyzer, uncheckedDowncast<JSWrapper>(cell)->internalFields(), Traits::internalFieldNames);
+    }
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -132,7 +141,8 @@ void JSWrapper<Traits>::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSWrapper>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.appendValues(thisObject->internalFields().data(), numberOfInternalFields);
+    // Hidden: `analyzeHeap` reports them by name.
+    visitor.appendValuesHidden(thisObject->internalFields().data(), numberOfInternalFields);
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<typename Traits>, JSWrapper<Traits>);

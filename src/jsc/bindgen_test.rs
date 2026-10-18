@@ -64,7 +64,7 @@ pub(crate) fn expected_by_node(text: &bun_core::String, data: Option<&[u8]>, fla
     text.length() + data.map_or(0, <[u8]>::len) + usize::from(flag)
 }
 
-pub(crate) fn expected_by_node_in_cpp(data: &[u8], options: &TestFlag, more: &TestFlag) -> usize {
+pub(crate) fn expected_message(data: &[u8], options: &TestFlag, more: &TestFlag) -> usize {
     data.len() + usize::from(options.flag) + usize::from(more.flag)
 }
 
@@ -382,10 +382,6 @@ impl TestCounterClass for TestCounter {
 
     fn tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         bindgen::to_js::array(heap, [self.count], bindgen::to_js::i32)
-    }
-
-    fn same_tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
-        self.tag(heap)
     }
 
     fn increment(&mut self, by: i32) -> i32 {

@@ -566,7 +566,7 @@ function cppCallBody(signature: Signature, symbol: string, leading: readonly str
     lines.push(`JSC::EnsureStillAliveScope argument${i} = callFrame->argument(${i});`);
     if (typeof expected === "string") {
       lines.push(
-        `[[maybe_unused]] auto ctx${i} = Bun::Bindgen::NodeArgumentMessageContext { ${asciiLiteral(name)}, ${asciiLiteral(expected)} };`,
+        `[[maybe_unused]] auto ctx${i} = Bun::Bindgen::ArgumentMessageContext { ${asciiLiteral(name)}, ${asciiLiteral(expected)} };`,
       );
     } else if (expected) {
       lines.push(`static constexpr WTF::ASCIILiteral expected${i}[] = { ${expected.map(asciiLiteral).join(", ")} };`);
@@ -638,7 +638,7 @@ namespace Bun::Bindgen::Generated {
 struct ${name}Traits {
     static constexpr auto className = ${asciiLiteral(name)};
     static constexpr unsigned classIndex = ${type.classIndex};
-    static constexpr unsigned numberOfInternalFields = ${type.internalFields.length};
+    static constexpr std::array<WTF::ASCIILiteral, ${type.internalFields.length}> internalFieldNames { ${type.internalFields.map(asciiLiteral).join(", ")} };
     static size_t payloadSize() { return ${symbolName(type, "payloadSize")}; }
     static void finalize(void* payload) { ${classSymbolName(type, "finalize")}(payload); }
 };
@@ -699,9 +699,9 @@ ${cppPrologue}
     auto* thisObject = uncheckedDowncast<${type.cpp}>(JSC::JSValue::decode(thisValue));
     JSC::EnsureStillAliveScope ensureThisStillAlive { thisObject };
 ${
-  getter.internalField === undefined
+  !getter.cached
     ? `    RELEASE_AND_RETURN(scope, ${getSymbol}(globalObject, thisObject));`
-    : `    auto& cachedValue = thisObject->internalField(${getter.internalFieldIndex});
+    : `    auto& cachedValue = thisObject->internalField(${type.internalFields.indexOf(getter.name)});
     if (JSC::JSValue cached = cachedValue.get(); !cached.isUndefined())
         return JSC::JSValue::encode(cached);
     JSC::JSValue result = JSC::JSValue::decode(${getSymbol}(globalObject, thisObject));

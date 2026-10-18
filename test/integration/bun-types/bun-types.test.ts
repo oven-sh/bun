@@ -306,6 +306,7 @@ function checkForEmptyInterfaces(program: ts.Program) {
 /**
  * What the published types call the exports of each schema of the bindgen (docs/project/bindgen.mdx).
  * `null`: nothing, since JavaScript wraps them, they are not for users, or the file has only types.
+ * `Class<T>`: the constructor of a class of which only the instances, `T`, are published.
  */
 const PUBLISHED_AS: Record<string, string | null> = {
   "BunObject.bind.ts": "typeof Bun & { braces: typeof Bun.$.braces; shellEscape: typeof Bun.$.escape }",
@@ -411,17 +412,18 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
   function compare(path: string, published: ts.Type, schema: ts.Type) {
     if (compared.get(published)?.has(schema)) return;
     compared.set(published, (compared.get(published) ?? new Set()).add(schema));
-    if (published.flags & ts.TypeFlags.Void) return;
     // The exports of a file are a few of the members of `typeof Bun`.
     const never = path ? membersTheSchemaLacks(published, schema) : [];
     if (never.length > 0) broken.push(`${path} has no ${never.join(", ")}`);
     const calls = schema.getCallSignatures();
     const constructs = schema.getConstructSignatures();
     if (calls.length === 0 && constructs.length === 0 && !isGenerated(schema)) {
+      const promisesNothing = published.flags & ts.TypeFlags.Void;
       const absent = parts(schema).filter(part => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined));
       if (
-        !checker.isTypeAssignableTo(published, schema) ||
-        absent.some(part => !checker.isTypeAssignableTo(part, published))
+        !promisesNothing &&
+        (!checker.isTypeAssignableTo(published, schema) ||
+          absent.some(part => !checker.isTypeAssignableTo(part, published)))
       ) {
         broken.push(`${path} is ${show(schema)}, not ${show(published)}`);
       }

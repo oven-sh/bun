@@ -27,7 +27,7 @@ export const MatchedRoute = b.class({
     pathname: text,
     query: record,
     /** `src`, for old versions of bun-framework-next. */
-    scriptSrc: { ...text, cache: "src" },
+    scriptSrc: text,
     src: text,
   },
 });
@@ -37,6 +37,8 @@ export const Routable = b.union({
   request: b.classRef("Request"),
   response: b.classRef("Response"),
 });
+
+export const RouterStyle = b.enumeration(["nextjs"]);
 
 export const FileSystemRouter = b.class({
   rustPath: "crate::api::filesystem_router::FileSystemRouter",
@@ -56,11 +58,10 @@ export const FileSystemRouter = b.class({
       returns: MatchedRoute.nullable,
       capability: "heap",
       throws: true,
-      mutates: true,
     },
     origin: { getter: b.string.utf8.nullable, cache: true },
     reload: { returns: b.self, capability: "js", throws: true },
     routes: record,
-    style: { getter: b.string },
+    style: { getter: RouterStyle },
   },
 });

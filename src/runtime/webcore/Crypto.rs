@@ -9,8 +9,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSType, JSValue, JsResult, StringJsc};
 use crate::generated_bindgen::crypto::{CryptoClass, UUIDEncoding};
 use crate::node::Encoding;
 
-#[derive(Default)]
-pub(crate) struct Crypto {}
+pub(crate) struct Crypto;
 
 impl CryptoClass for Crypto {
     type Error<'a> = bindgen::Error<'a>;
@@ -22,15 +21,15 @@ impl CryptoClass for Crypto {
     fn get_random_values<'a>(
         _: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        typed_array: JsLocal<'a>,
+        array: JsLocal<'a>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
         let global = cx.global();
         // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues accepts only
         // integer-typed views. This is an allow-list: DataView, ArrayBuffer and SharedArrayBuffer
         // all pass `as_array_buffer` but must still raise TypeMismatchError.
-        let array_buffer = typed_array.to_js().as_array_buffer(global).filter(|_| {
+        let array_buffer = array.to_js().as_array_buffer(global).filter(|_| {
             matches!(
-                typed_array.to_js().js_type(),
+                array.to_js().js_type(),
                 JSType::Int8Array
                     | JSType::Uint8Array
                     | JSType::Uint8ClampedArray
@@ -53,7 +52,7 @@ impl CryptoClass for Crypto {
 
         random_data(array_buffer.byte_slice_mut());
 
-        Ok(typed_array)
+        Ok(array)
     }
 
     fn random_uuid(&self) -> BunString {
@@ -283,5 +282,5 @@ pub(crate) fn random_uuid_v5<'a>(
 extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::mark_binding!();
 
-    Crypto::default().into_js_value(global)
+    Crypto.into_js_value(global)
 }

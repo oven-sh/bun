@@ -539,24 +539,56 @@ it("origin should be validated", async () => {
   }).toThrow("FileSystemRouterOptions.origin must be a string");
 });
 
+function routesWithExtension(extension: String) {
+  using dir = tempDir("fsr-string-object", { "posts.tsx": "", "about.mdx": "" });
+  //@ts-ignore
+  return Object.keys(
+    new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs", fileExtensions: [extension] }).routes,
+  );
+}
+
 it("reads an extension that is a String object with its toString()", () => {
-  const { dir } = make(["posts.tsx", "about.mdx"]);
-  const routes = (extension: String) =>
-    //@ts-ignore
-    Object.keys(new Bun.FileSystemRouter({ dir, style: "nextjs", fileExtensions: [extension] }).routes);
-  expect(routes(Object.assign(new String(""), { toString: () => ".mdx" }))).toEqual(["/about"]);
+  expect(routesWithExtension(Object.assign(new String(""), { toString: () => ".mdx" }))).toEqual(["/about"]);
+});
+
+it("skips an extension that is a String object whose toString() is empty", () => {
   // None is left, so the default ones are used.
-  expect(routes(Object.assign(new String(".mdx"), { toString: () => "" }))).toEqual(["/posts"]);
+  expect(routesWithExtension(Object.assign(new String(".mdx"), { toString: () => "" }))).toEqual(["/posts"]);
 });
 
 it("takes options that are an array", () => {
-  const { dir } = make(["posts.tsx"]);
-  const router = new Bun.FileSystemRouter(Object.assign([], { dir, style: "nextjs" as const }));
+  using dir = tempDir("fsr-array-options", { "posts.tsx": "" });
+  const router = new Bun.FileSystemRouter(Object.assign([], { dir: String(dir), style: "nextjs" as const }));
   expect(Object.keys(router.routes)).toEqual(["/posts"]);
 });
 
+it("names a directory that is absent as it was joined", () => {
+  using dir = tempDir("fsr-absent", {});
+  for (const absent of [`${dir}${path.sep}absent`, `${dir}${path.sep}absent${path.sep}`]) {
+    expect(() => new Bun.FileSystemRouter({ dir: absent, style: "nextjs" })).toThrow(
+      expect.objectContaining({ name: "Error", message: `Unable to find directory: ${absent}` }),
+    );
+  }
+});
+
+it("refuses options that are not an object, and a route that is not a string, Request or Response", () => {
+  using dir = tempDir("fsr-wrong-arguments", { "posts.tsx": "" });
+  const router = new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs" });
+  const refusal = (message: string) =>
+    expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
+  for (const wrong of [undefined, null, 1, "posts"]) {
+    // @ts-expect-error
+    expect(() => new Bun.FileSystemRouter(wrong)).toThrow(refusal("Expected object"));
+  }
+  for (const wrong of [undefined, null, 1, {}]) {
+    // @ts-expect-error
+    expect(() => router.match(wrong)).toThrow(refusal("Expected string, Request or Response"));
+  }
+});
+
 it("assetPrefix and origin are what the router was given, or null", () => {
-  const { dir } = make(["posts.tsx"]);
+  using tmp = tempDir("fsr-asset-prefix", { "posts.tsx": "" });
+  const dir = String(tmp);
   const router = new Bun.FileSystemRouter({
     dir,
     style: "nextjs",

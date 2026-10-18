@@ -99,6 +99,65 @@ impl Lines {
     }
 }
 
+/// What counts as a line break. It depends on the language.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum LineBreaks {
+    /// `\n`, `\r\n`, `\r`, U+2028 and U+2029.
+    #[default]
+    EcmaScript,
+    /// `\n`, `\r\n` and `\r`.
+    Newlines,
+}
+
+impl LineBreaks {
+    /// Returns true if `\n` is the only line break in `text`.
+    fn is_plain(self, text: &[u8]) -> bool {
+        use bun_core::strings::{contains, contains_char};
+        !contains_char(text, b'\r')
+            && match self {
+                LineBreaks::EcmaScript => {
+                    !contains_char(text, 0xE2)
+                        || !contains(text, "\u{2028}".as_bytes())
+                            && !contains(text, "\u{2029}".as_bytes())
+                }
+                LineBreaks::Newlines => true,
+            }
+    }
+
+    /// The offset of the start of each line of `text`.
+    fn starts(self, text: &[u8], is_plain: bool) -> Vec<u32> {
+        let ends: &[u8] = match self {
+            // `\n` is the only line break, as in nearly every file.
+            _ if is_plain => return bun_core::strings::line_starts(text),
+            LineBreaks::EcmaScript => return bun_sema::check::compute_ecma_line_starts(text),
+            LineBreaks::Newlines => b"\r\n",
+        };
+        let (mut starts, mut at) = (vec![0], 0);
+        while let Some(found) = text
+            .get(at..)
+            .and_then(|rest| bun_core::strings::index_of_any(rest, ends))
+        {
+            at += found + 1 + usize::from(text[at + found..].starts_with(b"\r\n"));
+            starts.push(at as u32);
+        }
+        starts
+    }
+
+    pub fn line_starts(self, text: &[u8]) -> LineStarts {
+        LineStarts::at(self.starts(text, self.is_plain(text)))
+    }
+
+    /// The line and column of `offset` in `text`. It scans the whole text, so it's only for things that are reported
+    /// once per file.
+    pub fn position(self, text: &[u8], offset: usize) -> Position {
+        let offset = offset.min(text.len());
+        let (line, start) = self.line_starts(text).line_at(offset as u32);
+        let before = &text[start as usize..offset];
+        let column = bun_core::strings::utf8_decoded_len_utf16(before);
+        Position { line, column }
+    }
+}
+
 /// Where the lines of a text start.
 pub struct LineStarts {
     starts: Vec<u32>,
@@ -107,11 +166,6 @@ pub struct LineStarts {
 }
 
 impl LineStarts {
-    /// Of `text`, in which a line ends where ECMAScript says so.
-    pub fn new(text: &[u8]) -> LineStarts {
-        LineStarts::at(line_starts(text, is_plain(text)))
-    }
-
     /// `starts`: ascending, from 0.
     pub fn at(starts: Vec<u32>) -> LineStarts {
         let last = Cell::new(0);
@@ -195,19 +249,13 @@ pub(crate) struct NearbyLine {
     count: OnceCell<u32>,
 }
 
-/// Whether only `\n` ends a line of `text`.
-fn is_plain(text: &[u8]) -> bool {
-    use bun_core::strings::{contains, contains_char};
-    !contains_char(text, b'\r')
-        && (!contains_char(text, 0xE2)
-            || !contains(text, "\u{2028}".as_bytes()) && !contains(text, "\u{2029}".as_bytes()))
-}
-
 impl<'a> File<'a> {
     /// Whether only `\n` ends a line.
     fn is_plain(&self) -> bool {
         let nearby = &self.by_kind().nearby_line;
-        *nearby.is_plain.get_or_init(|| is_plain(self.text()))
+        *nearby
+            .is_plain
+            .get_or_init(|| self.line_breaks().is_plain(self.text()))
     }
 
     /// The line that `offset` is in, counted from 1, and where it starts, if that takes less than to find all lines.
@@ -242,7 +290,8 @@ impl<'a> File<'a> {
 
     fn lines_index(&self) -> &Lines {
         self.lazy.lines.get_or_init(|| {
-            let starts = LineStarts::at(line_starts(self.text(), self.is_plain()));
+            let starts = self.line_breaks().starts(self.text(), self.is_plain());
+            let starts = LineStarts::at(starts);
             Lines::new(self.text(), starts)
         })
     }
@@ -555,13 +604,4 @@ fn mention_bit_without_loop(text: &[u8]) -> u32 {
     first[..len].copy_from_slice(&text[..len]);
     let first = u128::from_le_bytes(first);
     bun_sema::hir::mention_bit_of([first as u64, (first >> 64) as u64], text.len())
-}
-
-/// Where the lines of `text` start.
-fn line_starts(text: &[u8], is_plain: bool) -> Vec<u32> {
-    match is_plain {
-        // Only `\n` ends a line, as in nearly every file.
-        true => bun_core::strings::line_starts(text),
-        false => bun_sema::check::compute_ecma_line_starts(text),
-    }
 }

@@ -843,19 +843,19 @@ describe.concurrent("backoff", () => {
       expect({ requests, exitCode }).toEqual({ requests: 1, exitCode: 1 });
     });
 
-    it("says that it waits once the wait is long", async () => {
+    it("doesn't print anything about a retry", async () => {
       let requests = 0;
       using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => (requests++, busy(503)) });
       const { err, exitCode } = await run(server.url.href, {
-        BUN_CONFIG_HTTP_RETRY_BACKOFF: "1000",
+        BUN_CONFIG_HTTP_RETRY_BACKOFF: "200",
         BUN_CONFIG_HTTP_RETRY_COUNT: "1",
       });
-      expect(err).toContain("warn: registry request failed, retrying\n");
+      expect(err).not.toMatch(/retry/i);
       expect({ requests, exitCode }).toEqual({ requests: 2, exitCode: 1 });
     });
   });
 
-  // The manifest fails twice, and both waits are long enough to be worth a line.
+  // The manifest request fails twice.
   describe("two retries", () => {
     const run = async (...flags: string[]) => {
       using registry = flakyRegistry((kind, hit) => (kind === "manifest" && hit <= 2 ? busy(503) : undefined));
@@ -865,8 +865,8 @@ describe.concurrent("backoff", () => {
       return lines.filter(line => /retry/i.test(line));
     };
 
-    it("get one line for both", async () => {
-      expect(await run()).toEqual(["warn: registry requests failed, retrying"]);
+    it("print nothing", async () => {
+      expect(await run()).toEqual([]);
     });
 
     it("get a line each with --verbose", async () => {

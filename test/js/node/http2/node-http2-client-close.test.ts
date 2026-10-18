@@ -10,6 +10,7 @@
  *   node --test test/js/node/http2/node-http2-client-close.test.ts
  */
 import assert from "node:assert";
+import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
 import { describe, test } from "node:test";
@@ -322,7 +323,571 @@ for (const [site, table] of [
   }
 }
 
+// A 'prefinish' listener that throws. node runs Http2Stream._final, and with it the 'prefinish'
+// emit, inside the try of the Writable: the error becomes 'error' on the stream, 'finish' does not
+// follow, and the stream still closes on both sides. "<call> returned" shows the call did not throw.
+type ThrowingFlow =
+  | "pushStream() callback: close(0)"
+  | "pushStream() callback: close(8)"
+  | "pushStream() callback: close(2)"
+  | "pushStream() callback: respond() then close()"
+  | "server: respond() then end()"
+  | "server: respond({ endStream: true })"
+  | "server: respond() then close()"
+  | "server: close() with no respond()"
+  | "server: respond(), end(), then close()"
+  | "server: request read to 'end', then respond() and end()"
+  | "server: request read to 'end', then respond() and close()"
+  | "server: respond({ waitForTrailers: true }) then end(chunk)"
+  | "server: respond({ waitForTrailers: true }), end(chunk), sendTrailers()"
+  | "compat: res.end(chunk)"
+  | "client: close() on a ready request"
+  | "client: end(chunk)"
+  | "client: end(chunk) held by flow control"
+  // node v26.3.0 leaves these streams open, or destroys them before 'prefinish'.
+  | "pushStream() callback: end() then close()"
+  | "server: respond() then end(chunk)"
+  | "server: request read to 'end', then respond() and end(chunk)"
+  | "server: request read to 'end', then respond() and end(200 KiB)";
+
+async function prefinishThrows(flow: ThrowingFlow, errorListener = true) {
+  const events: string[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<{ events: string[]; peer: number | undefined }>();
+  let peerCode: number | undefined;
+  let open = 2;
+  const closed = () => {
+    if (--open === 0) resolve({ events, peer: peerCode });
+  };
+  const ignoreErrors = <T extends http2.Http2Stream>(stream: T) => stream.on("error", () => {}) as T;
+  const watch = (stream: http2.Http2Stream) => {
+    stream.on("aborted", () => events.push("aborted"));
+    stream.once("prefinish", () => {
+      events.push("prefinish");
+      throw new Error("boom");
+    });
+    if (errorListener) stream.on("error", e => events.push("error:" + e.message));
+    stream.on("finish", () => events.push("finish"));
+    stream.on("close", () => {
+      events.push("close:" + stream.rstCode);
+      closed();
+    });
+  };
+  const peer = (stream: http2.Http2Stream) => {
+    ignoreErrors(stream).resume();
+    stream.on("close", () => {
+      peerCode = stream.rstCode;
+      closed();
+    });
+  };
+  const call = (label: string, fn: () => void) => {
+    try {
+      fn();
+      events.push(label + " returned");
+    } catch (e) {
+      events.push(label + " threw " + (e as Error).message);
+      // An 'error' listener takes the error: nothing may leave the call.
+      if (errorListener) reject(e);
+    }
+  };
+
+  const server = http2.createServer();
+  server.on("error", reject);
+  if (flow === "compat: res.end(chunk)") {
+    server.on("request", (_req, res) => {
+      watch(res.stream);
+      call("res.end()", () => res.end("ok"));
+    });
+  } else {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
+      const push = (fn: (pushed: http2.ServerHttp2Stream) => void) => {
+        ignoreErrors(stream);
+        stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
+          if (err) return reject(err);
+          watch(pushed);
+          fn(pushed);
+        });
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      };
+      switch (flow) {
+        case "pushStream() callback: close(0)":
+          return push(pushed => call("close()", () => pushed.close(0)));
+        case "pushStream() callback: close(8)":
+          return push(pushed => call("close()", () => pushed.close(8)));
+        case "pushStream() callback: close(2)":
+          return push(pushed => call("close()", () => pushed.close(2)));
+        case "pushStream() callback: respond() then close()":
+          return push(pushed => {
+            pushed.respond({ ":status": 200 });
+            call("close()", () => pushed.close());
+          });
+        case "pushStream() callback: end() then close()":
+          return push(pushed => {
+            call("end()", () => pushed.end());
+            call("close()", () => pushed.close());
+          });
+        case "server: respond() then end(chunk)":
+          watch(stream);
+          stream.respond({ ":status": 200 });
+          return call("end()", () => stream.end("ok"));
+        case "server: respond() then end()":
+          watch(stream);
+          stream.respond({ ":status": 200 });
+          return call("end()", () => stream.end());
+        case "server: respond({ endStream: true })":
+          watch(stream);
+          return call("respond()", () => stream.respond({ ":status": 200 }, { endStream: true }));
+        case "server: respond() then close()":
+          watch(stream);
+          stream.respond({ ":status": 200 });
+          return call("close()", () => stream.close());
+        case "server: close() with no respond()":
+          watch(stream);
+          return call("close()", () => stream.close());
+        case "server: respond(), end(), then close()":
+          watch(stream);
+          stream.respond({ ":status": 200 });
+          call("end()", () => stream.end());
+          return call("close()", () => stream.close());
+        case "server: request read to 'end', then respond() and end()":
+        case "server: request read to 'end', then respond() and close()":
+        case "server: request read to 'end', then respond() and end(chunk)":
+        case "server: request read to 'end', then respond() and end(200 KiB)":
+          watch(stream);
+          stream.resume();
+          return stream.on("end", () => {
+            stream.respond({ ":status": 200 });
+            if (flow.endsWith("end()")) call("end()", () => stream.end());
+            else if (flow.endsWith("end(chunk)")) call("end()", () => stream.end("ok"));
+            else if (flow.endsWith("end(200 KiB)")) call("end()", () => stream.end(Buffer.alloc(200 * 1024, "a")));
+            else call("close()", () => stream.close());
+          });
+        case "server: respond({ waitForTrailers: true }), end(chunk), sendTrailers()":
+          stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "1" }));
+        // fallthrough
+        case "server: respond({ waitForTrailers: true }) then end(chunk)":
+          watch(stream);
+          stream.respond({ ":status": 200 }, { waitForTrailers: true });
+          return call("end()", () => stream.end("ok"));
+        case "client: close() on a ready request":
+          return peer(stream);
+        case "client: end(chunk)":
+        case "client: end(chunk) held by flow control":
+          peer(stream);
+          stream.respond({ ":status": 200 });
+          return stream.on("end", () => stream.end("ok"));
+      }
+    });
+  }
+  const port = await listen(server);
+  const client = http2.connect(`http://127.0.0.1:${port}`);
+  client.on("error", reject);
+  client.on("stream", peer);
+  try {
+    switch (flow) {
+      case "client: close() on a ready request": {
+        const req = client.request({ ":path": "/", ":method": "POST" });
+        watch(req);
+        req.resume();
+        req.on("ready", () => call("close()", () => req.close()));
+        break;
+      }
+      case "client: end(chunk)":
+      case "client: end(chunk) held by flow control": {
+        const req = client.request({ ":path": "/", ":method": "POST" });
+        watch(req);
+        req.resume();
+        // 200 KiB is more than the 64 KiB window: the frame with END_STREAM leaves on a later
+        // WINDOW_UPDATE.
+        call("end()", () => req.end(flow === "client: end(chunk)" ? "hello" : Buffer.alloc(200 * 1024, "a")));
+        break;
+      }
+      case "server: request read to 'end', then respond() and end()":
+      case "server: request read to 'end', then respond() and close()":
+      case "server: request read to 'end', then respond() and end(chunk)":
+      case "server: request read to 'end', then respond() and end(200 KiB)": {
+        const req = client.request({ ":path": "/", ":method": "POST" });
+        peer(req);
+        req.end("body");
+        break;
+      }
+      default:
+        if (flow.startsWith("pushStream()")) ignoreErrors(client.request({ ":path": "/" })).resume();
+        else peer(client.request({ ":path": "/" }));
+    }
+    return await promise;
+  } finally {
+    client.destroy();
+    server.close();
+  }
+}
+
+describe("a 'prefinish' listener that throws becomes 'error' and the stream closes", () => {
+  for (const [flow, events, peer] of [
+    ["pushStream() callback: close(0)", ["aborted", "prefinish", "error:boom", "close() returned", "close:0"], 0],
+    ["pushStream() callback: close(8)", ["aborted", "prefinish", "error:boom", "close() returned", "close:8"], 8],
+    ["pushStream() callback: close(2)", ["aborted", "prefinish", "error:boom", "close() returned", "close:2"], 2],
+    [
+      "pushStream() callback: respond() then close()",
+      ["aborted", "prefinish", "error:boom", "close() returned", "close:0"],
+      0,
+    ],
+    ["server: respond() then end()", ["prefinish", "error:boom", "end() returned", "close:0"], 0],
+    ["server: respond({ endStream: true })", ["prefinish", "error:boom", "respond() returned", "close:0"], 0],
+    ["server: respond() then close()", ["aborted", "prefinish", "error:boom", "close() returned", "close:0"], 0],
+    ["server: close() with no respond()", ["aborted", "prefinish", "error:boom", "close() returned", "close:0"], 0],
+    [
+      "server: respond(), end(), then close()",
+      ["prefinish", "error:boom", "end() returned", "close() returned", "close:0"],
+      0,
+    ],
+    [
+      "server: request read to 'end', then respond() and end()",
+      ["prefinish", "error:boom", "end() returned", "close:0"],
+      0,
+    ],
+    [
+      "server: request read to 'end', then respond() and close()",
+      ["aborted", "prefinish", "error:boom", "close() returned", "close:0"],
+      0,
+    ],
+    [
+      "server: respond({ waitForTrailers: true }) then end(chunk)",
+      ["end() returned", "prefinish", "error:boom", "close:0"],
+      0,
+    ],
+    [
+      "server: respond({ waitForTrailers: true }), end(chunk), sendTrailers()",
+      ["end() returned", "prefinish", "error:boom", "close:0"],
+      0,
+    ],
+    ["compat: res.end(chunk)", ["res.end() returned", "prefinish", "error:boom", "close:0"], 0],
+    ["client: close() on a ready request", ["aborted", "prefinish", "error:boom", "close() returned", "close:0"], 0],
+    ["client: end(chunk)", ["end() returned", "prefinish", "error:boom", "close:0"], 0],
+    ["client: end(chunk) held by flow control", ["end() returned", "prefinish", "error:boom", "close:0"], 0],
+  ] as const) {
+    test(flow, async () => {
+      assert.deepStrictEqual(await prefinishThrows(flow), { events, peer });
+    });
+  }
+});
+
+describe("without an 'error' listener the call throws the error and the stream closes", () => {
+  for (const [flow, events] of [
+    ["server: respond() then end()", ["prefinish", "end() threw boom", "close:0"]],
+    ["server: respond() then close()", ["aborted", "prefinish", "close() threw boom", "close:0"]],
+  ] as const) {
+    test(flow, async () => {
+      assert.deepStrictEqual(await prefinishThrows(flow, false), { events, peer: 0 });
+    });
+  }
+});
+
+// The writable of a pushed stream can end before respond(): there is no body, so the response ends
+// on its HEADERS frame. 'prefinish' is synchronous inside the call that ends the writable.
+describe("a pushed stream that ends before respond()", () => {
+  for (const how of ["end() then respond()", "pushStream({ endStream: true }) then respond()"] as const) {
+    test(how, async () => {
+      const pushEvents: string[] = [];
+      const peerEvents: string[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        stream.on("error", () => {});
+        const options = how === "end() then respond()" ? {} : { endStream: true };
+        stream.pushStream({ ":path": "/pushed" }, options, (err, pushed) => {
+          if (err) return reject(err);
+          pushed.on("error", reject);
+          pushed.on("prefinish", () => pushEvents.push("prefinish"));
+          pushed.on("finish", () => pushEvents.push("finish"));
+          if (how === "end() then respond()") {
+            pushed.end();
+            pushEvents.push("end() returned");
+          }
+          pushed.respond({ ":status": 200 });
+          pushEvents.push("respond() returned");
+        });
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      const port = await listen(server);
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", reject);
+      client.on("stream", pushed => {
+        pushed.on("error", reject);
+        pushed.on("push", headers => peerEvents.push("push:" + headers[":status"]));
+        pushed.on("end", () => peerEvents.push("end"));
+        pushed.on("close", () => {
+          peerEvents.push("close:" + pushed.rstCode);
+          resolve();
+        });
+        pushed.resume();
+      });
+      try {
+        client.request({ ":path": "/" }).on("error", reject).resume();
+        await promise;
+        assert.deepStrictEqual(peerEvents, ["push:200", "end", "close:0"]);
+        assert.deepStrictEqual(
+          pushEvents,
+          how === "end() then respond()"
+            ? ["prefinish", "end() returned", "respond() returned", "finish"]
+            : ["respond() returned"],
+        );
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+  }
+});
+
+// END_STREAM of such a request rides on its trailers. 'finish' does not wait for them, and a
+// close() after it resets the stream.
+describe("a client request with waitForTrailers and no 'wantTrailers' listener", () => {
+  for (const body of [undefined, "body"] as const) {
+    test(`end(${body === undefined ? "" : "chunk"}) then close()`, async () => {
+      const requestEvents: string[] = [];
+      const serverEvents: string[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      let open = 2;
+      const closed = () => {
+        if (--open === 0) resolve();
+      };
+      const server = http2.createServer();
+      // The server never responds: only the reset of the client closes the stream.
+      server.on("stream", stream => {
+        stream.on("error", reject);
+        stream.on("end", () => {
+          serverEvents.push("end");
+          req.close();
+        });
+        stream.on("aborted", () => serverEvents.push("aborted"));
+        stream.on("close", () => {
+          serverEvents.push("close:" + stream.rstCode);
+          closed();
+        });
+        stream.resume();
+      });
+      const port = await listen(server);
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", reject);
+      const req = client.request({ ":path": "/", ":method": "POST" }, { waitForTrailers: true });
+      req.on("error", reject);
+      req.on("finish", () => requestEvents.push("finish"));
+      req.on("close", () => {
+        requestEvents.push("close:" + req.rstCode);
+        closed();
+      });
+      req.resume();
+      try {
+        req.end(body);
+        await promise;
+        assert.deepStrictEqual(requestEvents, ["finish", "close:0"]);
+        assert.deepStrictEqual(serverEvents, ["end", "aborted", "close:0"]);
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+  }
+});
+
 if (typeof Bun !== "undefined") {
+  // node v26.3.0 does not close these streams, or closes them another way.
+  describe("a 'prefinish' listener that throws: streams that node leaves open", () => {
+    const closes = ["end() returned", "prefinish", "error:boom", "close:0"];
+    for (const [flow, events] of [
+      // The user called close(): it does not wait for a 'finish' that cannot come.
+      [
+        "pushStream() callback: end() then close()",
+        ["prefinish", "error:boom", "end() returned", "close() returned", "close:0"],
+      ],
+      ["server: respond() then end(chunk)", closes],
+      // The frame with END_STREAM closes the stream natively before the Writable runs _final, and
+      // the stream waits for 'finish' before it is destroyed. The error cancels that 'finish'.
+      ["server: request read to 'end', then respond() and end(chunk)", closes],
+      ["server: request read to 'end', then respond() and end(200 KiB)", closes],
+    ] as const) {
+      test(flow, async () => {
+        assert.deepStrictEqual(await prefinishThrows(flow), { events, peer: 0 });
+      });
+    }
+    // close() finishes its work before it throws the error that no 'error' listener took.
+    for (const flow of ["pushStream() callback: close(0)", "client: close() on a ready request"] as const) {
+      test(`${flow}, no 'error' listener`, async () => {
+        assert.deepStrictEqual(await prefinishThrows(flow, false), {
+          events: ["aborted", "prefinish", "close() threw boom", "close:0"],
+          peer: 0,
+        });
+      });
+    }
+  });
+
+  describe("flows that end the writable inside another call", () => {
+    test("close() sends the response headers of a chunk that cork() held", async () => {
+      // close() ends the writable, which flushes the corked chunk, and _write sends the implicit
+      // response headers for it: the stream is not closed yet at that point. node throws
+      // ERR_HTTP2_INVALID_STREAM from close() here.
+      const { promise, resolve, reject } = Promise.withResolvers<object>();
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        stream.on("error", reject);
+        stream.cork();
+        stream.write("x");
+        stream.close();
+      });
+      const port = await listen(server);
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", reject);
+      try {
+        const req = client.request({ ":path": "/" });
+        let status: unknown;
+        let text = "";
+        req.on("error", reject);
+        req.on("response", headers => (status = headers[":status"]));
+        req.setEncoding("utf8");
+        req.on("data", chunk => (text += chunk));
+        req.on("close", () => resolve({ status, text, rstCode: req.rstCode }));
+        assert.deepStrictEqual(await promise, { status: 200, text: "x", rstCode: 0 });
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+
+    for (const how of ["end() first", "pushStream({ endStream: true })"] as const) {
+      test(`respondWithFile() sends the file on a pushed stream whose writable ended (${how})`, async () => {
+        // respond() puts END_STREAM on the HEADERS frame of such a stream, but not for a file
+        // response. node v26.3.0 crashes here.
+        const { promise, resolve, reject } = Promise.withResolvers<number>();
+        const server = http2.createServer();
+        server.on("stream", stream => {
+          stream.on("error", reject);
+          const options = how === "end() first" ? {} : { endStream: true };
+          stream.pushStream({ ":path": "/pushed" }, options, (err, pushed) => {
+            if (err) return reject(err);
+            pushed.on("error", reject);
+            if (how === "end() first") pushed.end();
+            pushed.respondWithFile(import.meta.filename, { ":status": 200 });
+          });
+          stream.respond({ ":status": 200 });
+          stream.end("ok");
+        });
+        const port = await listen(server);
+        const client = http2.connect(`http://127.0.0.1:${port}`);
+        client.on("error", reject);
+        client.on("stream", pushed => {
+          let bytes = 0;
+          pushed.on("error", reject);
+          pushed.on("data", chunk => (bytes += chunk.length));
+          pushed.on("end", () => resolve(bytes));
+        });
+        try {
+          client.request({ ":path": "/" }).on("error", reject).resume();
+          assert.strictEqual(await promise, fs.statSync(import.meta.filename).size);
+        } finally {
+          client.destroy();
+          server.close();
+        }
+      });
+    }
+
+    test("end() without a body finishes while socket backpressure holds its END_STREAM frame, and close() does not reset before that frame", async () => {
+      // The peer stops reading, so the body of stream 3 fills the socket and the engine queues the
+      // empty END_STREAM frame of stream 1. Like node, whose shutdown is synchronous, 'prefinish'
+      // fires inside end() and 'finish' does not wait for the socket. The NO_ERROR reset of close()
+      // then waits for the queued frame: a reset sent first would drop it.
+      const events: string[] = [];
+      const handled = Promise.withResolvers<void>();
+      const received = Promise.withResolvers<void>();
+      let held: http2.ServerHttp2Stream | undefined;
+      let queuedAfterEnd = 0;
+      // The default of 10 MB resets a stream that buffers more.
+      const server = http2.createServer({ maxSessionMemory: 64 });
+      server.on("stream", stream => {
+        stream.on("error", handled.reject);
+        if (stream.id === 1) {
+          held = stream;
+          stream.on("prefinish", () => events.push("prefinish"));
+          stream.on("finish", () => events.push("finish"));
+          return;
+        }
+        stream.respond({ ":status": 200 });
+        // Far more than the socket buffers of both ends take from a peer that does not read.
+        stream.write(Buffer.alloc(16 * 1024 * 1024, "b"));
+        held!.respond({ ":status": 200 });
+        held!.end();
+        events.push("end() returned");
+        queuedAfterEnd = stream.session!.state.outboundQueueSize!;
+        held!.close();
+        // 'finish' is one tick after 'prefinish': this tick is queued behind it.
+        process.nextTick(handled.resolve);
+      });
+      const port = await listen(server);
+      const frame = (type: number, flags: number, streamId: number, payload = Buffer.alloc(0)) => {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header[3] = type;
+        header[4] = flags;
+        header.writeUInt32BE(streamId, 5);
+        return Buffer.concat([header, payload]);
+      };
+      // GET http://localhost/ with static-table indexes and a literal :authority.
+      const request = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 9]), Buffer.from("localhost")]);
+      // A stream window and a connection window of 2^31-1: only the socket limits the server.
+      const window = Buffer.from([0x00, 0x04, 0x7f, 0xff, 0xff, 0xff]);
+      const increment = Buffer.alloc(4);
+      increment.writeUInt32BE(0x7fffffff - 65535);
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", received.reject);
+      // [type, END_STREAM] of each frame of stream 1, up to its END_STREAM or its RST_STREAM.
+      const frames: number[][] = [];
+      let buffered = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        buffered = buffered.length ? Buffer.concat([buffered, chunk]) : chunk;
+        while (buffered.length >= 9) {
+          const length = buffered.readUIntBE(0, 3);
+          if (buffered.length < 9 + length) break;
+          const type = buffered[3];
+          const endStream = buffered[4] & 0x1;
+          if ((buffered.readUInt32BE(5) & 0x7fffffff) === 1) {
+            frames.push([type, endStream]);
+            if (type === 3 || (type === 0 && endStream)) received.resolve();
+          }
+          buffered = buffered.subarray(9 + length);
+        }
+      });
+      try {
+        socket.write(
+          Buffer.concat([
+            Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"),
+            frame(4, 0, 0, window),
+            frame(8, 0, 0, increment),
+            frame(1, 0x5, 1, request),
+            frame(1, 0x5, 3, request),
+          ]),
+        );
+        socket.pause();
+        await handled.promise;
+        // queuedAfterEnd is the premise: the engine holds the END_STREAM frame.
+        assert.deepStrictEqual(
+          { events, queuedAfterEnd },
+          { events: ["prefinish", "end() returned", "finish"], queuedAfterEnd: 1 },
+        );
+        socket.resume();
+        await received.promise;
+        // HEADERS, then DATA with END_STREAM. No RST_STREAM comes first.
+        assert.deepStrictEqual(frames, [
+          [1, 0],
+          [0, 1],
+        ]);
+      } finally {
+        socket.destroy();
+        server.close();
+      }
+    });
+  });
+
   const node = Bun.which("node");
   // Alpine's node segfaults at a random point of this file (alpine 3.23 aarch64, on main too), and
   // the CI runner fails a file for any new core dump, whichever process wrote it. The glibc, macOS

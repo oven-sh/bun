@@ -1,4 +1,4 @@
-import { tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -241,6 +241,40 @@ test("errors from fs.promises include async stack frames", async () => {
   expect(caught.stack).toContain("at async level3");
   expect(caught.stack).toContain("at async level2");
   expect(caught.stack).toContain("at async level1");
+});
+
+test("errors from fs.promises have no stack when Error.stackTraceLimit is not a number", async () => {
+  // An error captures no stack under such a limit, as in Node. So it takes no frames from the await chain either.
+  const src = `
+    const { readFile } = require("node:fs/promises");
+    const callSiteCounts = [];
+    Error.prepareStackTrace = (error, callSites) => (callSiteCounts.push(callSites.length), "prepared");
+    async function failing() {
+      try {
+        await readFile("/nonexistent-path/does-not-exist.txt");
+      } catch (error) {
+        return typeof error.stack;
+      }
+    }
+    (async () => {
+      const stacks = [];
+      Error.stackTraceLimit = "5";
+      stacks.push(await failing());
+      Object.defineProperty(Error, "stackTraceLimit", { get: () => 5 });
+      stacks.push(await failing());
+      delete Error.stackTraceLimit;
+      stacks.push(await failing());
+      console.log(JSON.stringify({ stacks, callSiteCounts }));
+    })();`;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(JSON.stringify({ stacks: ["undefined", "undefined", "undefined"], callSiteCounts: [] }));
+  expect(exitCode).toBe(0);
 });
 
 test("fs.promises async stack through Promise subclass", async () => {

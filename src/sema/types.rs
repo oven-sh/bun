@@ -10,8 +10,7 @@ use crate::local::{Found, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
 use crate::session::{Arena, ArenaVec, Session};
 use crate::table::{ById, Frozen};
-use crate::util::memory::Taken as TakenBlock;
-use crate::util::memory::{Fill, Flat, Length, OWN, Placeholder, Placeholders, Room};
+use crate::util::memory::{Fill, Flat, OWN, Placeholder, Placeholders};
 use crate::util::{
     FxHashMap, FxHasher, GrowingPlaces, InParallel, LocalVec, SharedSort, for_each_mut,
     shard_among, spread_hash,
@@ -1664,7 +1663,7 @@ impl TypeSummary {
         is_module_object: false,
     };
 
-    /// What `Summaries::facts` has from the start.
+    /// What `Summary::facts` has from the start.
     #[inline]
     fn facts(&self) -> u8 {
         match self.is_module_object {
@@ -1674,7 +1673,7 @@ impl TypeSummary {
     }
 }
 
-/// The bits of `Summaries::facts`. A fact is written whole: the bit that says it is known together
+/// The bits of `Summary::facts`. A fact is written whole: the bit that says it is known together
 /// with its value.
 mod fact {
     /// Set when the type is created: see `Types::is_module_object`.
@@ -1688,112 +1687,56 @@ mod fact {
     pub(super) const HAS_GENERIC_ARGUMENTS: u8 = 1 << 6;
 }
 
-/// `TypeRecord::summary` of the types of a store, by index: a column for each field, so that what is
-/// read fills the cache lines.
+/// `TypeRecord::summary` of a type, and its `Rank`. Two to a cache line.
 ///
-/// The cells are atomic because `set` writes to one that `reserve` has added. `Relaxed` is enough for all of them: a thread
-/// gets the id of a type through something that orders what its creator wrote before (`AppendVec`).
-struct Summaries<'s, L: Length> {
-    flags: Flat<'s, AtomicU32, L>,
-    /// `ObjectFlags::bits`
-    object_flags: Flat<'s, AtomicU16, L>,
-    /// An `InstantiationClass` as a number.
-    class: Flat<'s, AtomicU8, L>,
+/// The cells are atomic because `set` writes to one that `TypeStore::reserve_ids` has added. `Relaxed` is enough for all of
+/// them: a thread gets the id of a type through something that orders what its creator wrote before (`AppendVec`).
+struct Summary {
+    flags: AtomicU32,
     /// See `Types::member_flags`, and `HAS_FRESH_LITERAL` for the three bits beside the flags.
-    member_flags: Flat<'s, AtomicU32, L>,
+    member_flags: AtomicU32,
+    /// `ObjectFlags::bits`
+    object_flags: AtomicU16,
+    /// An `InstantiationClass` as a number.
+    class: AtomicU8,
     /// What the checker has found out about the type since it was created, and one bit that is set
     /// at once: `fact`. See `Types::add_facts` for what may be here. What was found out about a
     /// task-local type is not published with it.
-    facts: Flat<'s, AtomicU8, L>,
-    /// The fields of `Rank`. Empty unless `TypeStore::orders_by_content`.
-    heights: Flat<'s, AtomicU32, L>,
-    places: Flat<'s, AtomicU64, L>,
-    contents: Flat<'s, AtomicU64, L>,
+    facts: AtomicU8,
+    /// The fields of `Rank`. `Rank::NONE` unless `TypeStore::orders_by_content`.
+    height: AtomicU32,
+    place: AtomicU64,
+    content: AtomicU64,
 }
 
-impl<'s> Summaries<'s, Cell<u32>> {
-    /// See `Flat::of_either`.
-    fn lay_over(&mut self, shared: &'s Summaries<'s, AtomicU32>) {
-        self.flags.lay_over(shared.flags.elements());
-        self.object_flags.lay_over(shared.object_flags.elements());
-        self.class.lay_over(shared.class.elements());
-        self.member_flags.lay_over(shared.member_flags.elements());
-        self.facts.lay_over(shared.facts.elements());
-        self.heights.lay_over(shared.heights.elements());
-        self.places.lay_over(shared.places.elements());
-        self.contents.lay_over(shared.contents.elements());
-    }
-}
+const _: () = assert!(size_of::<Summary>() == 32);
 
-impl<'s, L: Length> Summaries<'s, L> {
-    /// `reserve`: `Session::block`, or `Session::block_of_task`.
-    fn new_in(reserve: impl Fn(Room) -> TakenBlock<'s>) -> Self {
-        Summaries {
-            flags: Flat::new_in(reserve(Flat::<AtomicU32, L>::ROOM)),
-            object_flags: Flat::new_in(reserve(Flat::<AtomicU16, L>::ROOM)),
-            member_flags: Flat::new_in(reserve(Flat::<AtomicU32, L>::ROOM)),
-            facts: Flat::new_in(reserve(Flat::<AtomicU8, L>::ROOM)),
-            heights: Flat::new_in(reserve(Flat::<AtomicU32, L>::ROOM)),
-            places: Flat::new_in(reserve(Flat::<AtomicU64, L>::ROOM)),
-            contents: Flat::new_in(reserve(Flat::<AtomicU64, L>::ROOM)),
-            class: Flat::new_in(reserve(Flat::<AtomicU8, L>::ROOM)),
-        }
-    }
-
+impl Summary {
     #[inline]
-    fn len(&self) -> u32 {
-        self.class.len()
-    }
-
-    fn clear(&mut self) {
-        self.flags.clear();
-        self.object_flags.clear();
-        self.class.clear();
-        self.member_flags.clear();
-        self.facts.clear();
-        self.heights.clear();
-        self.places.clear();
-        self.contents.clear();
-    }
-
-    /// Returns the index. One thread at a time: the columns are added to one after the other.
-    /// `rank`: `Some` iff `TypeStore::orders_by_content`.
-    #[inline]
-    fn push(&self, summary: TypeSummary, rank: Option<Rank>) -> u32 {
-        if let Some(rank) = rank {
-            self.heights.push(AtomicU32::new(rank.height));
-            self.places.push(AtomicU64::new(rank.place));
-            self.contents.push(AtomicU64::new(rank.content));
+    fn new(summary: TypeSummary, rank: Rank) -> Summary {
+        Summary {
+            flags: AtomicU32::new(summary.flags),
+            member_flags: AtomicU32::new(summary.member_flags),
+            object_flags: AtomicU16::new(summary.object_flags.bits()),
+            class: AtomicU8::new(summary.class as u8),
+            facts: AtomicU8::new(summary.facts()),
+            height: AtomicU32::new(rank.height),
+            place: AtomicU64::new(rank.place),
+            content: AtomicU64::new(rank.content),
         }
-        self.flags.push(AtomicU32::new(summary.flags));
-        (self.object_flags).push(AtomicU16::new(summary.object_flags.bits()));
-        (self.member_flags).push(AtomicU32::new(summary.member_flags));
-        self.facts.push(AtomicU8::new(summary.facts()));
-        self.class.push(AtomicU8::new(summary.class as u8))
     }
 
-    /// Adds `count` summaries, each of which `set` fills in once, and returns the index of the first. One thread at a
-    /// time, like `push`. Every summary has a rank.
-    fn reserve(&self, count: u32) -> u32 {
-        let first = self.len();
-        let (nothing, no_rank) = (TypeSummary::NOTHING, Rank::NONE);
-        for _ in 0..count {
-            self.push(nothing, Some(no_rank));
-        }
-        first
-    }
-
-    /// `index` comes from `reserve`, and no other thread has got it so far.
-    fn set(&self, index: u32, summary: TypeSummary, rank: Rank) {
+    /// No other thread has got the id of the type so far.
+    fn set(&self, summary: TypeSummary, rank: Rank) {
         let order = Ordering::Relaxed;
-        self.heights.get(index).store(rank.height, order);
-        self.places.get(index).store(rank.place, order);
-        self.contents.get(index).store(rank.content, order);
-        self.flags.get(index).store(summary.flags, order);
-        (self.object_flags.get(index)).store(summary.object_flags.bits(), order);
-        (self.member_flags.get(index)).store(summary.member_flags, order);
-        self.facts.get(index).store(summary.facts(), order);
-        self.class.get(index).store(summary.class as u8, order);
+        self.flags.store(summary.flags, order);
+        self.member_flags.store(summary.member_flags, order);
+        self.object_flags.store(summary.object_flags.bits(), order);
+        self.class.store(summary.class as u8, order);
+        self.facts.store(summary.facts(), order);
+        self.height.store(rank.height, order);
+        self.place.store(rank.place, order);
+        self.content.store(rank.content, order);
     }
 }
 
@@ -1820,7 +1763,7 @@ impl InstantiationClass {
     }
 }
 
-/// In `Summaries::member_flags`, beside the flags, none of which is one of these bits. See
+/// In `Summary::member_flags`, beside the flags, none of which is one of these bits. See
 /// `Types::has_fresh_literal`.
 const HAS_FRESH_LITERAL: u32 = 1 << 29;
 /// The type itself is an object type other than a mapped type or an evolving array type.
@@ -1829,7 +1772,7 @@ const IS_PLAIN_OBJECT: u32 = 1 << 30;
 const IS_MAPPED_TYPE: u32 = 1 << 31;
 
 impl TypeRecord<'_> {
-    /// `member_flags_of`: `Summaries::member_flags` of a constituent.
+    /// `member_flags_of`: `Summary::member_flags` of a constituent.
     fn summary(&self, member_flags_of: impl Fn(TypeId) -> u32) -> TypeSummary {
         TypeSummary {
             flags: self.flags,
@@ -2199,7 +2142,7 @@ pub struct OwnStore<'s> {
     jitter: Jitter,
     /// How many times the task has come by a `Place`.
     times_at_a_place: Cell<u64>,
-    summaries: Summaries<'s, Cell<u32>>,
+    summaries: Mine<'s, Summary>,
 }
 
 impl<'s> OwnStore<'s> {
@@ -2207,8 +2150,8 @@ impl<'s> OwnStore<'s> {
     /// records. It is the only store that a `Types` may pair this one with.
     pub fn new_in(arena: &'s Arena, published: &TypeStore<'s>) -> Self {
         let session = published.session;
-        let mut summaries = Summaries::new_in(|room| session.block_of_task(room));
-        summaries.lay_over(published.summaries);
+        let mut summaries = Mine::new_in(session.block_of_task(Mine::<Summary>::ROOM));
+        summaries.lay_over(published.summaries.elements());
         OwnStore {
             arena,
             atoms: Own::new_in(session, None),
@@ -2468,7 +2411,7 @@ pub struct TypeStore<'s> {
     session: &'s Session,
     types: Interned<'s, TypeRecord<'s>>,
     /// In an arena, like `Interned::items`.
-    summaries: &'s Summaries<'s, AtomicU32>,
+    summaries: &'s Shared<'s, Summary>,
     sigs: Interned<'s, SigData<'s>>,
     mappers: Interned<'s, MapperRecord<'s>>,
     components: Interned<'s, List<'s, IndexComponent>>,
@@ -2641,7 +2584,7 @@ impl<'s> TypeStore<'s> {
     }
 
     fn with_order_in(session: &'s Session, texts: Option<Interner<'s>>) -> Self {
-        let summaries = Summaries::new_in(|room| session.block(room));
+        let summaries = Shared::new_in(session.block(Shared::<Summary>::ROOM));
         let store = TypeStore {
             session,
             types: Interned::new_in(session),
@@ -2725,10 +2668,10 @@ impl<'s> TypeStore<'s> {
             let record = self.types.items.get(id);
             let summary = record.summary(|member| {
                 debug_assert!(member.0 < id);
-                (self.summaries.member_flags.get(member.0)).load(Ordering::Relaxed)
+                (self.summaries.get(member.0).member_flags).load(Ordering::Relaxed)
             });
-            let rank = types.map(|types| types.rank_of_type(&record.created));
-            self.summaries.push(summary, rank);
+            let rank = types.map_or(Rank::NONE, |types| types.rank_of_type(&record.created));
+            self.summaries.push(Summary::new(summary, rank));
         }
     }
 
@@ -2790,8 +2733,9 @@ impl<'s> TypeStore<'s> {
             Kind::Sig => self.sigs.reserve(count),
             Kind::Type => {
                 let ids = self.types.reserve(count);
-                let of_summaries = self.summaries.reserve(count);
-                debug_assert_eq!(ids.first(), Some(of_summaries));
+                let nothing = || Summary::new(TypeSummary::NOTHING, Rank::NONE);
+                let summaries = self.summaries.add_placeholders(count, nothing);
+                debug_assert_eq!(ids.first(), summaries.first());
                 ids
             }
         }
@@ -2875,18 +2819,18 @@ impl<'p, 's> Types<'p, 's> {
 
     #[inline]
     pub fn flags(&self, id: TypeId) -> u32 {
-        (self.own.summaries.flags.of_either(id.0)).load(Ordering::Relaxed)
+        (self.own.summaries.of_either(id.0).flags).load(Ordering::Relaxed)
     }
 
     #[inline]
     pub fn object_flags(&self, id: TypeId) -> ObjectFlags {
-        let bits = self.own.summaries.object_flags.of_either(id.0);
+        let bits = &self.own.summaries.of_either(id.0).object_flags;
         ObjectFlags::from_bits_retain(bits.load(Ordering::Relaxed))
     }
 
     #[inline]
     pub fn instantiation_class(&self, id: TypeId) -> InstantiationClass {
-        let number = self.own.summaries.class.of_either(id.0);
+        let number = &self.own.summaries.of_either(id.0).class;
         InstantiationClass::of_number(number.load(Ordering::Relaxed))
     }
 
@@ -2923,7 +2867,7 @@ impl<'p, 's> Types<'p, 's> {
 
     #[inline]
     fn member_flags_and_more(&self, id: TypeId) -> u32 {
-        (self.own.summaries.member_flags.of_either(id.0)).load(Ordering::Relaxed)
+        (self.own.summaries.of_either(id.0).member_flags).load(Ordering::Relaxed)
     }
 
     /// `flags`, worked out from the record of the type.
@@ -2941,7 +2885,7 @@ impl<'p, 's> Types<'p, 's> {
 
     #[inline]
     fn facts_cell(&self, id: TypeId) -> &'p AtomicU8 {
-        self.own.summaries.facts.of_either(id.0)
+        &self.own.summaries.of_either(id.0).facts
     }
 
     /// Only for a function of the interning key of `id` and of the program that is computed without
@@ -3044,8 +2988,11 @@ impl<'p, 's> Types<'p, 's> {
         match &home {
             Home::Own { .. } => {
                 let orders_by_content = self.published.orders_by_content();
-                let rank = orders_by_content.then(|| self.rank_of_type(&record.created));
-                let index = self.own.summaries.push(summary, rank);
+                let rank = match orders_by_content {
+                    true => self.rank_of_type(&record.created),
+                    false => Rank::NONE,
+                };
+                let index = self.own.summaries.push(Summary::new(summary, rank));
                 debug_assert_eq!(index | LOCAL, own_id);
                 if is_unresolved_name {
                     self.own.has_unresolved_names.set(true);
@@ -3053,7 +3000,7 @@ impl<'p, 's> Types<'p, 's> {
             }
             Home::Published(id) => {
                 let rank = self.rank_of_type(&record.created);
-                (self.published.summaries).set(id.index(), summary, rank);
+                (self.published.summaries.get(id.index())).set(summary, rank);
                 if is_unresolved_name {
                     let has_unresolved_names = &self.published.has_unresolved_names;
                     has_unresolved_names.store(true, Ordering::Relaxed);
@@ -3526,11 +3473,11 @@ impl<'p, 's> Types<'p, 's> {
     /// Only if the store `orders_by_content`.
     #[inline]
     fn rank(&self, id: TypeId) -> Rank {
-        let of = &self.own.summaries;
+        let of = self.own.summaries.of_either(id.0);
         Rank {
-            height: of.heights.of_either(id.0).load(Ordering::Relaxed),
-            place: of.places.of_either(id.0).load(Ordering::Relaxed),
-            content: of.contents.of_either(id.0).load(Ordering::Relaxed),
+            height: of.height.load(Ordering::Relaxed),
+            place: of.place.load(Ordering::Relaxed),
+            content: of.content.load(Ordering::Relaxed),
         }
     }
 

@@ -786,6 +786,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline(never)]
     fn instantiate_cached(&mut self, ty: TypeId, mapper: MapperId, serial: u32) -> TypeId {
         let mut absent = None;
+        let is_kept_by_its_own_key = self.is_instantiation_kept_by_its_own_key(ty);
         if let Some(innermost) = self.index_infos_in_instantiation.last() {
             if let Some(&(known, is_marked)) = innermost.instantiations.get(&(ty, mapper)) {
                 // A cache hit records the same marks as recomputing it would.
@@ -794,7 +795,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 return known;
             }
-        } else {
+        } else if !is_kept_by_its_own_key {
             match self.p.instantiations.get_or_hash(&self.task, &(ty, mapper)) {
                 Ok(known) => {
                     self.recent_instantiations
@@ -870,6 +871,7 @@ impl<'p, 's> Checker<'p, 's> {
                     false => stored,
                 };
                 match absent {
+                    _ if is_kept_by_its_own_key => {}
                     Some(spread) => table.rewrite_absent(&self.task, spread, key, result, stored),
                     None => table.rewrite(&self.task, key, result, stored),
                 }
@@ -901,6 +903,18 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 result
             }
+        }
+    }
+
+    /// Whether all that instantiating `ty` takes is to map its type arguments and to look up what has them: a type
+    /// reference, an object type, a function type or a conditional type. As in `getObjectTypeInstantiation` and
+    /// `getConditionalTypeInstantiation`, that lookup is the only one.
+    #[inline]
+    fn is_instantiation_kept_by_its_own_key(&self, ty: TypeId) -> bool {
+        match self.data(ty) {
+            TypeData::Ref { .. } | TypeData::Fns { .. } | TypeData::Cond { .. } => true,
+            TypeData::Anon { origin, .. } => !matches!(origin, Origin::Mapped(..)),
+            _ => false,
         }
     }
 

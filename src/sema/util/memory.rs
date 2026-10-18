@@ -1946,7 +1946,8 @@ mod tests {
     #[cfg(all(target_os = "linux", not(miri)))]
     fn a_range_is_shorter_in_a_small_address_space_only_if_it_is_long() {
         let place = |bits: u32, len| {
-            let (start, end) = aside::place(&mut Vec::new(), (3 << (bits - 3), 5 << (bits - 3)), len)?;
+            let (start, end) =
+                aside::place(&mut Vec::new(), (3 << (bits - 3), 5 << (bits - 3)), len)?;
             Some(end - start)
         };
         for len in [STEP, 64 << 20, 1 << 30, 64 << 30] {

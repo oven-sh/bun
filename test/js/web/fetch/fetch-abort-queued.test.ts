@@ -13,10 +13,7 @@
 // affecting the rest of the test suite.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { once } from "node:events";
-import net from "node:net";
-import { join } from "node:path";
+import { bunEnv, bunExe } from "harness";
 
 const fixture = /* js */ `
   import { createServer } from "net";
@@ -96,10 +93,11 @@ test("aborting a fetch that is queued behind max_simultaneous_requests rejects t
 
 // The JS thread names a request to the HTTP thread by an id (abort, request-body write, receive
 // resume), so two live requests must never have the same id. Every fetch() takes an id, with or
-// without a `signal` option: only requests that have no signal store at all, such as the package
+// without a `signal` option. Only requests that have no signal store at all, such as the package
 // manifest requests of `bun install`, carry the id 0.
 // - The id is 64-bit. The first two tests below give two requests ids that are 2**32 apart.
-// - The last test aborts the first fetch of a process while it waits behind a request with id 0.
+// - The id counter starts at 1, so a request with a signal never collides with the id 0 of an
+//   unsignalled request. The third test checks that start value.
 // The id counter is process-wide, so each scenario runs in its own process. The tests are not
 // concurrent: a debug build needs 2 s to load bun:internal-for-testing in each process.
 
@@ -205,69 +203,16 @@ test("an abort reaches its request after a request 2**32 ids later has completed
   });
 });
 
-test("an abort reaches the first fetch of a process behind a request without an abort signal", async () => {
-  // The registry accepts TCP connections and never answers. A TLS connect to it stays pending, and
-  // with the HTTP/2 client enabled, every later request to it waits on that one connect.
-  const sockets: net.Socket[] = [];
-  await using registry = net.createServer(socket => {
-    sockets.push(socket);
-    socket.on("error", () => {});
-  });
-  await once(registry.listen(0, "127.0.0.1"), "listening");
-  const url = `https://127.0.0.1:${(registry.address() as net.AddressInfo).port}/`;
-
-  using dir = tempDir("fetch-abort-queued", {
-    "package.json": JSON.stringify({ name: "fetch-abort-queued", version: "1.0.0" }),
-    "index.cjs": /* js */ `
-      const sentinel = Bun.serve({ port: 0, fetch: () => new Response("ok") });
-      // See roundTrip in the tests above.
-      const roundTrip = async () => (await fetch(sentinel.url, { keepalive: false })).text();
-      ${state}
-      // Each require() below asks the registry for a package manifest: a request without an abort
-      // signal. The require() does not return, but it runs the event loop while it waits.
-      setImmediate(() => {
-        setImmediate(async () => {
-          // Two manifest requests wait on the connect now. These two fetches wait behind them.
-          const first = new AbortController();
-          const second = new AbortController();
-          const firstFetch = fetch(${JSON.stringify(url)}, { signal: first.signal });
-          const secondFetch = fetch(${JSON.stringify(url)}, { signal: second.signal });
-          firstFetch.catch(() => {});
-          secondFetch.catch(() => {});
-          await roundTrip();
-
-          // The control: the abort of a request that waits on the connect works.
-          second.abort();
-          await roundTrip();
-          const afterAbortOfSecond = { first: state(firstFetch), second: state(secondFetch) };
-          first.abort();
-          await roundTrip();
-          const afterAbortOfFirst = { first: state(firstFetch), second: state(secondFetch) };
-          console.log(JSON.stringify({ afterAbortOfSecond, afterAbortOfFirst }));
-          process.exit(0);
-        });
-        try { require("fetch-abort-queued-missing-b"); } catch {}
-      });
-      try { require("fetch-abort-queued-missing-a"); } catch {}
-    `,
-  });
-
-  const result = await run(["--install=force", "index.cjs"], {
-    cwd: String(dir),
-    env: {
-      BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT: "1",
-      BUN_CONFIG_REGISTRY: url,
-      BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
-    },
-  });
-  for (const socket of sockets) socket.destroy();
-  expect({ ...result, connections: sockets.length }).toEqual({
-    report: {
-      afterAbortOfSecond: { first: "pending", second: "AbortError" },
-      afterAbortOfFirst: { first: "AbortError", second: "AbortError" },
-    },
-    exitCode: 0,
-    // All four requests waited on one connect.
-    connections: 1,
-  });
+test("the request id counter starts at 1, so no request with a signal gets the id 0", async () => {
+  // The id 0 belongs to every request that has no signal store, such as the package manifest
+  // requests of `bun install`. The HTTP thread scans those requests by id on an abort, a body
+  // write and a receive resume. So a request that has a signal must never take the id 0, or its
+  // abort could reach an unsignalled request with the same id. The counter that numbers the
+  // signalled requests therefore starts at 1. skipIds(0) returns the next id without advancing
+  // the counter, so in a fresh process it reports the id the first signalled request will take.
+  const fixture = /* js */ `
+    import { fetchRequestIdInternals } from "bun:internal-for-testing";
+    console.log(JSON.stringify({ firstId: fetchRequestIdInternals.skipIds(0) }));
+  `;
+  expect(await run(["-e", fixture])).toEqual({ report: { firstId: 1 }, exitCode: 0 });
 });

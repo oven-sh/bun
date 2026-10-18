@@ -807,9 +807,9 @@ describe("async write buffer lifetime", () => {
     }
   });
 
-  it.each([
+  it.concurrent.each([
     {
-      // A bounds checked memory releases the block it grew out of. Where the allocator keeps that block mapped, the new memory takes it over.
+      // A bounds checked memory releases the block it grew out of. The new memory takes it over if it stays mapped.
       then: "moves",
       env: { BUN_JSC_useWasmFastMemory: "0" },
       afterGrow: "new Uint8Array(new WebAssembly.Memory({ initial: pages, maximum: pages }).buffer).fill(0xff);",
@@ -832,7 +832,8 @@ describe("async write buffer lifetime", () => {
         const pages = 256;
         let memory = new WebAssembly.Memory({ initial: pages, maximum: pages * 2 });
         const input = new Uint8Array(memory.buffer).fill(0x61);
-        zlib.deflate(input, (error, deflated) => {
+        // One write has to take all of the input: a second one would read the view again, and grow() detached it.
+        zlib.deflate(input, { chunkSize: pages * 65536 }, (error, deflated) => {
           if (error) throw error;
           console.log(zlib.inflateSync(deflated).equals(Buffer.alloc(pages * 65536, 0x61)));
         });

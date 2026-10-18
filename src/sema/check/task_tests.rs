@@ -1648,10 +1648,10 @@ fn the_nodes_of_many_files_have_different_hashes() {
 fn places_are_added_in_one_batch_and_found_without_a_lock() {
     let places = GrowingPlaces::<Global>::default();
     assert_eq!(places.find_frozen(spread_word(1), |_| true), None);
-    places.extend(0, std::iter::empty());
+    places.extend(0, 0, std::iter::empty());
     for batch in 0..3u32 {
         let added = batch * 1000..(batch + 1) * 1000;
-        places.extend(1000, added.map(|i| (spread_word(u64::from(i)), i)));
+        places.extend(0, 1000, added.map(|i| (spread_word(u64::from(i)), i)));
     }
     for i in 0..3000u32 {
         let found = places.find_frozen(spread_word(u64::from(i)), |index| index == i);

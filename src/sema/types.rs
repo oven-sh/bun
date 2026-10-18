@@ -1898,7 +1898,7 @@ impl Record for TypeRecord<'_> {
 ///   ids: such a store `orders_by_content`.
 /// - There is one record for a key at any time (`place`), so there is nothing to merge.
 struct Interned<'s, V> {
-    shards: Box<[GrowingPlaces<&'s Session>; INDEX_SHARDS], &'s Session>,
+    index: Box<GrowingPlaces<&'s Session, INDEX_SHARDS>, &'s Session>,
     /// In an arena, where a task can borrow them for as long as it may exist: see `Flat::of_either`. An id from `first_placed`
     /// on that no record has got yet has a hole.
     items: &'s Shared<'s, V>,
@@ -1906,23 +1906,17 @@ struct Interned<'s, V> {
     first_placed: u32,
 }
 
-/// As many as threads can usefully fill at a barrier, and no more: see `shard_among`.
-const INDEX_SHARDS: usize = 8;
+/// Threads add to an index at any time, each under the lock of a shard.
+const INDEX_SHARDS: usize = 64;
 
 impl<'s, V: Record> Interned<'s, V> {
     fn new_in(session: &'s Session) -> Self {
-        let shards = std::array::from_fn(|_| GrowingPlaces::new_in(session));
         let items = Shared::new_in(session.block(Shared::<V>::ROOM));
         Interned {
-            shards: Box::new_in(shards, session),
+            index: Box::new_in(GrowingPlaces::new_in(session), session),
             items: session.arena().alloc(items),
             first_placed: u32::MAX,
         }
-    }
-
-    #[inline]
-    fn shard(&self, spread: u64) -> &GrowingPlaces<&'s Session> {
-        &self.shards[shard_among(spread, INDEX_SHARDS)]
     }
 
     /// The record with the id `id`, which is published.
@@ -1934,10 +1928,10 @@ impl<'s, V: Record> Interned<'s, V> {
     /// `spread`: the hash of the key being looked up.
     #[inline]
     fn find(&self, spread: u64, is_it: impl Fn(&V) -> bool) -> Option<u32> {
-        let (shard, is_it) = (self.shard(spread), |i| is_it(self.get(i)));
+        let is_it = |i| is_it(self.get(i));
         match self.first_placed {
-            u32::MAX => shard.find_frozen(spread, is_it),
-            _ => shard.find(spread, is_it),
+            u32::MAX => self.index.find_frozen(spread, is_it),
+            _ => self.index.find(spread, is_it),
         }
     }
 
@@ -1959,19 +1953,17 @@ impl<'s, V: Record> Interned<'s, V> {
     /// record of the other stays where it is, and nothing refers to it.
     fn place(&self, spread: u64, id: Placeholder<'s>, record: V) -> u32 {
         let (id, placed) = (id.index(), self.items.replace(id, record));
-        self.shard(spread)
-            .find_or_add(spread, |other| placed.is_same(self.get(other)), || id)
+        (self.index).find_or_add(spread, |other| placed.is_same(self.get(other)), || id)
     }
 
     /// For `put`.
-    fn halves(&self) -> (&[GrowingPlaces<&'s Session>], &Shared<'s, V>, u32) {
-        (&self.shards[..], self.items, 0)
+    fn halves(&self) -> (&GrowingPlaces<&'s Session, INDEX_SHARDS>, &Shared<'s, V>, u32) {
+        (&self.index, self.items, 0)
     }
 
     /// Assigns the next id to `item`, which must not be present yet. `spread`: its lookup hash.
     fn add(&self, spread: u64, item: V) -> u32 {
-        self.shard(spread)
-            .find_or_add(spread, |_| false, || self.items.push(item))
+        (self.index).find_or_add(spread, |_| false, || self.items.push(item))
     }
 }
 
@@ -5481,8 +5473,8 @@ enum Placed<V> {
 /// FOLLOW, for one kind: writes the surviving records into the shared store, at their ids. Returns
 /// those that are `Later`, in id order: the caller writes them. Also returns, for `check_joined`,
 /// the merged records, remapped. `first` is the id of the first element of `items`.
-fn put<V: Send + Sync, A: Allocator + Clone + Sync, I: Fill<V> + Sync>(
-    (shards, items, first): (&[GrowingPlaces<A>], &I, u32),
+fn put<V: Send + Sync, A: Allocator + Clone + Sync, I: Fill<V> + Sync, const N: usize>(
+    (index, items, first): (&GrowingPlaces<A, N>, &I, u32),
     tasks: Vec<(Taken<V>, &Link)>,
     in_parallel: InParallel<'_>,
     settle: &(dyn Fn(V, &Link, u32) -> Placed<V> + Sync),
@@ -5504,7 +5496,7 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync, I: Fill<V> + Sync>(
         .map(|(task, link)| Work {
             task,
             link,
-            added: vec![Vec::new(); shards.len()],
+            added: vec![Vec::new(); N],
             later: Vec::new(),
         })
         .collect();
@@ -5512,7 +5504,7 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync, I: Fill<V> + Sync>(
         for (id, _, record) in std::mem::take(&mut it.task.records) {
             let record = match settle(record, it.link, id) {
                 Placed::Indexed(record, spread) => {
-                    it.added[shard_among(spread, shards.len())].push((spread, id));
+                    it.added[shard_among(spread, N)].push((spread, id));
                     record
                 }
                 Placed::NotIndexed(record) => record,
@@ -5527,10 +5519,10 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync, I: Fill<V> + Sync>(
     });
     {
         let work = &work;
-        in_parallel(shards.len(), &|shard| {
+        in_parallel(N, &|shard| {
             let count = work.iter().map(|it| it.added[shard].len()).sum();
             let added = work.iter().flat_map(|it| it.added[shard].iter().copied());
-            shards[shard].extend(count, added);
+            index.extend(shard, count, added);
         });
     }
     let mut joined = Vec::new();
@@ -5548,8 +5540,8 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync, I: Fill<V> + Sync>(
 
 /// In a debug build: a record that was merged with another must equal it. Otherwise two different
 /// contents have the same content hash.
-fn check_joined<V, A: Allocator + Clone, I: Fill<V>>(
-    (_, items, first): (&[GrowingPlaces<A>], &I, u32),
+fn check_joined<V, A: Allocator + Clone, I: Fill<V>, const N: usize>(
+    (_, items, first): (&GrowingPlaces<A, N>, &I, u32),
     joined: Vec<(u32, V)>,
     is_same: impl Fn(&V, &V) -> bool,
 ) {
@@ -5744,7 +5736,8 @@ impl<'s> TypeStore<'s> {
             let spread = spread_hash(&record.created);
             // SAFETY: `put` has reserved the id and left it to be written here.
             unsafe { self.types.items.write(id, record) };
-            (self.types.shard(spread)).extend(1, std::iter::once((spread, id)));
+            let shard = shard_among(spread, INDEX_SHARDS);
+            (self.types.index).extend(shard, 1, std::iter::once((spread, id)));
         }
         check_joined(self.types.halves(), joined, |a, b| a.created == b.created);
         self.summarize_types(self.types.items.len());

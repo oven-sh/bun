@@ -16,7 +16,7 @@
 //! it frees.
 
 use bun_threading::Guarded;
-use std::alloc::{Allocator, Global};
+use std::alloc::{Allocator, Global, Layout};
 use std::cell::Cell;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
@@ -1159,7 +1159,10 @@ impl<'a, T> Flat<'a, T, Cell<u32>> {
 // ───────────────────────────── cells ─────────────────────────────
 
 /// A type for which all zero bytes are a value.
-pub trait Zeroed: Sized {
+///
+/// # Safety
+/// They are.
+pub unsafe trait Zeroed: Sized {
     /// From the allocator's zeroed memory, which for a long slice comes from the operating system: a
     /// page that is never touched is never resident.
     fn zeroed_slice_in<A: Allocator>(len: usize, alloc: A) -> Box<[Self], A>;
@@ -1178,10 +1181,10 @@ fn touch_pages<C: Zeroed>(cells: &[C]) {
 
 macro_rules! zeroed {
     ($($atomic:ty),*) => {$(
-        impl Zeroed for $atomic {
+        // SAFETY: an atomic integer has the representation of the integer, for which all zero bytes are 0.
+        unsafe impl Zeroed for $atomic {
             fn zeroed_slice_in<A: Allocator>(len: usize, alloc: A) -> Box<[Self], A> {
-                // SAFETY: an atomic integer has the representation of the integer, for which all
-                // zero bytes are 0.
+                // SAFETY: as above.
                 unsafe { Box::new_zeroed_slice_in(len, alloc).assume_init() }
             }
             #[inline]
@@ -1363,92 +1366,130 @@ impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
 
 // ───────────────────────────── the newest of a series ─────────────────────────────
 
-struct Table<C> {
-    cells: *mut [C],
+/// A slice of a `Newest` starts at a multiple of this: the line of a cache. So the low bits of its address are free.
+const SLICE_ALIGNMENT: usize = 64;
+
+/// The address of the first cell of a slice plus the binary logarithm of the number of its cells. So who has loaded one
+/// word has the slice.
+struct Slice<C>(*mut C);
+
+impl<C> Slice<C> {
+    fn new(first: *mut C, len: usize) -> Slice<C> {
+        debug_assert!(len.is_power_of_two() && first.addr().is_multiple_of(SLICE_ALIGNMENT));
+        Slice(first.map_addr(|first| first | len.trailing_zeros() as usize))
+    }
+
+    #[inline(always)]
+    fn first(&self) -> *mut C {
+        self.0.map_addr(|it| it & !(SLICE_ALIGNMENT - 1))
+    }
+
+    #[inline(always)]
+    fn len(&self) -> usize {
+        1 << (self.0.addr() & (SLICE_ALIGNMENT - 1))
+    }
+
+    fn layout(len: usize) -> Layout {
+        let layout = Layout::array::<C>(len).and_then(|cells| cells.align_to(SLICE_ALIGNMENT));
+        layout.unwrap_or_else(|_| bun_alloc::out_of_memory())
+    }
 }
 
 struct Retired<C> {
-    table: *mut Table<C>,
+    slice: Slice<C>,
     next: *mut Retired<C>,
 }
 
-/// The newest of a series of slices of cells, read without a lock: a table that is replaced by a
-/// bigger one when it fills up. The older ones stay allocated until `forget_older`, because a reader
-/// may still hold one.
-pub struct Newest<C, A: Allocator + Clone = Global> {
-    newest: AtomicPtr<Table<C>>,
+/// `N` series of slices of cells, and the newest of each, read without a lock: the shards of a table, each of which is
+/// replaced by a bigger one when it fills up. The older ones stay allocated until `forget_older`, because a reader may
+/// still hold one.
+pub struct Newest<C, A: Allocator + Clone = Global, const N: usize = 1> {
+    /// Null: the series has none yet. They are next to each other: eight share a line of the cache, and nothing else
+    /// that a thread writes is there.
+    newest: [AtomicPtr<C>; N],
     retired: AtomicPtr<Retired<C>>,
     alloc: A,
     owns: Owns<C>,
 }
 
-impl<C: Zeroed, A: Allocator + Clone + Default> Default for Newest<C, A> {
+impl<C: Zeroed, A: Allocator + Clone + Default, const N: usize> Default for Newest<C, A, N> {
     fn default() -> Self {
         Self::new_in(A::default())
     }
 }
 
-impl<C: Zeroed, A: Allocator + Clone> Newest<C, A> {
+impl<C: Zeroed, A: Allocator + Clone, const N: usize> Newest<C, A, N> {
     pub fn new_in(alloc: A) -> Self {
         Newest {
-            newest: AtomicPtr::new(null_mut()),
+            newest: [const { AtomicPtr::new(null_mut()) }; N],
             retired: AtomicPtr::new(null_mut()),
             alloc,
             owns: PhantomData,
         }
     }
 
-    /// Empty: there is none yet. `Relaxed`: something else has ordered the last `replace` before
+    /// The newest of `series`. Empty: there is none yet. `Relaxed`: something else has ordered the last `replace` before
     /// this call.
     #[inline]
-    pub fn get(&self, order: Ordering) -> &[C] {
-        let newest = self.newest.load(order);
-        // SAFETY: null, or the address of a box from `replace`, and so is `cells`. Only
-        // `forget_older` frees them, once they are retired.
-        unsafe { newest.as_ref().map_or(&[][..], |it| &*it.cells) }
+    pub fn get(&self, series: usize, order: Ordering) -> &[C] {
+        let newest = Slice(self.newest[series].load(order));
+        if newest.0.is_null() {
+            return &[];
+        }
+        // SAFETY: `replace` has stored it, for that many cells, which it has initialized. Only `forget_older` frees
+        // them, once they are retired.
+        unsafe { std::slice::from_raw_parts(newest.first(), newest.len()) }
     }
 
-    /// Replaces it by `len` cells, all zero but for what `fill` stores before any reader sees them.
-    /// One thread at a time: the caller holds a lock, or the owner is not shared.
-    pub fn replace(&self, len: usize, fill: impl FnOnce(&[C])) -> &[C] {
-        let cells = C::zeroed_slice_in(len, self.alloc.clone());
-        touch_pages(&cells);
-        fill(&cells);
-        let cells = Box::into_raw_with_allocator(cells).0;
-        let newest = Box::new_in(Table { cells }, self.alloc.clone());
-        let newest = Box::into_raw_with_allocator(newest).0;
-        let old = self.newest.load(Ordering::Relaxed);
-        let swapped =
-            (self.newest).compare_exchange(old, newest, Ordering::Release, Ordering::Relaxed);
-        assert!(swapped.is_ok(), "two threads at a time");
-        self.retire(old);
-        self.get(Ordering::Relaxed)
+    /// Replaces the newest of `series` by `len` cells, a power of two, all zero but for what `fill` stores before any
+    /// reader sees them. One thread at a time for a series: the caller holds a lock, or the owner is not shared.
+    pub fn replace(&self, series: usize, len: usize, fill: impl FnOnce(&[C])) -> &[C] {
+        assert!(len.is_power_of_two());
+        let layout = Slice::<C>::layout(len);
+        let Ok(block) = self.alloc.allocate_zeroed(layout) else {
+            std::alloc::handle_alloc_error(layout)
+        };
+        let first = block.cast::<C>().as_ptr();
+        // SAFETY: the block has room for `len` cells and is aligned for them, and all zero bytes are a `C`.
+        let cells = unsafe { std::slice::from_raw_parts(first, len) };
+        touch_pages(cells);
+        fill(cells);
+        let old = self.newest[series].swap(Slice::new(first, len).0, Ordering::Release);
+        self.retire(Slice(old));
+        cells
     }
 }
 
-impl<C, A: Allocator + Clone> Newest<C, A> {
-    /// One thread at a time.
-    fn retire(&self, table: *mut Table<C>) {
-        if !table.is_null() {
-            let next = self.retired.load(Ordering::Relaxed);
-            let retired = Box::new_in(Retired { table, next }, self.alloc.clone());
-            let retired = Box::into_raw_with_allocator(retired).0;
-            self.retired.store(retired, Ordering::Relaxed);
+impl<C, A: Allocator + Clone, const N: usize> Newest<C, A, N> {
+    /// Any thread: two series can be replaced at a time.
+    fn retire(&self, slice: Slice<C>) {
+        if slice.0.is_null() {
+            return;
+        }
+        let mut next = self.retired.load(Ordering::Relaxed);
+        let retired = Box::new_in(Retired { slice, next }, self.alloc.clone());
+        let retired = Box::into_raw_with_allocator(retired).0;
+        while let Err(now) =
+            (self.retired).compare_exchange_weak(next, retired, Ordering::Release, Ordering::Relaxed)
+        {
+            next = now;
+            // SAFETY: it was a box above, and no other thread has seen it.
+            unsafe { (*retired).next = now };
         }
     }
 
-    /// Frees all but the newest.
+    /// Frees all but the newest of each series.
     #[inline]
     pub fn forget_older(&mut self) {
         let mut next = std::mem::replace(self.retired.get_mut(), null_mut());
         while !next.is_null() {
-            // SAFETY: the three were boxes of this allocator in `replace` and `retire`. A table is
-            // retired once, when `newest` has ceased to point to it, the list is unlinked, and
-            // `&mut self` shows that no reference to a cell is in use.
+            // SAFETY: `retire` has made it from a box of this allocator, and `replace` has allocated the slice there
+            // with this layout. A slice is retired once, when `newest` has ceased to point to it, the list is
+            // unlinked, and `&mut self` shows that no reference to a cell is in use.
             next = unsafe {
                 let retired = Box::from_raw_in(next, self.alloc.clone());
-                let table = Box::from_raw_in(retired.table, self.alloc.clone());
-                drop(Box::from_raw_in(table.cells, self.alloc.clone()));
+                let first = NonNull::new_unchecked(retired.slice.first());
+                (self.alloc).deallocate(first.cast(), Slice::<C>::layout(retired.slice.len()));
                 retired.next
             };
         }
@@ -1456,13 +1497,15 @@ impl<C, A: Allocator + Clone> Newest<C, A> {
 
     /// Frees all of them.
     pub fn clear(&mut self) {
-        let newest = std::mem::replace(self.newest.get_mut(), null_mut());
-        self.retire(newest);
+        for series in 0..N {
+            let newest = std::mem::replace(self.newest[series].get_mut(), null_mut());
+            self.retire(Slice(newest));
+        }
         self.forget_older();
     }
 }
 
-impl<C, A: Allocator + Clone> Drop for Newest<C, A> {
+impl<C, A: Allocator + Clone, const N: usize> Drop for Newest<C, A, N> {
     fn drop(&mut self) {
         self.clear();
     }
@@ -1776,15 +1819,15 @@ mod tests {
 
     #[test]
     fn readers_see_a_filled_table_while_one_thread_replaces_it() {
-        const TABLES: u64 = if cfg!(miri) { 40 } else { 2_000 };
+        const TABLES: u64 = if cfg!(miri) { 1 << 6 } else { 1 << 16 };
         let newest = Newest::<AtomicU64>::default();
-        assert!(newest.get(Ordering::Acquire).is_empty());
+        assert!(newest.get(0, Ordering::Acquire).is_empty());
         std::thread::scope(|scope| {
             for _ in 0..3 {
                 scope.spawn(|| {
                     let mut last = 0;
                     while last < TABLES {
-                        let cells = newest.get(Ordering::Acquire);
+                        let cells = newest.get(0, Ordering::Acquire);
                         // Every cell holds the length, which `fill` stored.
                         let len = cells.len() as u64;
                         assert!(cells.iter().all(|it| it.load(Ordering::Relaxed) == len));
@@ -1794,8 +1837,8 @@ mod tests {
                     }
                 });
             }
-            for len in 1..=TABLES {
-                let cells = newest.replace(len as usize, |cells| {
+            for len in (0..=TABLES.ilog2()).map(|log| 1 << log) {
+                let cells = newest.replace(0, len as usize, |cells| {
                     assert!(cells.iter().all(|it| it.load(Ordering::Relaxed) == 0));
                     cells.iter().for_each(|it| it.store(len, Ordering::Relaxed));
                 });
@@ -2121,18 +2164,19 @@ mod tests {
         drop((cells, vec));
         assert_eq!(count(), 0);
 
-        let mut newest = Newest::<AtomicU32, _>::new_in(alloc);
-        let first = newest.replace(4, |_| {});
-        newest.replace(8, |_| {});
-        assert_eq!((first.len(), newest.get(Ordering::Relaxed).len()), (4, 8));
-        // Two blocks for each table, and one for the one that is retired.
-        assert_eq!(count(), 5);
+        let mut newest = Newest::<AtomicU32, _, 2>::new_in(alloc);
+        let first = newest.replace(1, 4, |_| {});
+        newest.replace(1, 8, |_| {});
+        newest.replace(0, 1, |_| {});
+        let len = |newest: &Newest<_, _, 2>, series| newest.get(series, Ordering::Relaxed).len();
+        assert_eq!((first.len(), len(&newest, 1), len(&newest, 0)), (4, 8, 1));
+        // A block for each slice, and one for the one that is retired.
+        assert_eq!(count(), 4);
         newest.forget_older();
-        assert_eq!((newest.get(Ordering::Relaxed).len(), count()), (8, 2));
+        assert_eq!((len(&newest, 1), len(&newest, 0), count()), (8, 1, 2));
         newest.clear();
-        assert!(newest.get(Ordering::Relaxed).is_empty());
-        assert_eq!(count(), 0);
-        newest.replace(2, |_| {});
+        assert_eq!((len(&newest, 1), len(&newest, 0), count()), (0, 0, 0));
+        newest.replace(0, 2, |_| {});
         drop(newest);
         assert_eq!(count(), 0);
 

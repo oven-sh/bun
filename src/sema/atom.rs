@@ -7,7 +7,8 @@ use crate::local::LOCAL;
 use crate::session::Session;
 use crate::types::{OwnStore, Sharing};
 use crate::util::memory::Cells;
-use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
+use crate::util::{AppendVec, GrowingPlaces, SHARDS, spread_hash};
+use std::alloc::Global;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// A name. Its number is its index in a list that every parser thread appends to, so it differs
@@ -157,7 +158,7 @@ pub struct Interner<'s> {
 /// would make an `Interner<'s>` invariant in `'s`, and it is covariant (`shortened`). The session has them
 /// (`Session::keep`): nothing drops what a program refers to.
 struct Tables {
-    shards: Box<[GrowingPlaces; SHARDS]>,
+    places: Box<GrowingPlaces<Global, SHARDS>>,
     texts: Texts,
     /// `class_of` each text, `class::BITS` bits for each.
     classes: Cells<AtomicU32>,
@@ -168,7 +169,7 @@ struct Tables {
 impl Tables {
     fn new(is_in_common: bool) -> Tables {
         Tables {
-            shards: Box::new(std::array::from_fn(|_| GrowingPlaces::default())),
+            places: Box::default(),
             texts: AppendVec::new(),
             classes: Cells::default(),
             is_in_common,
@@ -734,22 +735,22 @@ impl<'s> Interner<'s> {
     /// the same numbers, and numbers its own after them. Nobody else sees those.
     pub fn over(session: &'s Session, below: Interner<'s>) -> Interner<'s> {
         assert!(below.tables.is_in_common);
-        let Tables { shards, texts, .. } = below.tables;
+        let Tables { places, texts, .. } = below.tables;
         Interner {
             session,
             tables: session.keep(Tables::new(false)),
             below: below.tables,
             // Texts are pushed under their shard's lock. With all shards locked, none below this length is incomplete.
-            first: GrowingPlaces::while_none_grows(&shards[..], || texts.len()),
+            first: places.while_none_grows(|| texts.len()),
             number: next_interner_number(),
         }
     }
 
     /// For the merge at the barrier. It writes without synchronization, so the tables must not be shared. The last value is
     /// the number of the first text.
-    pub(crate) fn halves(&self) -> (&[GrowingPlaces], &Texts, u32) {
+    pub(crate) fn halves(&self) -> (&GrowingPlaces<Global, SHARDS>, &Texts, u32) {
         assert!(!self.tables.is_in_common);
-        (&self.tables.shards[..], &self.tables.texts, self.first)
+        (&self.tables.places, &self.tables.texts, self.first)
     }
 
     pub fn session(&self) -> &'s Session {
@@ -796,10 +797,9 @@ impl<'s> Interner<'s> {
         if let Some(atom) = self.find_below(spread, text) {
             return atom;
         }
-        let Tables { shards, texts, .. } = self.tables;
-        let shard = &shards[shard_of(spread)];
+        let Tables { places, texts, .. } = self.tables;
         let is_it = |i: u32| &**texts.get(i - self.first) == text;
-        if let Some(atom) = shard.find(spread, is_it) {
+        if let Some(atom) = places.find(spread, is_it) {
             return Atom(atom);
         }
         let add = || {
@@ -807,7 +807,7 @@ impl<'s> Interner<'s> {
             self.tables.set_class(index, text);
             self.first + index
         };
-        Atom(shard.find_or_add(spread, is_it, add))
+        Atom(places.find_or_add(spread, is_it, add))
     }
 
     /// For the merge at the barrier, which is about to add `text` as the text of `atom`.
@@ -829,17 +829,17 @@ impl<'s> Interner<'s> {
         if self.first == 0 {
             return None;
         }
-        let Tables { shards, texts, .. } = self.below;
+        let Tables { places, texts, .. } = self.below;
         let is_it = |i: u32| i < self.first && &**texts.get(i) == text;
-        shards[shard_of(spread)].find(spread, is_it).map(Atom)
+        places.find(spread, is_it).map(Atom)
     }
 
     /// The atom of `text`, if it has been interned.
     pub fn lookup(&self, text: &[u8]) -> Option<Atom> {
         let spread = hash_of(text);
-        let Tables { shards, texts, .. } = self.tables;
+        let Tables { places, texts, .. } = self.tables;
         let is_it = |i: u32| &**texts.get(i - self.first) == text;
-        let own = || shards[shard_of(spread)].find(spread, is_it).map(Atom);
+        let own = || places.find(spread, is_it).map(Atom);
         self.find_below(spread, text).or_else(own)
     }
 
@@ -888,11 +888,10 @@ impl<'p, 's> Atoms<'p, 's> {
     fn find_published(&self, spread: u64, text: &[u8]) -> Option<Atom> {
         let Interner { tables, first, .. } = self.published;
         let is_it = |i: u32| &**tables.texts.get(i - first) == text;
-        let shard = &tables.shards[shard_of(spread)];
         let own = || match self.own.sharing() {
-            Sharing::Off => shard.find_frozen(spread, is_it),
+            Sharing::Off => tables.places.find_frozen(spread, is_it),
             // Tasks add atoms meanwhile.
-            Sharing::Finds | Sharing::Publishes => shard.find(spread, is_it),
+            Sharing::Finds | Sharing::Publishes => tables.places.find(spread, is_it),
         };
         let below = self.published.find_below(spread, text);
         below.or_else(|| own().map(Atom))

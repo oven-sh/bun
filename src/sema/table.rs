@@ -2065,9 +2065,9 @@ impl<'s, I: Id + Follow, T: Follow + Send + Sync + 's, A: Alloc> Publish<'s>
 /// How many threads can fill a `ByKey` concurrently. Each owns an equal number of the map's shards.
 const PARTS: usize = 8;
 
-/// The number of shards of the published part of a `ByKey`, a multiple of `PARTS`. One for each
-/// thread that fills it, and no more: see `shard_among`.
-const PUBLISHED_SHARDS: usize = PARTS;
+/// The number of shards of the published part of a `ByKey`, a multiple of `PARTS`. Tasks add to it at any time, each under
+/// the lock of a shard.
+const PUBLISHED_SHARDS: usize = 8 * PARTS;
 
 #[inline]
 fn part_of(spread: u64) -> usize {

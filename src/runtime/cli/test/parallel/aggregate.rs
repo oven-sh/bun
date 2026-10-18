@@ -22,6 +22,11 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
     };
     for (idx, file) in files.iter().enumerate() {
         let rel = junit_file_name(coord.files[idx].as_bytes());
+        junit.file_start_unix_ms = if file.started_unix_ms != 0 {
+            file.started_unix_ms
+        } else {
+            bun_core::time::milli_timestamp()
+        };
         for payload in &file.tests {
             if let Some(test) = runner::decode_test_case(&mut Reader { p: payload }, rel) {
                 junit.record_test_case(&test).expect("oom");
@@ -44,7 +49,9 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
             };
             junit.record_test_case(&unfinished).expect("oom");
         }
-        junit.end_file(Some(file.elapsed_ns)).expect("oom");
+        junit
+            .end_file(Some(rel), Some(file.elapsed_ns))
+            .expect("oom");
     }
 }
 

@@ -877,6 +877,7 @@ fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {
         wf.str(&f.name);
         wf.str(&f.message);
         wf.str(&f.body);
+        wf.u32(u32::from(f.uncaught));
     }
 }
 
@@ -907,6 +908,7 @@ pub(crate) fn decode_test_case<'a>(
         name: rd.str().to_vec(),
         message: rd.str().to_vec(),
         body: rd.str().to_vec(),
+        uncaught: rd.u32() != 0,
     };
     let earlier_failures: Vec<_> = (0..earlier).map(|_| read_failure()).collect();
     let failure = has_failure.then(read_failure);

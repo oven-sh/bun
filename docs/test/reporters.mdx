@@ -64,6 +64,10 @@ bun test --reporter=junit --reporter-outfile=./junit.xml
 
 Console output is unchanged; Bun writes the JUnit XML report to the specified path at the end of the test run, and creates the folder if it doesn't exist.
 
+Every test file that ran has a `<testsuite>`, even if it has no tests. Its `timestamp` is the time the file started, in the format of `Date.prototype.toISOString()`.
+
+If an error is thrown while a test is running but not by the test itself, for example by a timer or an unhandled rejection, the test fails and its `<failure>`, `<flakyFailure>` or `<rerunFailure>` has `uncaught="true"`.
+
 An error outside of any test is reported as a failed `<testcase>` named `(unhandled error)` in that file's `<testsuite>`. Examples are a test file or a preload script that throws while it loads, has a syntax error, or imports a module that doesn't exist.
 
 With `--parallel`, a file whose worker crashed has a failed `<testcase>` named `(worker crashed)`. The files that the crash kept from finishing or from starting have one named `(aborted)`. After `SIGINT` or `SIGTERM`, a file that was running has one named `(interrupted)`, and a file that hadn't started has one named `(aborted)`.

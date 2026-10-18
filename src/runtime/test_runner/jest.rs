@@ -700,12 +700,14 @@ pub(crate) mod on_unhandled_rejection {
                     }
                 }
             }
+            buntest.is_reporting_uncaught = true;
             buntest.on_uncaught_exception(
                 global_object,
                 Some(rejection),
                 true,
                 &current_state_data,
             );
+            buntest.is_reporting_uncaught = false;
             buntest.add_result(current_state_data);
             // The JS that reported the error may still be on the stack, so don't start the next test under it.
             bun_test::BunTest::run_next_tick(

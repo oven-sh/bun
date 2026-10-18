@@ -702,7 +702,7 @@ test("--parallel --reporter=junit writes the same document as a serial run", asy
     // Per-file <testsuite> blocks keyed by file, with timings and hostname masked.
     const suites: Record<string, string> = {};
     for (const m of xml
-      .replace(/ (time|hostname)="[^"]*"/g, "")
+      .replace(/ (time|hostname|timestamp)="[^"]*"/g, "")
       .matchAll(/^  <testsuite name="([^"]+)"[^]*?^  <\/testsuite>\n/gm)) {
       suites[m[1]] = m[0];
     }

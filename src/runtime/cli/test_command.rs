@@ -161,6 +161,8 @@ pub(crate) struct TestFailure {
     pub name: Vec<u8>,
     pub(crate) message: Vec<u8>,
     pub(crate) body: Vec<u8>,
+    /// The test's own call didn't throw this. It came from a timer, an event handler or an unhandled rejection while the test was running.
+    pub(crate) uncaught: bool,
 }
 
 /// How a test file is named in the JUnit document: relative to the project
@@ -210,9 +212,40 @@ fn push_stripping_ansi(out: &mut Vec<u8>, input: &[u8]) {
     }
 }
 
+/// Writes a Unix time in milliseconds the way `Date.prototype.toISOString` does.
+fn write_iso_8601(out: &mut Vec<u8>, unix_ms: i64) {
+    let days = unix_ms.div_euclid(86_400_000);
+    let ms = unix_ms.rem_euclid(86_400_000);
+    // Days to a civil date: https://howardhinnant.github.io/date_algorithms.html#civil_from_days
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    let _ = write!(
+        out,
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        year,
+        month,
+        day,
+        ms / 3_600_000,
+        ms / 60_000 % 60,
+        ms / 1000 % 60,
+        ms % 1000,
+    );
+}
+
 // Remaining TODOs:
 // - Add stdout/stderr to the JUnit report
-// - Add timestamp field to the JUnit report
 #[derive(Default)]
 pub(crate) struct JunitReporter {
     pub(crate) contents: Vec<u8>,
@@ -220,6 +253,8 @@ pub(crate) struct JunitReporter {
     pub(crate) offset_of_testsuites_value: usize,
     pub(crate) current_file: Box<[u8]>,
     pub(crate) file_start_ns: u64,
+    /// Unix time in milliseconds. The `timestamp` of every suite in the file.
+    pub(crate) file_start_unix_ms: i64,
     pub(crate) properties_list_to_repeat_in_every_test_suite: Option<Box<[u8]>>,
 
     pub(crate) suite_stack: Vec<SuiteInfo>,
@@ -307,7 +342,7 @@ impl TestFailure {
         TestFailure {
             name: b"TimeoutError".to_vec(),
             message: b"test timed out".to_vec(),
-            body: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -606,7 +641,18 @@ impl JunitReporter {
     /// Close every suite still open for the current file. The file suite's
     /// `time` is `elapsed_ns` when the caller measured it (the `--parallel`
     /// coordinator replaying a worker's file), else now − `file_start_ns`.
-    pub(crate) fn end_file(&mut self, elapsed_ns: Option<u64>) -> crate::Result<()> {
+    /// A `file` with no test cases gets an empty suite, so the report lists every file that ran.
+    pub(crate) fn end_file(
+        &mut self,
+        file: Option<&[u8]>,
+        elapsed_ns: Option<u64>,
+    ) -> crate::Result<()> {
+        if let Some(file) = file
+            && !strings::eql(&self.current_file, file)
+        {
+            self.end_file(None, None)?;
+            self.begin_test_suite(file)?;
+        }
         while !self.suite_stack.is_empty() {
             self.end_test_suite(elapsed_ns)?;
         }
@@ -645,7 +691,7 @@ impl JunitReporter {
             // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
             let _ = write!(
                 &mut summary,
-                "tests=\"{}\" assertions=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\" hostname=\"{}\"",
+                "tests=\"{}\" assertions=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\" hostname=\"{}\" timestamp=\"",
                 suite_info.metrics.test_cases,
                 suite_info.metrics.assertions,
                 suite_info.metrics.failures,
@@ -653,6 +699,8 @@ impl JunitReporter {
                 elapsed_time_seconds,
                 bstr::BStr::new(&hostname),
             );
+            write_iso_8601(&mut summary, self.file_start_unix_ms);
+            summary.push(b'"');
         }
 
         self.contents.splice(
@@ -748,6 +796,9 @@ impl JunitReporter {
             self.contents.extend_from_slice(b" message=\"");
             escape_xml(&f.message, &mut self.contents)?;
             self.contents.extend_from_slice(b"\"");
+        }
+        if failure.is_some_and(|f| f.uncaught) {
+            self.contents.extend_from_slice(b" uncaught=\"true\"");
         }
         match failure.filter(|f| !f.body.is_empty()) {
             Some(f) => {
@@ -958,7 +1009,7 @@ impl JunitReporter {
             return Ok(());
         }
 
-        self.end_file(None)?;
+        self.end_file(None, None)?;
 
         {
             let metrics = self.total_metrics;
@@ -3208,6 +3259,7 @@ impl TestCommand {
 
             if let Some(junit) = reporter.reporters.junit.as_mut() {
                 junit.file_start_ns = bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns();
+                junit.file_start_unix_ms = bun::time::milli_timestamp();
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
@@ -3405,7 +3457,7 @@ impl TestCommand {
             }
         }
         if let Some(junit) = reporter.reporters.junit.as_mut() {
-            let _ = junit.end_file(None);
+            let _ = junit.end_file(Some(junit_file_name(file_path)), None);
         }
         Ok(())
     }

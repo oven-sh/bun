@@ -741,6 +741,8 @@ pub(crate) struct BunTest {
     pub(crate) wants_wakeup: bool,
     /// The phase passed to the most recent `run_next_tick`.
     pending_phase: RefDataValue,
+    /// Set while the global unhandled-error handler reports an error through `on_uncaught_exception`.
+    pub(crate) is_reporting_uncaught: bool,
     /// True until `TestCommand::run` starts the runner, because the file's module may still be registering tests.
     pub(crate) is_loading: bool,
     /// Callback-less entry that runs last in the file. `defer_to_file_end` links its entries after it.
@@ -784,6 +786,7 @@ impl BunTest {
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
             pending_phase: RefDataValue::Start,
+            is_reporting_uncaught: false,
             is_loading: true,
             file_end: None,
             unclaimed: Default::default(),
@@ -1614,8 +1617,14 @@ impl BunTest {
             vm.on_print_error_zig_exception = None;
             vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
             // SAFETY: `failure_ctx` is one of the two `Option<TestFailure>` above, and the callback is done with it.
-            let slot = unsafe { &mut *failure_ctx.cast() };
+            let slot: &mut Option<crate::cli::test_command::TestFailure> =
+                unsafe { &mut *failure_ctx.cast() };
             crate::cli::test_command::TestFailure::record_log_message(slot, exception);
+            if let Some(failure) = slot
+                && handle_status == HandleUncaughtExceptionResult::ShowHandledError
+            {
+                failure.uncaught |= self.is_reporting_uncaught;
+            }
         }
         if let (Some(failure), Some(reporter)) = (unhandled_failure, self.reporter) {
             // SAFETY: as above.

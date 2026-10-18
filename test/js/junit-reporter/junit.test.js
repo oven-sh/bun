@@ -839,7 +839,7 @@ describe("only block", () => {
 `;
 
     const normalize = xml =>
-      xml.replaceAll(/ hostname="[^"]*"/g, "").replaceAll(/ time="\d+(\.\d+)?(e-\d+)?"/g, ' time="#"');
+      xml.replaceAll(/ (hostname|timestamp)="[^"]*"/g, "").replaceAll(/ time="\d+(\.\d+)?(e-\d+)?"/g, ' time="#"');
 
     async function report(args, bunfig) {
       using dir = tempDir("junit-suites", bunfig ? { ...files, "bunfig.toml": bunfig } : files);
@@ -912,6 +912,92 @@ describe("only block", () => {
       expect(xml).toBe(flat);
     });
 
+    it.each([[[]], [["--reporter-junit-suites=flat"]], [["--parallel=2"]]])(
+      "every <testsuite> has the time its file started as its timestamp %j",
+      async args => {
+        using dir = tempDir("junit-timestamp", files);
+        const before = Date.now();
+        await using proc = spawn([bunExe(), "test", ...junit, ...args], {
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        await proc.exited;
+        const after = Date.now();
+        const suites = (await file(join(String(dir), "junit.xml")).text()).match(/<testsuite [^>]*>/g);
+        expect(suites.length).toBeGreaterThanOrEqual(2);
+        for (const suite of suites) {
+          const [, timestamp] = suite.match(/ timestamp="([^"]*)"/) ?? [];
+          expect(timestamp).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+          expect(new Date(timestamp).toISOString()).toBe(timestamp);
+          expect(Date.parse(timestamp)).toBeWithin(before, after + 1);
+        }
+      },
+    );
+
+    it.each([[[]], [["--parallel=2"]]])("a file with no tests has an empty <testsuite> %j", async args => {
+      using dir = tempDir("junit-empty", {
+        "empty.test.js": `export {};`,
+        "one.test.js": `test("passes", () => {});`,
+      });
+      await using proc = spawn([bunExe(), "test", ...junit, ...args], {
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      const exitCode = await proc.exited;
+      const xml = await file(join(String(dir), "junit.xml")).text();
+      expect(xml.match(/<testsuite name="[^"]*" file="[^"]*" tests="\d+"/g)).toEqual([
+        `<testsuite name="empty.test.js" file="empty.test.js" tests="0"`,
+        `<testsuite name="one.test.js" file="one.test.js" tests="1"`,
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    it.each([[[]], [["--parallel=2"]]])(
+      'marks an error that the test itself did not throw with uncaught="true" %j',
+      async args => {
+        using dir = tempDir("junit-uncaught", {
+          "a.test.js": `
+            let attempt = 0;
+            test("throws", () => { throw new Error("thrown by the test"); });
+            test("rejects", async () => { throw new Error("rejected by the test"); });
+            test("its timer throws", async () => {
+              const { promise, resolve } = Promise.withResolvers();
+              setTimeout(() => { resolve(); throw new Error("thrown by a timer"); }, 1);
+              await promise;
+              await new Promise(resolve => setImmediate(resolve));
+            });
+            test("its timer throws once", async () => {
+              if (attempt++) return;
+              const { promise, resolve } = Promise.withResolvers();
+              setTimeout(() => { resolve(); throw new Error("thrown by a timer once"); }, 1);
+              await promise;
+              await new Promise(resolve => setImmediate(resolve));
+            }, { retry: 1 });
+          `,
+          "b.test.js": `test("passes", () => {});`,
+        });
+        await using proc = spawn([bunExe(), "test", ...junit, ...args], {
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        const exitCode = await proc.exited;
+        const xml = await file(join(String(dir), "junit.xml")).text();
+        expect(xml.match(/<(failure|flakyFailure|rerunFailure) [^>]*>/g)).toEqual([
+          `<failure type="Error" message="thrown by the test">`,
+          `<failure type="Error" message="rejected by the test">`,
+          `<failure type="Error" message="thrown by a timer" uncaught="true">`,
+          `<flakyFailure type="Error" message="thrown by a timer once" uncaught="true">`,
+        ]);
+        expect(exitCode).toBe(1);
+      },
+    );
+
     it("rejects any other value", async () => {
       const [flag, bunfig] = await Promise.all([
         report([...junit, "--reporter-junit-suites=deep"]),
@@ -929,5 +1015,5 @@ describe("only block", () => {
 });
 
 function filterJunitXmlOutput(xmlContent) {
-  return xmlContent.replaceAll(/ (time|hostname)=".*?"/g, "");
+  return xmlContent.replaceAll(/ (time|hostname|timestamp)=".*?"/g, "");
 }

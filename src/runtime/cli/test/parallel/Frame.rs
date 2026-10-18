@@ -14,7 +14,7 @@ pub(crate) enum Kind {
     /// then, only when the worker runs with `--reporter`, the structured
     /// result (`runner::encode_test_case`): u32 status, u32 assertions,
     /// u64 elapsed_ns, u32 line, str name, u32 n × {str scope_name,
-    /// u32 scope_line}, u32 has_failure [, str name, str message, str body]
+    /// u32 scope_line}, u32 has_failure [, str name, str message, str body, u32 uncaught]
     TestDone,
     /// 10 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
     /// files, shuffled, unhandled; u64 elapsed_ns

@@ -73,6 +73,8 @@ pub(crate) struct FileTestRecords {
     /// `TestDone` payloads past the formatted line; see `runner::decode_test_case`.
     pub(crate) tests: Vec<Box<[u8]>>,
     pub(crate) elapsed_ns: u64,
+    /// Unix time in milliseconds, or 0 if the file never started.
+    pub(crate) started_unix_ms: i64,
     /// The name and message of the failing test case that stands for what the file didn't get to run.
     pub(crate) unfinished: Option<(&'static [u8], &'static [u8])>,
 }
@@ -504,6 +506,8 @@ impl<'a> Coordinator<'a> {
                 ] = nums;
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.elapsed_ns = rd.u64();
+                    file.started_unix_ms = bun_core::time::milli_timestamp()
+                        - (file.elapsed_ns / bun_core::time::NS_PER_MS) as i64;
                 }
 
                 self.flush_captured(w);
@@ -791,6 +795,7 @@ impl<'a> Coordinator<'a> {
     ) {
         if let Some(file) = self.test_records.get_mut(file_idx as usize) {
             file.elapsed_ns = u64::try_from(elapsed_ms).unwrap_or(0) * bun_core::time::NS_PER_MS;
+            file.started_unix_ms = bun_core::time::milli_timestamp() - elapsed_ms.max(0);
             file.unfinished = Some((name, message));
         }
     }

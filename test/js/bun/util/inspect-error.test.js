@@ -515,7 +515,9 @@ test("lines of the message that look like stack frames are not printed as stack 
   const message = "my message\n    at fake (/nonexistent/fake.js:1:5)";
   const print = (err, name = "error") => {
     const printed = Bun.inspect(err);
-    return printed.slice(printed.lastIndexOf(name + ": ")).replace(/\S*inspect-error\.test\.js:\d+:\d+/, "this file");
+    return printed
+      .slice(printed.lastIndexOf(name + ": "))
+      .replaceAll(/[^\s(]*inspect-error\.test\.js:\d+:\d+/g, "this file");
   };
 
   const err = new Error(message);
@@ -533,14 +535,27 @@ test("lines of the message that look like stack frames are not printed as stack 
   renamed.name = "Renamed";
   expect(print(renamed, "Renamed")).toBe(`Renamed: ${message}\n      at this file\n`);
 
-  const reworded = new Error("my message");
-  reworded.stack;
-  reworded.message = "inspect-error.test.js";
-  expect(print(reworded)).toBe("error: inspect-error.test.js\n      at this file\n");
+  const named = new Error("my message");
+  named.name = message;
+  named.stack;
+  expect(print(named, message)).toBe(`${message}: my message\n      at this file\n`);
+
+  // Two frames: a single lost frame would be made up again from `line` and `column`.
+  function reword() {
+    const err = new Error("my message");
+    err.stack;
+    err.message = "inspect-error.test.js";
+    return err;
+  }
+  expect(print(reword())).toBe("error: inspect-error.test.js\n      at reword (this file)\n      at this file\n");
 
   const origLimit = Error.stackTraceLimit;
-  Error.stackTraceLimit = 0;
-  const withoutFrames = new Error(message);
-  Error.stackTraceLimit = origLimit;
+  let withoutFrames;
+  try {
+    Error.stackTraceLimit = 0;
+    withoutFrames = new Error(message);
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
   expect(print(withoutFrames)).toBe(`error: ${message}\n`);
 });

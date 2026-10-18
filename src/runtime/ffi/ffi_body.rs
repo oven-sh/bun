@@ -2156,7 +2156,7 @@ impl Function {
             let length_buf = bun_core::fmt::print_int(&mut arg_buf[3..], i);
             let arg_name = &arg_buf[0..3 + length_buf];
             writer.write_all(b"  ")?;
-            arg.param_typename(writer)?;
+            arg.typename(writer)?;
             write!(
                 writer,
                 " converted{} = {};\n  if (threw) return ValueEmpty.asZigRepr;\n",

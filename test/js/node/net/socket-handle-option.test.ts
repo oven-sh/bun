@@ -1,6 +1,10 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { execFileSync } from "node:child_process";
 import { once } from "node:events";
+import fs from "node:fs";
 import { Socket } from "node:net";
+import { join } from "node:path";
 
 const UV_EOF = -4095;
 
@@ -227,4 +231,104 @@ test("net.Socket({ handle }) destroys the socket with the errno that onread repo
   expect({ errno: err.errno, syscall: err.syscall }).toEqual({ errno: -104, syscall: "read" });
   expect(await closed).toEqual([true]);
   expect(socket._handle).toBe(null);
+});
+
+// The native handle: process.binding("pipe_wrap").Pipe, which `new net.Socket({ fd })`
+// makes for a pipe fd as node's createHandle() does. It has the read side only.
+describe.skipIf(isWindows)("Pipe handle", () => {
+  // FIFOs with both ends open in this process. The non-blocking read end is
+  // opened first so that opening the write end does not block.
+  function openFifos(dir: string, count: number) {
+    const paths = Array.from({ length: count }, (_, i) => join(dir, `fifo-${i}`));
+    execFileSync("mkfifo", paths);
+    return paths.map(path => ({
+      rfd: fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK),
+      wfd: fs.openSync(path, "w"),
+    }));
+  }
+  function isOpen(fd: number) {
+    try {
+      fs.fstatSync(fd);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  test("net.Socket({ fd }) reads a pipe fd through it", async () => {
+    using dir = tempDir("pipe-handle-read", {});
+    const [{ rfd, wfd }] = openFifos(String(dir), 1);
+    let wfdOpen = true;
+    try {
+      const socket = new Socket({ fd: rfd, writable: false }) as any;
+      const handle = socket._handle;
+      const chunks: Buffer[] = [];
+      socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+      const ended = once(socket, "end");
+      const closed = once(socket, "close");
+      fs.writeSync(wfd, "hello ");
+      fs.writeSync(wfd, "pipe");
+      fs.closeSync(wfd);
+      wfdOpen = false;
+      await ended;
+      expect(await closed).toEqual([false]);
+      expect({
+        handle: handle?.constructor?.name,
+        data: Buffer.concat(chunks).toString(),
+        bytesRead: socket.bytesRead,
+        detached: socket._handle,
+      }).toEqual({ handle: "Pipe", data: "hello pipe", bytesRead: 10, detached: null });
+    } finally {
+      if (wfdOpen) fs.closeSync(wfd);
+      // The handle leaves the caller's fd open.
+      if (isOpen(rfd)) fs.closeSync(rfd);
+    }
+  });
+
+  // The handle makes its fd non-blocking, and a synchronous write(2) to a full
+  // non-blocking pipe fails with EAGAIN.
+  test("a socket that writes synchronously to its fd gets no handle", () => {
+    using dir = tempDir("pipe-handle-write-only", {});
+    const [{ rfd, wfd }] = openFifos(String(dir), 1);
+    try {
+      const writeOnly = new Socket({ fd: wfd, readable: false, writable: true }) as any;
+      expect(writeOnly._handle).toBe(null);
+      // Closes wfd: the socket adopted it.
+      writeOnly.destroy();
+    } finally {
+      fs.closeSync(rfd);
+    }
+  });
+
+  // The lifetime cases of the handle itself. In a subprocess: a sanitizer
+  // abort is then an exit code, not the end of this runner.
+  test("survives close() inside onread, collection, and readStart() after EOF", async () => {
+    using dir = tempDir("pipe-handle-lifecycle", {});
+    execFileSync(
+      "mkfifo",
+      [0, 1, 2, 3, 4, 5].map(i => join(String(dir), `fifo-${i}`)),
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "pipe-handle-lifecycle-fixture.js"), String(dir)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      // One read, then the close callback. Nothing after close().
+      closeInsideOnread: [5, "closed"],
+      // No callback on a handle that was collected while stopped.
+      collectedWhileStopped: 0,
+      // Data, then UV_EOF, on a handle that only its own read keeps alive.
+      aliveWhileReading: [4, -4095],
+      // readStart() after EOF and after close() returns 0 and reads nothing.
+      readStartAfterEof: [1, -4095, "inside=0", "after=0", "closed=0"],
+      // "three" arrives only after the handle starts again.
+      stopAndStart: ["one", "two", "stopped", "three"],
+    });
+    // The fixture leaves an unref()ed handle reading on an open FIFO.
+    expect(exitCode).toBe(0);
+  });
 });

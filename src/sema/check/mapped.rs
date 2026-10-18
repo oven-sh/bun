@@ -55,6 +55,12 @@ const ASKS_UNION_MODIFIERS_FOR_INDEX_INFOS_ALONE: bool = true;
 /// For debugging.
 const CHECKS_INDEX_INFOS_OF_UNION_MODIFIERS: bool = false;
 
+/// `false`: a mapped type with `readonly` or `-readonly` does not ask its modifiers type for an index signature, as before.
+const ASKS_MODIFIERS_UNDER_ANY_MODIFIER: bool = true;
+
+/// `false`: `key_type_of_prop` returns a `nameType` that is a union, and a copy of the property does not have it, as before.
+const NAMES_NO_PROPERTY_BY_A_UNION: bool = true;
+
 impl<'p, 's> Checker<'p, 's> {
     /// The pairs of `mapper`, followed by `param` mapped to `ty`.
     fn mapper_with_pair(&self, mapper: MapperId, param: TypeId, ty: TypeId) -> MapperId {
@@ -610,6 +616,17 @@ impl<'p, 's> Checker<'p, 's> {
     /// number is the number only if it is a numeric literal in the source. A property without a
     /// declaration, like a tuple element, is named by a string.
     pub(super) fn key_type_of_prop(&mut self, owner: TypeId, prop: &Prop) -> Option<TypeId> {
+        let key = self.name_type_or_key_type_of_prop(owner, prop)?;
+        // `t.flags&include != 0`: no caller includes unions. Two keys of a mapped type that spell one name give the
+        // property a union for its `nameType`.
+        Some(match NAMES_NO_PROPERTY_BY_A_UNION && self.is_union(key) {
+            true => TypeId::NEVER,
+            false => key,
+        })
+    }
+
+    /// `key_type_of_prop`, before it is tested for its kind.
+    fn name_type_or_key_type_of_prop(&mut self, owner: TypeId, prop: &Prop) -> Option<TypeId> {
         // A key that is apart (`Types::key_apart`) is the `nameType` too: there is no `as` clause.
         if prop.name_type != TypeId::UNRESOLVED {
             return Some(prop.name_type);
@@ -653,7 +670,9 @@ impl<'p, 's> Checker<'p, 's> {
             }
             PropSource::Intersected(_, parts) => return self.key_type_of_props(owner, parts),
             // It has the `ValueDeclaration` of the first, and uses the syntax of the name there.
-            PropSource::Copy(_, parts, true) => return self.key_type_of_prop(owner, &parts[0]),
+            PropSource::Copy(_, parts, true) => {
+                return self.name_type_or_key_type_of_prop(owner, &parts[0]);
+            }
             _ => return self.key_type_of_name(prop.name),
         };
         // The name of a symbol also identifies which symbol it is.
@@ -696,9 +715,10 @@ impl<'p, 's> Checker<'p, 's> {
             | PropSource::Copy(..)
             | PropSource::ReverseMapped(..) => true,
         };
-        let key = is_stored.then(|| self.key_type_of_prop(owner, prop));
+        let key = is_stored.then(|| self.name_type_or_key_type_of_prop(owner, prop));
         match key.flatten() {
             Some(key) if self.flags(key) & tf::ENUM_LITERAL != 0 => key,
+            Some(key) if NAMES_NO_PROPERTY_BY_A_UNION && self.is_union(key) => key,
             _ => TypeId::UNRESOLVED,
         }
     }
@@ -2748,9 +2768,11 @@ impl<'p, 's> Checker<'p, 's> {
         let scope = self.begin_scope();
         let parts = self.parts(ty);
         self.tally(MemberCount::UnionsMadeObjects, 1);
-        self.tally(MemberCount::MembersOfThose, parts.len());
         let mut shape = Shape::new_in(self.arena);
         let mut checked = crate::util::FxHashSet::default();
+        let mut shapes_of_members: SmallVec<[usize; 8]> = SmallVec::new();
+        let mut shapes_of_constituents: SmallVec<[usize; 8]> = SmallVec::new();
+        let was_listing = self.union_members.set_listing(true);
         for &part in parts {
             // `getPropertiesOfType`. The apparent type of an intersection with a conditional type is a union if the constraint of the
             // conditional type is one.
@@ -2762,6 +2784,18 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(members) = self.members(apparent) else {
                 break;
             };
+            let address = |members: Members| std::ptr::from_ref(members.resolved) as usize;
+            shapes_of_members.push(address(members));
+            match self.data(apparent) {
+                TypeData::Intersection(constituents) => {
+                    shapes_of_constituents.extend(
+                        (constituents.iter()).map(|&constituent| {
+                            self.resolved_members(constituent).map_or(0, address)
+                        }),
+                    );
+                }
+                _ => shapes_of_constituents.push(address(members)),
+            }
             for prop in &members.shape().props {
                 if checked.insert(prop.name) {
                     shape.props.extend(
@@ -2775,6 +2809,14 @@ impl<'p, 's> Checker<'p, 's> {
             if self.structured(members).index_infos().is_empty() {
                 break;
             }
+        }
+        self.union_members.set_listing(was_listing);
+        // Or the names of the first members were enough.
+        let has_asked_all = shapes_of_members.len() == parts.len();
+        if has_asked_all && self.union_members.has_seen_shapes(&shapes_of_members) {
+            self.tally(MemberCount::OfMembersWithShapesSeenBefore, 1);
+        } else if has_asked_all && self.union_members.has_seen_shapes(&shapes_of_constituents) {
+            self.tally(MemberCount::OfConstituentsWithShapesSeenBefore, 1);
         }
         // `getIndexInfosOfType`: what `resolveUnionTypeMembers` has set, once it has run. This
         // object is also made for the properties alone, which resolve no members of the union.
@@ -2990,6 +3032,9 @@ impl<'p, 's> Checker<'p, 's> {
         // The entry of `created_for` is read first, and decides if its type is `any`. While it is missing, the next call
         // may find one.
         let reads_the_same_entry_from_now_on = of == created_for || known.is_some();
+        if !reads_the_same_entry_from_now_on {
+            self.note_absent_type_of_mapped_prop();
+        }
         let known = if of == created_for {
             known
         } else {
@@ -3297,10 +3342,12 @@ impl<'p, 's> Checker<'p, 's> {
                         } else {
                             ty
                         };
-                        let readonly = match (mapped.readonly, &modifiers) {
-                            (MappedModifier::Add, _) => true,
-                            // `getApplicableIndexInfo(modifiersType, propNameType)`
-                            (MappedModifier::None, Some(modifiers)) => {
+                        // `getApplicableIndexInfo(modifiersType, propNameType)`, which comes before the test of
+                        // `templateModifiers`.
+                        let is_asked = ASKS_MODIFIERS_UNDER_ANY_MODIFIER
+                            || mapped.readonly == MappedModifier::None;
+                        let is_readonly_there = match &modifiers {
+                            Some(modifiers) if is_asked => {
                                 let members = match *modifiers {
                                     Modifiers::Object(_, members) => Some(members),
                                     Modifiers::Union(union) => self.index_infos_of_modifiers(union),
@@ -3312,6 +3359,11 @@ impl<'p, 's> Checker<'p, 's> {
                                 })
                             }
                             _ => false,
+                        };
+                        let readonly = match mapped.readonly {
+                            MappedModifier::Add => true,
+                            MappedModifier::None => is_readonly_there,
+                            MappedModifier::Remove => false,
                         };
                         // `appendIndexInfo`
                         match shape.index.iter_mut().find(|i| i.key == index_key) {

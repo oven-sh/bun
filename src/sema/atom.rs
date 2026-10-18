@@ -1,10 +1,11 @@
 //! Interned names. One table for the whole program, filled from every parser thread, and frozen
 //! while the program is checked: a text first seen during checking becomes a task-local atom of the
-//! task that encounters it (`OwnStore`), and the merge at the barrier publishes it.
+//! task that encounters it (`OwnStore`), and the merge at the barrier publishes it. A task with
+//! `Sharing::Publishes` adds it to the table at once, as a parser thread does.
 
 use crate::local::LOCAL;
 use crate::session::Session;
-use crate::types::OwnStore;
+use crate::types::{OwnStore, Sharing};
 use crate::util::memory::Cells;
 use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -887,7 +888,12 @@ impl<'p, 's> Atoms<'p, 's> {
     fn find_published(&self, spread: u64, text: &[u8]) -> Option<Atom> {
         let Interner { tables, first, .. } = self.published;
         let is_it = |i: u32| &**tables.texts.get(i - first) == text;
-        let own = || tables.shards[shard_of(spread)].find_frozen(spread, is_it);
+        let shard = &tables.shards[shard_of(spread)];
+        let own = || match self.own.sharing() {
+            Sharing::Off => shard.find_frozen(spread, is_it),
+            // Tasks add atoms meanwhile.
+            Sharing::Finds | Sharing::Publishes => shard.find(spread, is_it),
+        };
         let below = self.published.find_below(spread, text);
         below.or_else(|| own().map(Atom))
     }
@@ -896,6 +902,12 @@ impl<'p, 's> Atoms<'p, 's> {
         let spread = hash_of(text);
         match self.find_published(spread, text) {
             Some(atom) => atom,
+            None if self.own.sharing() == Sharing::Publishes => {
+                self.own.count_published_atom();
+                let atom = self.published.intern_shared(spread, text);
+                self.own.wait_at(crate::jitter::Place::AtomPublished);
+                atom
+            }
             None => self.own.intern_atom(spread, text),
         }
     }

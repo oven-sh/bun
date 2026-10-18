@@ -117,9 +117,23 @@ pub(super) struct UnionMembers<'p> {
     /// For each name, the members with `is_listed` that have it.
     holders: FxHashMap<Atom, SmallVec<[TypeId; 4]>>,
     summaries: FxHashMap<TypeId, UnionSummary>,
+    /// A union is being asked for every name that its members have. See `property_holder_of_member`.
+    is_listing: bool,
+    /// See `has_seen_shapes`.
+    lists_of_shapes: FxHashSet<u64>,
 }
 
 impl<'p> UnionMembers<'p> {
+    /// Sets `is_listing`, and returns what it was.
+    pub(super) fn set_listing(&mut self, is_listing: bool) -> bool {
+        std::mem::replace(&mut self.is_listing, is_listing)
+    }
+
+    /// Whether it was asked about the same addresses before. For `MemberCount::OfMembersWithShapesSeenBefore`.
+    pub(super) fn has_seen_shapes(&mut self, shapes: &[usize]) -> bool {
+        !self.lists_of_shapes.insert(crate::util::fx_hash(shapes))
+    }
+
     #[inline]
     fn facts(&self, member: TypeId) -> Option<&MemberFacts<'p>> {
         let at = (self.facts_of.get(member) as usize).checked_sub(1)?;
@@ -567,7 +581,8 @@ impl<'p, 's> Checker<'p, 's> {
         walk.always_visited += usize::from(!facts.is_listed);
         let (t, members) = (facts.apparent_type, facts.members);
         if let Some(prop) = members.resolved.prop_past_filter(walk.name) {
-            self.add_member_property(builder, at, t, prop, members.mapper);
+            let symbol = self.identity_of_own_property(facts.reduced_apparent_type, prop);
+            self.add_member_property(builder, at, t, (symbol, prop), members.mapper);
             return;
         }
         if !self.is_ordinary_name(walk) {
@@ -814,11 +829,12 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let holder = self.apparent_type_or_type_variable(current, t);
-        let holder = self.property_holder(holder);
+        let holder = self.property_holder_of_member(holder, self.union_members.is_listing);
         let is_holder_final = self.non_cacheable_mark() == before;
         let missing = match self.property_of_holder(holder, walk.name, walk.skips) {
             Some((prop, mapper)) => {
-                self.add_member_property(builder, at, t, prop, mapper);
+                let symbol = self.identity_of_found_property(holder, prop);
+                self.add_member_property(builder, at, t, (symbol, prop), mapper);
                 None
             }
             None => {
@@ -835,17 +851,17 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// The member at `at`, whose apparent type is `t`, has `prop`.
+    /// The member at `at`, whose apparent type is `t`, has `prop`. `symbol`: `identity_of_own_property`.
     fn add_member_property(
         &mut self,
         builder: &mut UnionPropertyBuilder<'p, 's>,
         at: usize,
         t: TypeId,
-        prop: &'p Prop<'p>,
+        (symbol, prop): (*const Prop<'p>, &'p Prop<'p>),
         mapper: MapperId,
     ) {
         let access = PropFlags::PRIVATE | PropFlags::PROTECTED;
-        if !builder.insert_symbol((std::ptr::from_ref(prop), mapper)) {
+        if !builder.insert_symbol((symbol, mapper)) {
             return;
         }
         // It changes neither the flags nor the kind of source.

@@ -639,6 +639,16 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone, const N: usize> ShardedMa
             .map(|i| &shard.entries.get(i).1)
     }
 
+    /// `get_ref` with the hash at hand: `spread_hash(key)`.
+    #[inline]
+    pub(crate) fn get_by_now(&self, spread: u64, key: &K) -> Option<&V> {
+        let shard = self.shard(spread);
+        shard
+            .places
+            .find(spread, |i| shard.entries.get(i).0 == *key)
+            .map(|i| &shard.entries.get(i).1)
+    }
+
     /// Runs at a barrier, on the one thread that fills `shards`: room for `more` entries in each.
     pub(crate) fn reserve(&self, shards: std::ops::Range<usize>, more: usize) {
         for shard in &self.shards[shards] {
@@ -647,7 +657,7 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone, const N: usize> ShardedMa
     }
 
     /// Runs at a barrier, on the one thread that fills the shard of `spread`, which is
-    /// `spread_hash(key)`. Does not overwrite an existing value.
+    /// `spread_hash(key)`, or in a commit. Does not overwrite an existing value.
     /// Returns whether `value` was inserted.
     pub(crate) fn add_if_absent(&self, spread: u64, key: &K, value: V) -> bool
     where

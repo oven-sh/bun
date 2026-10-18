@@ -19,7 +19,8 @@
 //!   or the same walk would leave one or not by what was asked in between (`Checker::scopes_begun`).
 //! - What it did not find there, and did not evaluate, says the same once it is there. `type_of_mapped_prop` and the tables
 //!   of what is circular are asked in that way. An entry says what its absence did not only if it comes from a cycle or a
-//!   limit, so what is kept here lasts until the next one (`inference_disturbances`).
+//!   limit, so what is kept here lasts until the next one (`inference_disturbances`): of this task, or in what another
+//!   task commits (`Checker::state_of_commits`).
 //! - So the same walk made later finds the same, takes the same path and fills no table either, and the task creates,
 //!   stores and publishes what it does without the memo. Unless something is in progress that a function looks at before
 //!   it looks into a table: then the walk is made (`obstacle_to_leaving_out`).
@@ -168,7 +169,7 @@ const TRACES: [&str; 14] = [
 ];
 
 /// The names of `Checker::inference_disturbances`.
-const DISTURBANCES: [&str; 9] = [
+const DISTURBANCES: [&str; 10] = [
     "file",
     "cycles",
     "taints",
@@ -177,6 +178,7 @@ const DISTURBANCES: [&str; 9] = [
     "variance_cycles",
     "unmarked_refusals",
     "any_signature_reads",
+    "commits",
     "times_forgotten",
 ];
 
@@ -601,6 +603,7 @@ impl<'p, 's> Checker<'p, 's> {
             u64::from(self.variance_cycles),
             self.unmarked_refusals,
             u64::from(self.any_signature_reads),
+            self.state_of_commits(),
             u64::from(self.links.times_forgotten()),
         ]
     }

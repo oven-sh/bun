@@ -294,6 +294,28 @@ fn run(args: &[String]) {
                 checkers: number("--checkers=", defaults.checkers),
                 reproduces_symbol_ids: defaults.reproduces_symbol_ids,
                 orders_types_by_content: defaults.orders_types_by_content || has("--content-order"),
+                shares_at_once: defaults.shares_at_once
+                    || has("--share-at-once")
+                    || has("--no-steps"),
+                has_no_steps: defaults.has_no_steps || has("--no-steps"),
+                commit_policy: bun_sema::check::commit::CommitPolicy {
+                    entries: number("--commit-entries=", defaults.commit_policy.entries),
+                    microseconds: number(
+                        "--commit-microseconds=",
+                        defaults.commit_policy.microseconds as usize,
+                    ) as u64,
+                },
+                // `--jitter=<seed>`: threads wait where what the others see changes. `--jitter-places=<bits>`: only at
+                // those of `Place::NAMES`. `--jitter-stretch=<microseconds>`: one commit in four sleeps that long between
+                // its parts, or one in `--jitter-stretch-commits=<n>`.
+                jitter: bun_sema::jitter::Jitter {
+                    seed: number("--jitter=", 0) as u64,
+                    places: number("--jitter-places=", u32::MAX as usize) as u32,
+                    stretch: number("--jitter-stretch=", 0) as u32,
+                    stretches_one_in: number("--jitter-stretch-commits=", 4) as u32,
+                    shuffles: has("--jitter-shuffle"),
+                    ignores_stamps: has("--ignore-stamps"),
+                },
                 projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
                 after_file_is_for_checked_files: defaults.after_file_is_for_checked_files,
                 checks_only_named: defaults.checks_only_named,
@@ -464,8 +486,7 @@ fn run(args: &[String]) {
                     let count = |of: fn(&bun_sema_driver::StepReport) -> u64| {
                         report.steps.iter().map(of).sum::<u64>()
                     };
-                    // fan/r7/tools/oracle.py reads these lines. It compares the counts between
-                    // runs: they are deterministic for a given program.
+                    // To compare between runs: the counts are deterministic for a given program.
                     error_line!(
                         "plan options: step growth {}, warm-up files {}, warm-up max bytes {}, chunk bytes {}, min tasks {}",
                         plan_options.step_growth,

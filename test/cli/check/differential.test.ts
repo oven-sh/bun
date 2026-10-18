@@ -88,8 +88,8 @@ function modulesInLayers(width: number, depth: number) {
   return files;
 }
 
-// What an alias and an `export *` lead to is found before the first file is checked: layer by layer of the import graph,
-// 64 rings of modules to a task, and a layer begins when the one below is done. A layer here has 68 rings.
+// What an alias and an `export *` lead to is found before the first file is checked, on all threads: for a ring of
+// modules when it is found for what the ring imports. A layer here has 68 rings.
 test.concurrent.skipIf(!tsc)("aliases through layers of modules, on any number of threads", async () => {
   using dir = tempDir("bun-check-differential", {
     "tsconfig.json": tsconfig,
@@ -103,6 +103,92 @@ test.concurrent.skipIf(!tsc)("aliases through layers of modules, on any number o
   for (const code of ["TS2303", "TS2304", "TS2308", "TS2322"]) expect(theirs.join("\n")).toContain(code);
   for (const lines of ours) expect(lines).toEqual(theirs);
 });
+
+/**
+ * `chains` chains of modules, each one longer than the one before. A module re-exports the one before it in its chain.
+ * What else it reads, it does not import from a file: ambient modules that lead to each other, round in a ring, and to a
+ * package and back, a UMD global, `import a = b.c` in scripts, what another module adds to a module and to the globals.
+ */
+function modulesThatDependOnFilesTheyDoNotImport(chains: number, length: number) {
+  const files: Record<string, string> = {
+    "globals.ts": `declare namespace G { const g: "g"; namespace Inner { type T = "T of Inner"; const v: "v of Inner"; } }
+import GI = G.Inner;
+import Ring1 = Ring2;
+declare module "amb-a" { export { b as a } from "amb-b"; export import I = G.Inner; export default GI; export { u as viaUmd } from "./umd"; }
+`,
+    "other.ts": `import Ring2 = Ring1;
+declare module "amb-b" { export const b: "b"; export { a as back } from "amb-a"; export * from "amb-c"; }
+declare module "amb-c" { import { back } from "amb-b"; export const c: typeof back; export { round } from "amb-d"; export default missingInC; }
+declare module "amb-d" { export { round } from "amb-c"; export { t as viaFile } from "pkg"; }
+`,
+    "node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "types": "index.d.ts" }`,
+    "node_modules/pkg/index.d.ts": `export declare const t: "t of pkg";\nexport { c as fromAmbient, viaFile as roundTrip } from "amb-all";\n`,
+    "all.ts": `declare module "amb-all" { export * from "amb-a"; export * from "amb-b"; export * from "amb-d"; }\n`,
+    "umd.d.ts": `export as namespace Umd;\nexport declare const u: "u";\nexport { a as viaAmbient } from "amb-a";\n`,
+    "target.ts": `export const t = "t" as const;\nexport { b } from "amb-b";\n`,
+    "aug.ts": `import { t } from "./target";
+declare module "./target" { export const added: typeof import("amb-a").a; }
+declare module "amb-b" { export const addedToB: typeof t; }
+declare global { const fromAug: "fromAug"; namespace G { const more: "more"; } }
+`,
+  };
+  for (let chain = 0; chain < chains; chain++) {
+    for (let i = 0; i < length + chain; i++) {
+      const name = `c${chain}_${i}`;
+      const lines = [`export const ${name} = "${name}" as const;`];
+      const read = [name];
+      if (i > 0) {
+        lines.push(`export * from "./c${chain}_${i - 1}";`);
+        lines.push(`import { c${chain}_0 as first } from "./c${chain}_${i - 1}";`);
+        read.push("first");
+      }
+      switch ((chain + i) % 5) {
+        case 0:
+          lines.push(`import def, { a, I, viaUmd } from "amb-a";`);
+          read.push("def.v", "a", "I.v", "null! as I.T", "viaUmd");
+          break;
+        case 1:
+          lines.push(`import { b, back, c, round, addedToB } from "amb-b";`, `import defaultOfC from "amb-c";`);
+          read.push("b", "back", "c", "round", "addedToB", "defaultOfC");
+          break;
+        case 2:
+          lines.push(`import * as all from "amb-all";`, `import { fromAmbient, roundTrip } from "pkg";`);
+          read.push("all.a", "all.b", "all.viaFile", "all.c", "fromAmbient", "roundTrip");
+          break;
+        case 3:
+          lines.push(`import { added, b as viaTarget } from "./target";`);
+          read.push("added", "viaTarget", "Umd.u", "Umd.viaAmbient", "fromAug", "G.more");
+          break;
+        default:
+          lines.push(`import Local = G.Inner;`, `export import Again = GI;`);
+          read.push("Local.v", "Again.v", "GI.v", "null! as Ring1");
+      }
+      // `never` puts the types in the messages.
+      lines.push(`export const read${chain}_${i}: never[] = [${read.join(", ")}];`);
+      files[`${name}.ts`] = lines.join("\n") + "\n";
+    }
+  }
+  return files;
+}
+
+// A module is linked as soon as what it imports is. What it reads of a file that it does not import must not depend on
+// how far the link of that file has come.
+test.concurrent.skipIf(!tsc)(
+  "aliases that lead to files their file does not import, on any number of threads",
+  async () => {
+    using dir = tempDir("bun-check-differential", {
+      "tsconfig.json": tsconfig,
+      ...modulesThatDependOnFilesTheyDoNotImport(6, isDebug || isASAN ? 2 : 4),
+    });
+    const root = String(dir);
+    const [theirs, ...ours] = await Promise.all([
+      linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+      ...[1, 2, 3, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+    ]);
+    for (const code of ["TS2303", "TS2304", "TS2322", "TS2439", "TS2686"]) expect(theirs.join("\n")).toContain(code);
+    for (const lines of ours) expect(lines).toEqual(theirs);
+  },
+);
 
 /** The error lines of `cmd`, which are in the format of `tsc --pretty false`, by line of `a.ts`. */
 async function errorsOf(cmd: string[], cwd: string) {

@@ -248,6 +248,17 @@ impl<K: Eq, V> Hashed<K, V> {
         self.entries.is_empty()
     }
 
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// The entry at `place` in insertion order.
+    #[inline]
+    pub fn entry(&self, place: u32) -> Option<&(K, V)> {
+        self.entries.get(place as usize)
+    }
+
     /// The entries in insertion order. It is empty afterwards.
     pub fn take(&mut self) -> Vec<(K, V)> {
         self.found.clear();
@@ -519,14 +530,35 @@ impl<'s> Half<'s> {
     }
 }
 
+/// Under which keys a task has stored since its last commit, in that order. The values are where the lookups of the task
+/// find them: a commit stores what a key has by then. See `crate::check::commit`.
+#[derive(Default)]
+pub(crate) struct Log {
+    /// A slot, and the number of a published id or the place of an entry in a `Hashed`.
+    pub(crate) of_records: Vec<[u32; 2]>,
+    /// A slot, a file, and the number of a node in the file.
+    pub(crate) of_nodes: Vec<[u32; 3]>,
+}
+
+impl Log {
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.of_records.len() + self.of_nodes.len()
+    }
+}
+
 /// The task-local parts of all `Buffered` tables, indexed by slot. A field of the `Task`.
 pub(crate) struct Buffer<'s> {
     /// The file that the task is visiting, `NO_FILE` if it has none, and its ordinal.
     file: u32,
     ordinal: u32,
+    /// Whether another file can refer to `file`.
+    is_imported: bool,
     /// Whether the task can have evaluated a node of `file` before it started visiting `file`. See
     /// `Half::may_be_hashed`.
     may_be_hashed: bool,
+    /// `Some`: the task commits while it runs.
+    log: Option<Log>,
     /// Indexed by file: 1 for the first file that the task has visited, 2 for the second, and so
     /// on. 0, or out of range: the task has not visited it.
     ordinals: Vec<u32>,
@@ -540,10 +572,57 @@ impl<'s> Buffer<'s> {
         Buffer {
             file: NO_FILE,
             ordinal: 0,
+            is_imported: false,
             may_be_hashed: false,
+            log: None,
             ordinals: Vec::new(),
             files: 0,
             halves: Vec::new(),
+        }
+    }
+
+    /// From now on the keys of the new entries are logged.
+    pub(crate) fn begin_log(&mut self) {
+        self.log = Some(Log::default());
+    }
+
+    /// How many keys are logged.
+    #[inline]
+    pub(crate) fn logged(&self) -> usize {
+        self.log.as_ref().map_or(0, Log::len)
+    }
+
+    /// None are logged afterwards.
+    pub(crate) fn take_log(&mut self) -> Log {
+        self.log.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
+    /// What `take_log` has returned, for its memory.
+    pub(crate) fn give_back_log(&mut self, mut taken: Log) {
+        if let Some(log) = &mut self.log
+            && log.len() == 0
+        {
+            taken.of_records.clear();
+            taken.of_nodes.clear();
+            *log = taken;
+        }
+    }
+
+    /// An entry was stored under a published id, or at a place of a `Hashed`.
+    #[inline]
+    pub(crate) fn log_record(&mut self, slot: u32, key: u32) {
+        if let Some(log) = &mut self.log {
+            log.of_records.push([slot, key]);
+        }
+    }
+
+    /// Nothing is ever published under a node of a file that no other file can refer to.
+    #[inline]
+    fn log_node(&mut self, slot: u32, file: u32, index: u32) {
+        if let Some(log) = &mut self.log
+            && (file != self.file || self.is_imported)
+        {
+            log.of_nodes.push([slot, file, index]);
         }
     }
 
@@ -557,7 +636,7 @@ impl<'s> Buffer<'s> {
             self.files += 1;
             *ordinal = self.files;
         }
-        (self.file, self.ordinal) = (file, *ordinal);
+        (self.file, self.ordinal, self.is_imported) = (file, *ordinal, is_imported);
         self.may_be_hashed =
             (is_imported || !is_new) && self.halves.iter().any(|half| !half.sparse.is_empty());
     }
@@ -565,6 +644,7 @@ impl<'s> Buffer<'s> {
     /// Drops every entry.
     pub(crate) fn clear(&mut self) {
         (self.file, self.ordinal, self.may_be_hashed, self.files) = (NO_FILE, 0, false, 0);
+        (self.is_imported, self.log) = (false, None);
         clear_cells(&mut self.ordinals);
         for half in &mut self.halves {
             half.clear_cells();
@@ -649,13 +729,20 @@ impl<'s> Buffer<'s> {
     #[inline]
     pub(crate) fn put_published_id_if_empty(&mut self, slot: u32, number: u32, raw: u32) -> u32 {
         let word = u64::from(number);
-        *(self.half_mut(slot).sparse).insert(spread_word(word), word, raw)
+        let sparse = &mut self.half_mut(slot).sparse;
+        let entries = sparse.len();
+        let kept = *sparse.insert(spread_word(word), word, raw);
+        if sparse.len() != entries {
+            self.log_record(slot, number);
+        }
+        kept
     }
 
     #[inline]
     pub(crate) fn store_published_id(&mut self, slot: u32, number: u32, raw: u32) {
         let word = u64::from(number);
         (self.half_mut(slot).sparse).replace(spread_word(word), word, raw);
+        self.log_record(slot, number);
     }
 
     // ── a table keyed by node ──
@@ -728,18 +815,24 @@ impl<'s> Buffer<'s> {
     /// Returns the value the cell holds afterwards: `raw`, or the existing value.
     #[inline]
     pub(crate) fn put_node_if_empty(&mut self, slot: u32, file: u32, index: u32, raw: u32) -> u32 {
-        match self.cell_for_node(slot, file, index) {
+        let (kept, is_new) = match self.cell_for_node(slot, file, index) {
             Ok(cell) => {
-                if *cell == 0 {
+                let is_new = *cell == 0;
+                if is_new {
                     *cell = raw;
                 }
-                *cell
+                (*cell, is_new)
             }
             Err(half) => {
-                let word = node_word(file, index);
-                *half.sparse.insert(spread_word(word), word, raw)
+                let (word, entries) = (node_word(file, index), half.sparse.len());
+                let kept = *half.sparse.insert(spread_word(word), word, raw);
+                (kept, half.sparse.len() != entries)
             }
+        };
+        if is_new {
+            self.log_node(slot, file, index);
         }
+        kept
     }
 
     #[inline]
@@ -751,6 +844,7 @@ impl<'s> Buffer<'s> {
                 half.sparse.replace(spread_word(word), word, raw);
             }
         }
+        self.log_node(slot, file, index);
     }
 }
 

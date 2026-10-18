@@ -1,0 +1,597 @@
+//! Commits: how tasks share what they compute while they run, without steps and barriers.
+//!
+//! Every thread takes the next task of one list. What a task stores goes to its own part of the tables, as ever, and the
+//! key goes to a log (`crate::local::Log`). From time to time, while nothing is in progress in it, and when it ends, the
+//! task commits (`Checker::commit`): on its own thread it stores what it has logged since its last commit in the shared
+//! part, where the tasks that are running find it. The records are shared already (`Sharing::Publishes`), so an entry
+//! needs no rewriting.
+//!
+//! Which task is first anywhere depends on timing. These rules keep the report a function of the program:
+//!
+//! - **One commit at a time.** They store under one mutex and are numbered from 1 in that order. The first entry for a key
+//!   stays.
+//! - **Whoever finds an entry finds what was stored before it.** He does not evaluate it, so he goes without whatever
+//!   that evaluation has stored on the way, unless he finds that too. A commit first stores what is keyed by a record, in
+//!   the order of the log, each with a release: an entry is there after everything that was stored while it was
+//!   evaluated. Then it stores what is keyed by a node or a symbol, each with the number of the commit beside it
+//!   (`ByNode::stamps`). Then it says that it has stored everything (`Numbers::stored`), and only then do the entries with
+//!   its number count for anybody. So they appear all at once, after the entries of the first kind.
+//! - **A file does not change under a statement.** The first time that a task looks at a table for a node of a file, hit or
+//!   miss, it notes the number of the last commit that has stored everything (`View::snapshot_of`). Until its own walk
+//!   comes to the next statement or deferred node with nothing in progress, an entry under a node of that file with a
+//!   higher number does not exist for it.
+//! - **The file that a task visits does not change during the visit.** Its number is noted when the visit begins and kept to
+//!   the end (`View::pin`). What the task stores itself it finds in its own part.
+//! - **A commit is valid or nothing of it is stored.** Some results depend on which of two evaluations came first in their
+//!   checker, and `Program::validate` says which. The serial order that a commit is compared with is the order of the
+//!   commits. What is thrown away is what the task has done since its last commit. It ends then, and the files that it had not
+//!   checked to the end by that commit go to the last round.
+//! - **A task that gives up at a limit is not believed** (`Checker::note_gave_up`). How far from a limit a computation
+//!   begins depends on what was computed before, which for a task includes what it has found. It is thrown away like an
+//!   invalid one.
+//! - **The last round** is one task that checks those files in program order while nothing else runs. It finds all that was
+//!   committed. What it computes at a limit is what counts, as with one checker.
+//! - **A diagnostic goes with the entry of the query that has reported it**, in the same commit, and stays if the task is
+//!   lost later: whoever checks the file again finds the entry and does not report. If the entry loses, so does the
+//!   diagnostic (`Program::drop_diagnostics_of_losers`). What the walk of a file reports belongs to the file, and goes when a
+//!   commit follows the end of the file.
+//! - One kind of result does not wait for a commit: variances. See `Claims`.
+
+use super::task::{Ended, Task, tables_of};
+use super::{Checker, Program};
+use crate::jitter::{Jitter, Place};
+use crate::local::{Log, node_word};
+use crate::node::Node;
+use crate::program::{FileId, Sym};
+use crate::session::Arena;
+use crate::table::Publish;
+use crate::util::{FxHashMap, SharedSort};
+use bun_threading::{Condvar, Guarded};
+use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
+
+/// A field of `Program`.
+pub(super) struct Commits<'s> {
+    /// The mutex of `Checker::commit`.
+    committing: Guarded<Committing>,
+    numbers: &'s Numbers,
+    claims: Claims,
+    /// Every checker gets a copy.
+    pub(super) jitter: Jitter,
+}
+
+/// In an arena, so that a task can refer to it.
+struct Numbers {
+    /// The number of the newest commit that has begun to store.
+    begun: AtomicU32,
+    /// That commit, and every one before it, has stored everything.
+    stored: AtomicU32,
+}
+
+#[derive(Default)]
+struct Committing {
+    /// Of the last commit.
+    number: u32,
+    /// `Task::assignments_walked` of the commits so far, each with the number of its commit, in their order.
+    walked: Vec<(u32, FileId, Node)>,
+}
+
+impl<'s> Commits<'s> {
+    pub(super) fn new_in(arena: &'s Arena) -> Commits<'s> {
+        Commits {
+            committing: Guarded::default(),
+            numbers: arena.alloc(Numbers {
+                begun: AtomicU32::new(0),
+                stored: AtomicU32::new(0),
+            }),
+            claims: Claims {
+                table: Guarded::default(),
+                has_changed: Condvar::new(),
+            },
+            jitter: Jitter::default(),
+        }
+    }
+
+    /// See `Program::release`.
+    pub(super) fn release(&mut self) {
+        *self.committing.get_mut() = Committing::default();
+        *self.claims.table.get_mut() = FxHashMap::default();
+    }
+
+    /// For a task that begins. `files`: how many the program has.
+    pub(super) fn view(&self, files: usize, policy: CommitPolicy, jitter: Jitter) -> View<'s> {
+        View {
+            numbers: self.numbers,
+            of_files: vec![Cell::new(0); files].into_boxed_slice(),
+            touched: RefCell::default(),
+            pinned: Cell::new(NO_FILE),
+            oldest_pin: Cell::new(u32::MAX),
+            own: RefCell::default(),
+            policy,
+            last_commit: Cell::new(Instant::now()),
+            ignores_stamps: jitter.ignores_stamps,
+            times_unsettled: Cell::new(0),
+        }
+    }
+
+    /// The part of the commit `number` of `task` that stores, in the order that the head of this file gives. The caller
+    /// has the mutex. `tables`: by slot. `log`: of the task. Returns how many entries it has stored.
+    pub(super) fn store(
+        &self,
+        tables: &[&dyn Publish<'s>],
+        task: &Task<'s>,
+        log: &mut Log,
+        number: u32,
+    ) -> u64 {
+        let (jitter, commit) = (task.own.jitter(), u64::from(number));
+        let mut stored = 0;
+        self.numbers.begun.store(number, Ordering::Release);
+        jitter.stretch(commit);
+        for &[slot, key] in &log.of_records {
+            if let Some(table) = tables.get(slot as usize) {
+                stored += u64::from(table.store_logged(task, u64::from(key), number));
+                task.own.wait_at(Place::EntryStored);
+            }
+        }
+        jitter.stretch(commit);
+        if jitter.order(0).is_some() {
+            (log.of_nodes).shared_sort_by_key(|&[slot, file, index]| {
+                jitter.order(node_word(file, index) ^ u64::from(slot) << 56)
+            });
+        }
+        let half = log.of_nodes.len() / 2;
+        for (at, &[slot, file, index]) in log.of_nodes.iter().enumerate() {
+            if at == half {
+                jitter.stretch(commit);
+            }
+            if let Some(table) = tables.get(slot as usize) {
+                stored += u64::from(table.store_logged(task, node_word(file, index), number));
+                task.own.wait_at(Place::EntryStored);
+            }
+        }
+        jitter.stretch(commit);
+        task.own.wait_at(Place::CommitEnds);
+        self.numbers.stored.store(number, Ordering::Release);
+        stored
+    }
+}
+
+/// When a task commits besides at its end: at the first moment of rest after either has come true. They change the time that
+/// a check takes, never its result.
+#[derive(Copy, Clone, Default)]
+pub struct CommitPolicy {
+    /// It has logged this many keys since its last commit. 0: never for that reason.
+    pub entries: usize,
+    /// Its last commit is this many microseconds ago. 0: never for that reason.
+    pub microseconds: u64,
+}
+
+const NO_FILE: u32 = u32::MAX;
+
+/// What a task has of `Commits`: which entries under nodes and symbols exist for it.
+pub(crate) struct View<'s> {
+    numbers: &'s Numbers,
+    /// By file: one more than the number of the last commit that the task sees there. 0: the task has not looked at the
+    /// file since `forget`.
+    of_files: Box<[Cell<u32>]>,
+    /// The files that have a number there.
+    touched: RefCell<Vec<u32>>,
+    /// The file that the task is visiting, or `NO_FILE`.
+    pinned: Cell<u32>,
+    /// The lowest number that a file had while it was `pinned`, since the last commit of the task.
+    oldest_pin: Cell<u32>,
+    /// The numbers of the commits of the task, ascending.
+    own: RefCell<Vec<u32>>,
+    policy: CommitPolicy,
+    last_commit: Cell<Instant>,
+    /// `Jitter::ignores_stamps`
+    ignores_stamps: bool,
+    /// How many times `state` has found a commit storing.
+    times_unsettled: Cell<u32>,
+}
+
+impl View<'_> {
+    /// The number of the last commit that the task sees in `file`. The caller is about to look at a table for a node of it.
+    #[inline]
+    pub(crate) fn snapshot_of(&self, file: FileId) -> u32 {
+        match self.of_files.get(file.idx()).map_or(0, Cell::get) {
+            0 => self.touch(file),
+            known => known - 1,
+        }
+    }
+
+    #[inline(never)]
+    fn touch(&self, file: FileId) -> u32 {
+        if self.ignores_stamps {
+            return u32::MAX;
+        }
+        let stored = self.numbers.stored.load(Ordering::Acquire);
+        if let Some(of_file) = self.of_files.get(file.idx()) {
+            of_file.set(stored + 1);
+            self.touched.borrow_mut().push(file.0);
+        }
+        stored
+    }
+
+    /// Nothing is in progress in the task that has looked at a table.
+    pub(super) fn forget(&self) {
+        let pinned = self.pinned.get();
+        self.touched.borrow_mut().retain(|&file| {
+            if file != pinned
+                && let Some(of_file) = self.of_files.get(file as usize)
+            {
+                of_file.set(0);
+            }
+            file == pinned
+        });
+    }
+
+    /// The task begins to visit `file`.
+    pub(super) fn pin(&self, file: FileId) {
+        self.pinned.set(NO_FILE);
+        self.forget();
+        let snapshot = self.snapshot_of(file);
+        self.pinned.set(file.0);
+        self.oldest_pin.set(self.oldest_pin.get().min(snapshot));
+    }
+
+    fn is_own(&self, commit: u32) -> bool {
+        self.own.borrow().binary_search(&commit).is_ok()
+    }
+
+    /// The task has committed, under `number`.
+    pub(super) fn has_committed(&self, number: u32) {
+        self.own.borrow_mut().push(number);
+        self.forget();
+        self.oldest_pin.set(match self.pinned.get() {
+            NO_FILE => u32::MAX,
+            file => self.snapshot_of(FileId(file)),
+        });
+        self.last_commit.set(Instant::now());
+    }
+
+    /// `logged`: how many keys the task has logged.
+    fn is_commit_due(&self, logged: usize) -> bool {
+        let CommitPolicy {
+            entries,
+            microseconds,
+        } = self.policy;
+        entries != 0 && logged >= entries
+            || microseconds != 0
+                && self.last_commit.get().elapsed() >= Duration::from_micros(microseconds)
+    }
+
+    /// A greater number than last time if a commit may have added to the tables in between.
+    fn state(&self) -> u64 {
+        let stored = self.numbers.stored.load(Ordering::Acquire);
+        if self.numbers.begun.load(Ordering::Acquire) != stored {
+            // One is storing right now, and goes on after this. When it is through, `stored` is greater.
+            let times = self.times_unsettled.get().wrapping_add(1);
+            self.times_unsettled.set(times);
+        }
+        u64::from(stored) << 32 | u64::from(self.times_unsettled.get())
+    }
+}
+
+/// The variances that are being measured right now.
+///
+/// Tasks that begin at about the same time need the same variances, and none of them has committed when the others ask. A
+/// measurement can take seconds, and its result is a few flags for each type parameter of a symbol: no id is in it. So
+/// one thread measures, the others wait, and the result is shared when the measurement ends, not when its task commits.
+///
+/// - A thread that is about to begin an outermost measurement claims the symbol (`Program::claim_variances`).
+/// - A thread that finds the symbol claimed waits, and then takes the result.
+/// - When an outermost measurement ends, what it has measured is shared at once if `Checker::share_what_was_measured`
+///   finds that it may be: it goes to `Program::serial_variances`, where `variances_worker` looks before it measures and
+///   which a commit compares with. So every later commit agrees with it.
+/// - A claim that ends without a result wakes the waiters too. One of them claims the symbol, or they all measure.
+///
+/// **No deadlock.** A thread waits here only if it is not measuring (`Checker::in_variance_computation`), and a thread has a
+/// claim only while it is measuring. So no thread that has a claim ever waits for one: every wait is for a thread that is
+/// running. That thread takes no lock that a waiter holds, because a waiter holds none: it is in the middle of a task,
+/// and the wait releases the lock of `table`. A measurement is finite, and `variances_worker` has one way out, which
+/// gives the claim back.
+struct Claims {
+    /// Whoever takes the lock of `Program::serial_variances` as well takes this one first.
+    table: Guarded<FxHashMap<Sym, Claim>>,
+    /// A claim has ended, or variances were shared.
+    has_changed: Condvar,
+}
+
+/// A symbol that has no entry is not claimed, and no claim of it has ended without a result.
+#[derive(Default)]
+struct Claim {
+    is_taken: bool,
+    /// How many claims have ended without a result.
+    failures: u8,
+    /// Nobody claims it again, and nobody waits: every thread measures for itself.
+    is_given_up: bool,
+}
+
+/// What `Program::claim_variances` has found.
+pub(super) enum VarianceClaim<'s> {
+    /// They are shared, perhaps after a wait.
+    Known(&'s [u8]),
+    /// The caller has the claim. It measures, and then calls `Program::share_variances`.
+    Mine,
+    /// The caller measures, without a claim.
+    Unclaimed,
+}
+
+/// Why a claim ends without a result.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(super) enum NotShared {
+    /// The value depends on where the cycle was entered: `OrderDependent`. So it will for every other thread.
+    Cycle,
+    /// A thread that takes the result would not report it. So it will for every other thread.
+    Diagnostic,
+    /// The measurement may have used something for which a commit can find this task invalid.
+    Notes,
+    /// The result depends on a query that was in progress in this task, or was cut short.
+    Open,
+}
+
+impl<'s> Program<'s> {
+    /// Before the first checker.
+    pub fn set_jitter(&mut self, jitter: Jitter) {
+        self.commits.jitter = jitter;
+    }
+
+    /// See `Claims`. The caller is about to begin an outermost measurement of the variances of `sym`: it is not measuring,
+    /// so it has no claim. `may_claim`: whether its result has a chance to be shared.
+    pub(super) fn claim_variances(&self, sym: Sym, may_claim: bool) -> VarianceClaim<'s> {
+        let claims = &self.commits.claims;
+        let mut table = claims.table.lock();
+        loop {
+            let shared = self.serial_variances.lock().get(&sym).copied();
+            if let Some(variances) = shared {
+                return VarianceClaim::Known(variances);
+            }
+            match table.get(&sym) {
+                Some(claim) if claim.is_given_up => return VarianceClaim::Unclaimed,
+                Some(claim) if claim.is_taken => {}
+                _ if !may_claim => return VarianceClaim::Unclaimed,
+                _ => {
+                    table.entry(sym).or_default().is_taken = true;
+                    return VarianceClaim::Mine;
+                }
+            }
+            claims.has_changed.wait_guarded(&mut table);
+        }
+    }
+
+    /// See `Claims`. An outermost measurement has ended.
+    /// - `measured`: what it has stored, if it has met no cycle. `may_share`: nothing in it depends on the task that has
+    ///   measured it, so it is shared.
+    /// - `claimed`: the symbol that the caller has the claim of, and why it is not shared, if it is not.
+    ///
+    /// Returns what the caller goes on with although it is not what `serial_variances` has: there is another value, which
+    /// a task that met a cycle has committed in the meantime, or there is none and this one may not be shared. Nothing
+    /// has compared it with what other tasks use, so the caller notes it for its next commit.
+    pub(super) fn share_variances(
+        &self,
+        measured: &[(Sym, &'s [u8])],
+        may_share: bool,
+        claimed: Option<(Sym, Option<NotShared>)>,
+    ) -> Vec<(Sym, &'s [u8])> {
+        let mut not_registered = Vec::new();
+        if measured.is_empty() && claimed.is_none() {
+            return not_registered;
+        }
+        let claims = &self.commits.claims;
+        let mut table = claims.table.lock();
+        {
+            let mut serial = self.serial_variances.lock();
+            for &(sym, variances) in measured {
+                match serial.get(&sym) {
+                    Some(&first) if first == variances => {}
+                    None if may_share => {
+                        serial.insert(sym, variances);
+                    }
+                    _ => not_registered.push((sym, variances)),
+                }
+            }
+        }
+        match claimed {
+            None => {}
+            Some((sym, None)) => {
+                table.remove(&sym);
+            }
+            Some((sym, Some(reason))) => {
+                let claim = table.entry(sym).or_default();
+                claim.is_taken = false;
+                claim.failures = claim.failures.saturating_add(1);
+                // Another thread may do better, once.
+                claim.is_given_up = claim.failures >= 2
+                    || matches!(reason, NotShared::Cycle | NotShared::Diagnostic);
+            }
+        }
+        drop(table);
+        claims.has_changed.notify_all();
+        not_registered
+    }
+
+    /// `Program::validate` for what one task has noted, against the commits so far.
+    /// - Variances and listings: against every commit, as `validate` compares with every earlier step. A task notes only
+    ///   what it has computed, which it does only if it has found nothing. The variances that it has noted stay noted: it
+    ///   goes on using them.
+    /// - Walks: `validate` compares with the earlier tasks of the step, because a task has seen the walks of the steps
+    ///   before, and what was evaluated along with them, from its start. Here that is so for the commits that the task
+    ///   saw in the file when it began to visit it.
+    fn is_invalid(&self, task: &Task<'s>, view: &View<'s>, committing: &Committing) -> bool {
+        let has_other_variances = {
+            let serial = self.serial_variances.lock();
+            let mut noted = task.order_dependent_variances.iter();
+            noted.any(|it| {
+                serial
+                    .get(&it.sym)
+                    .is_some_and(|first| it.conflicts_with(first))
+            })
+        };
+        let has_another_list = {
+            let listings = self.serial_listings.lock();
+            let mut noted = task.listings.iter();
+            noted.any(|it| listings.get(&it.0).is_some_and(|first| first.0 != it.1))
+        };
+        if has_other_variances || has_another_list {
+            return true;
+        }
+        let oldest_pin = view.oldest_pin.get();
+        let from = committing.walked.partition_point(|it| it.0 <= oldest_pin);
+        let unseen = committing.walked[from..].iter();
+        let unseen: Vec<(FileId, Node)> = (unseen.filter(|it| !view.is_own(it.0)))
+            .map(|it| (it.1, it.2))
+            .collect();
+        self.has_walked_across_earlier_walk(&task.assignments_walked.borrow(), &unseen)
+    }
+
+    /// The commit `number` of `task` is valid: what the task has noted is what later commits are compared with.
+    fn register_notes(&self, task: &mut Task<'s>, committing: &mut Committing, number: u32) {
+        {
+            let mut serial = self.serial_variances.lock();
+            for it in &task.order_dependent_variances {
+                serial.entry(it.sym).or_insert(it.variances);
+            }
+        }
+        {
+            let mut listings = self.serial_listings.lock();
+            for it in task.listings.drain(..) {
+                listings.entry(it.0).or_insert((it.1, true));
+            }
+        }
+        let walked = task.assignments_walked.get_mut().drain(..);
+        committing
+            .walked
+            .extend(walked.map(|it| (number, it.0, it.1)));
+    }
+}
+
+/// What `Checker::commit_after_file` has done.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum AfterFile {
+    /// Nothing: no commit is due.
+    Waits,
+    /// The files that the task has checked so far are checked for good.
+    Committed,
+    /// The task is lost. The files that it has checked since it last returned `Committed` are to be checked again, in the
+    /// last round.
+    Lost,
+}
+
+impl<'s> Checker<'_, 's> {
+    /// Right after `begin_task`: the task commits while it runs, and sees the commits of the others.
+    /// `is_alone`: no other task runs, as in the last round.
+    pub fn see_commits(&mut self, policy: CommitPolicy, is_alone: bool) {
+        let files = self.p.files.modules.len();
+        let view = (self.p.commits).view(files, policy, self.task.own.jitter());
+        self.task.see_commits(view, is_alone);
+        self.task.own.count_places_from(self.task.number());
+        self.task.own.wait_at(Place::TaskBegins);
+    }
+
+    /// Whether the task is thrown away: it was found invalid, or it has given up at a limit. It stores and reports nothing
+    /// any more.
+    pub fn is_lost(&self) -> bool {
+        self.task.is_lost()
+    }
+
+    /// For a task that sees commits: a greater number than last time if a commit may have added to the tables in between.
+    /// A memo that keeps something on the strength of an absence keeps it no longer than this stays the same: an entry
+    /// that another task has computed in a cycle says what its absence did not.
+    pub(super) fn state_of_commits(&self) -> u64 {
+        self.task.view().map_or(0, View::state)
+    }
+
+    /// Between two statements or two deferred nodes of the task's own walk.
+    #[inline]
+    pub(super) fn rest_between_statements(&mut self) {
+        if self.task.commits()
+            && self.stack.is_empty()
+            && self.contextual.is_empty()
+            && self.inference_contexts.is_empty()
+            && !self.in_variance_computation
+        {
+            self.rest();
+        }
+    }
+
+    /// Nothing is in progress that has looked at a table or is about to store in one.
+    fn rest(&mut self) {
+        let logged = self.task.buffer().logged();
+        let is_due = (self.task.view()).is_some_and(|view| view.is_commit_due(logged));
+        if is_due && !self.task.is_lost() {
+            self.commit(false, true);
+        } else if let Some(view) = self.task.view() {
+            view.forget();
+        }
+    }
+
+    /// After `check_file`, and whatever is asked about the file afterwards. `is_last`: the task ends here.
+    /// `is_read`: see `commit`.
+    pub fn commit_after_file(&mut self, is_last: bool, is_read: bool) -> AfterFile {
+        let logged = self.task.buffer().logged();
+        let is_due = (self.task.view()).is_some_and(|view| view.is_commit_due(logged));
+        if !is_last && !is_due && !self.task.is_lost() {
+            return AfterFile::Waits;
+        }
+        match self.commit(true, is_read) {
+            true => AfterFile::Committed,
+            false => AfterFile::Lost,
+        }
+    }
+
+    /// See the head of this file. Nothing is in progress in the task.
+    /// `is_between_files`: no file is being checked.
+    /// `is_read`: whether anything will look at the tables afterwards. If not, nothing is stored in them.
+    /// Returns whether the task goes on: it is not lost.
+    fn commit(&mut self, is_between_files: bool, is_read: bool) -> bool {
+        if self.task.is_lost() {
+            return false;
+        }
+        let Some(mut reported) = self.take_diagnostics_for_commit(is_between_files) else {
+            if let Some(view) = self.task.view() {
+                view.forget();
+            }
+            return true;
+        };
+        let p = self.p;
+        let mut log = self.task.buffer().take_log();
+        self.task.own.wait_at(Place::CommitBegins);
+        let mut committing = p.commits.committing.lock();
+        let is_invalid = !self.task.is_believed()
+            && (self.task.view()).is_some_and(|view| p.is_invalid(&self.task, view, &committing));
+        if is_invalid {
+            drop(committing);
+            self.task.lose();
+            return false;
+        }
+        let number = committing.number + 1;
+        committing.number = number;
+        p.register_notes(&mut self.task, &mut committing, number);
+        let task = &self.task;
+        p.drop_diagnostics_of_losers(&mut reported, |commit| {
+            task.view().is_some_and(|view| view.is_own(commit))
+        });
+        p.publish_reported(task.number(), reported);
+        let stored = match is_read {
+            true => p.commits.store(&tables_of(p), task, &mut log, number),
+            false => 0,
+        };
+        drop(committing);
+        task.count_committed(log.len() as u64, stored);
+        if let Some(view) = task.view() {
+            view.has_committed(number);
+        }
+        if task.closed_a_cycle {
+            p.closed_a_cycle.store(true, Ordering::Relaxed);
+        }
+        task.buffer().give_back_log(log);
+        true
+    }
+
+    /// Ends a task that `see_commits` was called for, after its last `commit_after_file`, on its own thread.
+    pub fn end_task_after_commits(&mut self) -> Ended {
+        self.task.end(self.p)
+    }
+}

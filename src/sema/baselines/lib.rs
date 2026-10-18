@@ -1365,6 +1365,12 @@ pub struct Setup<'a> {
     pub traces: bool,
     /// `PlanOptions::orders_types_by_content`
     pub orders_types_by_content: bool,
+    /// `PlanOptions::shares_at_once`
+    pub shares_at_once: bool,
+    /// `PlanOptions::has_no_steps`
+    pub has_no_steps: bool,
+    /// `CommitPolicy::entries`
+    pub commit_entries: usize,
     pub threads: usize,
     /// Only every n-th test, in the order of their paths. 1: all of them.
     pub every: usize,
@@ -1811,6 +1817,12 @@ fn run_one(
                 // one with steps, publishing and validation.
                 tasks_on_one_thread: true,
                 orders_types_by_content: setup.orders_types_by_content,
+                shares_at_once: setup.shares_at_once,
+                has_no_steps: setup.has_no_steps,
+                commit_policy: bun_sema::check::commit::CommitPolicy {
+                    entries: setup.commit_entries,
+                    microseconds: 0,
+                },
                 ..Default::default()
             },
             retains_everything: false,
@@ -2340,7 +2352,7 @@ impl Drop for Watched {
 }
 
 /// `[--bundle=file] --lib=<dir> --testlib=<dir> [--only=substring] [--every=n [--first=i]] [--threads=n] [--report=file]
-/// [--out=dir] [--types-and-symbols] [--declarations] [--traces] [--content-order]
+/// [--out=dir] [--types-and-symbols] [--declarations] [--traces] [--content-order] [--share-at-once]
 /// <name>=<tests>=<baselines>=<file with the names of all the baselines> ..`
 ///
 /// With `--bundle`, the directories and the file with the names are paths in it.
@@ -2384,6 +2396,13 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         traces: args.iter().any(|it| it == "--traces"),
         orders_types_by_content: bun_sema_driver::PlanOptions::default().orders_types_by_content
             || args.iter().any(|it| it == "--content-order"),
+        shares_at_once: bun_sema_driver::PlanOptions::default().shares_at_once
+            || args
+                .iter()
+                .any(|it| it == "--share-at-once" || it == "--no-steps"),
+        has_no_steps: bun_sema_driver::PlanOptions::default().has_no_steps
+            || args.iter().any(|it| it == "--no-steps"),
+        commit_entries: number("commit-entries").unwrap_or(0),
         threads: number("threads").unwrap_or(8),
         every: number("every").unwrap_or(1),
         first: number("first").unwrap_or(0),

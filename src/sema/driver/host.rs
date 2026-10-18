@@ -1518,4 +1518,18 @@ impl Host for Disk {
             None => crate::for_each_parallel_in_runs(&self.caches, self.threads, count, run, work),
         }
     }
+    fn parallel_while(
+        &self,
+        count: usize,
+        work: &(dyn Fn(usize) + Sync),
+        meanwhile: &mut dyn FnMut(),
+    ) {
+        // There the calling thread is one of those that work.
+        if self.is_of_a_thread_of_the_pool || self.shares.lock().is_some() {
+            self.parallel(count, work);
+            return meanwhile();
+        }
+        let run = run_of(count);
+        crate::for_each_parallel_while(&self.caches, self.threads, count, run, work, meanwhile);
+    }
 }

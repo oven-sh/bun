@@ -2136,8 +2136,9 @@ test.concurrent.skipIf(!tsc)("unions of another file, on any number of threads, 
 });
 
 // The members of an intersection are a list with a copy of every property of every constituent. If the constituents have
-// 32 properties or more, and there are no more than 8 of them, a lookup by name leaves the properties where they are, until
-// something lists them or a quarter of the names were asked for. Only a task that publishes nothing does that: every task
+// 32 properties or more, and share the names of no more than half of them, a lookup by name leaves the properties where
+// they are, until something lists them or there were a quarter as many lookups as names. A union looks a name up in each
+// member in that way, unless it is asked for all its properties. Only a task that publishes nothing does that: every task
 // of one thread, and those of the last step of several. And a property of a mapped type gets the mapper that has its key
 // when its type is asked for. So each program here is checked with sizes on both sides of those numbers, on 1 and on 8
 // threads, by name before the list and after it, and none of that must change what is reported.
@@ -2809,11 +2810,240 @@ export {};
   Type '"a"' is not assignable to type 'never'.
 `,
   },
+  "a union of intersections that are asked by name": {
+    // Each intersection has 3 constituents besides, with 44 properties.
+    sizes: [0, 5, 6, 30],
+    program: count => `
+interface Base { kind: string; call(): void; ${filler(40)} }
+interface Twin { kind: string; ${filler(40)} }
+type Wide<K, T> = Base & { tag: K } & { theme: T }${each(count, i => ` & { e${i}?: ${i} }`, "")};
+type Three<T> = Wide<"a", T> | Wide<"b", T> | Wide<"c", T>;
+type Nine<T> = ${each(9, i => `Wide<${i}, T>`)};
+type Mostly<K, T> = Base & Twin & { tag: K; theme: T };
+type Callable<K> = Base & { tag: K } & (() => K);
+${reads(
+  "few",
+  ["tag", "theme", "kind", "f0", "toString", "missing"].map(name => `(null! as Three<1>).${name}`),
+)}
+${reads(
+  "many",
+  Array.from({ length: 20 }, (_, i) => `(null! as Three<2>).f${i}!`),
+)}
+${reads(
+  "vain",
+  Array.from({ length: 20 }, (_, i) => `(null! as Three<3> | { g${i}: 1 }).g${i}`),
+)}
+${reads(
+  "after",
+  ["tag", "theme", "f39"].map(name => `(null! as Three<2>).${name}`),
+)}
+${reads(
+  "nine",
+  ["tag", "theme", "kind", "f0", "toString"].flatMap(name => [1, 2].map(t => `(null! as Nine<${t}>).${name}`)),
+)}
+${reads("listed", [
+  "null! as Exclude<keyof Three<4>, \`f\${number}\` | \`e\${number}\`>",
+  "(null! as Three<4>).tag",
+  "{ ...(null! as Three<5>) }.tag",
+  "(null! as Three<5>).theme",
+  "(null! as Partial<Three<6>>).tag",
+])}
+${reads(
+  "mostly",
+  ["tag", "theme", "kind", "f1"].map(name => `(null! as Mostly<1, 1> | Mostly<2, 1>).${name}`),
+)}
+${reads(
+  "callable",
+  ["tag", "apply", "toString", "call"].map(name => `(null! as Callable<1> | Callable<2>).${name}`),
+)}
+function twice<X extends Wide<"a", 7>, Y extends Wide<"a", 7>, Z extends Wide<"b", 7>>(xy: X | Y, xz: X | Z, all: X | Y | Z) {
+${reads("t", ["xy.tag", "xy.f1", "xy.toString", "xz.tag", "xz.f1", "all.tag", "all.theme", ...Array.from({ length: 14 }, (_, i) => `xy.f${i + 2}!`), "xy.tag", "all.f1"])}
+}
+function narrowed(u: Three<8>, n: Nine<8>) {
+  if (u.tag === "a") { const a: never = u; } else { const rest: never = u.tag; }
+  if (n.tag === 3) { const three: never = n.theme; }
+  switch (n.tag) { case 0: case 1: { const low: never = n.tag; } }
+}
+const target: { tag: string; theme: 9; f0?: 0 } = null! as Three<9>;
+const wrong: { tag: "a" | "b"; theme: 9 } = null! as Three<9>;
+export {};
+`,
+    errors: `
+(9,7): error TS2322: Type '"a" | "b" | "c"' is not assignable to type 'never'.
+  Type '"a"' is not assignable to type 'never'.
+(10,7): error TS2322: Type '1' is not assignable to type 'never'.
+(11,7): error TS2322: Type 'string' is not assignable to type 'never'.
+(12,7): error TS2322: Type '0 | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+(13,7): error TS2322: Type '() => string' is not assignable to type 'never'.
+(14,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(14,41): error TS2339: Property 'missing' does not exist on type 'Three<1>'.
+  Property 'missing' does not exist on type 'Wide<"a", 1>'.
+(15,7): error TS2322: Type '0' is not assignable to type 'never'.
+(16,7): error TS2322: Type '1' is not assignable to type 'never'.
+(17,7): error TS2322: Type '2' is not assignable to type 'never'.
+(18,7): error TS2322: Type '3' is not assignable to type 'never'.
+(19,7): error TS2322: Type '4' is not assignable to type 'never'.
+(20,7): error TS2322: Type '5' is not assignable to type 'never'.
+(21,7): error TS2322: Type '6' is not assignable to type 'never'.
+(22,7): error TS2322: Type '7' is not assignable to type 'never'.
+(23,7): error TS2322: Type '8' is not assignable to type 'never'.
+(24,7): error TS2322: Type '9' is not assignable to type 'never'.
+(25,7): error TS2322: Type '10' is not assignable to type 'never'.
+(26,7): error TS2322: Type '11' is not assignable to type 'never'.
+(27,7): error TS2322: Type '12' is not assignable to type 'never'.
+(28,7): error TS2322: Type '13' is not assignable to type 'never'.
+(29,7): error TS2322: Type '14' is not assignable to type 'never'.
+(30,7): error TS2322: Type '15' is not assignable to type 'never'.
+(31,7): error TS2322: Type '16' is not assignable to type 'never'.
+(32,7): error TS2322: Type '17' is not assignable to type 'never'.
+(33,7): error TS2322: Type '18' is not assignable to type 'never'.
+(34,7): error TS2322: Type '19' is not assignable to type 'never'.
+(35,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(35,54): error TS2339: Property 'g0' does not exist on type '{ g0: 1; } | Three<3>'.
+  Property 'g0' does not exist on type 'Wide<"a", 3>'.
+(36,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(36,54): error TS2339: Property 'g1' does not exist on type '{ g1: 1; } | Three<3>'.
+  Property 'g1' does not exist on type 'Wide<"a", 3>'.
+(37,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(37,54): error TS2339: Property 'g2' does not exist on type '{ g2: 1; } | Three<3>'.
+  Property 'g2' does not exist on type 'Wide<"a", 3>'.
+(38,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(38,54): error TS2339: Property 'g3' does not exist on type '{ g3: 1; } | Three<3>'.
+  Property 'g3' does not exist on type 'Wide<"a", 3>'.
+(39,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(39,54): error TS2339: Property 'g4' does not exist on type '{ g4: 1; } | Three<3>'.
+  Property 'g4' does not exist on type 'Wide<"a", 3>'.
+(40,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(40,54): error TS2339: Property 'g5' does not exist on type '{ g5: 1; } | Three<3>'.
+  Property 'g5' does not exist on type 'Wide<"a", 3>'.
+(41,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(41,54): error TS2339: Property 'g6' does not exist on type '{ g6: 1; } | Three<3>'.
+  Property 'g6' does not exist on type 'Wide<"a", 3>'.
+(42,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(42,54): error TS2339: Property 'g7' does not exist on type '{ g7: 1; } | Three<3>'.
+  Property 'g7' does not exist on type 'Wide<"a", 3>'.
+(43,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(43,54): error TS2339: Property 'g8' does not exist on type '{ g8: 1; } | Three<3>'.
+  Property 'g8' does not exist on type 'Wide<"a", 3>'.
+(44,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(44,54): error TS2339: Property 'g9' does not exist on type '{ g9: 1; } | Three<3>'.
+  Property 'g9' does not exist on type 'Wide<"a", 3>'.
+(45,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(45,56): error TS2339: Property 'g10' does not exist on type '{ g10: 1; } | Three<3>'.
+  Property 'g10' does not exist on type 'Wide<"a", 3>'.
+(46,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(46,56): error TS2339: Property 'g11' does not exist on type '{ g11: 1; } | Three<3>'.
+  Property 'g11' does not exist on type 'Wide<"a", 3>'.
+(47,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(47,56): error TS2339: Property 'g12' does not exist on type '{ g12: 1; } | Three<3>'.
+  Property 'g12' does not exist on type 'Wide<"a", 3>'.
+(48,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(48,56): error TS2339: Property 'g13' does not exist on type '{ g13: 1; } | Three<3>'.
+  Property 'g13' does not exist on type 'Wide<"a", 3>'.
+(49,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(49,56): error TS2339: Property 'g14' does not exist on type '{ g14: 1; } | Three<3>'.
+  Property 'g14' does not exist on type 'Wide<"a", 3>'.
+(50,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(50,56): error TS2339: Property 'g15' does not exist on type '{ g15: 1; } | Three<3>'.
+  Property 'g15' does not exist on type 'Wide<"a", 3>'.
+(51,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(51,56): error TS2339: Property 'g16' does not exist on type '{ g16: 1; } | Three<3>'.
+  Property 'g16' does not exist on type 'Wide<"a", 3>'.
+(52,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(52,56): error TS2339: Property 'g17' does not exist on type '{ g17: 1; } | Three<3>'.
+  Property 'g17' does not exist on type 'Wide<"a", 3>'.
+(53,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(53,56): error TS2339: Property 'g18' does not exist on type '{ g18: 1; } | Three<3>'.
+  Property 'g18' does not exist on type 'Wide<"a", 3>'.
+(54,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(54,56): error TS2339: Property 'g19' does not exist on type '{ g19: 1; } | Three<3>'.
+  Property 'g19' does not exist on type 'Wide<"a", 3>'.
+(55,7): error TS2322: Type '"a" | "b" | "c"' is not assignable to type 'never'.
+  Type '"a"' is not assignable to type 'never'.
+(56,7): error TS2322: Type '2' is not assignable to type 'never'.
+(57,7): error TS2322: Type '39 | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+(58,7): error TS2322: Type '0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8' is not assignable to type 'never'.
+  Type '0' is not assignable to type 'never'.
+(59,7): error TS2322: Type '0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8' is not assignable to type 'never'.
+  Type '0' is not assignable to type 'never'.
+(60,7): error TS2322: Type '1' is not assignable to type 'never'.
+(61,7): error TS2322: Type '2' is not assignable to type 'never'.
+(62,7): error TS2322: Type 'string' is not assignable to type 'never'.
+(63,7): error TS2322: Type 'string' is not assignable to type 'never'.
+(64,7): error TS2322: Type '0 | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+(65,7): error TS2322: Type '0 | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+(66,7): error TS2322: Type '() => string' is not assignable to type 'never'.
+(67,7): error TS2322: Type '() => string' is not assignable to type 'never'.
+(68,7): error TS2322: Type '"call" | "kind" | "tag" | "theme"' is not assignable to type 'never'.
+  Type '"call"' is not assignable to type 'never'.
+(69,7): error TS2322: Type '"a" | "b" | "c"' is not assignable to type 'never'.
+  Type '"a"' is not assignable to type 'never'.
+(70,7): error TS2322: Type '"a" | "b" | "c"' is not assignable to type 'never'.
+  Type '"a"' is not assignable to type 'never'.
+(71,7): error TS2322: Type '5' is not assignable to type 'never'.
+(72,7): error TS2322: Type '"a" | "b" | "c" | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+(73,7): error TS2322: Type '1 | 2' is not assignable to type 'never'.
+  Type '1' is not assignable to type 'never'.
+(74,7): error TS2322: Type '1' is not assignable to type 'never'.
+(75,7): error TS2322: Type 'string' is not assignable to type 'never'.
+(76,7): error TS2322: Type '1 | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+(77,7): error TS2322: Type '1 | 2' is not assignable to type 'never'.
+  Type '1' is not assignable to type 'never'.
+(78,7): error TS2322: Type '{ <T, R>(this: (this: T) => R, thisArg: T): R; <T, A extends any[], R>(this: (this: T, ...args: A) => R, thisArg: T, args: A): R; }' is not assignable to type 'never'.
+(79,7): error TS2322: Type '(() => string) & (() => string)' is not assignable to type 'never'.
+(80,7): error TS2322: Type '() => void' is not assignable to type 'never'.
+(82,7): error TS2322: Type '"a"' is not assignable to type 'never'.
+(83,7): error TS2322: Type '1 | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+(84,7): error TS2322: Type '() => string' is not assignable to type 'never'.
+(85,7): error TS2322: Type '"a" | "b"' is not assignable to type 'never'.
+  Type '"a"' is not assignable to type 'never'.
+(86,7): error TS2322: Type '1 | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+(87,7): error TS2322: Type '"a" | "b"' is not assignable to type 'never'.
+  Type '"a"' is not assignable to type 'never'.
+(88,7): error TS2322: Type '7' is not assignable to type 'never'.
+(89,7): error TS2322: Type '2' is not assignable to type 'never'.
+(90,7): error TS2322: Type '3' is not assignable to type 'never'.
+(91,7): error TS2322: Type '4' is not assignable to type 'never'.
+(92,7): error TS2322: Type '5' is not assignable to type 'never'.
+(93,7): error TS2322: Type '6' is not assignable to type 'never'.
+(94,7): error TS2322: Type '7' is not assignable to type 'never'.
+(95,7): error TS2322: Type '8' is not assignable to type 'never'.
+(96,7): error TS2322: Type '9' is not assignable to type 'never'.
+(97,7): error TS2322: Type '10' is not assignable to type 'never'.
+(98,7): error TS2322: Type '11' is not assignable to type 'never'.
+(99,7): error TS2322: Type '12' is not assignable to type 'never'.
+(100,7): error TS2322: Type '13' is not assignable to type 'never'.
+(101,7): error TS2322: Type '14' is not assignable to type 'never'.
+(102,7): error TS2322: Type '15' is not assignable to type 'never'.
+(103,7): error TS2322: Type '"a"' is not assignable to type 'never'.
+(104,7): error TS2322: Type '1 | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+(107,30): error TS2322: Type 'Wide<"a", 8>' is not assignable to type 'never'.
+(107,59): error TS2322: Type '"b" | "c"' is not assignable to type 'never'.
+  Type '"b"' is not assignable to type 'never'.
+(108,28): error TS2322: Type '8' is not assignable to type 'never'.
+(109,44): error TS2322: Type '0 | 1' is not assignable to type 'never'.
+  Type '0' is not assignable to type 'never'.
+(112,7): error TS2322: Type 'Three<9>' is not assignable to type '{ tag: "a" | "b"; theme: 9; }'.
+  Type 'Wide<"c", 9>' is not assignable to type '{ tag: "a" | "b"; theme: 9; }'.
+    Types of property 'tag' are incompatible.
+      Type '"c"' is not assignable to type '"a" | "b"'.
+`,
+  },
 };
 
 // Whether an intersection reduces to `never` is decided name by name, from the properties that several constituents have.
-// If the constituents have 16 properties or more, what a name has added to the answer is kept for the next intersection of
-// the same object types, from the third one on, for as long as those that have the name have the same type arguments. Up
+// If the constituents have 16 properties or more, what a name has added to the answer is kept: for the next intersection
+// of the same object types, from the third one on, for as long as those that have the name have the same type arguments,
+// and if 4 or more have the name, for the next intersection in which the same ones have it. Up
 // to 8 constituents are compared pair by pair. A property of a union is created when it is asked for, with the types of
 // what it combines, so what asks for it by name must not list the others. So each program here has the same constituents
 // in four intersections or more, with sizes on both sides of those numbers, and none of that must change what is reported.
@@ -3413,6 +3643,121 @@ interface H { name: string; shape?: 2 }${programs.join("")}\nexport {};\n`;
 (97,7): error TS2322: Type 'any' is not assignable to type 'never'.
 `,
   },
+  "the properties of the constraint are created although no other member of the intersection has one of their names": {
+    sizes: [2, 9],
+    program: count => {
+      const inInitializer = [
+        ["", "(null! as U & (E | F)).other"],
+        ["", "(null! as (U & E) | F).other"],
+        ["", "(null! as (U & { z: 1 }) | { z: 2 }).z"],
+        ["", "null! as keyof (U & E)"],
+        ["", "({ ...(null! as U & E) })"],
+        ["", "{ const { name } = null! as U & E; return name; }"],
+        ["", "{ for (const k in null! as U & E) return k; return 1; }"],
+        ["", '"name" in (null! as U & E)'],
+        ["", "null! as keyof (U & {})"],
+        ["", "null! as keyof (U & object)"],
+        ["", "null! as keyof (U & string)"],
+        [", V", "null! as keyof (U & V)"],
+        ["", "null! as keyof ((U & E) | undefined)"],
+        ["", "(null! as U & E).name"],
+        ["", "null! as keyof U"],
+        [", V extends B", "null! as keyof (V & E)"],
+      ];
+      const programs = inInitializer.map(
+        ([more, returned], n) => `
+interface A${n} { id: string; shape?: 1 }
+interface B${n} { id: string; shape?: keyof typeof shapes${n} }
+type Members${n} = A${n} | B${n}${each(count - 2, i => ` | (A${n} & { t${i}?: ${i} })`, "")};
+const shapes${n} = { circle: (<U extends Members${n}${more.replace(/B$/, `B${n}`)}>() => ${returned})() };
+const whole${n}: never = shapes${n};`,
+      );
+      return `
+interface E { name: string; other?: 1 }
+interface F { name: string; other?: 2 }${programs.join("")}\nexport {};\n`;
+    },
+    errors: `
+(5,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(7,7): error TS7022: 'shapes0' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(7,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(8,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(10,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(12,7): error TS7022: 'shapes1' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(12,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(13,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(15,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(17,7): error TS7022: 'shapes2' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(17,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(18,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(20,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(22,7): error TS7022: 'shapes3' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(22,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(23,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(25,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(27,7): error TS7022: 'shapes4' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(27,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(28,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(30,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(32,7): error TS7022: 'shapes5' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(32,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(32,64): error TS7022: 'name' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(33,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(35,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(37,7): error TS7022: 'shapes6' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(37,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(37,67): error TS7022: 'k' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(38,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(40,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(42,7): error TS7022: 'shapes7' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(42,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(43,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(45,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(47,7): error TS7022: 'shapes8' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(47,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(48,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(50,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(52,7): error TS7022: 'shapes9' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(52,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(53,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(55,29): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(57,7): error TS7022: 'shapes10' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(57,29): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(58,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(60,29): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(62,7): error TS7022: 'shapes11' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(62,29): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(63,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(65,29): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(67,7): error TS7022: 'shapes12' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(67,29): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(68,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(73,7): error TS2322: Type '{ circle: string; }' is not assignable to type 'never'.
+(78,7): error TS2322: Type '{ circle: "id" | "shape"; }' is not assignable to type 'never'.
+(83,7): error TS2322: Type '{ circle: keyof B15 | keyof E; }' is not assignable to type 'never'.
+`,
+  },
+  "the properties of the constraint are created for a parameter that is such an intersection": {
+    sizes: [2, 9],
+    program: count => `
+interface C { id: string; other?: 1 }
+interface E { name: string; other?: 1 }
+interface A { id: string; shape?: 1 }
+interface B { id: string; shape?: keyof typeof shapes }
+type Members = A | B${each(count - 2, i => ` | (A & { t${i}?: ${i} })`, "")};
+declare function accept<V extends Members>(t: V & E): 1;
+const shapes = { circle: (<U extends Members>() => accept<U>(null! as U & C))() };
+const whole: never = shapes;
+export {};
+`,
+    errors: `
+(5,27): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(8,7): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(8,27): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(8,62): error TS2345: Argument of type 'U & C' is not assignable to parameter of type 'U & E'.
+  Type 'U & C' is not assignable to type 'E'.
+(9,7): error TS2322: Type 'any' is not assignable to type 'never'.
+`,
+  },
   "an intersection with a type parameter whose constraint is a union, compared with object types": {
     sizes: [2, 9, 130],
     program: count => {
@@ -3558,6 +3903,458 @@ export {};
     Type '"a"' is not assignable to type '1'.
 (82,9): error TS2322: Type 'S<U>' is not assignable to type '{ id: string; extra: 1; shape: 1 | 2 | undefined; both: 1 | 2; }'.
   Property 'shape' is optional in type 'A & { extra: 1; }' but required in type '{ id: string; extra: 1; shape: 1 | 2 | undefined; both: 1 | 2; }'.
+`,
+  },
+  "what the first intersection of some object types has found is kept for the second": {
+    // So many object types have each of the names.
+    sizes: [2, 3, 4, 5, 12],
+    program: count => `
+${each(count, i => `interface H${i} { kind: "k"; same: string; n?: number; h${i}?: 1; ${filler(4, `h${i}_`)} }`, " ")}
+${each(count, i => `interface T${i}<K> { kind: K; same: string; t${i}?: K; ${filler(4, `t${i}_`)} }`, " ")}
+${each(count, i => `declare class G${i} { get v(): 1; set v(x: 1 | ${i + 2}); get r(): "r"; g${i}: 1; ${filler(4, `g${i}_`)} }`, " ")}
+${each(count, i => `declare const o${i}: { kind: "k"; lit: ${i % 2}; ${filler(4, `o${i}_`)} };`, " ")}
+interface Big { kind: "k"; same: string; ${filler(8, "b")} }
+type All = ${each(count, i => `H${i}`, " & ")};
+type Tags<K> = ${each(count, i => `T${i}<K>`, " & ")};
+type Mixed<K> = ${each(count, i => `T${i}<${i === 1 ? "K" : '"k"'}>`, " & ")};
+type Accessors = ${each(count, i => `G${i}`, " & ")};
+type Picked = ${each(count, i => `Pick<Big & { p${i}?: 1 }, "kind" | "same" | "p${i}" | "b${i % 8}">`, " & ")};
+type Optional = ${each(count, i => `Partial<H${i}>`, " & ")};
+type Spread = ${each(count, i => `typeof o${i}`, " & ")};
+type IsNever<T> = [T] extends [never] ? true : false;
+type Deep<T> = { at: IsNever<All & { theme: T }>; tags: IsNever<Tags<T> & { theme: T }>; of: (All & { theme: T })["kind"] };
+${reads(
+  "all",
+  four(i => `(null! as All & { theme: ${i} }).theme`),
+)}
+${reads(
+  "tags",
+  ["k", "k", "j", "k"].map((k, i) => `(null! as Tags<"${k}"> & { theme: ${i} }).kind`),
+)}
+${reads(
+  "mixed",
+  ["k", "j", "k", "j"].map((k, i) => `null! as IsNever<Mixed<"${k}"> & { theme: ${i} }>`),
+)}
+${reads(
+  "accessors",
+  four(i => `(null! as Accessors & { theme: ${i} }).v`),
+)}
+${reads(
+  "picked",
+  four(i => `(null! as Picked & { theme: ${i} }).kind`),
+)}
+${reads(
+  "optional",
+  four(i => `(null! as Optional & { theme: ${i} }).kind`),
+)}
+${reads(
+  "spread",
+  four(i => `null! as IsNever<Spread & { theme: ${i} }>`),
+)}
+${reads(
+  "deep",
+  four(i => `null! as Deep<${i}>[keyof Deep<${i}>]`),
+)}
+function generic<T extends string, K extends "k" | "j">() {
+${reads(
+  "g",
+  ["T", "T[]", "K", "[K]"].flatMap(t => [
+    `(null! as All & { theme: ${t} }).theme`,
+    `(null! as Tags<K> & { theme: ${t} }).kind`,
+  ]),
+)}
+${reads(
+  "v",
+  ["T", "K", "T", "K"].map(
+    t =>
+      `(null! as ${each(count, i => `{ p: ${i ? "string" : t}; q${i}?: 1; ${filler(4, `q${i}_`)} }`, " & ")} & { theme: ${t} }).p`,
+  ),
+)}
+${reads(
+  "d",
+  ["T", "K", "T"].flatMap(t => ["at", "tags", "of"].map(name => `(null! as Deep<${t}>).${name}`)),
+)}
+}
+interface Cycle { kind: "k"; same: keyof typeof cyclic }
+const cyclic = { same: (null! as All & Cycle).same };
+${reads(
+  "later",
+  four(i => `(null! as All & { theme: [${i}] }).theme`),
+)}
+${reads(
+  "picked_later",
+  four(i => `(null! as Picked & { theme: [${i}] }).kind`),
+)}
+export {};
+`,
+    errors: `
+(16,7): error TS2322: Type '1' is not assignable to type 'never'.
+(17,7): error TS2322: Type '2' is not assignable to type 'never'.
+(18,7): error TS2322: Type '3' is not assignable to type 'never'.
+(19,7): error TS2322: Type '4' is not assignable to type 'never'.
+(20,7): error TS2322: Type '"k"' is not assignable to type 'never'.
+(21,7): error TS2322: Type '"k"' is not assignable to type 'never'.
+(22,7): error TS2322: Type '"j"' is not assignable to type 'never'.
+(23,7): error TS2322: Type '"k"' is not assignable to type 'never'.
+(24,7): error TS2322: Type 'false' is not assignable to type 'never'.
+(25,7): error TS2322: Type 'true' is not assignable to type 'never'.
+(26,7): error TS2322: Type 'false' is not assignable to type 'never'.
+(27,7): error TS2322: Type 'true' is not assignable to type 'never'.
+(28,7): error TS2322: Type '1' is not assignable to type 'never'.
+(29,7): error TS2322: Type '1' is not assignable to type 'never'.
+(30,7): error TS2322: Type '1' is not assignable to type 'never'.
+(31,7): error TS2322: Type '1' is not assignable to type 'never'.
+(32,7): error TS2322: Type '"k"' is not assignable to type 'never'.
+(33,7): error TS2322: Type '"k"' is not assignable to type 'never'.
+(34,7): error TS2322: Type '"k"' is not assignable to type 'never'.
+(35,7): error TS2322: Type '"k"' is not assignable to type 'never'.
+(36,7): error TS2322: Type '"k" | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+(37,7): error TS2322: Type '"k" | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+(38,7): error TS2322: Type '"k" | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+(39,7): error TS2322: Type '"k" | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+(40,7): error TS2322: Type 'true' is not assignable to type 'never'.
+(41,7): error TS2322: Type 'true' is not assignable to type 'never'.
+(42,7): error TS2322: Type 'true' is not assignable to type 'never'.
+(43,7): error TS2322: Type 'true' is not assignable to type 'never'.
+(44,7): error TS2322: Type '"k" | false' is not assignable to type 'never'.
+  Type '"k"' is not assignable to type 'never'.
+(45,7): error TS2322: Type '"k" | false' is not assignable to type 'never'.
+  Type '"k"' is not assignable to type 'never'.
+(46,7): error TS2322: Type '"k" | false' is not assignable to type 'never'.
+  Type '"k"' is not assignable to type 'never'.
+(47,7): error TS2322: Type '"k" | false' is not assignable to type 'never'.
+  Type '"k"' is not assignable to type 'never'.
+(49,7): error TS2322: Type 'T' is not assignable to type 'never'.
+  Type 'string' is not assignable to type 'never'.
+(50,7): error TS2322: Type '"j" | "k"' is not assignable to type 'never'.
+  Type '"j"' is not assignable to type 'never'.
+(51,7): error TS2322: Type 'T[]' is not assignable to type 'never'.
+(52,7): error TS2322: Type '"j" | "k"' is not assignable to type 'never'.
+  Type '"j"' is not assignable to type 'never'.
+(53,7): error TS2322: Type '"j" | "k"' is not assignable to type 'never'.
+  Type '"j"' is not assignable to type 'never'.
+(54,7): error TS2322: Type '"j" | "k"' is not assignable to type 'never'.
+  Type '"j"' is not assignable to type 'never'.
+(55,7): error TS2322: Type '[K]' is not assignable to type 'never'.
+(56,7): error TS2322: Type '"j" | "k"' is not assignable to type 'never'.
+  Type '"j"' is not assignable to type 'never'.
+(57,7): error TS2322: Type 'T' is not assignable to type 'never'.
+  Type 'string' is not assignable to type 'never'.
+(58,7): error TS2322: Type '"j" | "k"' is not assignable to type 'never'.
+  Type '"j"' is not assignable to type 'never'.
+(59,7): error TS2322: Type 'T' is not assignable to type 'never'.
+  Type 'string' is not assignable to type 'never'.
+(60,7): error TS2322: Type '"j" | "k"' is not assignable to type 'never'.
+  Type '"j"' is not assignable to type 'never'.
+(61,7): error TS2322: Type 'false' is not assignable to type 'never'.
+(62,7): error TS2322: Type 'false' is not assignable to type 'never'.
+(63,7): error TS2322: Type '"k"' is not assignable to type 'never'.
+(64,7): error TS2322: Type 'false' is not assignable to type 'never'.
+(65,7): error TS2322: Type 'false' is not assignable to type 'never'.
+(66,7): error TS2322: Type '"k"' is not assignable to type 'never'.
+(67,7): error TS2322: Type 'false' is not assignable to type 'never'.
+(68,7): error TS2322: Type 'false' is not assignable to type 'never'.
+(69,7): error TS2322: Type '"k"' is not assignable to type 'never'.
+(71,30): error TS2502: 'same' is referenced directly or indirectly in its own type annotation.
+(72,7): error TS7022: 'cyclic' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(73,7): error TS2322: Type '[1]' is not assignable to type 'never'.
+(74,7): error TS2322: Type '[2]' is not assignable to type 'never'.
+(75,7): error TS2322: Type '[3]' is not assignable to type 'never'.
+(76,7): error TS2322: Type '[4]' is not assignable to type 'never'.
+(77,7): error TS2322: Type '"k"' is not assignable to type 'never'.
+(78,7): error TS2322: Type '"k"' is not assignable to type 'never'.
+(79,7): error TS2322: Type '"k"' is not assignable to type 'never'.
+(80,7): error TS2322: Type '"k"' is not assignable to type 'never'.
+`,
+  },
+  "a protected property of several members of an intersection that has an alias": {
+    sizes: [0],
+    program: () => `
+class C { protected p = 1; c = 1 }
+class E { protected p = 1; e = 1 }
+interface I extends C { i: 1 }
+interface J extends E { j: 1 }
+type N = C & E & { x: 1 };
+type O = I & J;
+type G<T> = C & E & { x: T };
+type M = C & { x: 1 };
+declare const n: N, o: O, g: G<1>, u: N | O, direct: C & E;
+n.p;
+let q: typeof n.p;
+n?.p;
+n!.p;
+n.p = 1;
+o.p;
+g.p;
+u.p;
+direct.p;
+function f<T extends N>(t: T) { t.p; }
+const { p } = n;
+({ p: n.c } = n);
+class D extends C {
+  m(x: N, y: M, z: M | C) {
+    x.p;
+    y.p;
+    z.p;
+    const { p } = y;
+    ({ p: y.c } = y);
+  }
+}
+export {};
+`,
+    errors: `
+(11,3): error TS2445: Property 'p' is protected and only accessible within class 'C & E & { x: 1; }' and its subclasses.
+(12,17): error TS2445: Property 'p' is protected and only accessible within class 'C & E & { x: 1; }' and its subclasses.
+(13,4): error TS2445: Property 'p' is protected and only accessible within class 'C & E & { x: 1; }' and its subclasses.
+(14,4): error TS2445: Property 'p' is protected and only accessible within class 'C & E & { x: 1; }' and its subclasses.
+(15,3): error TS2445: Property 'p' is protected and only accessible within class 'C & E & { x: 1; }' and its subclasses.
+(16,3): error TS2445: Property 'p' is protected and only accessible within class 'I & J' and its subclasses.
+(17,3): error TS2445: Property 'p' is protected and only accessible within class 'C & E & { x: 1; }' and its subclasses.
+(18,3): error TS2445: Property 'p' is protected and only accessible within class 'N | O' and its subclasses.
+(19,8): error TS2445: Property 'p' is protected and only accessible within class 'C & E' and its subclasses.
+(20,35): error TS2445: Property 'p' is protected and only accessible within class 'C & E & { x: 1; }' and its subclasses.
+(21,9): error TS2445: Property 'p' is protected and only accessible within class 'N' and its subclasses.
+(22,4): error TS2445: Property 'p' is protected and only accessible within class 'N' and its subclasses.
+(25,7): error TS2445: Property 'p' is protected and only accessible within class 'C & E & { x: 1; }' and its subclasses.
+(26,7): error TS2446: Property 'p' is protected and only accessible through an instance of class 'D'. This is an instance of class 'C & { x: 1; }'.
+(27,7): error TS2446: Property 'p' is protected and only accessible through an instance of class 'D'. This is an instance of class 'C | M'.
+(28,13): error TS2446: Property 'p' is protected and only accessible through an instance of class 'D'. This is an instance of class 'M'.
+(29,8): error TS2446: Property 'p' is protected and only accessible through an instance of class 'D'. This is an instance of class 'M'.
+`,
+  },
+  "an interface that extends a mapped type over an intersection with itself": {
+    sizes: [0],
+    program: () => {
+      const bases = [
+        'Pick<Loop & Big, "b">',
+        'Pick<Big & Loop, "b">',
+        'Pick<Loop & Big, "b" | "own">',
+        'Pick<Both, "b">',
+        'P<Loop & Big, "b">',
+        "Q<Loop & Big>",
+        "Mid",
+      ];
+      return `
+interface Big { a: 1; b: 2; c: 3 }
+type P<T, K extends keyof T> = { [X in K]: T[X] };
+type Q<T> = { [X in "b"]: 5 } & { z: T };
+${bases
+  .map(
+    (base, n) => `namespace N${n} {
+  type Both = Loop & Big;
+  interface Mid extends Pick<Loop & Big, "b"> { mid: 1 }
+  interface Loop extends ${base} { own: 1 }
+  declare const loop: Loop, both: Loop & Big;
+  const b: never = loop.b;
+  const own: never = loop.own;
+  const k: keyof Loop = "zzz";
+  const whole: { own: 1; b: 3 } = loop;
+  const c: never = both.b;
+}`,
+  )
+  .join("\n")}
+namespace First {
+  declare const loop: Loop;
+  const b: never = loop.b;
+  interface Loop extends Pick<Loop & Big, "b"> { own: 1 }
+}
+export {};
+`;
+    },
+    errors: `
+(10,9): error TS2322: Type '2' is not assignable to type 'never'.
+(11,9): error TS2322: Type '1' is not assignable to type 'never'.
+(12,9): error TS2322: Type '"zzz"' is not assignable to type 'keyof Loop'.
+(13,9): error TS2322: Type 'Loop' is not assignable to type '{ own: 1; b: 3; }'.
+  Types of property 'b' are incompatible.
+    Type '2' is not assignable to type '3'.
+(14,9): error TS2322: Type '2' is not assignable to type 'never'.
+(18,13): error TS2615: Type of property 'b' circularly references itself in mapped type 'Pick<Big & Loop, "b">'.
+(21,9): error TS2322: Type 'any' is not assignable to type 'never'.
+(22,9): error TS2322: Type '1' is not assignable to type 'never'.
+(23,9): error TS2322: Type '"zzz"' is not assignable to type 'keyof Loop'.
+(25,9): error TS2322: Type 'any' is not assignable to type 'never'.
+(32,9): error TS2322: Type '2' is not assignable to type 'never'.
+(33,9): error TS2322: Type '1' is not assignable to type 'never'.
+(34,9): error TS2322: Type '"zzz"' is not assignable to type 'keyof Loop'.
+(35,9): error TS2322: Type 'Loop' is not assignable to type '{ own: 1; b: 3; }'.
+  Types of property 'b' are incompatible.
+    Type '2' is not assignable to type '3'.
+(36,9): error TS2322: Type '2' is not assignable to type 'never'.
+(40,13): error TS2615: Type of property 'b' circularly references itself in mapped type 'Pick<Both, "b">'.
+(43,9): error TS2322: Type 'any' is not assignable to type 'never'.
+(44,9): error TS2322: Type '1' is not assignable to type 'never'.
+(45,9): error TS2322: Type '"zzz"' is not assignable to type 'keyof Loop'.
+(47,9): error TS2322: Type 'any' is not assignable to type 'never'.
+(54,9): error TS2322: Type '2' is not assignable to type 'never'.
+(55,9): error TS2322: Type '1' is not assignable to type 'never'.
+(56,9): error TS2322: Type '"zzz"' is not assignable to type 'keyof Loop'.
+(57,9): error TS2322: Type 'Loop' is not assignable to type '{ own: 1; b: 3; }'.
+  Types of property 'b' are incompatible.
+    Type '2' is not assignable to type '3'.
+(58,9): error TS2322: Type '2' is not assignable to type 'never'.
+(65,9): error TS2322: Type '5' is not assignable to type 'never'.
+(66,9): error TS2322: Type '1' is not assignable to type 'never'.
+(67,9): error TS2322: Type '"zzz"' is not assignable to type 'keyof Loop'.
+(68,9): error TS2322: Type 'Loop' is not assignable to type '{ own: 1; b: 3; }'.
+  Types of property 'b' are incompatible.
+    Type '5' is not assignable to type '3'.
+(69,9): error TS2322: Type 'any' is not assignable to type 'never'.
+(69,25): error TS2339: Property 'b' does not exist on type 'never'.
+  The intersection 'Loop & Big' was reduced to 'never' because property 'b' has conflicting types in some constituents.
+(76,9): error TS2322: Type '2' is not assignable to type 'never'.
+(77,9): error TS2322: Type '1' is not assignable to type 'never'.
+(78,9): error TS2322: Type '"zzz"' is not assignable to type 'keyof Loop'.
+(79,9): error TS2322: Type 'Loop' is not assignable to type '{ own: 1; b: 3; }'.
+  Types of property 'b' are incompatible.
+    Type '2' is not assignable to type '3'.
+(80,9): error TS2322: Type '2' is not assignable to type 'never'.
+(84,9): error TS2322: Type 'any' is not assignable to type 'never'.
+(84,20): error TS2615: Type of property 'b' circularly references itself in mapped type 'Pick<Loop & Big, "b">'.
+`,
+  },
+  "a property of a mapped type that two keys spell, and copies of it": {
+    sizes: [0],
+    program: () => `
+enum A { x = "k" }
+enum B { y = "k" }
+declare const twice: { [K in A.x | B.y]: K };
+const spread = { ...twice };
+const both = { ...twice, ...{ z: 1 } };
+const again = { ...spread };
+const { ...rest } = twice;
+declare const u: typeof twice | { k: 1 };
+declare const i: typeof twice & { z: 1 };
+type M = { [K in keyof typeof twice]: 1 };
+type S = { [K in keyof typeof spread]: 1 };
+${reads("keys", [
+  "null! as keyof typeof twice",
+  "null! as keyof typeof spread",
+  "null! as keyof typeof both",
+  "null! as keyof typeof again",
+  "null! as keyof typeof rest",
+  "null! as keyof typeof u",
+  "null! as keyof typeof i",
+  "null! as keyof M",
+  "null! as keyof S",
+  "null! as keyof Pick<typeof twice, A.x>",
+])}
+${reads("values", [
+  "spread.k",
+  "again.k",
+  "(null! as M).k",
+  "(null! as S).k",
+  "(null! as Readonly<typeof twice>).k",
+  "(null! as Partial<typeof spread>).k",
+])}
+const byString: { [k: string]: 1 } = spread;
+const ofMapped: { [k: string]: 1 } = twice;
+function f<T>(t: { [K in keyof T]: T[K] }): T { return null!; }
+${reads("inferred", ["f(spread)", "f(twice)"])}
+for (const key in spread) { const h: never = key; }
+export {};
+`,
+    errors: `
+(13,7): error TS2322: Type 'A | B' is not assignable to type 'never'.
+  Type 'A' is not assignable to type 'never'.
+(15,7): error TS2322: Type '"z"' is not assignable to type 'never'.
+(19,7): error TS2322: Type '"z" | A | B' is not assignable to type 'never'.
+  Type '"z"' is not assignable to type 'never'.
+(20,7): error TS2322: Type 'A | B' is not assignable to type 'never'.
+  Type 'A' is not assignable to type 'never'.
+(22,7): error TS2322: Type 'A' is not assignable to type 'never'.
+(23,7): error TS2322: Type 'A | B' is not assignable to type 'never'.
+  Type 'A' is not assignable to type 'never'.
+(24,7): error TS2322: Type 'A | B' is not assignable to type 'never'.
+  Type 'A' is not assignable to type 'never'.
+(25,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(25,37): error TS2339: Property 'k' does not exist on type 'M'.
+(26,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(26,37): error TS2339: Property 'k' does not exist on type 'S'.
+(27,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(27,58): error TS2339: Property 'k' does not exist on type 'Readonly<{ k: A | B; }>'.
+(28,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(28,58): error TS2339: Property 'k' does not exist on type 'Partial<{ k: A | B; }>'.
+(29,7): error TS2322: Type '{ k: A | B; }' is not assignable to type '{ [k: string]: 1; }'.
+  Property 'k' is incompatible with index signature.
+    Type 'A | B' is not assignable to type '1'.
+      Type 'A' is not assignable to type '1'.
+(30,7): error TS2322: Type '{ k: A | B; }' is not assignable to type '{ [k: string]: 1; }'.
+  Property 'k' is incompatible with index signature.
+    Type 'A | B' is not assignable to type '1'.
+      Type 'A' is not assignable to type '1'.
+(32,7): error TS2322: Type '{ k: A | B; }' is not assignable to type 'never'.
+(33,7): error TS2322: Type '{ k: A | B; }' is not assignable to type 'never'.
+(34,35): error TS2322: Type 'string' is not assignable to type 'never'.
+`,
+  },
+  "the index signatures of the modifiers type of a mapped type with readonly, with -readonly and without": {
+    sizes: [0],
+    program: () => {
+      const rows = [
+        ["readonly ", "B", "string", '"x"'],
+        ["-readonly ", "B", "string", '"x"'],
+        ["", "B", "string", '"x"'],
+        ["+readonly ", "B", "string", '"x"'],
+        ["readonly ", "B | { [k: string]: 1 }", "string", '"x"'],
+        ["-readonly ", "B | { readonly [k: string]: 1 }", "string", '"x"'],
+        ["", "B | { readonly [k: string]: 1 }", "string", '"x"'],
+        ["readonly ", "B", '"a"', '"a"'],
+        ["readonly ", "B", "number", "0"],
+        ["readonly ", "B & { z: 1 }", "string", '"x"'],
+        ["", "B & { readonly [k: string]: 1 }", "string", '"x"'],
+      ];
+      return (
+        rows
+          .map(
+            ([modifier, modifiers, keys, key], n) => `
+namespace N${n} {
+  const shapes = { circle: (null! as RP<${modifiers}, ${keys}>)[${key}] };
+  type RP<T, K extends keyof T> = { ${modifier}[P in K]: 1 };
+  interface Base<T> { [k: string]: 1 }
+  interface B extends Base<typeof shapes> {}
+  interface Plain { [k: string]: 1 }
+  declare const written: RP<${modifiers.replace(/\bB\b/, "Plain")}, ${keys}>;
+  written[${key}] = 1;
+}`,
+          )
+          .join("") + "\nexport {};\n"
+      );
+    },
+    errors: `
+(3,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(6,13): error TS2310: Type 'B' recursively references itself as a base type.
+(9,3): error TS2542: Index signature in type 'RP<Plain, string>' only permits reading.
+(12,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(15,13): error TS2310: Type 'B' recursively references itself as a base type.
+(21,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(24,13): error TS2310: Type 'B' recursively references itself as a base type.
+(30,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(33,13): error TS2310: Type 'B' recursively references itself as a base type.
+(36,3): error TS2542: Index signature in type 'RP<Plain, string>' only permits reading.
+(39,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(42,13): error TS2310: Type 'B' recursively references itself as a base type.
+(45,3): error TS2542: Index signature in type 'RP<Plain | { [k: string]: 1; }, string>' only permits reading.
+(48,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(51,13): error TS2310: Type 'B' recursively references itself as a base type.
+(57,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(60,13): error TS2310: Type 'B' recursively references itself as a base type.
+(63,3): error TS2542: Index signature in type 'RP<Plain | { readonly [k: string]: 1; }, string>' only permits reading.
+(66,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(69,13): error TS2310: Type 'B' recursively references itself as a base type.
+(72,11): error TS2540: Cannot assign to 'a' because it is a read-only property.
+(75,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(78,13): error TS2310: Type 'B' recursively references itself as a base type.
+(81,3): error TS2542: Index signature in type 'RP<Plain, number>' only permits reading.
+(84,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(87,13): error TS2310: Type 'B' recursively references itself as a base type.
+(90,3): error TS2542: Index signature in type 'RP<Plain & { z: 1; }, string>' only permits reading.
+(93,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(96,13): error TS2310: Type 'B' recursively references itself as a base type.
 `,
   },
 };

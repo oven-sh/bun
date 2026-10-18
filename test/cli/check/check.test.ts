@@ -9358,6 +9358,15 @@ export default 2;
 declare namespace fn { const prop: "prop"; type Ty = "Ty"; }
 export = fn;
 `,
+        "named-only.d.ts": `declare module "with named imports only" {
+  import { Options, flag } from "emitter";
+  import { both, value } from "settings";
+  export const result: [Options, typeof flag, both, typeof both, typeof value];
+}
+declare module "that only re-exports" {
+  export { both, value as renamed } from "settings";
+}
+`,
         "names.ts": `import { prop, Ty } from "./fn";
 import { I, s } from "./cls";
 import { value, both, only } from "./obj";
@@ -9391,7 +9400,9 @@ export = obj;
 `,
         "plain.ts": `import two, { a, type T } from "./es";
 import { result } from "with a namespace import";
-export const all: never[] = [two, a, null! as T, result];
+import { result as named } from "with named imports only";
+import { both, renamed } from "that only re-exports";
+export const all: never[] = [two, a, null! as T, result, named, both, null! as both, renamed];
 `,
         "reexports.ts": `export { both, only, value } from "./obj";
 export { both as again } from "./through";
@@ -9474,10 +9485,14 @@ export = obj;
         namespaces.ts(13,79): error TS2322: Type '"the type both"' is not assignable to type 'never'.
         namespaces.ts(13,98): error TS2322: Type '"only a type"' is not assignable to type 'never'.
         namespaces.ts(13,121): error TS2322: Type '"T of es"' is not assignable to type 'never'.
-        plain.ts(3,30): error TS2322: Type 'number' is not assignable to type 'never'.
-        plain.ts(3,35): error TS2322: Type 'number' is not assignable to type 'never'.
-        plain.ts(3,38): error TS2322: Type '"T of es"' is not assignable to type 'never'.
-        plain.ts(3,50): error TS2322: Type '[typeof Emitter, Options, "flag", "the type both", "the value both", "value"]' is not assignable to type 'never'.
+        plain.ts(5,30): error TS2322: Type 'number' is not assignable to type 'never'.
+        plain.ts(5,35): error TS2322: Type 'number' is not assignable to type 'never'.
+        plain.ts(5,38): error TS2322: Type '"T of es"' is not assignable to type 'never'.
+        plain.ts(5,50): error TS2322: Type '[typeof Emitter, Options, "flag", "the type both", "the value both", "value"]' is not assignable to type 'never'.
+        plain.ts(5,58): error TS2322: Type '[Options, "flag", "the type both", "the value both", "value"]' is not assignable to type 'never'.
+        plain.ts(5,65): error TS2322: Type '"the value both"' is not assignable to type 'never'.
+        plain.ts(5,71): error TS2322: Type '"the type both"' is not assignable to type 'never'.
+        plain.ts(5,86): error TS2322: Type '"value"' is not assignable to type 'never'.
         reexports.ts(3,21): error TS2498: Module '"<dir>/fn"' uses 'export =' and cannot be used with 'export *'.
         reexports.ts(4,15): error TS2498: Module '"<dir>/cls"' uses 'export =' and cannot be used with 'export *'.
         reexports.ts(6,30): error TS2322: Type 'typeof import("<dir>/reexports")' is not assignable to type 'never'.
@@ -17462,6 +17477,58 @@ import "y";
       expect(stdout).toMatchInlineSnapshot(
         `"node_modules/x/node_modules/z/node_modules/dup/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
       );
+      expect(exitCode).toBe(1);
+    });
+
+    test("three copies of a package are one package, and another version with the same text is another", async () => {
+      // A package with its own copy of `dup`.
+      const dependent = (name: string, version: string) => ({
+        [`node_modules/${name}/package.json`]: `{ "name": "${name}", "version": "1.0.0", "types": "index.d.ts" }
+`,
+        [`node_modules/${name}/index.d.ts`]: `export { A, viaInner } from "dup";
+export declare const own: "own of ${name}";
+`,
+        [`node_modules/${name}/node_modules/dup/package.json`]: `{ "name": "dup", "version": "${version}", "types": "index.d.ts" }
+`,
+        [`node_modules/${name}/node_modules/dup/index.d.ts`]: `export declare class A {
+  #secret: number;
+  value: "A of dup";
+}
+export { inner as viaInner } from "./inner";
+`,
+        [`node_modules/${name}/node_modules/dup/inner.d.ts`]: `export declare const inner: "inner of dup";
+`,
+      });
+      using dir = project({
+        "a.ts": `import { A, viaInner, own as ownOfX } from "x";
+import { A as OfY, own as ownOfY } from "y";
+import { A as OfW, viaInner as innerOfW } from "w";
+import { A as OfOther } from "other";
+export const same: A = new OfY();
+export const alsoTheSame: OfY = new OfW();
+export const another: A = new OfOther();
+export const all: never[] = [new A().value, new OfW().value, new OfOther().value, viaInner, innerOfW, ownOfX, ownOfY];
+`,
+        ...dependent("x", "1.0.0"),
+        ...dependent("y", "1.0.0"),
+        ...dependent("w", "1.0.0"),
+        ...dependent("other", "2.0.0"),
+      });
+      const [{ stdout, exitCode }, ...others] = await Promise.all(
+        [8, 2, 1].map(threads => check(dir, ["--threads", String(threads)])),
+      );
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(7,14): error TS2322: Type 'import("<dir>/node_modules/other/node_modules/dup/index").A' is not assignable to type 'import("<dir>/node_modules/x/node_modules/dup/index").A'.
+          Property '#secret' in type 'A' refers to a different member that cannot be accessed from within type 'A'.
+        a.ts(8,30): error TS2322: Type '"A of dup"' is not assignable to type 'never'.
+        a.ts(8,45): error TS2322: Type '"A of dup"' is not assignable to type 'never'.
+        a.ts(8,62): error TS2322: Type '"A of dup"' is not assignable to type 'never'.
+        a.ts(8,83): error TS2322: Type '"inner of dup"' is not assignable to type 'never'.
+        a.ts(8,93): error TS2322: Type '"inner of dup"' is not assignable to type 'never'.
+        a.ts(8,103): error TS2322: Type '"own of x"' is not assignable to type 'never'.
+        a.ts(8,111): error TS2322: Type '"own of y"' is not assignable to type 'never'."
+      `);
+      for (const other of others) expect(other.stdout).toBe(stdout);
       expect(exitCode).toBe(1);
     });
 

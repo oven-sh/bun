@@ -73,7 +73,7 @@ impl<'s> Program<'s> {
                         .any(|it| listings.get(&it.0).is_some_and(|first| first.0 != it.1));
                 if is_invalid
                     || has_another_list
-                    || self.has_walked_across_earlier_walk(finished, &walked)
+                    || self.has_walked_across_earlier_walk(&finished.assignments_walked, &walked)
                 {
                     return true;
                 }
@@ -125,13 +125,13 @@ impl<'s> Program<'s> {
         *self.listings_are_not_compared.lock() = false;
     }
 
-    /// `earlier`: `Finished::assignments_walked` of the valid tasks before it.
-    fn has_walked_across_earlier_walk(
+    /// `walked`: `Finished::assignments_walked` of a task. `earlier`: those of the valid tasks before it.
+    pub(super) fn has_walked_across_earlier_walk(
         &self,
-        finished: &Finished<'s>,
+        walked: &[(FileId, Node, bool)],
         earlier: &[(FileId, Node)],
     ) -> bool {
-        (finished.assignments_walked.iter()).any(|&(file, node, is_visiting)| {
+        walked.iter().any(|&(file, node, is_visiting)| {
             let hir = self.files.hir(file);
             let is_in =
                 |inner: Node, outer: Node| hir.find_ancestor(inner, |n| n == outer).is_some();
@@ -198,6 +198,9 @@ impl<'s> Checker<'_, 's> {
     /// A checker for which this is not called is outside the plan: its writes are dropped with it.
     pub fn begin_task(&mut self, step: u32, index: u32, is_read_later: bool) {
         self.task.begin(step, index, is_read_later);
+        if self.p.types.shares_records() {
+            self.task.own.set_sharing(Sharing::Publishes);
+        }
         self.order_dependent.clear();
         self.order_dependent_filter = 0;
     }
@@ -391,6 +394,7 @@ impl<'s> Checker<'_, 's> {
     /// `checkSourceElements`
     fn check_source_elements(&mut self, file: FileId, statements: IdList<StmtId>) {
         for s in self.hir(file).ids(statements) {
+            self.rest_between_statements();
             self.check_source_element(file, s);
         }
     }
@@ -440,6 +444,7 @@ impl<'s> Checker<'_, 's> {
     /// `checkDeferredNodes`: nodes deferred in the meantime are appended to the queue.
     fn check_deferred_nodes(&mut self, file: FileId) {
         while let Some(e) = self.deferred_nodes.pop_front() {
+            self.rest_between_statements();
             let saved = self.enter_source_element(CurrentNode::Expr(file, e));
             self.check_deferred_node(file, e);
             self.current_source_element = saved;

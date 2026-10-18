@@ -155,6 +155,18 @@ pub trait Host: Sync {
     }
     /// Calls `work` with every index below `count`, on any number of threads.
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync));
+    /// `parallel`, and `meanwhile` on the calling thread: at the same time if `parallel` leaves the calling thread with
+    /// nothing to do but wait, and else when `work` is done. So `meanwhile` may wait for what `work` does, and `work` must
+    /// not wait for `meanwhile`. It returns when both are done.
+    fn parallel_while(
+        &self,
+        count: usize,
+        work: &(dyn Fn(usize) + Sync),
+        meanwhile: &mut dyn FnMut(),
+    ) {
+        self.parallel(count, work);
+        meanwhile();
+    }
     /// Whether `parallel` would run on the calling thread alone now, whatever the number of threads asked for.
     fn is_of_one_thread(&self) -> bool {
         false
@@ -378,6 +390,7 @@ impl Options {
             captures_suggestions,
             emits_first,
             orders_types_by_content,
+            shares_at_once,
             current_directory,
             lib_dir,
             libs,
@@ -468,7 +481,7 @@ impl Options {
         } = self;
         let _ = write!(
             key,
-            "{skip_lib_check:?} {skip_default_lib_check:?} {no_check:?} {drops_unreferenced:?} {captures_suggestions:?} {emits_first:?} {orders_types_by_content:?} {current_directory:?} {lib_dir:?} "
+            "{skip_lib_check:?} {skip_default_lib_check:?} {no_check:?} {drops_unreferenced:?} {captures_suggestions:?} {emits_first:?} {orders_types_by_content:?} {shares_at_once:?} {current_directory:?} {lib_dir:?} "
         );
         let _ = write!(
             key,
@@ -774,6 +787,9 @@ pub struct Options {
     /// Where TypeScript orders two types by their ids, they are ordered by what they are made of
     /// (`crate::types::TypeStore::ordered_by_content_in`). Not a TypeScript option.
     pub orders_types_by_content: bool,
+    /// A task publishes what it creates when it creates it (`crate::types::TypeStore::share_records`). The types are
+    /// ordered as with `orders_types_by_content` then. Not a TypeScript option.
+    pub shares_at_once: bool,
     /// `GetCurrentDirectory`
     pub current_directory: Vec<u8>,
     /// Where `lib.*.d.ts` are.
@@ -1865,8 +1881,12 @@ fn normalize_path_for_cjs_resolution(containing_directory: &[u8], module_name: &
     candidate
 }
 
+/// Off: `Resolver::package_json` returns a copy.
+const SHARES_PACKAGE_JSONS: bool = true;
+
 struct Package<'h> {
-    json: Json,
+    /// A program keeps those of its packages when the resolver is gone.
+    json: std::sync::Arc<Json>,
     /// `Name` and `Version`, if both are strings: without them `getPackageId` makes no id.
     name_and_version: Option<(&'h [u8], &'h [u8])>,
     /// `readPackageJsonPeerDependencies`
@@ -2795,7 +2815,7 @@ impl<'h> Resolver<'h> {
             let kept = |name: &[u8]| Some(self.keep(json.get(name)?.as_str()?));
             Package {
                 name_and_version: kept(b"name").zip(kept(b"version")),
-                json,
+                json: std::sync::Arc::new(json),
                 peer_dependencies: Default::default(),
             }
         });
@@ -2823,8 +2843,11 @@ impl<'h> Resolver<'h> {
     }
 
     /// The `package.json` in `dir`, if one exists.
-    pub fn package_json(&self, dir: &[u8]) -> Option<Json> {
-        self.package(dir).map(|package| package.json.clone())
+    pub fn package_json(&self, dir: &[u8]) -> Option<std::sync::Arc<Json>> {
+        self.package(dir).map(|package| match SHARES_PACKAGE_JSONS {
+            true => package.json.clone(),
+            false => std::sync::Arc::new(Json::clone(&package.json)),
+        })
     }
 
     /// `Resolver.GetPackageScopeForPath`: the nearest `package.json` in `dir` or an ancestor
@@ -3988,7 +4011,7 @@ impl<'h> Resolver<'h> {
         look: Look,
     ) -> Option<Vec<u8>> {
         if look.as_require {
-            let json = package.filter(|_| is_package_dir).map(|it| &it.json);
+            let json = package.filter(|_| is_package_dir).map(|it| &*it.json);
             let named = |field: &[u8]| {
                 let entry = get_package_json_path_field(json?, field, candidate, look)?;
                 let entry = strings::without_trailing_slash(&entry);

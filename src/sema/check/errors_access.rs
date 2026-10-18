@@ -157,6 +157,9 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
     ("Date", &[("esnext", &["toTemporalInstant"])]),
 ];
 
+/// `false`: TS2445 names the type that has the property as it is, and TS2446 names its apparent type, whoever asks, as before.
+const PRINTS_WHAT_THE_CALLER_PASSES: bool = true;
+
 /// `isSuper` and `writing` of `checkPropertyAccessibilityAtLocation`
 #[derive(Copy, Clone)]
 pub(super) struct PropertyAccess {
@@ -1546,22 +1549,35 @@ impl<'p> Checker<'p, '_> {
                 enclosing_class = Some(target);
             }
         }
+        // For `a.b` the caller passes `getApparentType`, for a pattern the type that is destructured. The apparent type of an
+        // intersection whose members take a `this` argument is another intersection, which has no alias, and
+        // `apparent_type` leaves it as it is.
+        let is_apparent_type =
+            matches!(at, Parent::Expr(e) if e.is_some() && hir.node(e) == location);
         let Some(enclosing_class) = enclosing_class else {
             // `getDeclaringClass`: a property synthesized from several declarations has no parent.
             let class = self.declaring_class(first).filter(|_| is_declared_once);
-            let class = class.map_or(containing, |class| self.declared_type(class));
+            let class = match class {
+                Some(class) => self.declared_type(class),
+                None if is_apparent_type && PRINTS_WHAT_THE_CALLER_PASSES => {
+                    self.apparent_type_of_intersection(containing)
+                }
+                None => containing,
+            };
             return self.report_inaccessible(error_node, 2445, first, &[class]);
         };
         if is_static {
             return true;
         }
-        // And only through an instance of that class, which a union is not (`hasBaseType`). The
-        // caller passes `getApparentType`: of `this & X`, which `this is X` narrows `this` to, it
-        // is the intersection of the class and `X`.
+        // And only through an instance of that class, which a union is not (`hasBaseType`). Of
+        // `this & X`, which `this is X` narrows `this` to, the apparent type is the intersection of
+        // the class and `X`.
         let through = if self.is_deferred(containing) {
             self.base_constraint(containing)
-        } else {
+        } else if is_apparent_type || !PRINTS_WHAT_THE_CALLER_PASSES {
             self.apparent_type_of_intersection(containing)
+        } else {
+            containing
         };
         if self.has_base(through, enclosing_class) {
             return true;

@@ -117,6 +117,11 @@ impl ActiveMappers {
         self.find(mapper).is_some()
     }
 
+    /// A bit for each active mapper: its number modulo 64.
+    pub(super) fn bits(&self) -> u64 {
+        (self.mappers.iter()).fold(0, |bits, mapper| bits | (1 << (mapper.0 % 64)))
+    }
+
     /// `pushActiveMapper`
     fn push(&mut self, mapper: MapperId) {
         self.pushed = self.pushed.wrapping_add(1).max(1);
@@ -157,6 +162,40 @@ impl PropInstantiation {
                 (prop.mapper, prop.name_type) = (mapper, TypeId::UNRESOLVED);
             }
         }
+    }
+
+    /// Whether `apply_to(prop)` and `other.apply_to(of_other)` would make `prop` and `of_other` equal. They have the same
+    /// name.
+    pub(super) fn makes_the_same_as(self, prop: &Prop, other: Self, of_other: &Prop) -> bool {
+        let name_type = |it: Self, of: &Prop| match it {
+            Self::MapperWithKey(_) => TypeId::UNRESOLVED,
+            Self::Type(_) | Self::Mapper(_) => of.name_type,
+        };
+        let mapper = |it: Self, of: &Prop| match it {
+            Self::Mapper(mapper) | Self::MapperWithKey(mapper) => mapper,
+            Self::Type(_) => of.mapper,
+        };
+        prop.flags == of_other.flags
+            && name_type(self, prop) == name_type(other, of_other)
+            && mapper(self, prop) == mapper(other, of_other)
+            && match (self, other) {
+                (Self::Type(new), Self::Type(other_new)) => {
+                    new == other_new
+                        && match (&prop.source, &of_other.source) {
+                            (PropSource::Type(_), PropSource::Type(_)) => true,
+                            (
+                                PropSource::Copy(_, declared, has_value_declaration),
+                                PropSource::Copy(_, other_declared, other_has_value_declaration),
+                            ) => {
+                                has_value_declaration == other_has_value_declaration
+                                    && declared == other_declared
+                            }
+                            _ => false,
+                        }
+                }
+                (Self::Type(_), _) | (_, Self::Type(_)) => false,
+                _ => prop.source == of_other.source,
+            }
     }
 
     /// Whether `apply_to(prop)` would make `prop` equal to `instantiated`, which has the same name.
@@ -583,6 +622,7 @@ impl<'p, 's> Checker<'p, 's> {
         if class == InstantiationClass::Unchanged {
             return ty;
         }
+        self.note_mapper_used(mapper);
         // Before any cache: at the limit tsgo fails every instantiation, that of a type parameter
         // too.
         if (self.instantiation_depth >= 100 || self.instantiation_count >= 5_000_000)
@@ -644,6 +684,7 @@ impl<'p, 's> Checker<'p, 's> {
         declared: TypeId,
         mapper: MapperId,
     ) -> TypeId {
+        self.note_mapper_used(mapper);
         if self.index_infos_in_instantiation.is_empty()
             && let Some((known, _)) = self.recent_instantiations.get_tagged(declared.0, mapper.0)
         {

@@ -12,6 +12,7 @@ macro_rules! cat {
 mod alias;
 mod call;
 mod check_source_file;
+pub mod commit;
 mod context;
 mod decl;
 mod decorators;
@@ -94,7 +95,7 @@ use crate::hir::{self, *};
 use crate::local::MaybeLocal;
 use crate::program::{FileId, Files, Sym};
 use crate::session::{Arena, ArenaBox, Session};
-use crate::session::{ArenaHashMap, ArenaHashSet, ArenaVec, map_in, set_in, vec_from_iter_in};
+use crate::session::{ArenaVec, vec_from_iter_in};
 use crate::table::{Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect, FileLocal};
 use crate::types::Prop;
 use crate::types::*;
@@ -194,11 +195,14 @@ pub struct Program<'s> {
     /// `Finished::closed_a_cycle`.
     pub closed_a_cycle: AtomicBool,
     /// `Finished::order_dependent_variances` of the valid tasks so far: the first value in serial order for each symbol. Written at a
-    /// barrier (`Program::validate`), read on a cache miss in `variances_worker`.
-    serial_variances: Guarded<ArenaHashMap<'s, Sym, &'s [u8]>>,
+    /// barrier (`Program::validate`) or at a commit, read on a cache miss in `variances_worker`. Any thread adds to this
+    /// map and the next one, so they are on the regular heap: `release`.
+    serial_variances: Guarded<FxHashMap<Sym, &'s [u8]>>,
     /// `Finished::listings` of the valid tasks so far: the first in serial order for each
-    /// intersection. Written and read at a barrier (`Program::validate`).
-    serial_listings: Guarded<ArenaHashMap<'s, Sym, (bool, bool)>>,
+    /// intersection. Written and read at a barrier (`Program::validate`) or at a commit.
+    serial_listings: Guarded<FxHashMap<Sym, (bool, bool)>>,
+    /// See `commit`.
+    commits: commit::Commits<'s>,
     /// A round of retries left every invalid task invalid: `Finished::listings` are not compared
     /// for the rest of the step (`Program::stop_comparing_listings`).
     listings_are_not_compared: Guarded<bool>,
@@ -459,7 +463,8 @@ impl<'s> Program<'s> {
         let scopes = bases(|m| m.bound.scopes.len());
         let type_params = bases(|m| m.hir.type_params.len());
         let symbols = bases(|m| m.bound.symbols.len());
-        let types = match files.options.orders_types_by_content {
+        let shares_at_once = files.options.shares_at_once;
+        let mut types = match files.options.orders_types_by_content || shares_at_once {
             true => TypeStore::ordered_by_content_in(session, files.atoms),
             false => TypeStore::new_in(session),
         };
@@ -479,11 +484,15 @@ impl<'s> Program<'s> {
                     arena,
                 )),
             });
+        if shares_at_once {
+            types.share_records();
+        }
         let mut program = Program {
             session,
             closed_a_cycle: Default::default(),
-            serial_variances: Guarded::new(map_in(session.arena())),
-            serial_listings: Guarded::new(map_in(session.arena())),
+            serial_variances: Guarded::default(),
+            serial_listings: Guarded::default(),
+            commits: commit::Commits::new_in(session.arena()),
             listings_are_not_compared: Guarded::new(false),
             properties_referenced_before: Default::default(),
             emit_helper_errors_of_earlier_files: Default::default(),
@@ -586,6 +595,10 @@ impl<'s> Program<'s> {
         let session = self.session;
         let no_nodes = Bases::none_in(&session);
         self.sink.release();
+        self.types.release();
+        self.commits.release();
+        *self.serial_variances.get_mut() = FxHashMap::default();
+        *self.serial_listings.get_mut() = FxHashMap::default();
         *self.global_errors.get_mut() = Default::default();
         self.call_diagnostics = ByNodeIndirect::new_in(&no_nodes, session);
         self.diagnostics_of_re_resolved_calls = ByNodeIndirect::new_in(&no_nodes, session);
@@ -632,11 +645,16 @@ impl<'s> Program<'s> {
 
     pub fn checker(&self) -> Checker<'_, 's> {
         let arena = self.session.arena();
+        let mut task = Task::new_in(arena);
+        if self.types.shares_records() {
+            task.own.set_sharing(Sharing::Finds);
+        }
+        task.own.set_jitter(self.commits.jitter);
 
         Checker {
             p: self,
             arena,
-            task: Task::new_in(arena),
+            task,
             left_frame: None,
             files: self.files,
             variance_type_parameter: Atom::NONE,
@@ -755,6 +773,7 @@ impl<'s> Program<'s> {
             failed_type_argument: 0,
             order_dependent: Default::default(),
             order_dependent_filter: 0,
+            order_dependent_uses: 0,
             simplified: Default::default(),
             inherited_names: [0; 4],
             inherited_name_set: None,
@@ -1464,6 +1483,8 @@ pub struct Checker<'p, 's> {
     order_dependent: FxHashMap<Sym, u32>,
     /// A 64-bit Bloom filter for the keys of `order_dependent`.
     order_dependent_filter: u64,
+    /// How many times variances in `order_dependent` were used.
+    order_dependent_uses: u64,
     /// `simplifiedForReading` and `simplifiedForWriting`.
     simplified: [shortcuts::TypeMap<TypeId>; 2],
     /// A 256-bit filter of the property names of `Object`, `Function`, `CallableFunction` and
@@ -1995,7 +2016,7 @@ impl<'p, 's> Checker<'p, 's> {
         if used > self.stack_limit {
             self.ran_out_of_stack.set(true);
             self.times_cut_short.set(self.times_cut_short.get() + 1);
-            self.note_state_was_read();
+            self.note_gave_up();
             return true;
         }
         false
@@ -2849,6 +2870,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `bailed_out`, where the frame at `from` makes the query again: see `starts_over_from_lower`.
     fn bailed_out_from(&mut self, from: usize) {
+        self.note_gave_up();
         self.mark_tainted_from(from);
         self.note_cycle();
         self.refused_at = self.work;
@@ -2962,6 +2984,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// refused. Returns `UNRESOLVED` where the recursion here is no evidence of recursion in tsgo:
     /// after a refusal, and more than 60 levels of `instantiate` deep under a conditional type.
     pub(super) fn excessively_deep(&mut self) -> TypeId {
+        self.note_gave_up();
         // Only the call right after a refused `enter` sees the refusal.
         let is_limit_in_tsgo = match std::mem::replace(&mut self.last_enter, EnterOutcome::Entered)
         {
@@ -2983,6 +3006,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `instantiateTypeWithAlias`: `instantiationDepth == 100`. `instantiation_depth` counts what tsgo counts under a conditional type
     /// too: `resolve_conditional` follows a tail call in a loop, as `getConditionalType` does.
     pub(super) fn instantiation_too_deep(&mut self) -> TypeId {
+        self.note_gave_up();
         self.instantiation_limit_hits += 1;
         if std::mem::replace(&mut self.last_enter, EnterOutcome::Entered) == EnterOutcome::Refused {
             return TypeId::UNRESOLVED;
@@ -3035,6 +3059,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// the program, so which task reaches the limit, and at which node, is too.
     #[cold]
     fn error_at_current_node(&mut self, code: u32) {
+        self.note_gave_up();
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
         let is_reported = self.eager.is_empty();
         // Outside of an expression, `c.currentNode` is the statement or declaration that
@@ -3551,6 +3576,17 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     fn note_state_was_read(&self) {
         self.task.hold_back();
+    }
+
+    /// The checker has given up: at a limit of instantiation (2589), of the size of a union (2590) or of a comparison (2859,
+    /// 2321), for lack of native stack, or at a depth at which a query is refused. What it returns then is no function
+    /// of the question alone. How far from the limit a computation begins, and how much of it is left to do, depends on
+    /// what was computed before, which for a task that sees commits includes what it has found. Such a task is lost.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn note_gave_up(&self) {
+        self.note_state_was_read();
+        self.task.lose();
     }
 
     /// Increments `cycles`.

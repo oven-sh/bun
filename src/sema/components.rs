@@ -12,6 +12,8 @@ pub struct Component<'s> {
     pub files: &'s [FileId],
     /// 0 if it imports nothing outside itself. Otherwise one more than the highest level of a component it imports.
     pub level: u32,
+    /// The other components that its files import, each once: their indices in `Components::all`.
+    pub imports: &'s [u32],
 }
 
 pub struct Components<'s> {
@@ -53,11 +55,17 @@ impl<'s> Components<'s> {
         // Numbered by the traversal: a component has a higher number than every component it imports.
         let (number_of, numbered) = strongly_connected_components(&edges);
         let mut levels = vec![0u32; numbered.len()];
+        let mut imports: Vec<Vec<usize>> = vec![Vec::new(); numbered.len()];
+        // The last component that was found to import each one.
+        let mut last_importer = vec![usize::MAX; numbered.len()];
         for (number, nodes) in numbered.iter().enumerate() {
             for &imported in nodes.iter().flat_map(|&node| &edges[node]) {
                 let imported = number_of[imported as usize] as usize;
                 if imported != number {
                     levels[number] = levels[number].max(levels[imported] + 1);
+                    if std::mem::replace(&mut last_importer[imported], number) != number {
+                        imports[number].push(imported);
+                    }
                 }
             }
         }
@@ -70,6 +78,7 @@ impl<'s> Components<'s> {
         let component = |&number: &usize| Component {
             files: arena.alloc_slice_fill_iter(numbered[number].iter().map(|&node| order[node])),
             level: levels[number],
+            imports: arena.alloc_slice_fill_iter(imports[number].iter().map(|&it| index_of[it])),
         };
         let of_node = |&node: &u32| match number_of.get(node as usize) {
             Some(&number) => index_of[number as usize],

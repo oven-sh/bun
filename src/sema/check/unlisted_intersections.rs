@@ -3,7 +3,7 @@
 //! The members of an intersection are a list with a copy of every property of every constituent, and an index of their
 //! names. `Props & Omit<React.HTMLAttributes<T>, keyof Props>` has 300 of them, and takes no list to be asked for `children`
 //! and `className`. So the first lookup by name leaves the properties where they are, in the constituents. The list is
-//! made when something asks for it (`members`), or when a quarter of the names were asked for.
+//! made when something asks for it (`members`), or after a quarter as many lookups as there are names.
 //!
 //! tsgo lists the properties of an intersection before it looks the first one up (`getReducedType`), and what that resolves
 //! can report errors, close cycles, create types and add to `instantiationCount`. So nothing that computes anything waits:
@@ -22,13 +22,15 @@
 //!   last step, which check nearly all the files, publish nothing.
 //!
 //! A property that is found by name is equal to the one in the list, field by field. It is not at the same address. Only
-//! `UnionPropertyBuilder::symbols` tells properties apart by address, and `property_holder`, which feeds it, lists.
+//! `UnionPropertyBuilder::symbols` tells properties apart by address, and it knows a property of an intersection by the
+//! intersection.
 //!
 //! All of this belongs to one checker, and so to one task. The thresholds change the time, never a result.
 
 use super::super::instantiate::PropInstantiation;
 use super::super::*;
-use super::{Built, IntersectionBuilder, RECENT_MEMBERS, Resolved};
+use super::reduction::SharedNames;
+use super::{Built, IntersectionBuilder, MemberCount, RECENT_MEMBERS, Resolved};
 use crate::util::PositionSet;
 use smallvec::SmallVec;
 
@@ -44,8 +46,16 @@ const SHADOW: bool = false;
 /// theirs is soon made, and a name is found faster in it than in a table by type and then in each constituent.
 const MIN_PROPERTIES: usize = 32;
 
-/// With more constituents it is listed at once: each is compared with each other for the names that they share.
-const MOST_CONSTITUENTS: usize = 8;
+/// With more constituents it is listed at once. `Some(8)`: as before.
+const MOST_CONSTITUENTS: Option<usize> = None;
+
+/// `false`: `add_member` lists the properties of a member of a union that is an intersection, as before. `SHADOW` checks what
+/// is found by name there too.
+pub(super) const IN_UNIONS: bool = true;
+
+/// `false`: an intersection is listed when a quarter of its names were found, as before. Otherwise when it was asked a
+/// quarter as many times as it has names, in vain or not: a union asks every member for the names of the others.
+const COUNTS_EVERY_LOOKUP: bool = true;
 
 /// A constituent of an intersection, and what `build_intersection_shape` has computed for its properties.
 pub(super) struct Constituent<'p> {
@@ -93,30 +103,22 @@ fn take_any_mapper(props: &[Prop]) -> bool {
     })
 }
 
-/// Sets `Constituent::shared`. Of two constituents, the names of the one that has fewer are looked up in the other.
-fn find_shared_names(constituents: &mut [Constituent]) {
+/// Sets `Constituent::shared`, and returns how many properties that is. No constituent has a name twice.
+fn find_shared_names(constituents: &mut [Constituent]) -> usize {
     for constituent in constituents.iter_mut() {
         constituent.shared = PositionSet::new(constituent.props().len());
     }
-    for later in 1..constituents.len() {
-        let (earlier, rest) = constituents.split_at_mut(later);
-        let later = &mut rest[0];
-        for earlier in earlier {
-            if !(earlier.members.resolved).may_share_a_name_with(later.members.resolved) {
-                continue;
-            }
-            let (few, many) = match earlier.props().len() <= later.props().len() {
-                true => (&mut *earlier, &mut *later),
-                false => (&mut *later, &mut *earlier),
-            };
-            for (position, prop) in few.props().iter().enumerate() {
-                if let Some(other) = many.members.resolved.position(prop.name) {
-                    few.shared.insert(position);
-                    many.shared.insert(other);
-                }
-            }
+    let all: SmallVec<[Members; 8]> = constituents.iter().map(|it| it.members).collect();
+    let names = SharedNames::of(&all);
+    let mut count = 0;
+    for place in 0..names.len() {
+        let holders = names.holders(place);
+        count += holders.len();
+        for &(at, position) in holders {
+            constituents[at as usize].shared.insert(position as usize);
         }
     }
+    count
 }
 
 impl<'s> IntersectionBuilder<'s> {
@@ -131,14 +133,25 @@ impl<'s> IntersectionBuilder<'s> {
         }
     }
 
-    /// Adds the properties of `constituents` whose name several of them have.
-    pub(super) fn add_shared(&mut self, constituents: &mut [Constituent], arena: &'s Arena) {
-        find_shared_names(constituents);
+    /// Adds the properties of `constituents` whose name several of them have. `false`: that is more than half of them, so
+    /// it has added them all. `Components[keyof Components]` in a parameter has little else.
+    pub(super) fn add_shared(
+        &mut self,
+        constituents: &mut [Constituent],
+        arena: &'s Arena,
+    ) -> bool {
+        let shared = find_shared_names(constituents);
+        let count: usize = constituents.iter().map(|it| it.props().len()).sum();
+        if shared * 2 > count {
+            self.add_all(constituents, arena);
+            return false;
+        }
         for constituent in constituents.iter() {
             for position in constituent.shared.iter() {
                 self.add(constituent.copy_of_property(position, arena), arena);
             }
         }
+        true
     }
 }
 
@@ -154,6 +167,8 @@ struct Unlisted<'p> {
     found: FxHashMap<Atom, &'p Prop<'p>>,
     /// How many properties the constituents have.
     count: usize,
+    /// How many times `property_of_unlisted_intersection` has asked.
+    lookups: usize,
 }
 
 impl<'p> Unlisted<'p> {
@@ -216,7 +231,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         let count: usize = constituents.iter().map(|it| it.props().len()).sum();
         count >= MIN_PROPERTIES
-            && constituents.len() <= MOST_CONSTITUENTS
+            && MOST_CONSTITUENTS.is_none_or(|most| constituents.len() <= most)
             // Two properties of one constituent that have one name are combined as well.
             && (constituents.iter()).all(|it| it.members.resolved.has_distinct_names())
             && (constituents.iter()).all(|it| self.has_stored_members(it.asked, it.members))
@@ -244,6 +259,7 @@ impl<'p, 's> Checker<'p, 's> {
             combined,
             stored,
             found: FxHashMap::default(),
+            lookups: 0,
         };
         self.unlisted_intersections.by_type.insert(ty, unlisted);
         Built {
@@ -339,11 +355,18 @@ impl<'p, 's> Checker<'p, 's> {
         let unlisted = self.unlisted_intersections.by_type.get_mut(&ty)?;
         let found = unlisted.find(name, arena);
         let combined = unlisted.combined;
-        let is_asked_often = unlisted.found.len() * 4 >= unlisted.count;
+        unlisted.lookups += 1;
+        let asked = match COUNTS_EVERY_LOOKUP {
+            true => unlisted.lookups,
+            false => unlisted.found.len(),
+        };
+        let is_asked_often = asked * 4 >= unlisted.count;
+        self.tally(MemberCount::AskedOfUnlisted, 1);
         if SHADOW {
             self.check_property_of_unlisted_intersection(ty, name, found);
         }
         if is_asked_often {
+            self.tally(MemberCount::ListedAfterBeingAsked, 1);
             let _ = self.members(ty);
         }
         if let Some(prop) = found {
@@ -358,6 +381,20 @@ impl<'p, 's> Checker<'p, 's> {
             mapper: MapperId::IDENTITY,
         };
         self.property_in_type(ty, &members, name)
+    }
+
+    /// Whether the intersection `ty` has `prop` itself. `property_of_unlisted_intersection` has just found it, there or in a
+    /// global type whose properties `ty` has, and may have listed the properties.
+    pub(super) fn is_own_property_of_intersection(&mut self, ty: TypeId, prop: &Prop) -> bool {
+        match self.unlisted_intersections.by_type.get(&ty) {
+            Some(unlisted) => {
+                unlisted.found.contains_key(&prop.name)
+                    || unlisted.combined.prop(prop.name).is_some()
+            }
+            None => {
+                (self.members(ty)).is_some_and(|members| members.resolved.prop(prop.name).is_some())
+            }
+        }
     }
 
     /// Under `SHADOW`, in `leave_unlisted`.

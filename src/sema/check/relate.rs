@@ -4,6 +4,7 @@
 //! `backticks` at the head of a function are the names used there. `REPORT` is `reportErrors`. Code
 //! that only serves error elaboration is in `explain_relation.rs`.
 
+use super::commit::{NotShared, VarianceClaim};
 use super::explain_relation::{
     Chain, ErrorState, chain_depth, is_same_chain, visibility_to_string,
 };
@@ -782,7 +783,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match self.resolved_members(ty) {
             Some(members) => Self::has_no_members(members.whole_shape()),
-            None => self.has_no_members_in_place(ty),
+            None => {
+                self.note_absent_members();
+                self.has_no_members_in_place(ty)
+            }
         }
     }
 
@@ -2771,14 +2775,11 @@ impl<'p, 's> Checker<'p, 's> {
             self.variance_cycles += 1;
             return &[];
         }
-        // The value of the first task in serial order, for a task that is retried (`Program::validate`).
+        // The value of the first task in serial order, for a task that is retried (`Program::validate`). For a task that
+        // commits, also what a measurement that has ended has shared: `commit::Claims`.
         let serial = self.p.serial_variances.lock().get(&sym).copied();
         if let Some(variances) = serial {
-            let scope = self.begin_scope();
-            return match self.end_scope_as(scope, false) {
-                Ok(stored) => self.p.variances.insert(&self.task, sym, variances, stored),
-                Err(_) => variances,
-            };
+            return self.take_shared_variances(sym, variances);
         }
         let (cuts, outermost) = (
             self.cuts(),
@@ -2792,6 +2793,21 @@ impl<'p, 's> Checker<'p, 's> {
             self.cut_short_again();
             return known;
         }
+        // Only a thread that is not measuring claims or waits: see `commit::Claims` for why.
+        let mut has_claim = false;
+        if self.task.commits() && !self.in_variance_computation {
+            self.task.own.wait_at(crate::jitter::Place::Claim);
+            let claim = self.p.claim_variances(sym, cuts == 0);
+            self.task.own.wait_at(crate::jitter::Place::Claim);
+            match claim {
+                VarianceClaim::Known(variances) => {
+                    return self.take_shared_variances(sym, variances);
+                }
+                VarianceClaim::Mine => has_claim = true,
+                VarianceClaim::Unclaimed => {}
+            }
+        }
+        let before = self.what_forbids_sharing();
         self.variances_in_progress.push(sym);
         let was_computing = std::mem::replace(&mut self.in_variance_computation, true);
         let variance_cycles = self.variance_cycles;
@@ -2862,18 +2878,24 @@ impl<'p, 's> Checker<'p, 's> {
         self.variances_in_progress.pop();
         // Kept until the check ends, published or not: a few bytes.
         let variances: &'s [u8] = self.arena.alloc_slice_copy(&variances);
+        let mut is_open = false;
         let variances = match self.end_scope(scope) {
             Ok(stored) => {
                 self.variances_measured.push((sym, variances));
                 self.p.variances.insert(&self.task, sym, variances, stored)
             }
             Err(_) => {
+                is_open = true;
                 if self.cuts() != cuts {
                     self.variances_cut_short.insert(sym, (outermost, variances));
                 }
                 variances
             }
         };
+        if !was_computing && self.task.commits() {
+            let has_met_a_cycle = self.variance_cycles != variance_cycles;
+            self.share_what_was_measured((sym, has_claim), before, has_met_a_cycle, is_open);
+        }
         if !was_computing && self.variance_cycles != variance_cycles {
             for (sym, variances) in self.variances_measured.drain(..) {
                 let at = self.task.order_dependent_variances.len() as u32;
@@ -2890,6 +2912,98 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         variances
+    }
+
+    /// The variances of `sym` are `variances`, which `Program::serial_variances` has. They are stored like a result of this
+    /// task's own, so from now on `are_marker_arguments` knows the marker types of `sym`, as after a measurement.
+    fn take_shared_variances(&mut self, sym: Sym, variances: &'s [u8]) -> &'s [u8] {
+        let scope = self.begin_scope();
+        match self.end_scope_as(scope, false) {
+            Ok(stored) => self.p.variances.insert(&self.task, sym, variances, stored),
+            Err(_) => variances,
+        }
+    }
+
+    /// What has to be the same before and after a measurement that is shared at once: the diagnostics reported, those
+    /// settled, and the uses of variances that depend on the order.
+    fn what_forbids_sharing(&self) -> (usize, usize, u64) {
+        (
+            self.reported.len(),
+            self.task.diagnostics.len(),
+            self.order_dependent_uses,
+        )
+    }
+
+    /// In a task that commits: an outermost measurement has ended, of `sym`. `has_claim`: this thread has the claim of `sym`.
+    /// `before`: `what_forbids_sharing` when the measurement began. `is_open`: its result was not stored.
+    ///
+    /// `variances_measured` has what was stored since it began: the variances of `sym`, and of the symbols that were
+    /// measured inside. Each is valid for every caller in this task (`end_scope`), which is what lets the task commit
+    /// it. It is shared now, with tasks that are running, only if besides
+    /// - no cycle was met: otherwise the values depend on where the cycle was entered, and go through `OrderDependent`
+    ///   and the next commit;
+    /// - nothing was reported: a thread that takes the result does not evaluate what has reported it;
+    /// - nothing was used for which the next commit can find this task invalid, and the task is not lost. What such a task
+    ///   has computed is dropped, and what is shared can't be taken back. What happens to the task later does not
+    ///   matter: the measurement is over.
+    ///
+    /// What is not shared, and met no cycle, is noted like a value that did, as if every variance in it had been used. So
+    /// the next commit compares it with what `serial_variances` has by then, and registers it there if there is nothing.
+    /// Otherwise a task that measures the same symbol in a cycle, and commits first, would make another value the one
+    /// that counts, and nobody would notice that this task has used its own.
+    ///
+    /// What a thread that takes the flags goes without, compared to one that measures:
+    /// - The entries of `relations` for the marker types, and for what was compared inside. They are results: a thread
+    ///   that needs one computes it. Each has its own `REPORTS_UNMEASURABLE` and `REPORTS_UNRELIABLE`, every hit adds them
+    ///   to `reliability`, and what sets them asks the type (`HAS_MARKER`), not whether a measurement is going on. So a
+    ///   later measurement gets the same marks from an entry as from the comparison. The one test of
+    ///   `in_variance_computation`, in `type_arguments_related_to`, is about a type with a marker. Those of a measurement
+    ///   are only compared during one, and `checkTypeParameterDeferred` has markers of its own.
+    /// - `instantiation_count` and `relation_sizes`, which are lower. They matter at a limit (2589, 2859), where the task
+    ///   is lost.
+    /// - `Task::order_dependent_variances`: there is nothing to note about a value that no cycle was met for.
+    fn share_what_was_measured(
+        &mut self,
+        (sym, has_claim): (Sym, bool),
+        before: (usize, usize, u64),
+        has_met_a_cycle: bool,
+        is_open: bool,
+    ) {
+        let now = self.what_forbids_sharing();
+        let reason = match () {
+            _ if has_met_a_cycle => Some(NotShared::Cycle),
+            _ if (now.0, now.1) != (before.0, before.1) => Some(NotShared::Diagnostic),
+            _ if now.2 != before.2 || self.task.may_be_thrown_away() => Some(NotShared::Notes),
+            _ => None,
+        };
+        // After a cycle the caller notes them.
+        let measured = match has_met_a_cycle {
+            true => &[][..],
+            false => &self.variances_measured[..],
+        };
+        let may_share = reason.is_none();
+        // What was measured inside can be whole where the outermost result is not.
+        let reason = reason.or(is_open.then_some(NotShared::Open));
+        let claimed = has_claim.then_some((sym, reason));
+        self.task.own.wait_at(crate::jitter::Place::VariancesShared);
+        let not_registered = self.p.share_variances(measured, may_share, claimed);
+        self.task.own.wait_at(crate::jitter::Place::VariancesShared);
+        for (sym, variances) in not_registered {
+            if self.order_dependent.contains_key(&sym) {
+                continue;
+            }
+            let at = self.task.order_dependent_variances.len() as u32;
+            self.order_dependent.insert(sym, at);
+            self.order_dependent_filter |= Self::order_dependent_bit(sym);
+            self.task.order_dependent_variances.push(OrderDependent {
+                sym,
+                variances,
+                compared: u32::MAX,
+                failed: 0,
+                void_targets: 0,
+                inferred: 0,
+            });
+        }
     }
 
     #[inline]
@@ -2909,6 +3023,8 @@ impl<'p, 's> Checker<'p, 's> {
         if self.order_dependent_filter & Self::order_dependent_bit(sym) != 0
             && let Some(&at) = self.order_dependent.get(&sym)
         {
+            self.order_dependent_uses += 1;
+            self.task.hold_back();
             // How many pairs were compared.
             let count = match holds {
                 true => sources.len().min(targets.len()),
@@ -2940,6 +3056,8 @@ impl<'p, 's> Checker<'p, 's> {
         if self.order_dependent_filter & Self::order_dependent_bit(sym) != 0
             && let Some(&at) = self.order_dependent.get(&sym)
         {
+            self.order_dependent_uses += 1;
+            self.task.hold_back();
             let all = u32::MAX.checked_shr(32 - count.min(32) as u32).unwrap_or(0);
             self.task.order_dependent_variances[at as usize].inferred |= all;
         }
@@ -4194,6 +4312,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Ternary::FALSE;
         }
         if r.relation_count <= 0 {
+            self.note_gave_up();
             r.overflow = true;
             return Ternary::FALSE;
         }
@@ -4209,6 +4328,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let is_too_deep = r.source_stack.len() == 100 || r.target_stack.len() == 100;
         if is_too_deep || self.is_stack_low() {
+            self.note_gave_up();
             r.is_too_deep |= is_too_deep;
             r.overflow = true;
             return Ternary::FALSE;
@@ -4314,6 +4434,7 @@ impl<'p, 's> Checker<'p, 's> {
         relation: Relation,
         kind: u8,
     ) {
+        self.note_gave_up();
         let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
         let scope = self.begin_scope();
         if let Ok(stored) = self.end_scope_as(scope, false) {
@@ -4800,6 +4921,7 @@ impl<'p, 's> Checker<'p, 's> {
         // types, so we only need to check the properties of the first type without index signature".
         let mut props: ArenaVec<Prop> = ArenaVec::new_in(self.arena);
         let mut names_of_props = FxHashSet::<Atom>::default();
+        let was_listing = self.union_members.set_listing(true);
         for &current in members {
             let Some(of_current) = self.members(current) else {
                 continue;
@@ -4818,6 +4940,7 @@ impl<'p, 's> Checker<'p, 's> {
                 break;
             }
         }
+        self.union_members.set_listing(was_listing);
         self.synth(Shape {
             props,
             ..Shape::new_in(self.arena)

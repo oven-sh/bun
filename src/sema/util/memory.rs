@@ -9,6 +9,8 @@
 //! - `Cells`: atomic integers for a range of indices that keeps growing, initially all zero.
 //! - `Newest`: the newest of a series of slices of cells, read without a lock.
 //!
+//! And `slice_made_by`: a boxed slice whose elements are written by several threads.
+//!
 //! Each gets its memory from the allocator that it holds, and returns it there. Any thread that
 //! adds to an `AppendVec`, a `Cells` or a `Newest` may allocate, and the thread that drops it frees.
 
@@ -373,8 +375,19 @@ impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
     /// `cell`, and something has ordered the earlier calls before this one.
     #[inline]
     pub fn existing(&self, index: u32) -> Option<&C> {
+        self.existing_loaded(index, Ordering::Relaxed)
+    }
+
+    /// `existing`, while other threads call `cell`.
+    #[inline]
+    pub fn existing_by_now(&self, index: u32) -> Option<&C> {
+        self.existing_loaded(index, Ordering::Acquire)
+    }
+
+    #[inline(always)]
+    fn existing_loaded(&self, index: u32, order: Ordering) -> Option<&C> {
         let Located { chunk, offset } = Chunks::<C, FIRST_CELLS_BITS, A>::locate(index);
-        let base = self.chunks.bases[chunk].load(Ordering::Relaxed);
+        let base = self.chunks.bases[chunk].load(order);
         if base.is_null() {
             return None;
         }
@@ -506,6 +519,31 @@ impl<C, A: Allocator + Clone> Drop for Newest<C, A> {
     fn drop(&mut self) {
         self.clear();
     }
+}
+
+// ───────────────────────────── a slice that several threads fill ─────────────────────────────
+
+/// A slice of `len` elements, of which `make(index)` is the element `index`. `run` gets a function, and
+/// calls it with every index below `len`, on whichever threads. So the elements are made by all the
+/// threads. An element that `run` has left out is made at the end.
+pub fn slice_made_by<T: Send, A: Allocator>(
+    len: usize,
+    alloc: A,
+    make: &(dyn Fn(usize) -> T + Sync),
+    run: impl FnOnce(&(dyn Fn(usize) + Sync)),
+) -> Box<[T], A> {
+    use std::sync::{Mutex, PoisonError};
+    let slots: Vec<Mutex<Option<T>>> = (0..len).map(|_| Mutex::new(None)).collect();
+    run(&|index| {
+        let element = make(index);
+        *slots[index].lock().unwrap_or_else(PoisonError::into_inner) = Some(element);
+    });
+    let mut all = Vec::with_capacity_in(len, alloc);
+    for (index, slot) in slots.into_iter().enumerate() {
+        let made = slot.into_inner().unwrap_or_else(PoisonError::into_inner);
+        all.push(made.unwrap_or_else(|| make(index)));
+    }
+    all.into_boxed_slice()
 }
 
 #[cfg(test)]
@@ -907,5 +945,55 @@ mod tests {
 
         drop(AtomicU64::zeroed_slice_in(10, alloc));
         assert_eq!(count(), 0);
+    }
+
+    #[test]
+    fn four_threads_make_one_slice() {
+        let (blocks, alive, next) = (
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+        );
+        let counts = || {
+            (
+                blocks.load(Ordering::Relaxed),
+                alive.load(Ordering::Relaxed),
+            )
+        };
+        let slice = slice_made_by(
+            100,
+            Counting(&blocks),
+            &|index| Counted::new(index as u32 * 3, &alive),
+            |make| {
+                std::thread::scope(|scope| {
+                    for _ in 0..4 {
+                        scope.spawn(|| {
+                            loop {
+                                let index = next.fetch_add(1, Ordering::Relaxed);
+                                if index >= 100 {
+                                    break;
+                                }
+                                make(index);
+                            }
+                        });
+                    }
+                });
+            },
+        );
+        let mut elements = slice.iter().enumerate();
+        assert!(elements.all(|(index, element)| element.0 == index as u32 * 3));
+        assert_eq!(counts(), (1, 100));
+        drop(slice);
+        assert_eq!(counts(), (0, 0));
+        assert!(slice_made_by(0, Global, &|index| index, |_| {}).is_empty());
+    }
+
+    #[test]
+    fn an_element_that_is_left_out_is_made_at_the_end() {
+        let slice = slice_made_by(3, Global, &|index| index, |make| {
+            make(0);
+            make(2);
+        });
+        assert_eq!(&slice[..], [0, 1, 2]);
     }
 }

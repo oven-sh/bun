@@ -158,6 +158,16 @@ impl Reported {
         }
     }
 
+    /// What stands in `Task::diagnostics` for a diagnostic that a commit has taken out while a file was being checked:
+    /// `check_file` remembers places in that list.
+    fn taken() -> Reported {
+        Reported::bare(NOWHERE, 0)
+    }
+
+    fn is_taken(&self) -> bool {
+        self.code == 0
+    }
+
     /// It has a start and a code, and no end, arguments or chain.
     pub(super) fn is_bare(&self) -> bool {
         self.end == 0 && self.args.is_empty() && self.message_chain.is_empty()
@@ -219,16 +229,16 @@ pub(super) struct Sink<'s> {
     /// The diagnostics reported in each file. A `Reported` owns memory of the regular heap:
     /// `release`.
     by_file: ArenaVec<'s, Guarded<Vec<Reported>>>,
-    /// The queries under which a task has reported. Accessed only at barriers.
-    owners: Guarded<ArenaHashSet<'s, Query>>,
+    /// The queries under which a task has reported, each with `Task::number` of the first that has. Any thread adds to it,
+    /// so it is on the regular heap too.
+    owners: Guarded<FxHashMap<Query, u64>>,
 }
 
 impl<'s> Sink<'s> {
-    /// `arena`: that of the thread that runs the barriers, where `owners` grows.
     pub(super) fn new_in(files: usize, arena: &'s Arena) -> Sink<'s> {
         Sink {
             by_file: vec_from_iter_in((0..files).map(|_| Guarded::default()), arena),
-            owners: Guarded::new(set_in(arena)),
+            owners: Guarded::default(),
         }
     }
 
@@ -237,6 +247,7 @@ impl<'s> Sink<'s> {
         for reported in &mut self.by_file {
             *reported.get_mut() = Vec::new();
         }
+        *self.owners.get_mut() = FxHashMap::default();
     }
 }
 
@@ -273,22 +284,82 @@ fn is_task_independent(q: Query) -> bool {
     }
 }
 
+/// `is_task_independent` for tasks that publish their records when they create them (`Sharing::Publishes`): an id without
+/// `LOCAL` is the same in every task too.
+fn is_same_in_every_task(q: Query) -> bool {
+    let is_shared = |number: u32| !crate::local::is_local_number(number);
+    match q {
+        Query::ReturnOfSignature(signature) => is_shared(signature.0),
+        Query::Shape(ty)
+        | Query::Properties(ty)
+        | Query::Constraint(ty)
+        | Query::InferredConstraint(ty)
+        | Query::TypeArguments(ty) => is_shared(ty.0),
+        Query::MappedProp(ty, name) => is_shared(ty.0) && is_shared(name.0),
+        Query::Cond(_, _, mapper) => is_shared(mapper.0),
+        q => is_task_independent(q),
+    }
+}
+
 impl super::Program<'_> {
     /// At the barrier, tasks in plan order. A diagnostic that belongs to a query is reported iff no
     /// earlier task has reported under that query.
     pub(super) fn publish_diagnostics(&self, finished: &mut Finished) {
+        let task = u64::from(finished.step) << 32 | u64::from(finished.index);
+        self.publish_reported(task, std::mem::take(&mut finished.diagnostics));
+    }
+
+    /// `publish_diagnostics`, also for a commit. `task`: `Task::number`.
+    pub(super) fn publish_reported(&self, task: u64, reported: Vec<(Option<Query>, Reported)>) {
         let mut owners = self.sink.owners.lock();
-        let mut own = Vec::new();
-        for (owner, diagnostic) in std::mem::take(&mut finished.diagnostics) {
-            if let Some(q) = owner {
-                if owners.contains(&q) {
-                    continue;
-                }
-                own.push(q);
+        for (owner, diagnostic) in reported {
+            if owner.is_some_and(|q| *owners.entry(q).or_insert(task) != task) {
+                continue;
             }
             self.push_diagnostic(diagnostic);
         }
-        owners.extend(own);
+    }
+
+    /// The number of the commit that has stored the entry of `q`. `None`: there is no such entry, or `q` is not about
+    /// syntax, or stores none.
+    fn commit_of_entry(&self, q: Query) -> Option<u32> {
+        match q {
+            Query::Expr(file, e) => self.expr_types.commit_of((file, e)),
+            Query::Call(file, e) => self.calls.commit_of((file, e)),
+            Query::Symbol(symbol) => self.symbol_types.commit_of(symbol),
+            Query::Declared(symbol) => self.declared_types.commit_of(symbol),
+            Query::Bases(symbol) => self.base_types.commit_of(symbol),
+            Query::BaseConstructor(symbol) => self.base_constructor_types.commit_of(symbol),
+            Query::Return(file, func) | Query::ReturnAtFirstLook(file, func) => {
+                self.fn_return_types.commit_of((file, func))
+            }
+            Query::Pat(file, pat) | Query::ParameterSymbol(file, pat) => {
+                self.pat_types.commit_of((file, pat))
+            }
+            Query::LiteralProp(file, prop) => self.literal_prop_types.commit_of((file, prop)),
+            Query::TypeNode(file, node) => self.type_node_types.commit_of((file, node)),
+            _ => None,
+        }
+    }
+
+    /// At a commit, under its mutex, before it stores. What was reported while a query was evaluated belongs to the entry
+    /// that the query stores. If another task has stored that entry, this task's loses: every reader goes by the
+    /// other one, and what belongs to it is what its task has reported. `is_own`: whether a commit is one of this task.
+    ///
+    /// Only for a diagnostic in the file that the query is about. Every task logs such a one (`is_reported_in_time`), so
+    /// the winner has logged it if there was anything to log. Whether one in another file is logged depends on the task.
+    pub(super) fn drop_diagnostics_of_losers(
+        &self,
+        reported: &mut Vec<(Option<Query>, Reported)>,
+        is_own: impl Fn(u32) -> bool,
+    ) {
+        reported.retain(|(owner, diagnostic)| {
+            !owner.is_some_and(|q| {
+                let winner = self.commit_of_entry(q);
+                q.syntax().is_some_and(|(file, _)| file == diagnostic.file)
+                    && winner.is_some_and(|commit| !is_own(commit))
+            })
+        });
     }
 
     /// To the buffer of the file, or to `global_errors` if it is located in no file (`c.error(nil, ..)`).
@@ -840,5 +911,35 @@ impl Checker<'_, '_> {
                 Some((owner.filter(|&q| is_task_independent(q)), diagnostic))
             })
             .collect()
+    }
+
+    /// `take_diagnostics` for a commit. What belongs to a query goes with the entry of the query, which the commit stores.
+    /// What belongs to the task goes when the file is checked to the end (`is_between_files`): if the task is lost before,
+    /// whoever checks the file again reports it.
+    /// `None`: not now. A callback among them has not been called, which `check_file` does at the end of the file.
+    pub(super) fn take_diagnostics_for_commit(
+        &mut self,
+        is_between_files: bool,
+    ) -> Option<Vec<(Option<Query>, Reported)>> {
+        let logged = &mut self.task.diagnostics;
+        let taken: Vec<(Option<Query>, Reported)> = if is_between_files {
+            std::mem::take(logged)
+        } else if logged.iter().any(|it| it.1.deferred.is_some()) {
+            return None;
+        } else {
+            (logged.iter_mut())
+                .filter(|it| it.0.is_some_and(is_same_in_every_task))
+                .map(|it| std::mem::replace(it, (None, Reported::taken())))
+                .collect()
+        };
+        let mut directives = Default::default();
+        let settled = taken.into_iter().filter_map(|(owner, diagnostic)| {
+            if diagnostic.is_taken() {
+                return None;
+            }
+            let diagnostic = self.settled(diagnostic, &mut directives)?;
+            Some((owner.filter(|&q| is_same_in_every_task(q)), diagnostic))
+        });
+        Some(settled.collect())
     }
 }

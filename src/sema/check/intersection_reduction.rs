@@ -23,13 +23,21 @@
 //! - The one that is kept left no trace (`traces_of_reduction`): it made no query, computed no instantiation, added
 //!   nothing to `instantiationCount`, created no record, reported nothing, found nothing in progress or cut short, and
 //!   marked no variance. So it found all it asked for in the type store and in tables.
+//! - Or all it left is what it computed (`KEEPS_FIRST_EXAMINATION`): queries, instantiations and records. Nothing was found in
+//!   progress or cut short, and no frame is tainted (`stores_what_it_computes`), so every result went into its table. And
+//!   it made none of the calls that count every time (`Kept::counts_each_time`). So the next one would leave no trace.
 //! - What it found there stays (`is_settled_for_reduction`). An evaluation begins with a miss, so an entry is replaced only
 //!   by an evaluation of its key that began before the entry was stored and ends after it was read.
 //! - What it did not find there, and did not evaluate, says the same once it is there. `type_of_mapped_prop` asks in that
 //!   way for the type that the property has in the mapped type it was created for. An entry says what its absence did not
-//!   only if it comes from a cycle or a limit, so what is kept here lasts until the next one (`generation_of_reductions`).
+//!   only if it comes from a cycle or a limit, so an examination that has asked so is kept until the next one
+//!   (`generation_of_reductions`). `is_empty_anonymous_object_type` asks in that way for members, which can come at any
+//!   time: that is a trace.
 //! - So the same examination made later finds the same, takes the same path and leaves no trace either. Unless something
-//!   is in progress that a function looks at before it looks into a table: then it is made (`is_at_rest_for_reduction`).
+//!   is in progress that a function looks at before it looks into a table: then it is made (`unrest_of_reduction`).
+//! - While a mapper is active, an `instantiate` with it counts once for each type and marks the type for the next one, also
+//!   where `type_of_instantiated_symbol` takes the count back. So an examination is neither kept nor left out while one of
+//!   the mappers that it instantiates with may be active (`KeptOfName::mappers_used`).
 //! - The names that are examined are examined in the order in which all of them would be.
 //! - A shape and a property are known by their addresses, so the shape has to be a stored one (`has_stored_members`):
 //!   others do not outlive the file.
@@ -51,6 +59,16 @@ pub(super) const ENABLED: bool = true;
 /// trace or adds something else to the answer. For debugging.
 pub(super) const SHADOW: bool = false;
 
+/// `false`: only an examination that left no trace is kept, so the second one of its kind. `SHADOW` checks this too, and
+/// the next two.
+const KEEPS_FIRST_EXAMINATION: bool = true;
+
+/// `false`: all that is kept ends with the next cycle or limit.
+const OUTLASTS_CYCLES: bool = true;
+
+/// `false`: nothing is left out or kept while an instantiation is in progress.
+const WORKS_IN_INSTANTIATIONS: bool = true;
+
 /// With fewer properties in its constituents, nothing is kept for an intersection: there is little to find again.
 pub(super) const MIN_PROPERTIES: usize = 16;
 
@@ -62,33 +80,40 @@ const MIN_HOLDERS: usize = 4;
 /// of them the constituents that have each name are counted.
 const FEW_CONSTITUENTS: usize = 8;
 
-/// The names of `Checker::member_counts`.
-pub const MEMBER_COUNTS: [&str; 25] = [
+/// The names of `Checker::member_counts`. `Report` has a default value, which an array has up to a length of 32.
+pub const MEMBER_COUNTS: [&str; 32] = [
     "intersections reduced",
-    "not stored",
     "with a shared name",
-    "constituents",
-    "properties of constituents",
     "nothing is kept for",
-    "not at rest",
+    "not at rest: instantiation",
+    "not at rest: symbol links",
+    "not at rest: check mode",
+    "not at rest: comparison",
     "lists of shapes seen once",
     "lists of shapes",
-    "generations",
     "shared names",
     "holders of those",
     "left out",
     "left out by holders",
+    "examined: few holders",
+    "examined: new",
+    "examined: of an earlier generation",
+    "examined: a mapper is active",
+    "examined: first with two symbols",
     "left a trace",
+    "kept at once",
     "not settled",
-    "forgotten midway",
     "unions made objects",
-    "members of those",
+    "of members with shapes seen before",
+    "of constituents with shapes seen before",
     "properties of unions created",
     "members visited",
     "members visited without facts",
     "intersections listed",
     "properties listed",
     "intersections left unlisted",
+    "asked of unlisted intersections",
+    "listed after being asked",
 ];
 
 /// An index into `MEMBER_COUNTS`.
@@ -96,20 +121,18 @@ pub const MEMBER_COUNTS: [&str; 25] = [
 pub(in super::super) enum MemberCount {
     /// `never_intersections` did not have the intersection.
     Reduced,
-    /// .. and does not have it now.
-    NotStored,
     /// `may_have_never_reduced_property` was asked, for whatever reason.
     WithSharedName,
-    Constituents,
-    PropertiesOfConstituents,
     /// It has few properties, members that are not stored, or itself for `this`.
     NothingIsKeptFor,
-    NotAtRest,
+    /// See `unrest_of_reduction`, also for the next three.
+    InInstantiation,
+    HasSymbolLinks,
+    InCheckMode,
+    InComparison,
     SeenOnce,
     /// `Reductions::by_shapes` got an entry.
     ListsOfShapes,
-    /// There was a cycle or a limit since something was kept.
-    Generations,
     /// The names that the constituents share, where something may be kept.
     SharedNames,
     HoldersOfThose,
@@ -117,20 +140,36 @@ pub(in super::super) enum MemberCount {
     LeftOut,
     /// .. because of `Reductions::by_holders`.
     LeftOutByHolders,
+    /// Examined: the list of shapes has no entry, and fewer than `MIN_HOLDERS` have the name.
+    FewHolders,
+    /// .. nothing is kept for it.
+    New,
+    /// .. there was a cycle or a limit since.
+    OfAnEarlierGeneration,
+    /// .. or not kept after it.
+    MapperIsActive,
+    FirstWithTwoSymbols,
     /// Examined, and not kept.
     LeftATrace,
+    /// Kept although it computed something.
+    KeptAtOnce,
     NotSettled,
-    /// An examination has ended what was kept for the names after it.
-    ForgottenMidway,
     /// `union_objects` did not have the union.
     UnionsMadeObjects,
-    MembersOfThose,
+    /// .. and another union had members with the same shapes, in the same order, under whatever mappers.
+    OfMembersWithShapesSeenBefore,
+    /// .. or not, but its members were intersections of types with the same shapes.
+    OfConstituentsWithShapesSeenBefore,
     UnionPropertiesCreated,
     MembersVisited,
     MembersVisitedWithoutFacts,
     IntersectionsListed,
     PropertiesListed,
     IntersectionsLeftUnlisted,
+    /// `property_of_unlisted_intersection` was called.
+    AskedOfUnlisted,
+    /// .. so often that it has listed the properties.
+    ListedAfterBeingAsked,
 }
 
 /// What the properties with one name add to what `examine_shared_properties` finds.
@@ -250,14 +289,38 @@ impl SharedNames {
     }
 }
 
+/// What an examination of a name has added, and when the next one may be left out.
+#[derive(Clone)]
+struct KeptOfName {
+    of_name: OfName,
+    /// `generation_of_reductions` when it was made. `FOR_GOOD`: it asked for nothing that a cycle or a limit can add.
+    generation: u64,
+    /// A bit for each mapper that it has given to `instantiate`, or would without `recent_instantiations`: the number of
+    /// the mapper modulo 64.
+    mappers_used: u64,
+}
+
+const FOR_GOOD: u64 = u64::MAX;
+
+impl KeptOfName {
+    /// `Err`: why the name is examined all the same.
+    fn may_be_left_out(&self, kept: &Kept) -> Result<(), MemberCount> {
+        if self.generation != FOR_GOOD && self.generation != kept.generation {
+            return Err(MemberCount::OfAnEarlierGeneration);
+        }
+        if self.mappers_used & kept.active_mappers != 0 {
+            return Err(MemberCount::MapperIsActive);
+        }
+        Ok(())
+    }
+}
+
 /// What the last examination of each name has added, if it may be left out the next time.
 struct Outcomes {
     /// In the order of `SharedNames`.
-    of_names: Box<[Option<OfName>]>,
+    of_names: Box<[Option<KeptOfName>]>,
     /// The mappers of the constituents that `of_names` is for.
     mappers: Box<[MapperId]>,
-    /// `generation_of_reductions` when they were made.
-    generation: u64,
 }
 
 /// What is kept for a list of shapes.
@@ -271,14 +334,33 @@ struct Entry {
 /// What `examine_shared_properties` may leave out and keep, for one intersection.
 pub(super) struct Kept<'a> {
     outcomes: Option<&'a mut Outcomes>,
+    /// `generation_of_reductions`
     generation: u64,
+    /// A bit for each active mapper, as in `KeptOfName::mappers_used`.
+    active_mappers: u64,
     /// `is_settled_for_reduction`
     may_keep: bool,
     /// An examination has ended what was kept. Nothing more is left out or kept for this intersection.
     is_over: bool,
     /// The key in `Reductions::by_holders` of the name that is looked at. Empty: it has none.
     holders: SmallVec<[(PropAddress, MapperId); 8]>,
+    /// The examination of that name has made a call that adds to `instantiationCount`, or compares types, each time it
+    /// is made: `instantiate` outside `type_of_instantiated_symbol`, `intersection` with a type variable.
+    pub(super) counts_each_time: bool,
 }
+
+/// What `begin_name_of_reduction` has found, for `end_name_of_reduction`.
+pub(super) struct BeforeName {
+    traces: [u64; TRACES],
+    reliability: u8,
+    mappers_used: u64,
+    absent_types_of_mapped_props: u64,
+}
+
+/// The length of `traces_of_reduction`.
+const TRACES: usize = 12;
+/// The first so many of them say what was computed. See `KEEPS_FIRST_EXAMINATION`.
+const TRACES_OF_COMPUTING: usize = 4;
 
 /// The address of a `Resolved`.
 type ShapeAddress = usize;
@@ -292,9 +374,14 @@ pub(in super::super) struct Reductions {
     /// The hashes of the lists of shapes that have come once. A list gets its entry when it comes again.
     seen_once: crate::util::FxHashSet<u64>,
     /// By the properties with one name, in the order of the constituents, each with the mapper of its constituent.
-    by_holders: FxHashMap<Box<[(PropAddress, MapperId)]>, OfName>,
-    /// `generation_of_reductions` when the entries of `by_holders` were made.
-    generation: u64,
+    by_holders: FxHashMap<Box<[(PropAddress, MapperId)]>, KeptOfName>,
+    /// See `KeptOfName::mappers_used`: since `begin_name_of_reduction`.
+    mappers_used: u64,
+    /// How often `type_of_mapped_prop` went on without the type that the property has in the mapped type it was created
+    /// for.
+    absent_types_of_mapped_props: u64,
+    /// How often `is_empty_anonymous_object_type` went on without the members of the type.
+    absent_members: u64,
     counts: [u64; MEMBER_COUNTS.len()],
 }
 
@@ -387,23 +474,19 @@ impl<'p, 's> Checker<'p, 's> {
         parts: &[TypeId],
         all: &[Members<'p>],
     ) -> NeverReduced {
-        if !self.is_at_rest_for_reduction() {
-            self.tally(MemberCount::NotAtRest, 1);
+        if let Some(unrest) = self.unrest_of_reduction() {
+            self.tally(unrest, 1);
             let names = SharedNames::of(all);
             return self.examine_shared_properties(ty, parts, all, false, &names, None);
         }
-        let generation = self.generation_of_reductions();
-        if self.reductions.generation != generation {
-            self.tally(MemberCount::Generations, 1);
-            self.reductions.generation = generation;
-            self.reductions.by_holders.clear();
-        }
         let mut kept = Kept {
             outcomes: None,
-            generation,
+            generation: self.generation_of_reductions(),
+            active_mappers: self.active_mappers.bits(),
             may_keep: self.is_settled_for_reduction(),
             is_over: false,
             holders: SmallVec::new(),
+            counts_each_time: false,
         };
         let shapes: SmallVec<[ShapeAddress; 8]> = (all.iter())
             .map(|members| std::ptr::from_ref(members.resolved) as ShapeAddress)
@@ -427,7 +510,6 @@ impl<'p, 's> Checker<'p, 's> {
                 let outcomes = Outcomes {
                     of_names: vec![None; names.len()].into(),
                     mappers: all.iter().map(|members| members.mapper).collect(),
-                    generation,
                 };
                 let entry = Entry {
                     places: names.places_of_constituents(all.len()),
@@ -438,10 +520,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
         };
         let outcomes = &mut entry.outcomes;
-        if outcomes.generation != generation {
-            outcomes.of_names.fill(None);
-            outcomes.generation = generation;
-        }
         let constituents = (outcomes.mappers.iter_mut().zip(all)).zip(entry.places.iter());
         for ((kept, members), places) in constituents {
             if *kept != members.mapper {
@@ -470,15 +548,26 @@ impl<'p, 's> Checker<'p, 's> {
         holders: &[(u32, u32)],
     ) -> Option<OfName> {
         kept.holders.clear();
+        kept.counts_each_time = false;
         if kept.is_over {
             return None;
         }
         let of_list = kept.outcomes.as_deref();
-        if let Some(Some(of_name)) = of_list.and_then(|it| it.of_names.get(place)) {
+        let of_list = of_list.and_then(|it| it.of_names.get(place)?.as_ref());
+        if let Some(of_list) = of_list
+            && of_list.may_be_left_out(kept).is_ok()
+        {
             self.tally(MemberCount::LeftOut, 1);
-            return Some(of_name.clone());
+            return Some(of_list.of_name.clone());
         }
+        // What is kept for the list is kept for the holders too, if there are enough of them.
+        let why_not = of_list.and_then(|it| it.may_be_left_out(kept).err());
         if holders.len() < MIN_HOLDERS {
+            let is_new = match kept.outcomes.is_none() {
+                true => MemberCount::FewHolders,
+                false => MemberCount::New,
+            };
+            self.tally(why_not.unwrap_or(is_new), 1);
             return None;
         }
         kept.holders.extend(holders.iter().map(|&(at, position)| {
@@ -486,20 +575,55 @@ impl<'p, 's> Checker<'p, 's> {
             let prop = &members.shape().props[position as usize];
             (std::ptr::from_ref(prop) as PropAddress, members.mapper)
         }));
-        let of_name = self.reductions.by_holders.get(&kept.holders[..])?.clone();
+        let of_holders = match self.reductions.by_holders.get(&kept.holders[..]) {
+            Some(of_holders) => (of_holders.may_be_left_out(kept)).map(|()| of_holders.clone()),
+            None => Err(why_not.unwrap_or(MemberCount::New)),
+        };
+        let of_holders = match of_holders {
+            Ok(of_holders) => of_holders,
+            Err(why_not) => {
+                self.tally(why_not, 1);
+                return None;
+            }
+        };
         self.tally(MemberCount::LeftOutByHolders, 1);
+        let of_name = of_holders.of_name.clone();
         if let Some(of_list) = kept.outcomes.as_deref_mut()
             && let Some(of_list) = of_list.of_names.get_mut(place)
         {
-            *of_list = Some(of_name.clone());
+            *of_list = Some(of_holders);
         }
         Some(of_name)
     }
 
-    /// Before the examination of a name whose outcome may be kept. The result is for `end_name_of_reduction`.
-    pub(super) fn begin_name_of_reduction(&mut self) -> ([u64; 11], u8) {
-        let outer_reliability = std::mem::take(&mut self.reliability);
-        (self.traces_of_reduction(), outer_reliability)
+    /// `instantiate` is given `mapper`, or would be without `recent_instantiations`.
+    #[inline]
+    pub(in super::super) fn note_mapper_used(&mut self, mapper: MapperId) {
+        if ENABLED && WORKS_IN_INSTANTIATIONS {
+            self.reductions.mappers_used |= 1 << (mapper.0 % 64);
+        }
+    }
+
+    /// See `Reductions::absent_types_of_mapped_props`.
+    #[inline]
+    pub(in super::super) fn note_absent_type_of_mapped_prop(&mut self) {
+        self.reductions.absent_types_of_mapped_props += 1;
+    }
+
+    /// See `Reductions::absent_members`.
+    #[inline]
+    pub(in super::super) fn note_absent_members(&mut self) {
+        self.reductions.absent_members += 1;
+    }
+
+    /// Before the examination of a name whose outcome may be kept.
+    pub(super) fn begin_name_of_reduction(&mut self) -> BeforeName {
+        BeforeName {
+            reliability: std::mem::take(&mut self.reliability),
+            mappers_used: std::mem::take(&mut self.reductions.mappers_used),
+            absent_types_of_mapped_props: self.reductions.absent_types_of_mapped_props,
+            traces: self.traces_of_reduction(),
+        }
     }
 
     /// The examination of the name at `place`, for the intersection `ty`, has added `of_name`. `kept_of_name` was asked for
@@ -509,12 +633,15 @@ impl<'p, 's> Checker<'p, 's> {
         ty: TypeId,
         kept: &mut Kept,
         place: usize,
-        (before, outer_reliability): ([u64; 11], u8),
+        before: BeforeName,
         of_name: &OfName,
         left_out: Option<&OfName>,
     ) {
-        let has_left_no_trace = self.reliability == 0 && self.traces_of_reduction() == before;
-        self.reliability |= outer_reliability;
+        let (after, marks_no_variance) = (self.traces_of_reduction(), self.reliability == 0);
+        self.reliability |= before.reliability;
+        let mappers_used = self.reductions.mappers_used;
+        self.reductions.mappers_used |= before.mappers_used;
+        let has_left_no_trace = marks_no_variance && after == before.traces;
         if let Some(left_out) = left_out {
             if !has_left_no_trace || left_out != of_name {
                 self.fact_differs_for("what a name adds to the reduction", &[ty]);
@@ -525,57 +652,99 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         if !has_left_no_trace {
-            self.tally(MemberCount::LeftATrace, 1);
             // What it has done can end what is kept for the names that come after it.
             if self.generation_of_reductions() != kept.generation
-                || !self.is_at_rest_for_reduction()
+                || self.unrest_of_reduction().is_some()
             {
-                self.tally(MemberCount::ForgottenMidway, 1);
+                self.tally(MemberCount::LeftATrace, 1);
                 kept.is_over = true;
-                if let Some(outcomes) = kept.outcomes.as_deref_mut() {
-                    outcomes.of_names.fill(None);
-                }
-            } else if kept.may_keep {
-                kept.may_keep = self.is_settled_for_reduction();
+                return;
             }
-        } else if !kept.may_keep {
-            self.tally(MemberCount::NotSettled, 1);
-        } else {
-            if let Some(outcomes) = kept.outcomes.as_deref_mut()
-                && let Some(of_list) = outcomes.of_names.get_mut(place)
+            kept.may_keep = kept.may_keep && self.is_settled_for_reduction();
+            let has_only_computed = marks_no_variance
+                && after[TRACES_OF_COMPUTING..] == before.traces[TRACES_OF_COMPUTING..];
+            if !KEEPS_FIRST_EXAMINATION
+                || !has_only_computed
+                || kept.counts_each_time
+                || !self.stores_what_it_computes()
             {
-                *of_list = Some(of_name.clone());
+                self.tally(MemberCount::LeftATrace, 1);
+                return;
             }
-            if !kept.holders.is_empty() {
-                let holders = Box::from(&kept.holders[..]);
-                self.reductions.by_holders.insert(holders, of_name.clone());
-            }
+        }
+        if mappers_used & kept.active_mappers != 0 {
+            self.tally(MemberCount::MapperIsActive, 1);
+            return;
+        }
+        if !kept.may_keep {
+            self.tally(MemberCount::NotSettled, 1);
+            return;
+        }
+        if !has_left_no_trace {
+            self.tally(MemberCount::KeptAtOnce, 1);
+        }
+        let has_asked_in_vain =
+            self.reductions.absent_types_of_mapped_props != before.absent_types_of_mapped_props;
+        let of_name = KeptOfName {
+            of_name: of_name.clone(),
+            generation: match OUTLASTS_CYCLES && !has_asked_in_vain {
+                true => FOR_GOOD,
+                false => kept.generation,
+            },
+            mappers_used,
+        };
+        if !kept.holders.is_empty() {
+            let holders = Box::from(&kept.holders[..]);
+            self.reductions.by_holders.insert(holders, of_name.clone());
+        }
+        if let Some(outcomes) = kept.outcomes.as_deref_mut()
+            && let Some(of_list) = outcomes.of_names.get_mut(place)
+        {
+            *of_list = Some(of_name);
         }
     }
 
-    /// Nothing is in progress that an examination looks at before it looks into a table, or changes without a trace.
-    /// - An instantiation. While a mapper is active, an `instantiate` with it counts once for each type and marks the type
-    ///   for the next one, also where `type_of_instantiated_symbol` takes the count back. The depth and the count have a
-    ///   limit, which comes before the tables. And `instantiate` and `members` look at `index_infos_in_instantiation` and
-    ///   `unresolved_members` first, `type_of_prop` at `instantiated_symbol_links`.
+    /// What is in progress that an examination looks at before it looks into a table, or changes without a trace. `None`:
+    /// nothing.
+    /// - An instantiation: the depth and the count have a limit, which comes before the tables. And `instantiate` and
+    ///   `members` look at `index_infos_in_instantiation` and `unresolved_members` first. For the active mappers see
+    ///   `KeptOfName::mappers_used`.
+    /// - `type_of_prop` looks at `instantiated_symbol_links` first.
     /// - A check that neither reads nor stores the types of expressions: a property of an object literal has one.
     /// - `T & string` is reduced by a comparison with the constraint of `T`. An overflow that a caller has yet to read: a
     ///   comparison assigns one flag and sets the other. A comparison that was cut short in this file is not evaluated again.
-    fn is_at_rest_for_reduction(&self) -> bool {
-        self.instantiation_depth == 0
-            && self.instantiation_count < 5_000_000
-            && self.index_infos_in_instantiation.is_empty()
-            && self.unresolved_members.is_empty()
-            && self.instantiated_symbol_links.is_empty()
-            && !self.is_rechecking()
-            && !self.pulls_contextual_types()
-            && !self.relation_too_complex
-            && !self.relation_too_deep
-            && self.relations_cut_short.is_empty()
-            && self.generic_mapped_types_cut_short.is_empty()
+    fn unrest_of_reduction(&self) -> Option<MemberCount> {
+        let deepest = match WORKS_IN_INSTANTIATIONS {
+            true => 99,
+            false => 0,
+        };
+        if self.instantiation_depth > deepest
+            || self.instantiation_count >= 5_000_000
+            || !self.index_infos_in_instantiation.is_empty()
+            || !self.unresolved_members.is_empty()
+        {
+            return Some(MemberCount::InInstantiation);
+        }
+        if !self.instantiated_symbol_links.is_empty() {
+            return Some(MemberCount::HasSymbolLinks);
+        }
+        if self.is_rechecking() || self.pulls_contextual_types() {
+            return Some(MemberCount::InCheckMode);
+        }
+        let is_comparing = self.relation_too_complex
+            || self.relation_too_deep
+            || !self.relations_cut_short.is_empty()
+            || !self.generic_mapped_types_cut_short.is_empty();
+        is_comparing.then_some(MemberCount::InComparison)
     }
 
-    /// Whether what an examination finds in tables now stays there, where `is_at_rest_for_reduction` holds: no frame stores
+    /// Whether the result of every query and every instantiation that is made now, and finds nothing in progress or cut
+    /// short, goes into its table. Under a tainted frame it is kept for as long as that frame is in progress.
+    fn stores_what_it_computes(&self) -> bool {
+        self.provisional.is_empty() && self.frames.iter().all(|frame| !frame.tainted)
+    }
+
+    /// Whether what an examination finds in tables now stays there, where `unrest_of_reduction` finds nothing: no frame stores
     /// over what a visit inside it has stored. A type node and a conditional type do, and nothing says whether there was
     /// such a visit. Of the other queries that do, the frame says so.
     fn is_settled_for_reduction(&self) -> bool {
@@ -586,19 +755,20 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// Grows with every cycle and every limit.
+    /// Grows with every cycle and every limit, of this task or in what another task may have committed.
     fn generation_of_reductions(&self) -> u64 {
-        self.cycles + self.limits_in_earlier_files + self.limits + self.instantiation_limit_hits
+        (self.cycles + self.limits_in_earlier_files + self.limits + self.instantiation_limit_hits)
+            .wrapping_add(self.state_of_commits())
     }
 
     /// Changes with everything that an examination can do, together with `reliability`. Those that are added up only grow.
-    /// A scope that begins and ends isn't a trace: `examine_shared_properties` has one for each name.
-    fn traces_of_reduction(&self) -> [u64; 11] {
+    /// A scope that begins and ends is no trace: `examine_shared_properties` has one for each name.
+    fn traces_of_reduction(&self) -> [u64; TRACES] {
         [
             self.work,
             self.instantiations_computed,
             u64::from(self.instantiation_count),
-            self.task.own.lengths().iter().sum::<usize>() as u64,
+            self.task.own.created().iter().sum::<usize>() as u64,
             self.reported.len() as u64,
             self.task.diagnostics.len() as u64,
             self.cycles + self.taints,
@@ -606,6 +776,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.limits + self.instantiation_limit_hits,
             self.times_cut_short.get() + self.unmarked_refusals,
             u64::from(self.variance_cycles) + u64::from(self.any_signature_reads),
+            self.reductions.absent_members,
         ]
     }
 }

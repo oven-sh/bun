@@ -5,6 +5,7 @@
 
 use crate::atom::{Atom, Interner};
 use crate::hir::{ExprId, FnId, ParamId, TypeNodeId, TypeParamId};
+use crate::jitter::{Jitter, Place};
 use crate::local::{Found, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
 use crate::session::{Arena, ArenaVec, Session};
@@ -15,10 +16,12 @@ use crate::util::{
     place_of, shard_among, spread_hash,
 };
 use bun_alloc::{ArenaBox, vec_from_iter_in};
+use bun_threading::Guarded;
 use std::alloc::Allocator;
 use std::cell::Cell;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering};
 
 /// A list that is stored once: one block, of its exact size, in the arena of the thread that built
 /// it. As wide as `Box<[T]>`. It frees the block when it is dropped, on any thread.
@@ -1613,9 +1616,22 @@ struct Rank {
     /// One more than the greatest height of a type that the key mentions, itself or through a mapper, a signature, an alias
     /// or an origin, and 1 if it mentions none. So a type comes after every type that it is made of.
     height: u32,
+    /// The last piece of syntax that the key mentions, itself or through the types in it: the number of a file above the
+    /// number of a node or a symbol in the file. 0 if it mentions none. tsgo creates a type when it comes to the syntax
+    /// that asks for it, so of two types the one that mentions later syntax is mostly the one with the higher id.
+    place: u64,
     /// A hash of the key in which a type counts as its own `content`, a mapper, a signature and a list of components as
     /// what they hold, an atom as its text, and a symbol or a node as its file and its number in the file.
     content: u64,
+}
+
+impl Rank {
+    /// Of an id that has no type.
+    const NONE: Rank = Rank {
+        height: 0,
+        place: 0,
+        content: 0,
+    };
 }
 
 /// What is asked of a type most often. A record is read for its `TypeData`.
@@ -1626,6 +1642,26 @@ struct TypeSummary {
     class: InstantiationClass,
     member_flags: u32,
     is_module_object: bool,
+}
+
+impl TypeSummary {
+    /// Of an id that has no type.
+    const NOTHING: TypeSummary = TypeSummary {
+        flags: 0,
+        object_flags: ObjectFlags::empty(),
+        class: InstantiationClass::Unchanged,
+        member_flags: 0,
+        is_module_object: false,
+    };
+
+    /// What `Summaries::facts` has from the start.
+    #[inline]
+    fn facts(&self) -> u8 {
+        match self.is_module_object {
+            true => fact::IS_MODULE_OBJECT,
+            false => 0,
+        }
+    }
 }
 
 /// The bits of `Summaries::facts`. A fact is written whole: the bit that says it is known together
@@ -1644,19 +1680,25 @@ mod fact {
 
 /// `TypeRecord::summary` of the types of a store, by index: a column for each field, so that what is
 /// read fills the cache lines.
+///
+/// The cells are atomic because `set` writes to one that `reserve` has added. `Relaxed` is enough for all of them: a thread
+/// gets the id of a type through something that orders what its creator wrote before (`AppendVec`).
 struct Summaries<L: Length, A: Allocator + Clone> {
-    flags: Stable<u32, L, A>,
-    object_flags: Stable<ObjectFlags, L, A>,
-    class: Stable<InstantiationClass, L, A>,
+    flags: Stable<AtomicU32, L, A>,
+    /// `ObjectFlags::bits`
+    object_flags: Stable<AtomicU16, L, A>,
+    /// An `InstantiationClass` as a number.
+    class: Stable<AtomicU8, L, A>,
     /// See `Types::member_flags`, and `HAS_FRESH_LITERAL` for the three bits beside the flags.
-    member_flags: Stable<u32, L, A>,
+    member_flags: Stable<AtomicU32, L, A>,
     /// What the checker has found out about the type since it was created, and one bit that is set
     /// at once: `fact`. See `Types::add_facts` for what may be here. What was found out about a
     /// task-local type is not published with it.
     facts: Stable<AtomicU8, L, A>,
-    /// `Rank::height` and `Rank::content`. Empty unless `TypeStore::orders_by_content`.
-    heights: Stable<u32, L, A>,
-    contents: Stable<u64, L, A>,
+    /// The fields of `Rank`. Empty unless `TypeStore::orders_by_content`.
+    heights: Stable<AtomicU32, L, A>,
+    places: Stable<AtomicU64, L, A>,
+    contents: Stable<AtomicU64, L, A>,
 }
 
 impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
@@ -1667,6 +1709,7 @@ impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
             member_flags: Stable::new_in(alloc.clone()),
             facts: Stable::new_in(alloc.clone()),
             heights: Stable::new_in(alloc.clone()),
+            places: Stable::new_in(alloc.clone()),
             contents: Stable::new_in(alloc.clone()),
             class: Stable::new_in(alloc),
         }
@@ -1679,22 +1722,22 @@ impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
 
     #[inline(always)]
     fn flags(&self, index: u32) -> u32 {
-        *self.flags.get(index)
+        self.flags.get(index).load(Ordering::Relaxed)
     }
 
     #[inline(always)]
     fn object_flags(&self, index: u32) -> ObjectFlags {
-        *self.object_flags.get(index)
+        ObjectFlags::from_bits_retain(self.object_flags.get(index).load(Ordering::Relaxed))
     }
 
     #[inline(always)]
     fn class(&self, index: u32) -> InstantiationClass {
-        *self.class.get(index)
+        InstantiationClass::of_number(self.class.get(index).load(Ordering::Relaxed))
     }
 
     #[inline(always)]
     fn member_flags(&self, index: u32) -> u32 {
-        *self.member_flags.get(index)
+        self.member_flags.get(index).load(Ordering::Relaxed)
     }
 
     #[inline(always)]
@@ -1706,8 +1749,9 @@ impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
     #[inline]
     fn rank(&self, index: u32) -> Rank {
         Rank {
-            height: *self.heights.get(index),
-            content: *self.contents.get(index),
+            height: self.heights.get(index).load(Ordering::Relaxed),
+            place: self.places.get(index).load(Ordering::Relaxed),
+            content: self.contents.get(index).load(Ordering::Relaxed),
         }
     }
 
@@ -1716,18 +1760,39 @@ impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
     #[inline]
     fn push(&self, summary: TypeSummary, rank: Option<Rank>) -> u32 {
         if let Some(rank) = rank {
-            self.heights.push(rank.height);
-            self.contents.push(rank.content);
+            self.heights.push(AtomicU32::new(rank.height));
+            self.places.push(AtomicU64::new(rank.place));
+            self.contents.push(AtomicU64::new(rank.content));
         }
-        self.flags.push(summary.flags);
-        self.object_flags.push(summary.object_flags);
-        self.member_flags.push(summary.member_flags);
-        let facts = match summary.is_module_object {
-            true => fact::IS_MODULE_OBJECT,
-            false => 0,
-        };
-        self.facts.push(AtomicU8::new(facts));
-        self.class.push(summary.class)
+        self.flags.push(AtomicU32::new(summary.flags));
+        (self.object_flags).push(AtomicU16::new(summary.object_flags.bits()));
+        (self.member_flags).push(AtomicU32::new(summary.member_flags));
+        self.facts.push(AtomicU8::new(summary.facts()));
+        self.class.push(AtomicU8::new(summary.class as u8))
+    }
+
+    /// Adds `count` summaries, each of which `set` fills in once, and returns the index of the first. One thread at a
+    /// time, like `push`. Every summary has a rank.
+    fn reserve(&self, count: u32) -> u32 {
+        let first = self.len();
+        let (nothing, no_rank) = (TypeSummary::NOTHING, Rank::NONE);
+        for _ in 0..count {
+            self.push(nothing, Some(no_rank));
+        }
+        first
+    }
+
+    /// `index` comes from `reserve`, and no other thread has got it so far.
+    fn set(&self, index: u32, summary: TypeSummary, rank: Rank) {
+        let order = Ordering::Relaxed;
+        self.heights.get(index).store(rank.height, order);
+        self.places.get(index).store(rank.place, order);
+        self.contents.get(index).store(rank.content, order);
+        self.flags.get(index).store(summary.flags, order);
+        (self.object_flags.get(index)).store(summary.object_flags.bits(), order);
+        (self.member_flags.get(index)).store(summary.member_flags, order);
+        self.facts.get(index).store(summary.facts(), order);
+        self.class.get(index).store(summary.class as u8, order);
     }
 }
 
@@ -1740,6 +1805,18 @@ pub enum InstantiationClass {
     /// Looked up in the mapper.
     TypeParameter,
     Other,
+}
+
+impl InstantiationClass {
+    /// The reverse of `as u8`.
+    #[inline(always)]
+    fn of_number(number: u8) -> InstantiationClass {
+        match number {
+            0 => InstantiationClass::Unchanged,
+            1 => InstantiationClass::TypeParameter,
+            _ => InstantiationClass::Other,
+        }
+    }
 }
 
 /// In `Summaries::member_flags`, beside the flags, none of which is one of these bits. See
@@ -1807,22 +1884,95 @@ impl TypeRecord<'_> {
     }
 }
 
-/// The published records of one kind. Read-only during a step: `find` is lock-free and writes
-/// nothing. `add` is for the merge step.
+/// A record of one of the four kinds that `intern_record` creates.
+trait Record: Sized {
+    /// Whether the two have one interning key.
+    fn is_same(&self, other: &Self) -> bool;
+    /// What an id without a record stands for. It owns no memory.
+    fn hole() -> Self;
+}
+
+impl Record for List<'_, IndexComponent> {
+    fn is_same(&self, other: &Self) -> bool {
+        **self == **other
+    }
+    fn hole() -> Self {
+        List::empty()
+    }
+}
+
+impl Record for MapperRecord<'_> {
+    fn is_same(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+    fn hole() -> Self {
+        (Mapping::empty(), ObjectFlags::empty())
+    }
+}
+
+impl Record for SigData<'_> {
+    fn is_same(&self, other: &Self) -> bool {
+        self == other
+    }
+    fn hole() -> Self {
+        SigData::WithReturn {
+            sig: SigId(u32::MAX),
+            ret: TypeId::UNRESOLVED,
+        }
+    }
+}
+
+impl Record for TypeRecord<'_> {
+    fn is_same(&self, other: &Self) -> bool {
+        self.created == other.created
+    }
+    fn hole() -> Self {
+        TypeRecord {
+            created: (TypeData::Intrinsic(Intrinsic::Unresolved), None),
+            flags: 0,
+            object_flags: ObjectFlags::empty(),
+            has_type_variables_in_alias_only: false,
+            is_from_type_node: AtomicBool::new(false),
+            is_ordered_by_id: AtomicBool::new(false),
+            constrained_type_variable: AtomicU8::new(0),
+            is_without_primitive_union: false,
+            is_sorted_run: AtomicBool::new(false),
+            id: TypeId::UNRESOLVED,
+        }
+    }
+}
+
+/// The published records of one kind. `find` is lock-free and writes nothing.
+///
+/// `items` is read-only during a step: `add` is for the merge step.
+///
+/// `placed` is for a store that `shares_records`: tasks add to it while others read.
+/// - A task reserves many ids at a time (`reserve`), under a lock, and then gives them to its records one by one. One
+///   counter for all threads would be written by every creation. And the ids of two threads would alternate, so that
+///   in every table keyed by them a cache line had cells of several threads.
+/// - An id is final from the start, and says nothing about when its record was created. So nothing may follow the order of
+///   ids: such a store `orders_by_content`.
+/// - There is one record for a key at any time (`place`), so there is nothing to merge.
 struct Interned<'s, V> {
     shards: Box<[GrowingPlaces<&'s Session>; INDEX_SHARDS], &'s Session>,
     items: AppendVec<V, &'s Session>,
+    /// The records with the ids from `first_placed` on. An id that no record has got yet has an empty one.
+    placed: AppendVec<OnceLock<V>, &'s Session>,
+    /// More than any id: nothing is placed.
+    first_placed: u32,
 }
 
 /// As many as threads can usefully fill at a barrier, and no more: see `shard_among`.
 const INDEX_SHARDS: usize = 8;
 
-impl<'s, V> Interned<'s, V> {
+impl<'s, V: Record> Interned<'s, V> {
     fn new_in(session: &'s Session) -> Self {
         let shards = std::array::from_fn(|_| GrowingPlaces::new_in(session));
         Interned {
             shards: Box::new_in(shards, session),
             items: AppendVec::new_in(session),
+            placed: AppendVec::new_in(session),
+            first_placed: u32::MAX,
         }
     }
 
@@ -1831,11 +1981,50 @@ impl<'s, V> Interned<'s, V> {
         &self.shards[shard_among(spread, INDEX_SHARDS)]
     }
 
+    /// The record with the id `id`, which is published.
+    #[inline(always)]
+    fn get(&self, id: u32) -> &V {
+        match id.checked_sub(self.first_placed) {
+            None => self.items.get(id),
+            // Nobody has the id of an empty one. Whoever had would get a hole, for good.
+            Some(at) => self.placed.get(at).get_or_init(V::hole),
+        }
+    }
+
     /// `spread`: the hash of the key being looked up.
     #[inline]
     fn find(&self, spread: u64, is_it: impl Fn(&V) -> bool) -> Option<u32> {
+        let (shard, is_it) = (self.shard(spread), |i| is_it(self.get(i)));
+        match self.first_placed {
+            u32::MAX => shard.find_frozen(spread, is_it),
+            _ => shard.find(spread, is_it),
+        }
+    }
+
+    /// From now on nothing is added to `items`, and tasks `reserve` and `place`.
+    fn place_from_here(&mut self) {
+        self.first_placed = self.items.len();
+    }
+
+    /// `count` ids that nobody else has. Returns the first. One thread at a time.
+    fn reserve(&self, count: u32) -> u32 {
+        let first = self.first_placed + self.placed.len();
+        for _ in 0..count {
+            self.placed.push(OnceLock::new());
+        }
+        first
+    }
+
+    /// Publishes `record`, in which every id is published, unless another thread has published an equal one since the
+    /// caller looked. Returns the id of the one that is published. `id`: from `reserve`, for this record alone. `spread`:
+    /// its lookup hash.
+    ///
+    /// Under the lock of the shard of the index, so of two threads with one key one adds its id and the other finds it. The
+    /// record of the other stays where it is, and nothing refers to it.
+    fn place(&self, spread: u64, id: u32, record: V) -> u32 {
+        let placed = (self.placed.get(id - self.first_placed)).get_or_init(|| record);
         self.shard(spread)
-            .find_frozen(spread, |i| is_it(self.items.get(i)))
+            .find_or_add(spread, |other| placed.is_same(self.get(other)), || id)
     }
 
     /// For `put`.
@@ -1967,6 +2156,37 @@ impl<V> Own<V> {
 
 const KIND_SHIFT: u32 = 29;
 
+/// What a task has to do with the records that tasks publish while others run: `TypeStore::shares_records`.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Sharing {
+    /// No task of the program publishes any.
+    Off,
+    /// It finds those of the others. What it creates is its own.
+    Finds,
+    /// It publishes what it creates, when it creates it, unless that is bound.
+    Publishes,
+}
+
+/// Where a new record goes.
+#[derive(Copy, Clone)]
+enum Home {
+    /// To the task's own records.
+    Own { is_bound: bool },
+    /// To the published ones, under this id.
+    Published(u32),
+}
+
+impl Home {
+    /// The id of the record. `own`: the one that it has among the task's own.
+    #[inline]
+    fn id(self, own: u32) -> u32 {
+        match self {
+            Home::Own { .. } => own,
+            Home::Published(id) => id,
+        }
+    }
+}
+
 /// All task-local records: atoms, lists of index components, mappers, signatures, types. A field of
 /// `Task`. No other task sees it. At the end of the task `finish` extracts the records the task
 /// publishes, and the rest is dropped with the task.
@@ -1992,6 +2212,14 @@ pub struct OwnStore<'s> {
     has_unresolved_names: Cell<bool>,
     /// See `Types::as_first_request`.
     first_request: Cell<FirstRequest>,
+    sharing: Sharing,
+    /// `Sharing::Publishes`, by kind: the ids that the task has reserved and not used, from the first to before the second.
+    ids: [Cell<(u32, u32)>; 5],
+    /// .. and how many it has used.
+    published: [Cell<u32>; 5],
+    jitter: Jitter,
+    /// How many times the task has come by a `Place`.
+    times_at_a_place: Cell<u64>,
     summaries: Summaries<Cell<u32>, std::alloc::Global>,
 }
 
@@ -2012,7 +2240,54 @@ impl<'s> OwnStore<'s> {
             has_ordered_by_own_id: Cell::new(false),
             has_unresolved_names: Cell::new(false),
             first_request: Cell::new(FirstRequest::NONE),
+            sharing: Sharing::Off,
+            ids: Default::default(),
+            published: Default::default(),
+            jitter: Jitter::default(),
+            times_at_a_place: Cell::new(0),
         }
+    }
+
+    /// Before anything is created.
+    pub fn set_sharing(&mut self, sharing: Sharing) {
+        debug_assert!(self.is_empty());
+        self.sharing = sharing;
+    }
+
+    pub fn set_jitter(&mut self, jitter: Jitter) {
+        self.jitter = jitter;
+    }
+
+    /// `task`: a number that no other task has, so that no two tasks wait alike.
+    pub(crate) fn count_places_from(&self, task: u64) {
+        self.times_at_a_place.set(task << 24);
+    }
+
+    #[inline]
+    pub fn jitter(&self) -> Jitter {
+        self.jitter
+    }
+
+    /// `Jitter::wait_at`. What a task does there is the same in every run with one seed.
+    #[inline]
+    pub(crate) fn wait_at(&self, place: Place) {
+        if self.jitter.seed != 0 {
+            let times = self.times_at_a_place.get().wrapping_add(1);
+            self.times_at_a_place.set(times);
+            self.jitter.wait_at(place, times);
+        }
+    }
+
+    #[inline]
+    pub fn sharing(&self) -> Sharing {
+        self.sharing
+    }
+
+    /// The task is about to publish an atom. For `created`.
+    #[inline]
+    pub(crate) fn count_published_atom(&self) {
+        let published = &self.published[Kind::Atom as usize];
+        published.set(published.get() + 1);
     }
 
     /// The task is about to visit `file`, which nothing imports. From now on every record that
@@ -2069,23 +2344,24 @@ impl<'s> OwnStore<'s> {
 type Of<'s, V> = for<'a> fn(&'a OwnStore<'s>) -> &'a Own<V>;
 
 /// Looks up `key` among the task-local records and the published ones, or else creates a new
-/// task-local record.
-/// `is_it`: whether a record matches `key`. `make`: builds the record for `key`, and returns
-/// whether it is bound. `mentions_own`: whether `key` is known to reference a task-local record,
-/// which no published record does. It is asked once the task-local records have been searched.
+/// record.
+/// `is_it`: whether a record matches `key`. `make`: builds the record for `key`, given the id that it
+/// has if it is task-local, and returns where it goes (`Types::home_of`). `mentions_own`: whether
+/// `key` is known to reference a task-local record, which no published record does. It is asked once
+/// the task-local records have been searched.
 #[inline]
-fn intern_record<'s, V, K>(
+fn intern_record<'s, V: Record, K>(
     (published, own, kind): (&Interned<'s, V>, &OwnStore<'s>, Kind),
     of: Of<'s, V>,
     (spread, key): (u64, K),
     mentions_own: impl FnOnce(&K) -> bool,
     is_it: impl Fn(&V, &K) -> bool,
-    make: impl FnOnce(K, u32) -> (V, bool),
+    make: impl FnOnce(K, u32) -> (V, Home),
 ) -> u32 {
     let mine = of(own);
     let is_record = |id: u32| {
         let record = if id & LOCAL == 0 {
-            published.items.get(id)
+            published.get(id)
         } else {
             mine.records.get(id & !LOCAL)
         };
@@ -2118,10 +2394,18 @@ fn intern_record<'s, V, K>(
         Some(id) => id,
         None => {
             let index = mine.records.len();
-            let (record, is_bound) = make(key, index | LOCAL);
-            own.log(kind, index);
-            mine.push(record, is_bound);
-            index | LOCAL
+            match make(key, index | LOCAL) {
+                (record, Home::Own { is_bound }) => {
+                    own.log(kind, index);
+                    mine.push(record, is_bound);
+                    index | LOCAL
+                }
+                (record, Home::Published(id)) => {
+                    let id = published.place(spread, id, record);
+                    own.wait_at(Place::RecordPublished);
+                    id
+                }
+            }
         }
     };
     mine.found.fill(vacancy, spread, id);
@@ -2175,6 +2459,9 @@ fn is_in_order(pairs: &[(TypeId, TypeId)]) -> bool {
 ///   duplicates exist only between the tasks of one step, and `link` merges them.
 /// - Anything that changes the behaviour of a type is in its interning key, or is computed from the
 ///   key.
+///
+/// In a store that `shares_records`, tasks add records too, at any time, and `link` has nothing to do: see `Interned`. The
+/// second and the third point do not hold there.
 pub struct TypeStore<'s> {
     session: &'s Session,
     types: Interned<'s, TypeRecord<'s>>,
@@ -2190,12 +2477,15 @@ pub struct TypeStore<'s> {
     /// `Some`: `Types::creation_order` is `Types::content_order`, and every type has a `Rank`. It has the texts of the
     /// published atoms, which a rank is made of.
     texts: Option<Interner<'s>>,
+    /// `reserve_ids`: what tasks have given back, by kind. The lock is also held while ids are reserved.
+    spare_ids: Guarded<[Vec<(u32, u32)>; 5]>,
 }
 
-/// See `Types::first_new_type_id`: how many types the task had created.
+/// See `Types::first_new_type_id`: how many types the task had created, its own and published ones.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct NewTypes {
     own: u32,
+    published: u32,
 }
 
 /// The shared store together with the task-local store, which is all that a task sees.
@@ -2358,6 +2648,7 @@ impl<'s> TypeStore<'s> {
             string_literals: [ById::new_in(session), ById::new_in(session)],
             has_unresolved_names: AtomicBool::new(false),
             texts,
+            spare_ids: Guarded::default(),
         };
         // First: the flags of a type are those of its mapper too.
         let no_pairs = (Mapping::empty(), ObjectFlags::empty());
@@ -2405,6 +2696,7 @@ impl<'s> TypeStore<'s> {
     /// Publishes a type whose id is known to every task of the program. Called before the first
     /// step, on one thread. Everything it references is published.
     pub fn publish_constant(&self, data: TypeData<'s>) -> TypeId {
+        debug_assert!(!self.shares_records());
         let created = (data, None);
         let spread = spread_hash(&created);
         if let Some(id) = self.types.find(spread, |record| record.created == created) {
@@ -2441,7 +2733,84 @@ impl<'s> TypeStore<'s> {
     pub fn orders_by_content(&self) -> bool {
         self.texts.is_some()
     }
+
+    /// From now on a task with `Sharing::Publishes` publishes a record when it creates it: see `Interned`. After the last
+    /// `publish_constant`, before the first task. Only for a store that `orders_by_content`. `link` has nothing to do then.
+    pub fn share_records(&mut self) {
+        debug_assert!(self.orders_by_content());
+        self.components.place_from_here();
+        self.mappers.place_from_here();
+        self.sigs.place_from_here();
+        self.types.place_from_here();
+    }
+
+    #[inline]
+    pub fn shares_records(&self) -> bool {
+        self.types.first_placed != u32::MAX
+    }
+
+    /// See `Program::release`.
+    pub fn release(&mut self) {
+        *self.spare_ids.get_mut() = Default::default();
+    }
+
+    /// The id of the next record of the kind `kind` that the task of `own` publishes.
+    #[inline]
+    fn next_id(&self, kind: Kind, own: &OwnStore<'s>) -> u32 {
+        let ids = &own.ids[kind as usize];
+        let (mut next, mut end) = ids.get();
+        if next == end {
+            (next, end) = self.reserve_ids(kind);
+            own.wait_at(Place::IdsTaken);
+        }
+        ids.set((next + 1, end));
+        let published = &own.published[kind as usize];
+        published.set(published.get() + 1);
+        next
+    }
+
+    /// Ids that no other task has, from the first to before the second: what a task has given back, or new ones.
+    #[cold]
+    #[inline(never)]
+    fn reserve_ids(&self, kind: Kind) -> (u32, u32) {
+        let mut spare = self.spare_ids.lock();
+        if let Some(ids) = spare[kind as usize].pop() {
+            return ids;
+        }
+        // Under the lock, so that the ids are consecutive, and a type and its summary have one index.
+        let count = IDS_RESERVED_AT_A_TIME[kind as usize];
+        let first = match kind {
+            Kind::Atom => 0,
+            Kind::Components => self.components.reserve(count),
+            Kind::Mapper => self.mappers.reserve(count),
+            Kind::Sig => self.sigs.reserve(count),
+            Kind::Type => {
+                let first = self.types.reserve(count);
+                let of_summaries = self.summaries.reserve(count);
+                debug_assert_eq!(first, of_summaries);
+                first
+            }
+        };
+        (first, first + count)
+    }
+
+    /// At the end of a task: the ids that it has reserved and not used are for the next one.
+    pub fn take_back_ids(&self, own: &OwnStore<'s>) {
+        if own.sharing != Sharing::Publishes {
+            return;
+        }
+        let mut spare = self.spare_ids.lock();
+        for (ids, spare) in own.ids.iter().zip(spare.iter_mut()) {
+            let (next, end) = ids.replace((0, 0));
+            if next != end {
+                spare.push((next, end));
+            }
+        }
+    }
 }
+
+/// `TypeStore::reserve_ids`, in the order of `KINDS`. Atoms are numbered one by one: a task creates few.
+const IDS_RESERVED_AT_A_TIME: [u32; 5] = [0, 32, 512, 256, 1024];
 
 impl<'p, 's> Types<'p, 's> {
     #[inline(always)]
@@ -2665,14 +3034,42 @@ impl<'p, 's> Types<'p, 's> {
         self.add_facts(id, fact::KNOWS_HAS_GENERIC_ARGUMENTS | value);
     }
 
-    /// `new_record` for a task-local type, which the caller adds to `OwnStore::types` next.
-    fn new_own_record(&self, created: Made<'s>, id: u32) -> TypeRecord<'s> {
-        let record = self.new_record(created, id);
+    /// Where a record of the kind `kind` goes that the task is about to create.
+    #[inline]
+    fn home_of(&self, kind: Kind, is_bound: bool) -> Home {
+        match is_bound || self.own.sharing != Sharing::Publishes {
+            true => Home::Own { is_bound },
+            false => Home::Published(self.published.next_id(kind, self.own)),
+        }
+    }
+
+    /// `new_record` for a type that `intern_record` creates, and where it goes. `own_id`: its id if that is to the task's
+    /// own. Its summary is stored here: whoever finds the type may ask for that at once.
+    fn new_record_of_task(&self, created: Made<'s>, own_id: u32) -> (TypeRecord<'s>, Home) {
+        let home = self.home_of(Kind::Type, created.is_bound(self.own));
+        let record = self.new_record(created, home.id(own_id));
         let summary = record.summary(|member| self.member_flags_and_more(member));
-        let rank = (self.published.orders_by_content()).then(|| self.rank_of_type(&record.created));
-        let index = self.own.summaries.push(summary, rank);
-        debug_assert_eq!(index | LOCAL, id);
-        record
+        let is_unresolved_name = matches!(record.created.0, TypeData::UnresolvedName { .. });
+        match home {
+            Home::Own { .. } => {
+                let orders_by_content = self.published.orders_by_content();
+                let rank = orders_by_content.then(|| self.rank_of_type(&record.created));
+                let index = self.own.summaries.push(summary, rank);
+                debug_assert_eq!(index | LOCAL, own_id);
+                if is_unresolved_name {
+                    self.own.has_unresolved_names.set(true);
+                }
+            }
+            Home::Published(id) => {
+                let rank = self.rank_of_type(&record.created);
+                self.published.summaries.set(id, summary, rank);
+                if is_unresolved_name {
+                    let has_unresolved_names = &self.published.has_unresolved_names;
+                    has_unresolved_names.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+        (record, home)
     }
 
     /// `Type.flags`
@@ -2952,7 +3349,7 @@ impl<'p, 's> Types<'p, 's> {
     #[inline(always)]
     fn record(&self, id: TypeId) -> &'p TypeRecord<'s> {
         if id.0 & LOCAL == 0 {
-            self.published.types.items.get(id.0)
+            self.published.types.get(id.0)
         } else {
             self.own.types.records.get(id.0 & !LOCAL)
         }
@@ -2961,7 +3358,7 @@ impl<'p, 's> Types<'p, 's> {
     #[inline(always)]
     fn mapper_record(&self, id: MapperId) -> &'p MapperRecord<'s> {
         if id.0 & LOCAL == 0 {
-            self.published.mappers.items.get(id.0)
+            self.published.mappers.get(id.0)
         } else {
             self.own.mappers.records.get(id.0 & !LOCAL)
         }
@@ -3161,6 +3558,7 @@ impl<'p, 's> Types<'p, 's> {
         }
         let (x, y) = (self.rank(a), self.rank(b));
         (x.height.cmp(&y.height))
+            .then_with(|| x.place.cmp(&y.place))
             .then_with(|| x.content.cmp(&y.content))
             .then_with(|| self.compare_contents(a, b))
     }
@@ -3216,6 +3614,7 @@ impl<'p, 's> Types<'p, 's> {
         }
         Rank {
             height: ranking.height + 1,
+            place: ranking.place,
             content: ranking.lanes.0[0],
         }
     }
@@ -3283,10 +3682,20 @@ impl<'p, 's> Types<'p, 's> {
 
     pub fn intern(&self, mut data: TypeData<'s>) -> TypeId {
         self.drop_flag_without_effect(&mut data);
-        if let TypeData::StringLit { value, fresh } = data
-            && !value.is_own()
-            && let Some(id) = self.published.string_literals[usize::from(fresh)].get(&value)
+        let shares_records = self.published.shares_records();
+        let literal = match data {
+            TypeData::StringLit { value, fresh } if !value.is_own() => {
+                Some((value, &self.published.string_literals[usize::from(fresh)]))
+            }
+            _ => None,
+        };
+        if let Some((value, known)) = literal
+            && let Some(id) = known.get(&value)
         {
+            // Another task may have added it a moment ago, see below. What it wrote before comes with it.
+            if shares_records {
+                std::sync::atomic::fence(Ordering::Acquire);
+            }
             return id;
         }
         // `getFreshTypeOfLiteralType` creates the fresh type from the regular one, and bigint
@@ -3304,7 +3713,14 @@ impl<'p, 's> Types<'p, 's> {
             };
             self.intern_new((regular, None));
         }
-        self.intern_new((data, None))
+        let id = self.intern_new((data, None));
+        if let Some((value, known)) = literal
+            && shares_records
+            && !id.is_local()
+        {
+            known.insert(value, id);
+        }
+        id
     }
 
     /// `intern` for a type that has an alias or an origin.
@@ -3360,11 +3776,7 @@ impl<'p, 's> Types<'p, 's> {
                     provenance.map(|it| ArenaBox::new_in(it.to_provenance(arena), arena));
                 let created: Made<'s> = (data.to_data(arena), provenance);
                 debug_assert_eq!(spread_hash(&created), spread);
-                if matches!(created.0, TypeData::UnresolvedName { .. }) {
-                    self.own.has_unresolved_names.set(true);
-                }
-                let is_bound = created.is_bound(self.own);
-                (self.new_own_record(created, id), is_bound)
+                self.new_record_of_task(created, id)
             },
         ))
     }
@@ -3395,13 +3807,7 @@ impl<'p, 's> Types<'p, 's> {
             (spread_hash(&created), created),
             |created| SKIPS_LOOKUPS_OF_OWN_KEYS && created.mentions_own(),
             |record, created| record.created == *created,
-            |created, id| {
-                if matches!(created.0, TypeData::UnresolvedName { .. }) {
-                    self.own.has_unresolved_names.set(true);
-                }
-                let is_bound = created.is_bound(self.own);
-                (self.new_own_record(created, id), is_bound)
-            },
+            |created, id| self.new_record_of_task(created, id),
         ))
     }
 
@@ -3410,6 +3816,7 @@ impl<'p, 's> Types<'p, 's> {
     pub fn first_new_type_id(&self) -> NewTypes {
         NewTypes {
             own: self.own.types.records.len(),
+            published: self.own.published[Kind::Type as usize].get(),
         }
     }
 
@@ -3470,7 +3877,7 @@ impl<'p, 's> Types<'p, 's> {
     #[inline]
     pub fn sig(&self, id: SigId) -> &'p SigData<'s> {
         if id.0 & LOCAL == 0 {
-            self.published.sigs.items.get(id.0)
+            self.published.sigs.get(id.0)
         } else {
             self.own.sigs.records.get(id.0 & !LOCAL)
         }
@@ -3502,8 +3909,8 @@ impl<'p, 's> Types<'p, 's> {
             |data| SKIPS_LOOKUPS_OF_OWN_KEYS && data.mentions_own(),
             |record, data| record == data,
             |data, _| {
-                let is_bound = data.is_bound(self.own);
-                (data, is_bound)
+                let home = self.home_of(Kind::Sig, data.is_bound(self.own));
+                (data, home)
             },
         ))
     }
@@ -3512,7 +3919,7 @@ impl<'p, 's> Types<'p, 's> {
     #[inline]
     pub fn components(&self, id: ComponentsId) -> &'p [IndexComponent] {
         if id.0 & LOCAL == 0 {
-            &self.published.components.items.get(id.0)[..]
+            &self.published.components.get(id.0)[..]
         } else {
             &self.own.components.records.get(id.0 & !LOCAL)[..]
         }
@@ -3530,8 +3937,8 @@ impl<'p, 's> Types<'p, 's> {
             |record, list| **record == **list,
             |list, _| {
                 let list = self.list(list);
-                let is_bound = list.is_bound(self.own);
-                (list, is_bound)
+                let home = self.home_of(Kind::Components, list.is_bound(self.own));
+                (list, home)
             },
         ))
     }
@@ -3573,8 +3980,8 @@ impl<'p, 's> Types<'p, 's> {
                 let flags =
                     (pairs.iter()).fold(ObjectFlags::empty(), |f, p| f | self.object_flags(p.1));
                 let pairs = Mapping::copy_from_slice_in(pairs, self.own.arena);
-                let is_bound = pairs.is_bound(self.own);
-                ((pairs, flags), is_bound)
+                let home = self.home_of(Kind::Mapper, pairs.is_bound(self.own));
+                ((pairs, flags), home)
             },
         ))
     }
@@ -4668,6 +5075,10 @@ struct Ranking<'p, 's> {
     lanes: Lanes,
     /// The greatest height of a type that it was shown.
     height: u32,
+    /// `Rank::place` so far.
+    place: u64,
+    /// The file that it was shown last. What follows a file is the number of a node or a symbol in it.
+    file: Option<FileId>,
 }
 
 impl<'p, 's> Ranking<'p, 's> {
@@ -4676,7 +5087,26 @@ impl<'p, 's> Ranking<'p, 's> {
             types,
             lanes: Lanes::START,
             height: 0,
+            place: 0,
+            file: None,
         }
+    }
+}
+
+/// The first number that `Hash` writes.
+struct FirstNumber(Option<u32>);
+
+impl Hasher for FirstNumber {
+    fn write(&mut self, bytes: &[u8]) {
+        if self.0.is_none() {
+            let mut number = [0; 4];
+            let len = bytes.len().min(4);
+            number[..len].copy_from_slice(&bytes[..len]);
+            self.0 = Some(u32::from_le_bytes(number));
+        }
+    }
+    fn finish(&self) -> u64 {
+        u64::from(self.0.unwrap_or(0))
     }
 }
 
@@ -4688,6 +5118,7 @@ impl Hashing for Ranking<'_, '_> {
             item.visit(&mut one);
             sum = sum.wrapping_add(one.lanes.0[0]);
             self.height = self.height.max(one.height);
+            self.place = self.place.max(one.place);
         }
         self.lanes.add(items.len() as u64);
         self.lanes.add(sum);
@@ -4717,14 +5148,23 @@ impl Visitor for Ranking<'_, '_> {
         let rank = self.types.rank(id);
         self.lanes.add(rank.content);
         self.height = self.height.max(rank.height);
+        self.place = self.place.max(rank.place);
     }
     #[inline]
     fn file(&mut self, file: FileId) {
         self.lanes.add(u64::from(file.0));
+        self.file = Some(file);
     }
     #[inline]
     fn plain<T: Hash + ?Sized>(&mut self, value: &T) {
         value.hash(&mut self.lanes);
+        if let Some(file) = self.file.take() {
+            let mut number = FirstNumber(None);
+            value.hash(&mut number);
+            // A file counts from 1: no place is 0.
+            let place = (u64::from(file.0) + 1) << 32 | number.finish();
+            self.place = self.place.max(place);
+        }
     }
 }
 
@@ -4892,7 +5332,11 @@ impl<'s> OwnStore<'s> {
     /// computation has created one.
     #[inline]
     pub(crate) fn created(&self) -> [usize; 5] {
-        self.lengths()
+        let mut created = self.lengths();
+        for (count, published) in created.iter_mut().zip(&self.published) {
+            *count += published.get() as usize;
+        }
+        created
     }
 
     /// Runs at the end of the task. `marks`: the records referenced by the entries that the task
@@ -5208,6 +5652,10 @@ impl<'s> TypeStore<'s> {
             let links = tasks.iter().map(|_| Link::default()).collect();
             return (links, LinkCounts::default());
         }
+        debug_assert!(
+            !self.shares_records(),
+            "what is not published at once is bound"
+        );
         // Dispatching a stage to the pool costs more than the stage itself. The ids are the same:
         // no stage depends on which thread runs it.
         let on_this_thread: InParallel<'_> = &|count, work| (0..count).for_each(work);
@@ -5619,6 +6067,35 @@ mod tests {
     }
 
     #[test]
+    fn of_two_types_of_one_height_the_one_that_mentions_later_syntax_comes_later() {
+        fn this_of(types: Types<'_, '_>, (file, symbol): (u32, u32)) -> TypeId {
+            types.intern(TypeData::ThisParam(Sym {
+                file: FileId(file),
+                id: crate::bind::SymbolId(symbol),
+            }))
+        }
+        for (earlier, later) in [((0, 3), (0, 7)), ((0, 7), (1, 0)), ((2, 300), (2, 301))] {
+            let [by_rank, _] = orders_of(|types, _, is_reversed| {
+                both(
+                    is_reversed,
+                    || this_of(types, earlier),
+                    || this_of(types, later),
+                )
+            });
+            assert!(by_rank.is_lt());
+            // Through a type that the key mentions.
+            let [by_rank, _] = orders_of(|types, _, is_reversed| {
+                both(
+                    is_reversed,
+                    || types.intern(TypeData::Keyof(this_of(types, earlier))),
+                    || types.intern(TypeData::Keyof(this_of(types, later))),
+                )
+            });
+            assert!(by_rank.is_lt());
+        }
+    }
+
+    #[test]
     fn keys_that_differ_in_a_type_are_ordered_as_the_two_types() {
         fn inner(types: Types<'_, '_>, is_reversed: bool) -> (TypeId, TypeId) {
             both(
@@ -5717,5 +6194,121 @@ mod tests {
         let types = Types::new(&store, &own);
         let published = [inner, outer].map(|ty| (types.rank(ty).height, types.rank(ty).content));
         assert_eq!(published, ranks);
+    }
+
+    fn sharing_store<'s>(session: &'s Session, atoms: Interner<'s>) -> TypeStore<'s> {
+        let mut store = TypeStore::ordered_by_content_in(session, atoms);
+        store.share_records();
+        store
+    }
+
+    fn own_store(session: &Session, sharing: Sharing) -> OwnStore<'_> {
+        let mut own = OwnStore::new_in(session.arena());
+        own.set_sharing(sharing);
+        own
+    }
+
+    #[test]
+    fn threads_that_create_the_same_types_get_the_same_ids() {
+        const COUNT: usize = 3000;
+        let session = Session::new();
+        let store = sharing_store(&session, Interner::new_in(&session));
+        // More than one block of ids, each type made of the one before.
+        let create = || {
+            let own = own_store(&session, Sharing::Publishes);
+            let types = Types::new(&store, &own);
+            let mut created = vec![TypeId::STRING];
+            for at in 0..COUNT {
+                created.push(types.intern(TypeData::Keyof(created[at])));
+            }
+            store.take_back_ids(&own);
+            created
+        };
+        let all: Vec<Vec<TypeId>> = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..8).map(|_| scope.spawn(create)).collect();
+            (threads.into_iter())
+                .map(|thread| thread.join().unwrap())
+                .collect()
+        });
+        assert!(all.iter().all(|created| *created == all[0]));
+        let own = own_store(&session, Sharing::Finds);
+        let types = Types::new(&store, &own);
+        for at in 0..COUNT {
+            let (of, ty) = (all[0][at], all[0][at + 1]);
+            assert!(!ty.is_local());
+            assert!(matches!(*types.get(ty), TypeData::Keyof(it) if it == of));
+            assert_eq!(types.flags(ty), tf::INDEX);
+            assert_eq!(types.rank(ty).height as usize, at + 2);
+            assert_eq!(types.intern(TypeData::Keyof(of)), ty);
+        }
+        assert_eq!(own.created(), [0; 5]);
+    }
+
+    #[test]
+    fn what_is_bound_is_not_published() {
+        let session = Session::new();
+        let store = sharing_store(&session, Interner::new_in(&session));
+        let mut own = own_store(&session, Sharing::Publishes);
+        own.add_unimported_file(FileId(3));
+        let types = Types::new(&store, &own);
+        let this_of = |file| {
+            let id = crate::bind::SymbolId(7);
+            types.intern(TypeData::ThisParam(Sym { file, id }))
+        };
+        let (bound, free) = (this_of(FileId(3)), this_of(FileId(2)));
+        assert!(bound.is_local() && !free.is_local());
+        assert!(types.intern(TypeData::Keyof(bound)).is_local());
+        assert!(!types.intern(TypeData::Keyof(free)).is_local());
+        let pairs = |to| vec![(free, to)];
+        assert!(types.mapper(pairs(bound)).is_local());
+        assert!(!types.mapper(pairs(TypeId::STRING)).is_local());
+        // Two types and a mapper of its own, two types and a mapper that are published.
+        assert_eq!(own.lengths(), [0, 0, 1, 0, 2]);
+        assert_eq!(own.created(), [0, 0, 2, 0, 4]);
+    }
+
+    #[test]
+    fn a_task_that_only_finds_keeps_what_it_creates() {
+        let session = Session::new();
+        let store = sharing_store(&session, Interner::new_in(&session));
+        let publishing = own_store(&session, Sharing::Publishes);
+        let published = Types::new(&store, &publishing).intern(TypeData::Keyof(TypeId::STRING));
+        let own = own_store(&session, Sharing::Finds);
+        let types = Types::new(&store, &own);
+        assert_eq!(types.intern(TypeData::Keyof(TypeId::STRING)), published);
+        assert!(types.intern(TypeData::Keyof(TypeId::NUMBER)).is_local());
+    }
+
+    #[test]
+    fn the_ids_that_a_task_gives_back_are_used_by_the_next() {
+        let session = Session::new();
+        let store = sharing_store(&session, Interner::new_in(&session));
+        let create = |of: TypeId| {
+            let own = own_store(&session, Sharing::Publishes);
+            let created = Types::new(&store, &own).intern(TypeData::Keyof(of));
+            store.take_back_ids(&own);
+            created
+        };
+        let first = create(TypeId::STRING);
+        assert_eq!(create(TypeId::NUMBER).0, first.0 + 1);
+        assert_eq!(create(TypeId::STRING), first);
+        assert_eq!(create(TypeId::BIGINT).0, first.0 + 2);
+    }
+
+    #[test]
+    fn a_string_literal_type_and_its_atom_are_published_at_once() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let store = sharing_store(&session, atoms);
+        let create = || {
+            let own = own_store(&session, Sharing::Publishes);
+            let value = crate::atom::Atoms::new(&atoms, &own).intern(b"not in any file");
+            assert!(!value.is_own());
+            let fresh = false;
+            Types::new(&store, &own).intern(TypeData::StringLit { value, fresh })
+        };
+        let first = create();
+        assert!(!first.is_local());
+        assert_eq!(create(), first);
     }
 }

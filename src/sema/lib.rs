@@ -14,6 +14,7 @@ pub mod config;
 pub mod config_options;
 pub mod ecmascript;
 pub mod hir;
+pub mod jitter;
 pub mod json;
 pub mod local;
 pub mod messages;

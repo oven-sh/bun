@@ -1,4 +1,4 @@
-//! Tasks, steps and barriers (bulk-synchronous parallel): fan/r8/DESIGN.md.
+//! Tasks, steps and barriers (bulk-synchronous parallel).
 //!
 //! Checking runs in steps. During a step the published state is read-only. A task reads only the
 //! published state and what it owns, and writes only to what it owns. So its result is a function
@@ -13,16 +13,20 @@
 //! to every task-local id that survives (`Program::link`), and then `publish` applies the tasks'
 //! entries in task order, with every key and value rewritten through the link (`follow`). The first
 //! entry for a key wins.
+//!
+//! The other way to run tasks, without steps and barriers, is in `super::commit`.
 
+use super::commit::View;
 use super::sink::Reported;
 use super::{Program, Query};
 use crate::atom::Intern;
+use crate::jitter::Place;
 use crate::local::{Buffer, FileLocalTables, SlotNumber};
 use crate::node::Node;
 use crate::program::{FileId, Sym};
 use crate::session::Arena;
 use crate::table::{Applied, Entries, Finishing, Handle, Payload, Publish, Share};
-use crate::types::{Link, Marks, OwnRecords, OwnStore};
+use crate::types::{Link, Marks, OwnRecords, OwnStore, Sharing};
 use crate::util::SharedSort;
 use crate::util::{InParallel, for_each_mut};
 use std::cell::{Cell, RefCell, UnsafeCell};
@@ -81,6 +85,14 @@ pub struct Task<'s> {
     pub(super) assignments_walked: RefCell<Vec<(FileId, Node, bool)>>,
     /// See `hold_back`.
     held_back: Cell<u64>,
+    /// `Some`: the task commits while it runs, and sees the commits of the others. See `super::commit`.
+    view: Option<View<'s>>,
+    /// See `lose`. It is set under `&Checker`.
+    is_lost: Cell<bool>,
+    /// The task is never lost: it runs alone, in the last round.
+    is_believed: bool,
+    /// How many keys the task had logged at its commits, and how many entries they have stored.
+    committed: Cell<[u64; 2]>,
     /// The types, signatures, mappers and component lists that the task has created.
     pub(crate) own: OwnStore<'s>,
     /// Interior-mutable because every access to a table takes `&Task`: some are made under `&Checker`. See `Task::buffer`.
@@ -106,6 +118,10 @@ impl<'s> Task<'s> {
             listings: Vec::new(),
             assignments_walked: RefCell::default(),
             held_back: Cell::new(0),
+            view: None,
+            is_lost: Cell::new(false),
+            is_believed: false,
+            committed: Cell::new([0; 2]),
             own: OwnStore::new_in(arena),
             buffer: UnsafeCell::new(Buffer::new()),
             file_local: UnsafeCell::new(FileLocalTables::new()),
@@ -144,6 +160,77 @@ impl<'s> Task<'s> {
         self.place.map(|(_, index)| index)
     }
 
+    /// A number that no other task of the plan has.
+    pub(super) fn number(&self) -> u64 {
+        (self.place).map_or(u64::MAX, |(step, index)| {
+            u64::from(step) << 32 | u64::from(index)
+        })
+    }
+
+    /// After `begin`. `is_believed`: see the field.
+    pub(super) fn see_commits(&mut self, view: View<'s>, is_believed: bool) {
+        self.buffer.get_mut().begin_log();
+        (self.view, self.is_believed) = (Some(view), is_believed);
+    }
+
+    #[inline]
+    pub(crate) fn view(&self) -> Option<&View<'s>> {
+        self.view.as_ref()
+    }
+
+    /// `see_commits` was called.
+    #[inline]
+    pub(crate) fn commits(&self) -> bool {
+        self.view.is_some()
+    }
+
+    /// Whether a commit of the task will store what it stores now.
+    #[inline]
+    pub(crate) fn shares_what_it_stores(&self) -> bool {
+        self.commits() && !self.is_lost()
+    }
+
+    /// What the task has done since its last commit is thrown away, and so is what it does from now on.
+    pub(super) fn lose(&self) {
+        self.is_lost.set(self.commits() && !self.is_believed);
+    }
+
+    #[inline]
+    pub(super) fn is_lost(&self) -> bool {
+        self.is_lost.get()
+    }
+
+    pub(super) fn is_believed(&self) -> bool {
+        self.is_believed
+    }
+
+    /// A commit had `logged` keys to go through and has stored `stored` entries.
+    pub(super) fn count_committed(&self, logged: u64, stored: u64) {
+        let [so_far, stored_so_far] = self.committed.get();
+        (self.committed).set([so_far + logged, stored_so_far + stored]);
+    }
+
+    /// Whether the task has noted a listing or a walk for which its next commit can find it invalid
+    /// (`Finished::can_be_invalid`), or is lost. What it has computed since then may depend on that.
+    pub(super) fn may_be_thrown_away(&self) -> bool {
+        !self.listings.is_empty()
+            || self.assignments_walked.borrow().iter().any(|it| it.2)
+            || self.is_lost()
+    }
+
+    /// Ends a task that commits, on its own thread, after its last commit.
+    pub(super) fn end(&mut self, program: &Program<'s>) -> Ended {
+        program.types.take_back_ids(&self.own);
+        let [logged, stored] = self.committed.get();
+        let ended = Ended {
+            logged,
+            stored,
+            foreign_evaluations: self.foreign_evaluations,
+        };
+        self.drop_everything();
+        ended
+    }
+
     /// Whatever is being computed now depends on more than its key and the program. Every computation in progress is
     /// meant, so this is a count, which each of them compares when it ends: `has_held_back_since`.
     #[inline]
@@ -160,7 +247,8 @@ impl<'s> Task<'s> {
     /// Whether `hold_back` was called since the computation began whose result `stored` permits to store, or nobody knows
     /// when that was.
     #[inline]
-    pub fn has_held_back_since(&self, stored: Stored) -> bool {
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub(crate) fn has_held_back_since(&self, stored: Stored) -> bool {
         stored.0 != self.held_back.get()
     }
 
@@ -175,6 +263,10 @@ impl<'s> Task<'s> {
         }
         self.buffer.get_mut().begin_file(file.0, is_imported);
         self.file_local.get_mut().begin_file(file.0);
+        if let Some(view) = &self.view {
+            view.pin(file);
+            self.own.wait_at(Place::FileBegins);
+        }
     }
 
     /// The entries keyed by the nodes of `file` are stored densely from now on, as after
@@ -203,7 +295,14 @@ impl<'s> Task<'s> {
         self.order_dependent_variances.clear();
         self.listings.clear();
         self.assignments_walked.get_mut().clear();
+        (self.view, self.is_believed) = (None, false);
+        self.is_lost.set(false);
+        self.committed.set([0; 2]);
+        // Outside the plan it publishes nothing.
+        let (sharing, jitter) = (self.own.sharing().min(Sharing::Finds), self.own.jitter());
         self.own = OwnStore::new_in(self.arena);
+        self.own.set_sharing(sharing);
+        self.own.set_jitter(jitter);
         self.buffer.get_mut().clear();
         self.file_local.get_mut().clear();
     }
@@ -236,6 +335,7 @@ impl<'s> Task<'s> {
         program: &Program<'s>,
         diagnostics: Vec<(Option<Query>, Reported)>,
     ) -> Finished<'s> {
+        program.types.take_back_ids(&self.own);
         self.finish_tables(&tables_of(program), diagnostics)
     }
 
@@ -287,6 +387,15 @@ impl<'s> Task<'s> {
             buffered,
         }
     }
+}
+
+/// What is left of a task that has committed what it had to publish, for `--timing`.
+pub struct Ended {
+    /// How many keys the task had logged at its commits, and how many entries they have stored. The others were bound, or
+    /// another task was first.
+    pub logged: u64,
+    pub stored: u64,
+    pub foreign_evaluations: [u32; 14],
 }
 
 /// The result a task passes to the barrier.
@@ -471,7 +580,7 @@ pub fn table_names() -> Vec<&'static str> {
 }
 
 /// The `Buffered` tables of `program`. The slot of a table is its index here: `number_tables`.
-fn tables_of<'a, 's>(program: &'a Program<'s>) -> Vec<&'a dyn Publish<'s>> {
+pub(super) fn tables_of<'a, 's>(program: &'a Program<'s>) -> Vec<&'a dyn Publish<'s>> {
     macro_rules! each {
         ($($field:ident)*) => { vec![$(&program.$field as &dyn Publish<'s>),*] };
     }

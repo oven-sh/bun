@@ -247,18 +247,40 @@ test.concurrent.each([
     name: "two plugins in bake.config.ts with a framework",
     files: {
       "r.ts": `export function render() { return new Response("x"); }`,
-      "bake.config.ts": `export default { plugins: [{ name: "a", framework: { server: "./r.ts" } }, { name: "b", framework: { server: "./r.ts" } }] };`,
+      "bake.config.ts": `
+        const framework = { fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./r.ts" }] };
+        export default { plugins: [{ name: "a", framework }, { name: "b", framework }] };
+      `,
     },
     waits: true,
     error: `"bake.config.ts": the plugins "a" and "b" both have a framework.`,
   },
   {
-    name: "a framework module that cannot be found",
+    name: "a framework that Bun.serve() rejects",
     files: {
-      "bake.config.ts": `export default { plugins: [{ name: "a", framework: { server: "./nope.ts" } }] };`,
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: { fileSystemRouterTypes: [{ root: "app/pages", serverEntryPoint: "./r.ts" }] } }] };`,
     },
     waits: true,
-    error: `"bake.config.ts": the framework of "a" names "./nope.ts", which cannot be found.`,
+    error: `"bake.config.ts": the framework of "a": 'fileSystemRouterTypes[0]' is missing 'style'`,
+  },
+  {
+    name: "a framework with clientPages and serverComponents",
+    files: {
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: {
+        fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./r.ts", clientPages: true }],
+        serverComponents: { separateSSRGraph: false, serverRuntimeImportSource: "./rt.ts" },
+      } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the framework of "a": 'fileSystemRouterTypes[n].clientPages' cannot be used with 'serverComponents'`,
+  },
+  {
+    name: "a framework entry point that cannot be found",
+    files: {
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: { fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./nope.ts" }] } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the framework of "a": cannot find "./nope.ts", its serverEntryPoint.`,
   },
   {
     name: "a bake.config.ts default export that is not an object",
@@ -1052,26 +1074,69 @@ test.concurrent.each([
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("bun bake renders .tsx pages with the framework of a bake.config.ts plugin", async () => {
+test.concurrent("bun bake routes and renders pages with the framework of a bake.config.ts plugin", async () => {
   using dir = tempDir("bake-command-framework", {
-    // No React: the plugin renders the pages.
-    "app/pages/index.tsx": `export default () => "home";`,
-    "app/pages/[id].tsx": `export default params => "page " + params.id;`,
+    // No React, and its own folder and extension: the framework routes and renders the pages.
+    "src/routes/index.ts": `export default () => "home";`,
+    "src/routes/[id].ts": `export default params => "page " + params.id;`,
+    // Not a page of this framework.
+    "app/pages/other.tsx": `export default () => "other";`,
     "render/server.ts": `
       export function render(request, meta) {
         const body = meta.pageModule.default(meta.params ?? {}) + " " + JSON.stringify(meta.modules);
         return new Response(body, { headers: { "content-type": "text/plain" } });
       }
     `,
-    "bake.config.ts": `export default { plugins: [{ name: "strings", framework: { server: "./render/server.ts" } }] };`,
+    "bake.config.ts": `export default {
+      plugins: [{
+        name: "strings",
+        framework: {
+          fileSystemRouterTypes: [{ root: "src/routes", style: "nextjs-pages", serverEntryPoint: "./render/server.ts", extensions: [".ts"] }],
+        },
+      }],
+    };`,
   });
 
   await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
   const url = await getServerUrl(proc);
 
-  // A framework with no client module has no browser bundle.
+  // A framework with no client entry point has no browser bundle.
   expect(await get(url, "/")).toBe("200 home []");
   expect(await get(url, "/7")).toBe("200 page 7 []");
+  expect(await get(url, "/other")).toBe("200 page other []");
+});
+
+test.concurrent("a framework with clientPages puts the pages of a route in its browser bundle", async () => {
+  using dir = tempDir("bake-command-client-pages", {
+    "app/pages/index.ts": `export default () => "home-page-module";`,
+    "app/pages/about.ts": `export default () => "about-page-module";`,
+    "render/server.ts": `export function render(request, meta) { return new Response(meta.modules.join(" ")); }`,
+    "render/client.ts": `import { route } from "bun:bake/client"; route.page();`,
+    "bake.config.ts": `export default {
+      plugins: [{
+        name: "fw",
+        framework: {
+          fileSystemRouterTypes: [{
+            root: "app/pages",
+            style: "nextjs-pages",
+            serverEntryPoint: "./render/server.ts",
+            clientEntryPoint: "./render/client.ts",
+            extensions: [".ts"],
+            clientPages: true,
+          }],
+        },
+      }],
+    };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const [, bundleUrl] = (await get(url, "/")).split(" ");
+  const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+  expect(bundle).toContain(`route: { page: "app/pages/index.ts", layouts: [] }`);
+  expect(bundle).toContain("home-page-module");
+  expect(bundle).not.toContain("about-page-module");
 });
 
 test.concurrent("bun bake reports two pages with the same URL pattern, and keeps serving", async () => {
@@ -1079,7 +1144,7 @@ test.concurrent("bun bake reports two pages with the same URL pattern, and keeps
     "app/pages/[a].tsx": `export default () => "a";`,
     "app/pages/[b].tsx": `export default () => "b";`,
     "render/server.ts": `export function render(request, meta) { return new Response(meta.pageModule.default()); }`,
-    "bake.config.ts": `export default { plugins: [{ name: "strings", framework: { server: "./render/server.ts" } }] };`,
+    "bake.config.ts": `export default { plugins: [{ name: "strings", framework: { fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./render/server.ts" }] } }] };`,
   });
 
   await using proc = spawnBake(String(dir), ["bake", "--port=0"]);

@@ -71,21 +71,27 @@ pub(crate) fn is_restarting(_global: &JSGlobalObject, _frame: &CallFrame) -> JsR
     ))
 }
 
-/// `setPages(server?, client?)`: the next `Bun.serve()` routes the `.tsx` and `.jsx` pages of
-/// `app/pages/`, with the framework modules at these absolute paths, or with the default React
-/// framework when `server` is undefined.
+/// `setPages(framework?)`: the next `Bun.serve()` adds the routers of `framework` (the `framework`
+/// object of a plugin), or of the default React framework when it is undefined.
 pub(crate) fn set_pages(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [server, client] = frame.arguments_as_array::<2>();
-    let path = |value: JSValue| -> JsResult<Option<Box<[u8]>>> {
-        if value.is_undefined_or_null() {
-            return Ok(None);
-        }
-        Ok(Some(Box::from(&*value.to_utf8(global)?)))
-    };
-    let framework = match path(server)? {
-        Some(server) => Some((server, path(client)?)),
-        None => None,
-    };
-    global.bun_vm().as_mut().bake_pages = Some(bun_jsc::virtual_machine::BakePages { framework });
+    let [framework] = frame.arguments_as_array::<1>();
+    let vm = global.bun_vm().as_mut();
+    if framework.is_undefined_or_null() {
+        vm.bake_framework.deinit();
+    } else {
+        vm.bake_framework.set(global, framework);
+    }
+    vm.bake_pages = true;
+    Ok(JSValue::UNDEFINED)
+}
+
+/// `checkFramework(framework)`: throws the error that `Bun.serve()` would throw for this `framework`
+/// object of a plugin, so that `bun bake` reports it as an error of `bake.config.ts`.
+pub(crate) fn check_framework(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [framework] = frame.arguments_as_array::<1>();
+    let mut bundler_options = crate::bake::SplitBundlerOptions::default();
+    let result = crate::bake::Framework::from_js(framework, global, &mut bundler_options);
+    bundler_options.destroy_plugin();
+    result?;
     Ok(JSValue::UNDEFINED)
 }

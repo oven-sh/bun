@@ -15,7 +15,8 @@ const {
 const setConfigPlugins = $newRustFunction("bake/config/plugins.rs", "setConfigPlugins", 2);
 const isRestart = $newRustFunction("bake/config/plugins.rs", "isRestart", 0);
 const restartProcess = $newRustFunction("bake/config/plugins.rs", "restartProcess", 0);
-const setPages = $newRustFunction("bake/config/plugins.rs", "setPages", 2);
+const setPages = $newRustFunction("bake/config/plugins.rs", "setPages", 1);
+const checkFramework = $newRustFunction("bake/config/plugins.rs", "checkFramework", 1);
 
 // `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
 const ObjectKeys = Object.keys;
@@ -130,15 +131,15 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
  */
 let configKeyInServer: string | undefined;
 
-/** The modules of a framework plugin, as absolute paths. */
-type FrameworkModules = { server: string; client: string | undefined; plugin: string };
+/** The `framework` object of a plugin, and the plugin's name. */
+type FrameworkPlugin = { object: object; plugin: string };
 
 type Config = {
   plugins: unknown[];
   names: string[];
   name: string;
   key: string;
-  framework: FrameworkModules | undefined;
+  framework: FrameworkPlugin | undefined;
 };
 
 /** The plugins of `bake.config.ts`: its default export is a config, or a function that returns one. */
@@ -172,7 +173,7 @@ async function loadConfig(cwd: string): Promise<Config> {
 
   const plugins: unknown[] = [];
   const names: string[] = [];
-  let framework: FrameworkModules | undefined;
+  let framework: FrameworkPlugin | undefined;
   for (let i = 0, length = list.length; i < length; i++) {
     const plugin = list[i];
     // A function with `name` and `setup` is a plugin too, as in `Bun.build()`.
@@ -185,7 +186,7 @@ async function loadConfig(cwd: string): Promise<Config> {
     }
     const pluginFramework = plugin.framework;
     if (pluginFramework !== undefined) {
-      framework = loadFramework(name, file, pluginName, pluginFramework, framework);
+      framework = loadFramework(name, path.dirname(file), pluginName, pluginFramework, framework);
     }
     // A framework plugin needs no build hooks.
     if (pluginFramework !== undefined && plugin.setup === undefined) continue;
@@ -202,44 +203,38 @@ async function loadConfig(cwd: string): Promise<Config> {
 }
 
 /**
- * The `framework` of a plugin: the module that renders a page on the server, and optionally the one
- * that runs in the browser. Paths and package names resolve from the folder of `bake.config.ts`.
+ * The `framework` of a plugin: the object of the `framework` option of `Bun.serve()`'s `app`, with
+ * its routers, server and client entry points, and server components. Checked here, so that a
+ * mistake in it is an error of `bake.config.ts`.
  */
-function loadFramework(
-  name: string,
-  configFile: string,
-  pluginName: string,
-  value: any,
-  other: FrameworkModules | undefined,
-) {
+function loadFramework(name: string, dir: string, pluginName: string, value: any, other: FrameworkPlugin | undefined) {
   if (other !== undefined) {
     throw new BakeError(`"${name}": the plugins "${other.plugin}" and "${pluginName}" both have a framework.`, true);
   }
-  if (value === null || typeof value !== "object" || typeof value.server !== "string") {
-    throw new BakeError(
-      `"${name}": the framework of "${pluginName}" must be an object with a "server" module, and may have a "client" module.`,
-      true,
-    );
+  const fail = (message: string) => new BakeError(`"${name}": the framework of "${pluginName}": ${message}`, true);
+  try {
+    checkFramework(value);
+  } catch (error: any) {
+    throw fail(error?.message ?? String(error));
   }
-  if (value.client !== undefined && typeof value.client !== "string") {
-    throw new BakeError(`"${name}": the "client" of the framework of "${pluginName}" must be a module name.`, true);
-  }
-  const dir = path.dirname(configFile);
-  const resolve = (specifier: string) => {
+  // The server resolves these from the project root, unless `builtInModules` provides them.
+  const builtIn = new Set<string>();
+  for (const module of value.builtInModules ?? []) builtIn.add(module?.import);
+  const resolve = (specifier: unknown, what: string) => {
+    if (typeof specifier !== "string" || builtIn.has(specifier)) return;
     try {
-      return Bun.resolveSync(specifier, dir);
+      Bun.resolveSync(specifier, dir);
     } catch {
-      throw new BakeError(
-        `"${name}": the framework of "${pluginName}" names "${specifier}", which cannot be found.`,
-        true,
-      );
+      throw fail(`cannot find "${specifier}", its ${what}.`);
     }
   };
-  return {
-    server: resolve(value.server),
-    client: value.client === undefined ? undefined : resolve(value.client),
-    plugin: pluginName,
-  };
+  for (const router of value.fileSystemRouterTypes ?? []) {
+    resolve(router.serverEntryPoint, "serverEntryPoint");
+    resolve(router.clientEntryPoint, "clientEntryPoint");
+  }
+  resolve(value.serverComponents?.serverRuntimeImportSource, "serverRuntimeImportSource");
+  resolve(value.reactFastRefresh?.importSource, "reactFastRefresh.importSource");
+  return { object: value as object, plugin: pluginName };
 }
 
 /**
@@ -373,11 +368,13 @@ async function start() {
   setConfigPlugins(config.plugins, config.names);
   const pagesDir = path.join(cwd, "app", "pages");
   const pages = await loadPages(pagesDir);
-  const componentPages = hasComponentPages(pagesDir);
-  // A framework plugin renders the pages instead of the default React framework.
-  if (componentPages && config.framework === undefined) checkReactForPages(cwd);
+  // A framework plugin has its own routers. Without one, the default framework routes the `.tsx`
+  // and `.jsx` pages of app/pages/, with the project's React.
+  const defaultFrameworkPages = config.framework === undefined && hasComponentPages(pagesDir);
+  if (defaultFrameworkPages) checkReactForPages(cwd);
+  const frameworkRoutes = config.framework !== undefined || defaultFrameworkPages;
   const app = await loadAppServer(cwd);
-  if (pages.length === 0 && !componentPages && app === undefined) {
+  if (pages.length === 0 && !frameworkRoutes && app === undefined) {
     throw new BakeError(
       `Nothing to serve in "${cwd}". Add a page, such as app/pages/index.html, or an app/server.ts.`,
       false,
@@ -424,7 +421,7 @@ async function start() {
       "bun bake",
       port => {
         // Each `Bun.serve()` attempt (the port retries too) takes it.
-        if (componentPages) setPages(config.framework?.server, config.framework?.client);
+        if (frameworkRoutes) setPages(config.framework?.object);
         const options = ObjectCreate(exported ?? null);
         // Own properties, defined rather than assigned: the export may be frozen, or have getters.
         const own = (key: string, value: unknown) =>

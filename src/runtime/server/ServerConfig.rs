@@ -880,28 +880,43 @@ impl ServerConfig {
                 });
             }
 
-            // `bun bake` sets this for its own `Bun.serve()`, when `app/pages/` has `.tsx` pages.
-            let mut bake_pages = global.bun_vm().as_mut().bake_pages.take();
+            // `bun bake` sets this for its own `Bun.serve()`, with a framework or for the `.tsx` pages
+            // of the default one.
+            let bake_pages = core::mem::take(&mut global.bun_vm().as_mut().bake_pages);
 
             // When HTML bundles are provided, ensure DevServer options are ready
             // The presence of these options causes Bun.serve to initialize things.
             if !init_ctx.dedupe_html_bundle_map.is_empty()
                 || !init_ctx.framework_router_list.is_empty()
-                || bake_pages.is_some()
+                || bake_pages
             {
                 if args.development.is_hmr_enabled() {
                     use bun_options_types::schema::api::DotEnvBehavior;
 
                     // SAFETY: `bun_vm()` returns the live VM for this global;
                     // we need `&mut Resolver` for `Framework::auto`.
+                    let mut bundler_options = crate::bake::SplitBundlerOptions::default();
+                    let bake_framework = global.bun_vm().bake_framework.get();
                     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-                    let framework = if let Some(pages) = bake_pages.take() {
-                        crate::bake::Framework::bake_pages(resolver, pages.framework)
-                    } else {
-                        crate::bake::Framework::auto(
+                    let framework = match bake_framework {
+                        Some(object) if bake_pages => {
+                            match crate::bake::Framework::from_js(
+                                object,
+                                global,
+                                &mut bundler_options,
+                            ) {
+                                Ok(framework) => framework,
+                                Err(err) => {
+                                    bundler_options.destroy_plugin();
+                                    return Err(err);
+                                }
+                            }
+                        }
+                        _ if bake_pages => crate::bake::Framework::bake_pages(resolver),
+                        _ => crate::bake::Framework::auto(
                             resolver,
                             core::mem::take(&mut init_ctx.framework_router_list),
-                        )
+                        ),
                     };
 
                     let mut user_options = crate::bake::UserOptions {
@@ -910,7 +925,7 @@ impl ServerConfig {
                             bun_paths::fs::FileSystem::instance().top_level_dir(),
                         ),
                         framework,
-                        bundler_options: Default::default(),
+                        bundler_options,
                     };
 
                     let o = &vm.transpiler.options.transform_options;

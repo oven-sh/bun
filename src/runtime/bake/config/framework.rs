@@ -55,9 +55,9 @@ pub(crate) struct FileSystemRouterType {
     pub(crate) extensions: Vec<Utf8Bytes<'static>>,
     pub(crate) style: router::Style,
     pub(crate) allow_layouts: bool,
-    /// The page and layout files also run in the browser: the dev server adds them to the client
-    /// graph, and the client entry gets them from `route` of `bun:bake/client`. For a framework that
-    /// hydrates the server's HTML without server components (the default React framework of `bun bake`).
+    /// `clientPages`: the page and layout files also run in the browser. The dev server adds them to
+    /// the client graph, and the client entry gets them from `route` of `bun:bake/client`, to hydrate
+    /// the server's HTML. Not with server components.
     pub(crate) client_pages: bool,
 }
 
@@ -226,7 +226,7 @@ impl Framework {
 }
 
 impl Framework {
-    pub(super) fn from_js(
+    pub(crate) fn from_js(
         opts: JSValue,
         global: &JSGlobalObject,
         bundler_options: &mut SplitBundlerOptions,
@@ -442,6 +442,9 @@ impl Framework {
                 let layouts = fsr_opts
                     .get_boolean_strict(global, "layouts")?
                     .unwrap_or(false);
+                let client_pages = fsr_opts
+                    .get_boolean_strict(global, "clientPages")?
+                    .unwrap_or(false);
 
                 let style = style_from_js(
                     match fsr_opts.get(global, "style")? {
@@ -530,7 +533,7 @@ impl Framework {
                     extensions,
                     ignore_dirs,
                     allow_layouts: layouts,
-                    client_pages: false,
+                    client_pages,
                 });
                 i += 1;
             }
@@ -539,6 +542,15 @@ impl Framework {
         };
         // errdefer for (file_system_router_types) |*fsr| fsr.style.deinit();
         // — Vec<FileSystemRouterType> drops contents on early return.
+
+        // With server components, the client graph gets the client components of a page, not the page.
+        if server_components.is_some()
+            && file_system_router_types.iter().any(|fsr| fsr.client_pages)
+        {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "'fileSystemRouterTypes[n].clientPages' cannot be used with 'serverComponents'"
+            )));
+        }
 
         let framework = Framework {
             is_built_in_react: false,

@@ -1497,7 +1497,7 @@ describe("DatabaseSync.prototype.setAuthorizer()", () => {
   });
 
   test("remains installed after close() and open()", () => {
-    const db = new DatabaseSync(":memory:");
+    using db = new DatabaseSync(":memory:");
     let calls = 0;
     db.setAuthorizer(() => {
       calls++;
@@ -1516,11 +1516,10 @@ describe("DatabaseSync.prototype.setAuthorizer()", () => {
       expect.objectContaining({ code: "ERR_SQLITE_ERROR", message: expect.stringMatching(/not authorized/) }),
     );
     expect(calls).toBeGreaterThan(callsBefore);
-    db.close();
   });
 
   test("stays cleared after close() and open()", () => {
-    const db = new DatabaseSync(":memory:");
+    using db = new DatabaseSync(":memory:");
     db.setAuthorizer(() => constants.SQLITE_DENY);
     db.setAuthorizer(null);
 
@@ -1529,7 +1528,6 @@ describe("DatabaseSync.prototype.setAuthorizer()", () => {
 
     db.exec("CREATE TABLE x (a)");
     expect(db.prepare("SELECT count(*) AS n FROM x").get()).toEqual({ n: 0 });
-    db.close();
   });
 });
 
@@ -1581,7 +1579,7 @@ describe("db.limits", () => {
   });
 
   test("limits set at runtime survive close() and open()", () => {
-    const db = new DatabaseSync(":memory:", { limits: { variableNumber: 3 } });
+    using db = new DatabaseSync(":memory:", { limits: { variableNumber: 3 } });
     const originalColumn = db.limits.column;
 
     db.limits.attach = 0;
@@ -1607,7 +1605,6 @@ describe("db.limits", () => {
     db.close();
     db.open();
     expect(db.limits.column).toBe(originalColumn);
-    db.close();
   });
 });
 
@@ -1879,21 +1876,19 @@ describe("enableDefensive()", () => {
   test("enableDefensive() persists across close() and open()", () => {
     const pragma = (db: any) => db.prepare("PRAGMA journal_mode").get().journal_mode;
 
-    const on = new DatabaseSync(":memory:", { defensive: false });
+    using on = new DatabaseSync(":memory:", { defensive: false });
     on.enableDefensive(true);
     on.close();
     on.open();
     on.exec("PRAGMA journal_mode=OFF");
     expect(pragma(on)).toBe("memory");
-    on.close();
 
-    const off = new DatabaseSync(":memory:", { defensive: true });
+    using off = new DatabaseSync(":memory:", { defensive: true });
     off.enableDefensive(false);
     off.close();
     off.open();
     off.exec("PRAGMA journal_mode=OFF");
     expect(pragma(off)).toBe("off");
-    off.close();
   });
 });
 

@@ -149,8 +149,7 @@ public:
     void setEnableLoadExtension(bool v) { m_enableLoadExtension = v; }
 
     const DatabaseSyncOpenConfiguration& config() const { return m_config; }
-    // Runtime setters write through to m_config so open() replays them
-    // after a close()/open() cycle, like the constructor options.
+    // Write through to m_config so open() replays the value after close().
     void setLimit(int id, int value);
     void setEnableDefensive(bool v) { m_config.enableDefensive = v; }
 

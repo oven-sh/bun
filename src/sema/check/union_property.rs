@@ -45,13 +45,6 @@ const MIN_MEMBERS_FOR_SUMMARY: usize = 128;
 /// the members takes about 2 instructions a member, to visit a member that has facts and not the name about 50.
 const MOST_HOLDERS_TO_FIND: usize = 16;
 
-/// `false`: `add_member_property` copies every property before it compares it with the first, as before.
-const COMPARES_WITHOUT_A_COPY: bool = true;
-
-/// It makes the copy as well. It is a panic that names the member and the file if the copy is not equal to the first.
-/// For debugging.
-const CHECKS_WITH_A_COPY: bool = false;
-
 /// The flags that say which accessors a property has, besides `READONLY`.
 const ACCESSOR_KIND: PropFlags = PropFlags::ACCESSOR.union(PropFlags::WRITE_ONLY);
 
@@ -119,19 +112,12 @@ pub(super) struct UnionMembers<'p> {
     summaries: FxHashMap<TypeId, UnionSummary>,
     /// A union is being asked for every name that its members have. See `property_holder_of_member`.
     is_listing: bool,
-    /// See `has_seen_shapes`.
-    lists_of_shapes: FxHashSet<u64>,
 }
 
 impl<'p> UnionMembers<'p> {
     /// Sets `is_listing`, and returns what it was.
     pub(super) fn set_listing(&mut self, is_listing: bool) -> bool {
         std::mem::replace(&mut self.is_listing, is_listing)
-    }
-
-    /// Whether it was asked about the same addresses before. For `MemberCount::OfMembersWithShapesSeenBefore`.
-    pub(super) fn has_seen_shapes(&mut self, shapes: &[usize]) -> bool {
-        !self.lists_of_shapes.insert(crate::util::fx_hash(shapes))
     }
 
     #[inline]
@@ -864,13 +850,8 @@ impl<'p, 's> Checker<'p, 's> {
         if !builder.insert_symbol((symbol, mapper)) {
             return;
         }
-        // It changes neither the flags nor the kind of source.
-        let instantiation = self.instantiation_of_prop(prop, mapper);
-        let instantiated = |arena: &'s Arena| {
-            let mut copy = prop.clone_in(arena);
-            instantiation.apply_to(&mut copy);
-            copy
-        };
+        let mut prop = prop.clone_in(self.arena);
+        self.instantiate_prop(&mut prop, mapper);
         // `prop.Flags&SymbolFlagsClassMember`: a variable of a module or of `globalThis` is
         // not considered.
         if !matches!(prop.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym)) {
@@ -882,7 +863,7 @@ impl<'p, 's> Checker<'p, 's> {
             builder.first_owner = t;
             builder.first_at = Some(at);
             builder.flags |= prop.flags & ACCESSOR_KIND;
-            builder.prop_set.push(instantiated(self.arena));
+            builder.prop_set.push(prop);
             return;
         }
         let single = &builder.prop_set[0];
@@ -891,31 +872,19 @@ impl<'p, 's> Checker<'p, 's> {
             true => p.flags & (ACCESSOR_KIND | PropFlags::READONLY),
             false => PropFlags::empty(),
         };
-        if accessors(prop) != accessors(single) {
+        if accessors(&prop) != accessors(single) {
             builder.flags.remove(ACCESSOR_KIND);
         }
-        // FOR SPEED, no copy is made of a property that is equal to `singleProp`, field by field: of `theme` in 150
-        // intersections with `{ theme: Theme }`. `compare_properties` begins with that test.
-        let is_single_once_more = COMPARES_WITHOUT_A_COPY && instantiation.makes(single, prop);
-        let copy = (!is_single_once_more || CHECKS_WITH_A_COPY).then(|| instantiated(self.arena));
         // `isInstantiation`: instantiations of one property that
         // `compareProperties` finds equal are one property.
-        let is_same = match &copy {
-            Some(copy) => single.source == copy.source && self.compare_properties(single, copy),
-            None => true,
-        };
-        if is_single_once_more && copy.as_ref().is_some_and(|copy| copy != single) {
-            self.fact_differs("a property of a member is the first once more", &[t]);
-        }
+        let is_same = single.source == prop.source && self.compare_properties(single, &prop);
         if is_same {
             builder.merged_instantiations = matches!(single.source, PropSource::Symbol(symbol)
             if (self.files().parent_of_symbol(symbol)).is_some_and(|parent| {
                 !self.local_type_params_of_symbol(parent).is_empty()
             }));
-        } else if let Some(copy) = copy
-            && builder.is_new_prop(&copy)
-        {
-            builder.prop_set.push(copy);
+        } else if builder.is_new_prop(&prop) {
+            builder.prop_set.push(prop);
         }
     }
 

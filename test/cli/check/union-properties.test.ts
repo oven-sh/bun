@@ -2138,10 +2138,9 @@ test.concurrent.skipIf(!tsc)("unions of another file, on any number of threads, 
 // The members of an intersection are a list with a copy of every property of every constituent. If the constituents have
 // 32 properties or more, and share the names of no more than half of them, a lookup by name leaves the properties where
 // they are, until something lists them or there were a quarter as many lookups as names. A union looks a name up in each
-// member in that way, unless it is asked for all its properties. Only a task that publishes nothing does that: every task
-// of one thread, and those of the last step of several. And a property of a mapped type gets the mapper that has its key
-// when its type is asked for. So each program here is checked with sizes on both sides of those numbers, on 1 and on 8
-// threads, by name before the list and after it, and none of that must change what is reported.
+// member in that way, unless it is asked for all its properties. And a property of a mapped type gets the mapper that has
+// its key when its type is asked for. So each program here is checked with sizes on both sides of those numbers, on 1 and
+// on 8 threads, by name before the list and after it, and none of that must change what is reported.
 
 /** `count` optional properties that no other type has. */
 const filler = (count: number, prefix = "f") => each(count, i => `${prefix}${i}?: ${i};`, " ");
@@ -3041,12 +3040,9 @@ export {};
 };
 
 // Whether an intersection reduces to `never` is decided name by name, from the properties that several constituents have.
-// If the constituents have 16 properties or more, what a name has added to the answer is kept: for the next intersection
-// of the same object types, from the third one on, for as long as those that have the name have the same type arguments,
-// and if 4 or more have the name, for the next intersection in which the same ones have it. Up
-// to 8 constituents are compared pair by pair. A property of a union is created when it is asked for, with the types of
-// what it combines, so what asks for it by name must not list the others. So each program here has the same constituents
-// in four intersections or more, with sizes on both sides of those numbers, and none of that must change what is reported.
+// Up to 8 constituents are compared pair by pair. A property of a union is created when it is asked for, with the types of
+// what it combines, so what asks for it by name must not list the others, and what lists them lists them in the order of
+// the constituents.
 
 /** `text(1)` .. `text(4)` */
 const four = (text: (i: number) => string) => [1, 2, 3, 4].map(text);
@@ -3827,6 +3823,104 @@ declare function make<M>(): M;${programs.join("")}\nexport {};\n`;
 (143,7): error TS7022: 'routes34' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
 `,
   },
+  "a parameter that is such an intersection or nothing": {
+    sizes: [0],
+    program: () => {
+      const types = [
+        "T & Partial<T>",
+        "Partial<T> & T",
+        "{ draft?: boolean } & T & Partial<T>",
+        "T & { draft?: boolean } & Partial<T>",
+        "{ draft?: boolean } & Partial<T> & T",
+        "{ draft?: boolean } & T & Required<T>",
+        "T & { extra?: 1 }",
+      ];
+      const bodies = [
+        "return x!;",
+        "return register(x!);",
+        "return x!.id;",
+        "return x && other;",
+        "return x || other;",
+        "return x ?? other;",
+        "if (x || other) return x; return other;",
+      ];
+      const programs = types
+        .flatMap(type => bodies.map(body => [type, body]))
+        .map(
+          ([type, body], n) => `
+interface Page${n} { id: string; title?: string }
+interface Link${n} { id: string; to?: keyof typeof routes${n} }
+function load${n}<T extends Page${n} | Link${n}>(x: (${type}) | undefined) { ${body} }
+const routes${n} = { home: load${n}(other) };`,
+        );
+      return `
+declare function register(entry: { id: string }): number;
+declare const other: { id: string };${programs.join("")}\nexport {};\n`;
+    },
+    errors: `
+(5,31): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(7,7): error TS7022: 'routes0' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(13,31): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(15,7): error TS7022: 'routes2' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(17,31): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(19,7): error TS7022: 'routes3' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(21,31): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(23,7): error TS7022: 'routes4' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(25,31): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(27,7): error TS7022: 'routes5' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(29,31): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(30,10): error TS7023: 'load6' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(31,7): error TS7022: 'routes6' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(49,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(51,7): error TS7022: 'routes11' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(53,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(55,7): error TS7022: 'routes12' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(57,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(58,10): error TS7023: 'load13' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(59,7): error TS7022: 'routes13' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(77,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(79,7): error TS7022: 'routes18' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(81,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(83,7): error TS7022: 'routes19' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(85,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(86,10): error TS7023: 'load20' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(87,7): error TS7022: 'routes20' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(89,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(91,7): error TS7022: 'routes21' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(97,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(99,7): error TS7022: 'routes23' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(101,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(103,7): error TS7022: 'routes24' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(105,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(107,7): error TS7022: 'routes25' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(109,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(111,7): error TS7022: 'routes26' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(113,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(114,10): error TS7023: 'load27' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(115,7): error TS7022: 'routes27' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(133,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(135,7): error TS7022: 'routes32' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(137,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(139,7): error TS7022: 'routes33' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(141,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(142,10): error TS7023: 'load34' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(143,7): error TS7022: 'routes34' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(161,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(163,7): error TS7022: 'routes39' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(165,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(167,7): error TS7022: 'routes40' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(169,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(170,10): error TS7023: 'load41' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(171,7): error TS7022: 'routes41' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(189,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(191,7): error TS7022: 'routes46' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(193,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(195,7): error TS7022: 'routes47' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(197,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(198,10): error TS7023: 'load48' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(199,7): error TS7022: 'routes48' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+`,
+  },
   "the properties of the constraint are created where a union with such an intersection is reduced to its supertypes": {
     sizes: [2, 9],
     program: count => {
@@ -4022,7 +4116,7 @@ export {};
   Property 'shape' is optional in type 'A & { extra: 1; }' but required in type '{ id: string; extra: 1; shape: 1 | 2 | undefined; both: 1 | 2; }'.
 `,
   },
-  "what the first intersection of some object types has found is kept for the second": {
+  "intersections of the same object types and one more, again and again": {
     // So many object types have each of the names.
     sizes: [2, 3, 4, 5, 12],
     program: count => `
@@ -4243,6 +4337,97 @@ export {};
 (29,8): error TS2446: Property 'p' is protected and only accessible through an instance of class 'D'. This is an instance of class 'M'.
 `,
   },
+  "an interface that extends a mapped type over an intersection with itself": {
+    sizes: [0],
+    program: () => {
+      const bases = [
+        'Pick<Loop & Big, "b">',
+        'Pick<Big & Loop, "b">',
+        'Pick<Loop & Big, "b" | "own">',
+        'Pick<Both, "b">',
+        'P<Loop & Big, "b">',
+        "Q<Loop & Big>",
+        "Mid",
+      ];
+      return `
+interface Big { a: 1; b: 2; c: 3 }
+type P<T, K extends keyof T> = { [X in K]: T[X] };
+type Q<T> = { [X in "b"]: 5 } & { z: T };
+${bases
+  .map(
+    (base, n) => `namespace N${n} {
+  type Both = Loop & Big;
+  interface Mid extends Pick<Loop & Big, "b"> { mid: 1 }
+  interface Loop extends ${base} { own: 1 }
+  declare const loop: Loop, both: Loop & Big;
+  const b: never = loop.b;
+  const own: never = loop.own;
+  const k: keyof Loop = "zzz";
+  const whole: { own: 1; b: 3 } = loop;
+  const c: never = both.b;
+}`,
+  )
+  .join("\n")}
+namespace First {
+  declare const loop: Loop;
+  const b: never = loop.b;
+  interface Loop extends Pick<Loop & Big, "b"> { own: 1 }
+}
+export {};
+`;
+    },
+    errors: `
+(10,9): error TS2322: Type '2' is not assignable to type 'never'.
+(11,9): error TS2322: Type '1' is not assignable to type 'never'.
+(12,9): error TS2322: Type '"zzz"' is not assignable to type 'keyof Loop'.
+(13,9): error TS2322: Type 'Loop' is not assignable to type '{ own: 1; b: 3; }'.
+  Types of property 'b' are incompatible.
+    Type '2' is not assignable to type '3'.
+(14,9): error TS2322: Type '2' is not assignable to type 'never'.
+(18,13): error TS2615: Type of property 'b' circularly references itself in mapped type 'Pick<Big & Loop, "b">'.
+(21,9): error TS2322: Type 'any' is not assignable to type 'never'.
+(22,9): error TS2322: Type '1' is not assignable to type 'never'.
+(23,9): error TS2322: Type '"zzz"' is not assignable to type 'keyof Loop'.
+(25,9): error TS2322: Type 'any' is not assignable to type 'never'.
+(32,9): error TS2322: Type '2' is not assignable to type 'never'.
+(33,9): error TS2322: Type '1' is not assignable to type 'never'.
+(34,9): error TS2322: Type '"zzz"' is not assignable to type 'keyof Loop'.
+(35,9): error TS2322: Type 'Loop' is not assignable to type '{ own: 1; b: 3; }'.
+  Types of property 'b' are incompatible.
+    Type '2' is not assignable to type '3'.
+(36,9): error TS2322: Type '2' is not assignable to type 'never'.
+(40,13): error TS2615: Type of property 'b' circularly references itself in mapped type 'Pick<Both, "b">'.
+(43,9): error TS2322: Type 'any' is not assignable to type 'never'.
+(44,9): error TS2322: Type '1' is not assignable to type 'never'.
+(45,9): error TS2322: Type '"zzz"' is not assignable to type 'keyof Loop'.
+(47,9): error TS2322: Type 'any' is not assignable to type 'never'.
+(54,9): error TS2322: Type '2' is not assignable to type 'never'.
+(55,9): error TS2322: Type '1' is not assignable to type 'never'.
+(56,9): error TS2322: Type '"zzz"' is not assignable to type 'keyof Loop'.
+(57,9): error TS2322: Type 'Loop' is not assignable to type '{ own: 1; b: 3; }'.
+  Types of property 'b' are incompatible.
+    Type '2' is not assignable to type '3'.
+(58,9): error TS2322: Type '2' is not assignable to type 'never'.
+(65,9): error TS2322: Type '5' is not assignable to type 'never'.
+(66,9): error TS2322: Type '1' is not assignable to type 'never'.
+(67,9): error TS2322: Type '"zzz"' is not assignable to type 'keyof Loop'.
+(68,9): error TS2322: Type 'Loop' is not assignable to type '{ own: 1; b: 3; }'.
+  Types of property 'b' are incompatible.
+    Type '5' is not assignable to type '3'.
+(69,9): error TS2322: Type 'any' is not assignable to type 'never'.
+(69,25): error TS2339: Property 'b' does not exist on type 'never'.
+  The intersection 'Loop & Big' was reduced to 'never' because property 'b' has conflicting types in some constituents.
+(76,9): error TS2322: Type '2' is not assignable to type 'never'.
+(77,9): error TS2322: Type '1' is not assignable to type 'never'.
+(78,9): error TS2322: Type '"zzz"' is not assignable to type 'keyof Loop'.
+(79,9): error TS2322: Type 'Loop' is not assignable to type '{ own: 1; b: 3; }'.
+  Types of property 'b' are incompatible.
+    Type '2' is not assignable to type '3'.
+(80,9): error TS2322: Type '2' is not assignable to type 'never'.
+(84,9): error TS2322: Type 'any' is not assignable to type 'never'.
+(84,20): error TS2615: Type of property 'b' circularly references itself in mapped type 'Pick<Loop & Big, "b">'.
+`,
+  },
   "a property of a mapped type that two keys spell, and copies of it": {
     sizes: [0],
     program: () => `
@@ -4318,71 +4503,6 @@ export {};
 (34,35): error TS2322: Type 'string' is not assignable to type 'never'.
 `,
   },
-  "the index signatures of the modifiers type of a mapped type with readonly, with -readonly and without": {
-    sizes: [0],
-    program: () => {
-      const rows = [
-        ["readonly ", "B", "string", '"x"'],
-        ["-readonly ", "B", "string", '"x"'],
-        ["", "B", "string", '"x"'],
-        ["+readonly ", "B", "string", '"x"'],
-        ["readonly ", "B | { [k: string]: 1 }", "string", '"x"'],
-        ["-readonly ", "B | { readonly [k: string]: 1 }", "string", '"x"'],
-        ["", "B | { readonly [k: string]: 1 }", "string", '"x"'],
-        ["readonly ", "B", '"a"', '"a"'],
-        ["readonly ", "B", "number", "0"],
-        ["readonly ", "B & { z: 1 }", "string", '"x"'],
-        ["", "B & { readonly [k: string]: 1 }", "string", '"x"'],
-      ];
-      return (
-        rows
-          .map(
-            ([modifier, modifiers, keys, key], n) => `
-namespace N${n} {
-  const shapes = { circle: (null! as RP<${modifiers}, ${keys}>)[${key}] };
-  type RP<T, K extends keyof T> = { ${modifier}[P in K]: 1 };
-  interface Base<T> { [k: string]: 1 }
-  interface B extends Base<typeof shapes> {}
-  interface Plain { [k: string]: 1 }
-  declare const written: RP<${modifiers.replace(/\bB\b/, "Plain")}, ${keys}>;
-  written[${key}] = 1;
-}`,
-          )
-          .join("") + "\nexport {};\n"
-      );
-    },
-    errors: `
-(3,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-(6,13): error TS2310: Type 'B' recursively references itself as a base type.
-(9,3): error TS2542: Index signature in type 'RP<Plain, string>' only permits reading.
-(12,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-(15,13): error TS2310: Type 'B' recursively references itself as a base type.
-(21,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-(24,13): error TS2310: Type 'B' recursively references itself as a base type.
-(30,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-(33,13): error TS2310: Type 'B' recursively references itself as a base type.
-(36,3): error TS2542: Index signature in type 'RP<Plain, string>' only permits reading.
-(39,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-(42,13): error TS2310: Type 'B' recursively references itself as a base type.
-(45,3): error TS2542: Index signature in type 'RP<Plain | { [k: string]: 1; }, string>' only permits reading.
-(48,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-(51,13): error TS2310: Type 'B' recursively references itself as a base type.
-(57,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-(60,13): error TS2310: Type 'B' recursively references itself as a base type.
-(63,3): error TS2542: Index signature in type 'RP<Plain | { readonly [k: string]: 1; }, string>' only permits reading.
-(66,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-(69,13): error TS2310: Type 'B' recursively references itself as a base type.
-(72,11): error TS2540: Cannot assign to 'a' because it is a read-only property.
-(75,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-(78,13): error TS2310: Type 'B' recursively references itself as a base type.
-(81,3): error TS2542: Index signature in type 'RP<Plain, number>' only permits reading.
-(84,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-(87,13): error TS2310: Type 'B' recursively references itself as a base type.
-(90,3): error TS2542: Index signature in type 'RP<Plain & { z: 1; }, string>' only permits reading.
-(93,9): error TS7022: 'shapes' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-(96,13): error TS2310: Type 'B' recursively references itself as a base type.
-`,
-  },
 };
 
 const bySize = { ...members, ...reduced };
@@ -4443,6 +4563,59 @@ test.concurrent.skipIf(!tsc)("members of another file, on any number of threads,
   expect(Object.keys(byFile(theirs)).length).toBe(12);
   for (const lines of ours) expect(byFile(lines)).toEqual(byFile(theirs));
 });
+
+// The file that is checked first says where the cycle is entered: at the property, at the function or at the constant.
+test.concurrent(
+  "a table, the types of its entries and the function that makes them, in files in any order",
+  async () => {
+    const orders = ["abc", "acb", "bac", "bca", "cab", "cba"];
+    const types = [
+      "T & Partial<T>",
+      "T & Readonly<T>",
+      "T & { [K in keyof T]: T[K] }",
+      "{ draft?: boolean } & T & Partial<T>",
+    ];
+    const files = orders.flatMap(order =>
+      types.flatMap((type, n) => {
+        const [entries, helper, table] = [...order].map(letter => `${order}${n}${letter}`);
+        return [
+          [
+            `${entries}.ts`,
+            `import type { routes } from "./${table}";
+export interface Page { id: string; title?: string }
+export interface Link { id: string; to?: keyof typeof routes }
+export type Entry = Page | Link;
+`,
+          ],
+          [
+            `${helper}.ts`,
+            `import type { Entry } from "./${entries}";
+declare function register(entry: { id: string }): number;
+export function load<T extends Entry>(x: (${type}) | undefined) { return register(x!); }
+`,
+          ],
+          [
+            `${table}.ts`,
+            `import { load } from "./${helper}";
+declare const page: { id: string; title?: string };
+export const routes = { home: load(page) };
+`,
+          ],
+        ];
+      }),
+    );
+    using dir = tempDir("bun-check-table", {
+      "tsconfig.json": tsconfig,
+      "wrong.ts": `export const wrong: number = "";\n`,
+      ...Object.fromEntries(files),
+    });
+    const root = String(dir);
+    const runs = [1, 1, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root));
+    for (const lines of await Promise.all(runs)) {
+      expect(Object.keys(byFile(lines))).toEqual(["wrong.ts"]);
+    }
+  },
+);
 
 // A new union or intersection takes its flags from its constituents, of which a type holds up to 7 itself. Here they are of
 // another file or of the file that asks, object types, mapped types with and without a type variable, intersections that

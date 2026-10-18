@@ -1,7 +1,6 @@
 //! Types computed from other types: `keyof`, `T[K]`, conditional, mapped and template literal types.
 
 use super::alias::NewAlias;
-use super::instantiate::PropInstantiation;
 use super::related::Place;
 use super::shape::MemberCount;
 use super::shortcuts::task_fact;
@@ -39,27 +38,6 @@ pub(super) struct MappedInstantiation {
     /// `InstantiationKey::nesting`
     nesting: u8,
 }
-
-/// `false`: `build_mapped_shape` creates a mapper for every key, as before. See `Types::key_apart`.
-const KEEPS_KEYS_APART: bool = true;
-
-/// Every property that is made with its key apart is made with the key in its mapper as well, and both are asked what is
-/// asked about such a property, and instantiated. And no template is instantiated without a key. A difference is a panic
-/// that names the mapped type and the file. For debugging.
-pub(super) const CHECKS_KEYS_APART: bool = false;
-
-/// `false`: `index_infos_of_modifiers` makes an object of the union, as before.
-const ASKS_UNION_MODIFIERS_FOR_INDEX_INFOS_ALONE: bool = true;
-
-/// It makes the object as well, and it is a panic that names the union and the file if that has other index signatures.
-/// For debugging.
-const CHECKS_INDEX_INFOS_OF_UNION_MODIFIERS: bool = false;
-
-/// `false`: a mapped type with `readonly` or `-readonly` does not ask its modifiers type for an index signature, as before.
-const ASKS_MODIFIERS_UNDER_ANY_MODIFIER: bool = true;
-
-/// `false`: `key_type_of_prop` returns a `nameType` that is a union, and a copy of the property does not have it, as before.
-const NAMES_NO_PROPERTY_BY_A_UNION: bool = true;
 
 impl<'p, 's> Checker<'p, 's> {
     /// The pairs of `mapper`, followed by `param` mapped to `ty`.
@@ -120,53 +98,6 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn forget_key_apart(&self, prop: &mut Prop) {
         if self.types().key_apart(prop).is_some() {
             prop.name_type = TypeId::UNRESOLVED;
-        }
-    }
-
-    /// Under `CHECKS_KEYS_APART`: `prop`, which `build_mapped_shape` has made for `of` with its key apart, against the same
-    /// property with `with_key` for its mapper.
-    #[cold]
-    #[inline(never)]
-    fn check_key_apart(&mut self, of: TypeId, prop: &Prop, with_key: MapperId) {
-        let whole = Prop {
-            mapper: with_key,
-            name_type: TypeId::UNRESOLVED,
-            ..prop.clone_in(self.arena)
-        };
-        let is_same = self.types().key_apart(&whole).is_none()
-            && self.mapper_of_prop(prop) == with_key
-            && self.key_type_of_prop(of, prop) == self.key_type_of_prop(of, &whole)
-            && self.name_type_of_copy(of, prop) == self.name_type_of_copy(of, &whole)
-            && self.containing_type_of_mapped_prop(of, prop)
-                == self.containing_type_of_mapped_prop(of, &whole);
-        if !is_same {
-            self.fact_differs_for("a property of a mapped type with its key apart", &[of]);
-        }
-    }
-
-    /// Under `CHECKS_KEYS_APART`: `instantiation` is what `instantiation_of_prop(prop, mapper)` has returned.
-    #[cold]
-    #[inline(never)]
-    pub(super) fn check_instantiation_with_key_apart(
-        &mut self,
-        prop: &Prop,
-        mapper: MapperId,
-        instantiation: PropInstantiation,
-    ) {
-        let (Some(_), &PropSource::Mapped(of, ..)) = (self.types().key_apart(prop), &prop.source)
-        else {
-            return;
-        };
-        let mut whole = Prop {
-            mapper: self.mapper_of_prop(prop),
-            name_type: TypeId::UNRESOLVED,
-            ..prop.clone_in(self.arena)
-        };
-        self.instantiate_prop(&mut whole, mapper);
-        let mut apart = prop.clone_in(self.arena);
-        instantiation.apply_to(&mut apart);
-        if self.mapper_of_prop(&apart) != whole.mapper {
-            self.fact_differs_for("the instantiation of a property with its key apart", &[of]);
         }
     }
 
@@ -623,7 +554,7 @@ impl<'p, 's> Checker<'p, 's> {
         let key = self.name_type_or_key_type_of_prop(owner, prop)?;
         // `t.flags&include != 0`: no caller includes unions. Two keys of a mapped type that spell one name give the
         // property a union for its `nameType`.
-        Some(match NAMES_NO_PROPERTY_BY_A_UNION && self.is_union(key) {
+        Some(match self.is_union(key) {
             true => TypeId::NEVER,
             false => key,
         })
@@ -722,7 +653,7 @@ impl<'p, 's> Checker<'p, 's> {
         let key = is_stored.then(|| self.name_type_or_key_type_of_prop(owner, prop));
         match key.flatten() {
             Some(key) if self.flags(key) & tf::ENUM_LITERAL != 0 => key,
-            Some(key) if NAMES_NO_PROPERTY_BY_A_UNION && self.is_union(key) => key,
+            Some(key) if self.is_union(key) => key,
             _ => TypeId::UNRESOLVED,
         }
     }
@@ -2779,8 +2710,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.tally(MemberCount::UnionsMadeObjects, 1);
         let mut shape = Shape::new_in(self.arena);
         let mut checked = crate::util::FxHashSet::default();
-        let mut shapes_of_members: SmallVec<[usize; 8]> = SmallVec::new();
-        let mut shapes_of_constituents: SmallVec<[usize; 8]> = SmallVec::new();
         let was_listing = self.union_members.set_listing(true);
         for &part in parts {
             // `getPropertiesOfType`. The apparent type of an intersection with a conditional type is a union if the constraint of the
@@ -2793,18 +2722,6 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(members) = self.members(apparent) else {
                 break;
             };
-            let address = |members: Members| std::ptr::from_ref(members.resolved) as usize;
-            shapes_of_members.push(address(members));
-            match self.data(apparent) {
-                TypeData::Intersection(constituents) => {
-                    shapes_of_constituents.extend(
-                        (constituents.iter()).map(|&constituent| {
-                            self.resolved_members(constituent).map_or(0, address)
-                        }),
-                    );
-                }
-                _ => shapes_of_constituents.push(address(members)),
-            }
             for prop in &members.shape().props {
                 if checked.insert(prop.name) {
                     shape.props.extend(
@@ -2820,13 +2737,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         self.union_members.set_listing(was_listing);
-        // Or the names of the first members were enough.
-        let has_asked_all = shapes_of_members.len() == parts.len();
-        if has_asked_all && self.union_members.has_seen_shapes(&shapes_of_members) {
-            self.tally(MemberCount::OfMembersWithShapesSeenBefore, 1);
-        } else if has_asked_all && self.union_members.has_seen_shapes(&shapes_of_constituents) {
-            self.tally(MemberCount::OfConstituentsWithShapesSeenBefore, 1);
-        }
         // `getIndexInfosOfType`: what `resolveUnionTypeMembers` has set, once it has run. This
         // object is also made for the properties alone, which resolve no members of the union.
         let index = match self.resolved_union_type_members(ty) {
@@ -3041,9 +2951,6 @@ impl<'p, 's> Checker<'p, 's> {
         // The entry of `created_for` is read first, and decides if its type is `any`. While it is missing, the next call
         // may find one.
         let reads_the_same_entry_from_now_on = of == created_for || known.is_some();
-        if !reads_the_same_entry_from_now_on {
-            self.note_absent_type_of_mapped_prop();
-        }
         let known = if of == created_for {
             known
         } else {
@@ -3089,12 +2996,6 @@ impl<'p, 's> Checker<'p, 's> {
             TypeId::ERROR
         };
         let with_key = self.mapper_of_prop(prop);
-        if CHECKS_KEYS_APART {
-            let param = self.type_param(file, mapped.param);
-            if self.types().map(with_key, param).is_none() {
-                self.fact_differs_for("the mapper of a property of a mapped type has a key", &[of]);
-            }
-        }
         let ty = self.instantiate(template, with_key);
         let ty = self.mapped_property_type(
             ty,
@@ -3136,27 +3037,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getIndexInfosOfType(modifiersType)` in `resolveMappedTypeMembers`, where that type is the union `union`: the
-    /// members that have them. `resolveUnionTypeMembers` creates no property. `union_as_object` creates them all, and
-    /// with each the types of what it combines: for `Omit<A | B | .., K>` over 150 object types that have an index
-    /// signature and 300 properties each, that is most of the time it takes to resolve the mapped type.
-    fn index_infos_of_modifiers(&mut self, union: TypeId) -> Option<Members<'p>> {
-        if !ASKS_UNION_MODIFIERS_FOR_INDEX_INFOS_ALONE {
-            let object = self.union_as_object(union);
-            return self.members(object);
-        }
-        let members = self.members_for_index_infos(union);
-        if CHECKS_INDEX_INFOS_OF_UNION_MODIFIERS {
-            let object = self.union_as_object(union);
-            let long_way = self.members(object);
-            let infos = |it: Option<Members<'p>>| it.map_or(&[][..], |it| it.index_infos());
-            if infos(members) != infos(long_way) {
-                self.fact_differs_for("the index signatures of a union of modifiers", &[union]);
-            }
-        }
-        members
-    }
-
     /// `resolveMappedTypeMembers`
     pub(super) fn build_mapped_shape(
         &mut self,
@@ -3193,9 +3073,7 @@ impl<'p, 's> Checker<'p, 's> {
                 None => true,
             };
         // See `Types::key_apart`. An `as` clause is instantiated for every key, with the mapper that has the key.
-        let keeps_keys_apart = KEEPS_KEYS_APART
-            && name_declared.is_none()
-            && self.types().map(mapper, param).is_none();
+        let keeps_keys_apart = name_declared.is_none() && self.types().map(mapper, param).is_none();
         // The index of each name in `shape.props`, once there are many.
         let mut places: FxHashMap<Atom, usize> = FxHashMap::default();
         for key in keys {
@@ -3313,10 +3191,6 @@ impl<'p, 's> Checker<'p, 's> {
                                 mapper: own_mapper,
                                 name_type,
                             };
-                            if CHECKS_KEYS_APART && is_key_apart {
-                                let with_key = with_key(self);
-                                self.check_key_apart(of, &prop, with_key);
-                            }
                             shape.props.push(prop);
                         }
                     },
@@ -3351,15 +3225,14 @@ impl<'p, 's> Checker<'p, 's> {
                         } else {
                             ty
                         };
-                        // `getApplicableIndexInfo(modifiersType, propNameType)`, which comes before the test of
-                        // `templateModifiers`.
-                        let is_asked = ASKS_MODIFIERS_UNDER_ANY_MODIFIER
-                            || mapped.readonly == MappedModifier::None;
-                        let is_readonly_there = match &modifiers {
-                            Some(modifiers) if is_asked => {
+                        let readonly = match (mapped.readonly, &modifiers) {
+                            (MappedModifier::Add, _) => true,
+                            // `getApplicableIndexInfo(modifiersType, propNameType)`
+                            (MappedModifier::None, Some(modifiers)) => {
                                 let members = match *modifiers {
                                     Modifiers::Object(_, members) => Some(members),
-                                    Modifiers::Union(union) => self.index_infos_of_modifiers(union),
+                                    // `resolveUnionTypeMembers` creates no property.
+                                    Modifiers::Union(union) => self.members_for_index_infos(union),
                                 };
                                 members.is_some_and(|m| {
                                     let m = self.structured(m);
@@ -3368,11 +3241,6 @@ impl<'p, 's> Checker<'p, 's> {
                                 })
                             }
                             _ => false,
-                        };
-                        let readonly = match mapped.readonly {
-                            MappedModifier::Add => true,
-                            MappedModifier::None => is_readonly_there,
-                            MappedModifier::Remove => false,
                         };
                         // `appendIndexInfo`
                         match shape.index.iter_mut().find(|i| i.key == index_key) {

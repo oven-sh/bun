@@ -1833,7 +1833,11 @@ mod tests {
         let mut vec = Flat::<u64, AtomicU32>::new_in(range.take(room).unwrap());
         std::thread::scope(|scope| {
             for _ in 0..4 {
-                scope.spawn(|| (0..50_000).for_each(|value| drop(vec.push(value))));
+                scope.spawn(|| {
+                    for value in 0..50_000 {
+                        vec.push(value);
+                    }
+                });
             }
         });
         assert_eq!(vec.len(), 200_000);

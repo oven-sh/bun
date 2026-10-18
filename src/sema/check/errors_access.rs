@@ -157,9 +157,6 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
     ("Date", &[("esnext", &["toTemporalInstant"])]),
 ];
 
-/// `false`: TS2445 names the type that has the property as it is, and TS2446 names its apparent type, whoever asks, as before.
-const PRINTS_WHAT_THE_CALLER_PASSES: bool = true;
-
 /// `isSuper` and `writing` of `checkPropertyAccessibilityAtLocation`
 #[derive(Copy, Clone)]
 pub(super) struct PropertyAccess {
@@ -1559,9 +1556,7 @@ impl<'p> Checker<'p, '_> {
             let class = self.declaring_class(first).filter(|_| is_declared_once);
             let class = match class {
                 Some(class) => self.declared_type(class),
-                None if is_apparent_type && PRINTS_WHAT_THE_CALLER_PASSES => {
-                    self.apparent_type_of_intersection(containing)
-                }
+                None if is_apparent_type => self.apparent_type_of_intersection(containing),
                 None => containing,
             };
             return self.report_inaccessible(error_node, 2445, first, &[class]);
@@ -1574,7 +1569,7 @@ impl<'p> Checker<'p, '_> {
         // the class and `X`.
         let through = if self.is_deferred(containing) {
             self.base_constraint(containing)
-        } else if is_apparent_type || !PRINTS_WHAT_THE_CALLER_PASSES {
+        } else if is_apparent_type {
             self.apparent_type_of_intersection(containing)
         } else {
             containing

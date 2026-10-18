@@ -17,9 +17,7 @@
 //! - The members of a constituent are kept by reference, so they have to be the stored ones (`has_stored_members`): others
 //!   do not outlive the file.
 //! - The list of some intersections is noted for `Program::validate` when it is assigned (`listing_alias`). Those are listed.
-//! - A task whose entries another task reads lists as before (`Task::is_read_later`). Another task would otherwise find
-//!   no list where it found one, and would ask the constituents itself, with what it has in progress. The tasks of the
-//!   last step, which check nearly all the files, publish nothing.
+//! - Another task finds no list until there is one, as if this task had not asked yet, and makes its own.
 //!
 //! A property that is found by name is equal to the one in the list, field by field. It is not at the same address. Only
 //! `UnionPropertyBuilder::symbols` tells properties apart by address, and it knows a property of an intersection by the
@@ -29,33 +27,15 @@
 
 use super::super::instantiate::PropInstantiation;
 use super::super::*;
-use super::reduction::SharedNames;
-use super::{Built, IntersectionBuilder, MemberCount, RECENT_MEMBERS, Resolved};
+use super::{
+    Built, IntersectionBuilder, MemberCount, RECENT_MEMBERS, Resolved, members_with_each_name,
+};
 use crate::util::PositionSet;
 use smallvec::SmallVec;
-
-/// `false`: the first lookup by name lists the properties, as before.
-pub(super) const ENABLED: bool = true;
-
-/// The list of every intersection that is left without one is made the long way as well, and compared with the list that
-/// would be made later. And every property that is found by name is compared with the one in that list. A difference is a
-/// panic that names the intersection and the file. For debugging.
-const SHADOW: bool = false;
 
 /// With fewer properties in its constituents, an intersection is listed at once. Most intersections are small: a list of
 /// theirs is soon made, and a name is found faster in it than in a table by type and then in each constituent.
 const MIN_PROPERTIES: usize = 32;
-
-/// With more constituents it is listed at once. `Some(8)`: as before.
-const MOST_CONSTITUENTS: Option<usize> = None;
-
-/// `false`: `add_member` lists the properties of a member of a union that is an intersection, as before. `SHADOW` checks what
-/// is found by name there too.
-pub(super) const IN_UNIONS: bool = true;
-
-/// `false`: an intersection is listed when a quarter of its names were found, as before. Otherwise when it was asked a
-/// quarter as many times as it has names, in vain or not: a union asks every member for the names of the others.
-const COUNTS_EVERY_LOOKUP: bool = true;
 
 /// A constituent of an intersection, and what `build_intersection_shape` has computed for its properties.
 pub(super) struct Constituent<'p> {
@@ -103,22 +83,43 @@ fn take_any_mapper(props: &[Prop]) -> bool {
     })
 }
 
-/// Sets `Constituent::shared`, and returns how many properties that is. No constituent has a name twice.
+/// Sets `Constituent::shared`, and returns how many properties that is. No constituent has a name twice. Of two
+/// constituents, the names of the one that has fewer are looked up in the other.
 fn find_shared_names(constituents: &mut [Constituent]) -> usize {
     for constituent in constituents.iter_mut() {
         constituent.shared = PositionSet::new(constituent.props().len());
     }
     let all: SmallVec<[Members; 8]> = constituents.iter().map(|it| it.members).collect();
-    let names = SharedNames::of(&all);
-    let mut count = 0;
-    for place in 0..names.len() {
-        let holders = names.holders(place);
-        count += holders.len();
-        for &(at, position) in holders {
-            constituents[at as usize].shared.insert(position as usize);
+    if let Some(members_with_name) = members_with_each_name(&all) {
+        for constituent in constituents.iter_mut() {
+            for (position, prop) in constituent.members.shape().props.iter().enumerate() {
+                if members_with_name.get(&prop.name).is_some_and(|&n| n > 1) {
+                    constituent.shared.insert(position);
+                }
+            }
+        }
+        return constituents.iter().map(|it| it.shared.iter().count()).sum();
+    }
+    for later in 1..constituents.len() {
+        let (earlier, rest) = constituents.split_at_mut(later);
+        let later = &mut rest[0];
+        for earlier in earlier {
+            if !(earlier.members.resolved).may_share_a_name_with(later.members.resolved) {
+                continue;
+            }
+            let (few, many) = match earlier.props().len() <= later.props().len() {
+                true => (&mut *earlier, &mut *later),
+                false => (&mut *later, &mut *earlier),
+            };
+            for (position, prop) in few.props().iter().enumerate() {
+                if let Some(other) = many.members.resolved.position(prop.name) {
+                    few.shared.insert(position);
+                    many.shared.insert(other);
+                }
+            }
         }
     }
-    count
+    constituents.iter().map(|it| it.shared.iter().count()).sum()
 }
 
 impl<'s> IntersectionBuilder<'s> {
@@ -195,6 +196,9 @@ impl<'p> Unlisted<'p> {
 #[derive(Default)]
 pub(in super::super) struct UnlistedIntersections<'p> {
     by_type: FxHashMap<TypeId, Unlisted<'p>>,
+    /// The last intersection of many constituents that was tested for `never`, if they share the names of more than half
+    /// of their properties: see `add_shared`. Its properties are asked for next.
+    shares_most_names: Option<TypeId>,
 }
 
 impl<'p, 's> Checker<'p, 's> {
@@ -221,6 +225,20 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `members_with_name`: how many of the constituents of `ty` have each name.
+    pub(super) fn note_names_of_constituents(
+        &mut self,
+        ty: TypeId,
+        members_with_name: &FxHashMap<Atom, u32>,
+    ) {
+        let (mut shared, mut count) = (0, 0);
+        for &members in members_with_name.values() {
+            count += members;
+            shared += members * u32::from(members > 1);
+        }
+        self.unlisted_intersections.shares_most_names = (shared * 2 > count).then_some(ty);
+    }
+
     /// Whether the properties of the intersection `whole` of `parts` may stay in `constituents`, if the list of them would
     /// be stored.
     pub(super) fn may_stay_unlisted(
@@ -231,28 +249,24 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         let count: usize = constituents.iter().map(|it| it.props().len()).sum();
         count >= MIN_PROPERTIES
-            && MOST_CONSTITUENTS.is_none_or(|most| constituents.len() <= most)
+            && self.unlisted_intersections.shares_most_names != Some(whole)
             // Two properties of one constituent that have one name are combined as well.
             && (constituents.iter()).all(|it| it.members.resolved.has_distinct_names())
             && (constituents.iter()).all(|it| self.has_stored_members(it.asked, it.members))
             && self.listing_alias(whole, parts, false).is_none()
     }
 
-    /// The properties of the intersection `ty` of `parts` stay in `constituents`. `combined`, `constituents`: what
+    /// The properties of the intersection `ty` stay in `constituents`. `combined`, `constituents`: what
     /// `build_intersection_shape` has returned. `stored`: for the list. The result is not the members of `ty`:
     /// `members_for_a_name` drops it.
     pub(super) fn leave_unlisted(
         &mut self,
         ty: TypeId,
-        parts: &[TypeId],
         combined: Shape<'s>,
         constituents: Constituents<'p>,
         stored: Stored,
     ) -> Built<'p> {
         let combined: &'p Resolved<'p> = self.arena.alloc(Resolved::new(combined));
-        if SHADOW {
-            self.check_unlisted_intersection(ty, parts, combined, &constituents);
-        }
         let unlisted = Unlisted {
             count: constituents.iter().map(|it| it.props().len()).sum(),
             constituents,
@@ -324,7 +338,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     #[inline(never)]
     fn members_for_a_name_not_recent(&mut self, ty: TypeId) -> Option<Members<'p>> {
-        if self.task.is_read_later() || self.p.members.get(&self.task, &ty).is_some() {
+        if self.p.members.get(&self.task, &ty).is_some() {
             return self.members_not_recent(ty);
         }
         if self.unlisted_intersections.by_type.contains_key(&ty) {
@@ -356,15 +370,9 @@ impl<'p, 's> Checker<'p, 's> {
         let found = unlisted.find(name, arena);
         let combined = unlisted.combined;
         unlisted.lookups += 1;
-        let asked = match COUNTS_EVERY_LOOKUP {
-            true => unlisted.lookups,
-            false => unlisted.found.len(),
-        };
-        let is_asked_often = asked * 4 >= unlisted.count;
+        // In vain or not: a union asks every member for the names of the others.
+        let is_asked_often = unlisted.lookups * 4 >= unlisted.count;
         self.tally(MemberCount::AskedOfUnlisted, 1);
-        if SHADOW {
-            self.check_property_of_unlisted_intersection(ty, name, found);
-        }
         if is_asked_often {
             self.tally(MemberCount::ListedAfterBeingAsked, 1);
             let _ = self.members(ty);
@@ -394,42 +402,6 @@ impl<'p, 's> Checker<'p, 's> {
             None => {
                 (self.members(ty)).is_some_and(|members| members.resolved.prop(prop.name).is_some())
             }
-        }
-    }
-
-    /// Under `SHADOW`, in `leave_unlisted`.
-    #[cold]
-    #[inline(never)]
-    fn check_unlisted_intersection(
-        &mut self,
-        ty: TypeId,
-        parts: &[TypeId],
-        combined: &Resolved,
-        constituents: &[Constituent<'p>],
-    ) {
-        let count = self.instantiation_count;
-        let (long_way, _) = self.build_intersection_shape(ty, parts, false);
-        self.instantiation_count = count;
-        if Self::list_properties(combined, constituents, self.arena) != long_way {
-            self.fact_differs_for("the properties of an unlisted intersection", &[ty]);
-        }
-    }
-
-    /// Under `SHADOW`: `found` is what `Unlisted::find` has returned for the property `name` of `ty`.
-    #[cold]
-    #[inline(never)]
-    fn check_property_of_unlisted_intersection(
-        &mut self,
-        ty: TypeId,
-        name: Atom,
-        found: Option<&Prop>,
-    ) {
-        let Some(unlisted) = self.unlisted_intersections.by_type.get(&ty) else {
-            return;
-        };
-        let listed = Self::list_properties(unlisted.combined, &unlisted.constituents, self.arena);
-        if listed.prop(name) != found {
-            self.fact_differs_for("a property of an unlisted intersection", &[ty]);
         }
     }
 }

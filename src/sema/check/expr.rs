@@ -5439,6 +5439,11 @@ impl<'p, 's> Checker<'p, 's> {
                     return l;
                 }
                 let r = self.type_of_expr(file, right);
+                if !is_assignment {
+                    self.look_at_with(|c| {
+                        c.check_testing_known_truthy_left_operand(file, e, true, left);
+                    });
+                }
                 // Without strictNullChecks the falsy values are those of the kind of thing the right side is. Of a left side that
                 // nothing is known of nothing is said.
                 let of = if self.p.files.options.strict_null_checks || l == TypeId::UNRESOLVED {
@@ -5459,6 +5464,11 @@ impl<'p, 's> Checker<'p, 's> {
                     return l;
                 }
                 let r = self.type_of_expr(file, right);
+                if !is_assignment {
+                    self.look_at_with(|c| {
+                        c.check_testing_known_truthy_left_operand(file, e, false, left);
+                    });
+                }
                 let truthy = self.remove_definitely_falsy(l);
                 let truthy = self.non_nullable(truthy);
                 self.union_reduced(&[truthy, r])
@@ -5473,6 +5483,11 @@ impl<'p, 's> Checker<'p, 's> {
                     return l;
                 }
                 let r = self.type_of_expr(file, right);
+                if !is_assignment {
+                    self.look_at_with(|c| {
+                        c.check_testing_known_truthy_left_operand(file, e, false, left);
+                    });
+                }
                 let present = self.non_nullable(l);
                 self.union_reduced(&[present, r])
             }

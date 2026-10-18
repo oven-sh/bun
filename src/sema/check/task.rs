@@ -171,12 +171,6 @@ impl<'s> Task<'s> {
         self.place.is_some()
     }
 
-    /// See `begin`. `false`: nothing that the task stores is ever read by another.
-    #[inline]
-    pub(super) fn is_read_later(&self) -> bool {
-        self.is_read_later
-    }
-
     /// The index of the task in its step.
     pub(super) fn index(&self) -> Option<u32> {
         self.place.map(|(_, index)| index)

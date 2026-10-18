@@ -117,11 +117,6 @@ impl ActiveMappers {
         self.find(mapper).is_some()
     }
 
-    /// A bit for each active mapper: its number modulo 64.
-    pub(super) fn bits(&self) -> u64 {
-        (self.mappers.iter()).fold(0, |bits, mapper| bits | (1 << (mapper.0 % 64)))
-    }
-
     /// Whether no `instantiate_cached` is in progress.
     #[inline]
     pub(super) fn is_empty(&self) -> bool {
@@ -438,7 +433,7 @@ impl<'p, 's> Checker<'p, 's> {
         prop: &Prop,
         mapper: MapperId,
     ) -> PropInstantiation {
-        let instantiation = match &prop.source {
+        match &prop.source {
             PropSource::Type(ty) | PropSource::Copy(ty, ..) => {
                 PropInstantiation::Type(self.instantiate(*ty, mapper))
             }
@@ -465,11 +460,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             _ => PropInstantiation::Mapper(self.compose(prop.mapper, mapper)),
-        };
-        if mapped::CHECKS_KEYS_APART {
-            self.check_instantiation_with_key_apart(prop, mapper, instantiation);
         }
-        instantiation
     }
 
     /// Whether no mapper changes `ty`.
@@ -632,7 +623,6 @@ impl<'p, 's> Checker<'p, 's> {
         if class == InstantiationClass::Unchanged {
             return ty;
         }
-        self.note_mapper_used(mapper);
         // Before any cache: at the limit tsgo fails every instantiation, that of a type parameter
         // too.
         if (self.instantiation_depth >= 100 || self.instantiation_count >= 5_000_000)
@@ -694,7 +684,6 @@ impl<'p, 's> Checker<'p, 's> {
         declared: TypeId,
         mapper: MapperId,
     ) -> TypeId {
-        self.note_mapper_used(mapper);
         if self.index_infos_in_instantiation.is_empty()
             && let Some((known, _)) = self.recent_instantiations.get_tagged(declared.0, mapper.0)
         {

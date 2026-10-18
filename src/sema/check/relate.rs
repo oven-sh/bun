@@ -124,13 +124,6 @@ pub(super) const CALLBACK: u8 = BIVARIANT_CALLBACK | STRICT_CALLBACK;
 /// `incompatibleErrorReporter` is `reportIncompatibleConstructSignatureReturn`. Set with `reportErrors` only.
 const CONSTRUCT_SIGNATURE: u8 = 32;
 
-/// `false`: `properties_of_apparent_type_related_to` and `augmented_property` make an object of an apparent type that is a
-/// union, as before.
-const ASKS_APPARENT_UNIONS_BY_NAME: bool = true;
-/// They make the object as well. It is a panic that names the types and the file if a property of the target is found in
-/// the one and not in the other, or with another type, or if the object has other global types. For debugging.
-const CHECKS_APPARENT_UNIONS_BY_NAME: bool = false;
-
 /// `getRelationKey`: the source, the target, and flags. The flags hold the relation in the low four bits and the intersection
 /// state above it.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -783,10 +776,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match self.resolved_members(ty) {
             Some(members) => Self::has_no_members(members.whole_shape()),
-            None => {
-                self.note_absent_members();
-                self.has_no_members_in_place(ty)
-            }
+            None => self.has_no_members_in_place(ty),
         }
     }
 
@@ -953,25 +943,14 @@ impl<'p, 's> Checker<'p, 's> {
         let mut globals: SmallVec<[TypeId; 4]> = SmallVec::new();
         for &part in parts.iter() {
             let part = self.reduced_apparent_type(part);
-            // The object that `union_as_object` makes has every property of the union, and no signature.
-            let is_asked = !(ASKS_APPARENT_UNIONS_BY_NAME && self.is_union(part));
-            let of_union = self.inherited_of(&Shape::new_in(self.arena));
-            let of_part = if is_asked || CHECKS_APPARENT_UNIONS_BY_NAME {
-                let object = match self.is_union(part) {
-                    true => self.union_as_object(part),
-                    false => part,
-                };
-                let Some(members) = self.members(object) else {
+            // A union has properties and no signature.
+            let of_part = if self.is_union(part) {
+                self.inherited_of(&Shape::new_in(self.arena))
+            } else {
+                let Some(members) = self.members(part) else {
                     continue;
                 };
-                let of_part = self.inherited_of(members.shape());
-                let globals = |it: &Inherited<'p>| (it.globals, it.count);
-                if !is_asked && globals(&of_part) != globals(&of_union) {
-                    self.fact_differs_for("the global types of a union", &[part]);
-                }
-                of_part
-            } else {
-                of_union
+                self.inherited_of(members.shape())
             };
             for &global in &of_part.globals[..of_part.count] {
                 let global = self.plain_global_ref(global);
@@ -4926,15 +4905,10 @@ impl<'p, 's> Checker<'p, 's> {
         // it asks for by the names of those of the target, and a property of a union is created when it is asked for,
         // with the types of what it combines. If every member has an index signature, the list is made of the names
         // of all of them: of 150 props types of 300 properties each, where the target has `theme` and `ownerState`.
-        let properties =
-            if ASKS_APPARENT_UNIONS_BY_NAME && !is_object_literal_kind(self.data(target)) {
-                if CHECKS_APPARENT_UNIONS_BY_NAME {
-                    self.check_apparent_union_by_name(apparent, &members, target);
-                }
-                apparent
-            } else {
-                self.object_of_apparent_union(apparent, &members)
-            };
+        let properties = match is_object_literal_kind(self.data(target)) {
+            true => self.object_of_apparent_union(apparent, &members),
+            false => apparent,
+        };
         self.properties_related_to_noting::<REPORT>(
             r,
             source,
@@ -4977,36 +4951,6 @@ impl<'p, 's> Checker<'p, 's> {
             props,
             ..Shape::new_in(self.arena)
         })
-    }
-
-    /// Under `CHECKS_APPARENT_UNIONS_BY_NAME`: what is found in the union `apparent` by the name of each property of
-    /// `target`, against what is found in `object_of_apparent_union`.
-    #[cold]
-    #[inline(never)]
-    fn check_apparent_union_by_name(
-        &mut self,
-        apparent: TypeId,
-        members: &[TypeId],
-        target: TypeId,
-    ) {
-        let listed = self.object_of_apparent_union(apparent, members);
-        let (Some(of_list), Some(of_target)) = (self.members(listed), self.listed_members(target))
-        else {
-            return;
-        };
-        let mut inherited = self.inherited_of(of_list.shape());
-        for prop in &of_target.shape().props {
-            let found = [
-                self.property_among(listed, &of_list, &mut inherited, prop.name),
-                self.get_property_of_type(apparent, prop.name),
-            ];
-            let [long_way, by_name] = found.map(|found| {
-                found.map(|(found, mapper)| (found.flags, self.type_of_prop(found, mapper)))
-            });
-            if long_way != by_name {
-                self.fact_differs_for("a property of a union by name", &[apparent, target]);
-            }
-        }
     }
 
     /// `isSourceIntersectionNeedingExtraCheck`

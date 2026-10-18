@@ -944,6 +944,66 @@ export ${f3}
     expect(inF3).toEqual(column ? [`a.ts(5,${column}): ${message}`] : []);
   });
 
+  // `f3` prints `f2`'s type one message deep, so TypeScript reports the assignment inside the call. It's the only error
+  // that isn't expected. Only its place is compared: TypeScript's message is TS2322, ours doesn't print the types yet.
+  test.each([
+    [`const f2 = () => (slot.port = "zq").toString();`, 19],
+    [`const f2 = () => ((slot.port = "zq").toString());`, 20],
+    [`function f2() { return ((slot.port = "zq").toString()); }`, 26],
+  ])("reports a wrong assignment inside a call if a function below prints the type again: %s", async (f2, column) => {
+    using dir = project({
+      "a.ts": `declare function takesNumber(n: number): number;
+declare const slot: { port: number };
+// @ts-expect-error
+takesNumber({ g: f1 });
+function f1() {
+  // @ts-expect-error
+  return takesNumber({ g: f2 });
+}
+${f2}
+function f3() {
+  // @ts-expect-error
+  return takesNumber({ g: f2 });
+}
+export {};
+`,
+    });
+    const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+    const places = stdout.split("\n").flatMap(line => line.match(/^\S+(?=: error TS)/) ?? []);
+    expect(places).toEqual([`a.ts(9,${column})`]);
+    expect(exitCode).toBe(1);
+  });
+
+  // Each program makes a member of a `lib.*.d.ts` file circular too. That error isn't printed with `skipLibCheck`, but its
+  // message is still built, and the default library's text isn't stored.
+  test.each([
+    [
+      `interface ArrayBufferTypes { mine: typeof Uint8Array.prototype }
+Uint8Array.prototype;
+`,
+      "a.ts(1,30): error TS2502: 'mine' is referenced directly or indirectly in its own type annotation.",
+    ],
+    [
+      `type V<T> = T[keyof T];
+interface Array<T> extends Record<'zz', V<Array<T>>> {}
+declare const a: number[];
+a.zz;
+`,
+      "a.ts(2,11): error TS2310: Type 'Array<T>' recursively references itself as a base type.",
+    ],
+    [
+      `declare namespace Intl { interface DateTimeFormatPartTypesRegistry extends Record<DateTimeFormatPart['type'], any> {} }
+let x: Intl.DateTimeFormatPart['type'];
+`,
+      "a.ts(1,36): error TS2310: Type 'DateTimeFormatPartTypesRegistry' recursively references itself as a base type.",
+    ],
+  ])("reports a cycle through a member of the default library: %#", async (text, expected) => {
+    using dir = project({ "a.ts": text });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(expected);
+    expect(exitCode).toBe(1);
+  });
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

@@ -462,9 +462,11 @@ impl<'p, 's> Checker<'p, 's> {
             Some((file, Decl::Member(member))) => {
                 let (hir, end) = (self.hir(file), self.end_of_member_name(file, member));
                 let start = hir[member].name_pos;
-                // `getNameOfSymbolAsWritten`: the name in the first declaration that has one.
+                // `getNameOfSymbolAsWritten`: the name in the first declaration that has one. The default library's text
+                // isn't stored.
                 let name = match first {
                     Some(named) if named != (file, Decl::Member(member)) => Arg::Sym(sym),
+                    _ if hir.text.is_empty() => Arg::Sym(sym),
                     _ => Arg::Bytes(&hir.text[start as usize..end as usize]),
                 };
                 self.report_circularity_error(owner, (file, start, end), name, ty, false);

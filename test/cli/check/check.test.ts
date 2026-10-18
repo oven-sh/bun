@@ -19502,7 +19502,8 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
         using dir = project({
           "a.ts": [
             ...functions.map(
-              i => `function f${i}<T${i}>(x: T${i}) { const inner = () => ({ x }); return { x, i: ${i} as const, inner }; }`,
+              i =>
+                `function f${i}<T${i}>(x: T${i}) { const inner = () => ({ x }); return { x, i: ${i} as const, inner }; }`,
             ),
             ...functions.map(i => `const r${i}: never = f${i}(${i % 2 ? '"s"' : 1});`),
             "export {};\n",

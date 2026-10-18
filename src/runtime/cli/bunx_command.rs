@@ -40,12 +40,11 @@ enum InProject {
     Absent,
     Run(ZBox),
     NotExecutable(ZBox),
-    /// `realpath` of the bin's file failed. `is_installed`: the package is a folder in a
-    /// `node_modules`, and is not a link to a folder of the project.
+    /// `realpath` of the bin's file failed.
     Unresolved {
         file: ZBox,
         err: bun_sys::Error,
-        is_installed: bool,
+        is_in_node_modules: bool,
     },
 }
 
@@ -492,8 +491,7 @@ impl BunxCommand {
     ) -> InProject {
         const SEP: &[u8] = &[bun_paths::SEP];
         let mut buf = bun_paths::path_buffer_pool::get();
-        // The installer links the bin of a package that has native builds to the build for this
-        // platform, which is one of the package's optional dependencies.
+        // The installer links the bin of a package with native builds into an optional dependency.
         if let Some(entry) = bun_which::which(&mut buf, bin_dir, b"", bin_name)
             .map(|entry| ZBox::from_bytes(entry.as_bytes()))
             && let Ok(real) = bun_sys::realpath(&entry, &mut buf)
@@ -512,7 +510,7 @@ impl BunxCommand {
             Err(err) => InProject::Unresolved {
                 file,
                 err,
-                is_installed: (real_dir.strip_suffix(package_name))
+                is_in_node_modules: (real_dir.strip_suffix(package_name))
                     .is_some_and(|parent| parent.ends_with(b"/node_modules/")),
             },
         }
@@ -706,7 +704,7 @@ impl BunxCommand {
     fn exit_unresolved(
         file: &[u8],
         err: bun_sys::Error,
-        is_installed: bool,
+        is_in_node_modules: bool,
         package_name: &[u8],
     ) -> ! {
         let package_name = BStr::new(package_name);
@@ -715,7 +713,7 @@ impl BunxCommand {
             "could not find the bin of <b>{}<r>: {}",
             (package_name, bun_core::fmt::quote(file)),
         );
-        if is_installed {
+        if is_in_node_modules {
             bun_core::note!(
                 "run 'bun install --force', or 'bun pm trust {}' and 'bun install' if an install script writes the bin",
                 package_name,
@@ -1058,8 +1056,13 @@ impl BunxCommand {
                 InProject::Unresolved {
                     file,
                     err,
-                    is_installed,
-                } => Self::exit_unresolved(file.as_bytes(), err, is_installed, update_request.name),
+                    is_in_node_modules,
+                } => Self::exit_unresolved(
+                    file.as_bytes(),
+                    err,
+                    is_in_node_modules,
+                    update_request.name,
+                ),
             }
         }
 

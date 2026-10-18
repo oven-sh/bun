@@ -152,6 +152,20 @@ test.if(isLinux && !isASAN)("a refused operator new reports out of memory", asyn
   expect(exitCode).not.toBe(0);
 });
 
+// `new (std::nothrow)` is for callers that handle the refusal: `std::stable_sort` asks
+// again for half the buffer. That form still returns null.
+test.if(isLinux && !isASAN)("a refused new (std::nothrow) returns null", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `console.log(require("bun:internal-for-testing").crash_handler.operatorNew(true))`],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("true\n");
+  expect(exitCode).toBe(0);
+});
+
 // The report header names the CPU features the crash handler detected. On
 // x86_64 that detection uses cpuid directly (CPUFeatures.cpp). Every supported
 // x64 CPU has SSE4.2 and POPCNT, since the baseline build targets Nehalem.

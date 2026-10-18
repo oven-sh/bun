@@ -260,6 +260,8 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
   // What a refused message inflates from. A run of one byte compresses to a few KiB.
   const deflated = (size: number) => deflateRawSync(Buffer.alloc(size, 7));
   const tooBig = Buffer.alloc(CAP_MB * MiB + 2 * MiB);
+  // Fills a buffer to exactly the cap, so the next byte it has to hold is a growth over the cap.
+  const full = Buffer.alloc(CAP_MB * MiB);
 
   type Mode = "ws" | "wss" | "ws-package";
   let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
@@ -330,11 +332,28 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
         client.send(OP.continuation, Buffer.alloc(3 * MiB));
       },
     ],
-    // The inflate buffer, which every connection of the loop shares.
+    // The fragment buffer also holds the 9 bytes of padding that a buffered compressed
+    // message is inflated with, and a control frame that is not whole in one read.
+    ["a compressed message with no room left for its padding", deflate, client => client.binary(full, { rsv1: true })],
+    [
+      "a split control frame behind a fragment that fills the buffer",
+      undefined,
+      client => {
+        client.binary(full, { fin: false });
+        client.write(client.frame(OP.ping, Buffer.alloc(100)).subarray(0, 50));
+      },
+    ],
+    // The inflate buffer, which every connection of the loop shares: refused while the
+    // message inflates, and for the last chunk of a message that filled it exactly.
     [
       "a compressed message that inflates past the cap",
       deflate,
       client => client.binary(deflated(tooBig.length), { rsv1: true }),
+    ],
+    [
+      "a compressed message whose last inflated chunk does not fit",
+      deflate,
+      client => client.binary(deflated(full.length + 1024), { rsv1: true }),
     ],
     // The copy for the message handler: one non-ASCII character makes the string 16-bit,
     // so its buffer is twice the size of the one the bytes already fit in.

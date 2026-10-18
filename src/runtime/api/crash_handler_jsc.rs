@@ -208,13 +208,19 @@ pub(crate) mod js_bindings {
     }
 
     /// `mi_new` is the C++ `operator new` where mimalloc overrides it. A size it cannot grant must not come back.
+    /// With a truthy argument: `new (std::nothrow)`, whose caller handles the refusal. Returns whether it got null.
     #[bun_jsc::host_fn]
-    fn js_operator_new(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        crash_handler::suppress_core_dumps_if_necessary();
+    fn js_operator_new(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         unsafe extern "C" {
-            // safe: takes any size, and the result is not used.
+            // safe: both take any size, and the result is not used.
             safe fn mi_new(size: usize) -> *mut core::ffi::c_void;
+            safe fn mi_new_nothrow(size: usize) -> *mut core::ffi::c_void;
         }
+        if frame.argument(0).to_boolean() {
+            let refused = mi_new_nothrow(usize::MAX / 2).is_null();
+            return Ok(JSValue::js_boolean(refused));
+        }
+        crash_handler::suppress_core_dumps_if_necessary();
         let _ = mi_new(usize::MAX / 2);
         Ok(JSValue::UNDEFINED)
     }

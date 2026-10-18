@@ -212,6 +212,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
                 has_react_hooks_suppression,
                 body,
             );
+            self.react_compiler_must_keep_body = false;
         }
         prev
     }

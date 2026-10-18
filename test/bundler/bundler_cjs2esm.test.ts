@@ -367,9 +367,8 @@ describe("bundler", () => {
     },
   });
   // A require() of an unwrapped package that initializes a destructuring
-  // declaration is kept as a require expression that remembers it was
-  // unwrapped, and prints as the namespace object. One inside try/catch is
-  // never unwrapped and prints as an ordinary require.
+  // declaration is an import: the pattern reads its namespace object. One
+  // inside try/catch is never unwrapped and prints as an ordinary require.
   itBundled("cjs2esm/UnwrappedModuleRequireDestructuredAndInTry", {
     files: {
       "/entry.js": /* js */ `
@@ -395,13 +394,574 @@ describe("bundler", () => {
     },
     onAfterBundle: api => {
       const code = api.readFile("out.js");
-      expect(code).toMatch(/\{ react: named \} = \(?exports_react\)?;/);
+      expect(code).toContain("{ react: named } = exports_react;");
       expect(code).toContain("__toCommonJS(exports_react)).react");
     },
     run: {
       stdout: "react\nreact",
     },
   });
+  // In ESM output a `require()` of one of these packages becomes
+  // `import * as ns`. An identifier that is declared with it becomes `ns`
+  // itself. A pattern, a `using` declaration and an export of a TypeScript
+  // namespace read `ns` as a value.
+  const unwrapListPackages = {
+    "/node_modules/react/package.json": /* json */ `
+      { "name": "react", "version": "19.0.0", "main": "index.js" }
+    `,
+    // Converts to ESM: its exports are statically known.
+    "/node_modules/react/index.js": /* js */ `
+      exports.react = "react";
+      exports.other = "other";
+      exports.unused = "DROP_REACT";
+    `,
+    "/node_modules/react-is/package.json": /* json */ `
+      { "name": "react-is", "version": "19.0.0", "main": "index.js" }
+    `,
+    "/node_modules/react-is/index.js": /* js */ `
+      exports.is = "is";
+      exports.unusedIs = "DROP_REACT_IS";
+    `,
+    "/node_modules/scheduler/package.json": /* json */ `
+      { "name": "scheduler", "version": "0.25.0", "main": "index.js" }
+    `,
+    // Stays a `__commonJS` wrapper: it assigns `module.exports`.
+    "/node_modules/scheduler/index.js": /* js */ `
+      module.exports = { sched: "sched" };
+    `,
+  };
+  // An identifier that is declared with the `require()` is the namespace: its
+  // reads bind to the exports directly, and the exports nothing reads are gone.
+  itBundled("cjs2esm/UnwrappedRequireAliasBindsDirectly", {
+    files: {
+      "/entry.js": /* js */ `
+        var top = require("react");
+        let topLet = require("react");
+        const topConst = require("react");
+        var x = 1, inList = require("react"), y = 2;
+        function fn() {
+          var a = require("react");
+          let b = require("react");
+          const c = require("react");
+          var p = 1, d = require("react-is"), q = 2;
+          return [a.react, b.react, c.other, d.is, p + q].join(" ");
+        }
+        const react_1 = require("react");
+        function typescriptOutput() {
+          return (0, react_1.react);
+        }
+        var e = require("react-is");
+        (function () {
+          var e = require("react");
+          console.log(e.other);
+        })();
+        class Holder {
+          static {
+            const inStaticBlock = require("react");
+            Holder.value = inStaticBlock.other;
+          }
+        }
+        // A \`let\` or \`const\` of a block.
+        function blocks(on) {
+          const out = [];
+          {
+            const inBlock = require("react");
+            out.push(inBlock.react);
+          }
+          if (!on) {
+            out.push("off");
+          } else if (on) {
+            let inElseIf = require("react");
+            out.push(inElseIf.other);
+          }
+          for (const once of [1]) {
+            const inLoop = require("react-is");
+            out.push(inLoop.is);
+          }
+          switch (on) {
+            case true:
+              const inCase = require("react");
+              out.push(inCase.react);
+          }
+          try {
+          } finally {
+            const inFinally = require("react-is");
+            out.push(inFinally.is);
+          }
+          return out.join(" ");
+        }
+        {
+          const topBlock = require("react");
+          console.log(topBlock.other);
+        }
+        console.log(top.react, topLet.react, topConst.other, x, inList.react, y);
+        console.log(fn(), typescriptOutput(), e.is, Holder.value);
+        console.log(blocks(true));
+      `,
+      ...unwrapListPackages,
+    },
+    dce: true,
+    dceKeepMarkerCount: false,
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      expect(code).not.toContain("exports_react");
+      expect(code).not.toContain("__toESM");
+      expect(code).toContain(`return [$react, $react, $other, $is, p + q].join(" ");`);
+      expect(code).toContain("console.log($react, $react, $other, x, $react, y);");
+      // The declaration of each block variable is gone.
+      for (const name of ["inBlock", "inElseIf", "inLoop", "inCase", "inFinally", "topBlock"]) {
+        expect(code).not.toContain(name);
+      }
+    },
+    run: {
+      stdout: [
+        "other",
+        "other",
+        "react react other 1 react 2",
+        "react react other is 3 react is other",
+        "react other is react is",
+      ].join("\n"),
+    },
+  });
+  // A pattern reads the namespace of a package that stays a `__commonJS` wrapper.
+  itBundled("cjs2esm/UnwrappedRequireDestructuredWrapped", {
+    files: {
+      "/entry.js": /* js */ `
+        const { sched } = require("scheduler");
+        const { react, other: renamed = "default" } = require("react");
+        const [first] = [require("scheduler")];
+        function fn() {
+          const { sched: inner } = require("scheduler");
+          let { react: innerReact } = require("react");
+          return inner + " " + innerReact;
+        }
+        console.log(sched, react, renamed, first.sched, fn());
+      `,
+      ...unwrapListPackages,
+    },
+    cjs2esm: { unhandled: ["/node_modules/scheduler/index.js"] },
+    run: {
+      stdout: "sched react other sched sched react",
+    },
+  });
+  // The layout of the real `react` package. `index.js` assigns
+  // `module.exports` in a branch on `process.env.NODE_ENV`, and the file that
+  // it picks assigns its exports in a function, so both stay `__commonJS`
+  // wrappers in a build that keeps the branch.
+  itBundled("cjs2esm/UnwrappedRequireDestructuredReactLayout", {
+    files: {
+      "/entry.js": /* js */ `
+        const { useState, version } = require("react");
+        function inFunction() {
+          const { useState, version: inner } = require("react");
+          return typeof useState + " " + inner;
+        }
+        console.log(typeof useState, version, inFunction(), require("./component.js").info());
+      `,
+      "/component.js": /* js */ `
+        const { useState, version } = require("react");
+        exports.info = () => typeof useState + " " + version;
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        'use strict';
+        if (process.env.NODE_ENV === 'production') {
+          module.exports = require('./cjs/react.production.js');
+        } else {
+          module.exports = require('./cjs/react.development.js');
+        }
+      `,
+      "/node_modules/react/cjs/react.production.js": /* js */ `
+        exports.useState = function useState() {};
+        exports.version = "19.0.0-production";
+      `,
+      "/node_modules/react/cjs/react.development.js": /* js */ `
+        "production" !== process.env.NODE_ENV &&
+          (function () {
+            exports.useState = function useState() {};
+            exports.version = "19.0.0-development";
+          })();
+      `,
+    },
+    define: { "process.env.NODE_ENV": '"development"' },
+    cjs2esm: {
+      unhandled: ["/component.js", "/node_modules/react/cjs/react.development.js", "/node_modules/react/index.js"],
+    },
+    run: {
+      stdout: "function 19.0.0-development function 19.0.0-development function 19.0.0-development",
+    },
+  });
+  // Before version 18 the files of `react` are not unwrapped themselves. A
+  // pattern over the package reads its exports there on main too.
+  itBundled("cjs2esm/UnwrappedRequireDestructuredBelowReact18", {
+    files: {
+      "/entry.js": /* js */ `
+        const { useState, version } = require("react");
+        console.log(typeof useState, version);
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "17.0.2", "main": "index.js" }
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        'use strict';
+        if (process.env.NODE_ENV === 'production') {
+          module.exports = require('./cjs/react.production.min.js');
+        } else {
+          module.exports = require('./cjs/react.development.js');
+        }
+      `,
+      "/node_modules/react/cjs/react.production.min.js": /* js */ `
+        exports.useState = function useState() {};
+        exports.version = "17.0.2-production";
+      `,
+      "/node_modules/react/cjs/react.development.js": /* js */ `
+        if (process.env.NODE_ENV !== "production") {
+          (function () {
+            exports.useState = function useState() {};
+            exports.version = "17.0.2-development";
+          })();
+        }
+      `,
+    },
+    define: { "process.env.NODE_ENV": '"development"' },
+    run: {
+      stdout: "function 17.0.2-development",
+    },
+  });
+  // The React Compiler prints this line at the top of a CommonJS file that it
+  // compiles. `react/compiler-runtime` has the layout of `react`.
+  itBundled("cjs2esm/UnwrappedRequireDestructuredCompilerRuntime", {
+    files: {
+      "/entry.js": /* js */ `
+        const { c: _c } = require("react/compiler-runtime");
+        const $ = _c(2);
+        console.log($.length);
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react/compiler-runtime.js": /* js */ `
+        'use strict';
+        if (process.env.NODE_ENV === 'production') {
+          module.exports = require('./cjs/react-compiler-runtime.production.js');
+        } else {
+          module.exports = require('./cjs/react-compiler-runtime.development.js');
+        }
+      `,
+      "/node_modules/react/cjs/react-compiler-runtime.production.js": /* js */ `
+        exports.c = function (size) {
+          return new Array(size);
+        };
+      `,
+      "/node_modules/react/cjs/react-compiler-runtime.development.js": /* js */ `
+        "production" !== process.env.NODE_ENV &&
+          (function () {
+            exports.c = function (size) {
+              return new Array(size);
+            };
+          })();
+      `,
+    },
+    define: { "process.env.NODE_ENV": '"development"' },
+    run: {
+      stdout: "2",
+    },
+  });
+  // An exported pattern is a declaration of ordinary variables.
+  itBundled("cjs2esm/UnwrappedRequireDestructuredExported", {
+    files: {
+      "/entry.js": /* js */ `
+        import { sched, named, read } from "./lib.js";
+        console.log(sched, named, read());
+      `,
+      "/lib.js": /* js */ `
+        export const { sched } = require("scheduler");
+        export const { react: named } = require("react");
+        export function read() {
+          return sched + " " + named;
+        }
+      `,
+      ...unwrapListPackages,
+    },
+    cjs2esm: { unhandled: ["/node_modules/scheduler/index.js"] },
+    run: {
+      stdout: "sched react sched react",
+    },
+  });
+  // An external package keeps its import statement: nothing prints a require().
+  for (const target of ["browser", "bun", "node"] as const) {
+    itBundled(`cjs2esm/UnwrappedRequireOfExternalPackage_${target}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { isExported } from "./lib.js";
+          const { react, other: renamed = "default" } = require("react");
+          function fn() {
+            const { is } = require("react-is");
+            return is;
+          }
+          const held = require("react");
+          console.log(react, renamed, fn(), held.other, isExported);
+        `,
+        "/lib.js": /* js */ `
+          export const { is: isExported } = require("react-is");
+        `,
+      },
+      external: ["react", "react-is"],
+      runtimeFiles: unwrapListPackages,
+      target,
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).not.toContain("__require");
+      },
+      run: {
+        stdout: "react other is other is",
+      },
+    });
+  }
+  // `using` disposes its value when the block ends, so the declaration stays.
+  // The value is the namespace of the package, which has no `Symbol.dispose`:
+  // a TypeError, as for the `module.exports` of every package on the list.
+  itBundled("cjs2esm/UnwrappedRequireUsing", {
+    files: {
+      "/entry.js": /* js */ `
+        function inFunction() {
+          using a = require("react");
+          return "no throw";
+        }
+        function inBlock() {
+          {
+            using b = require("react-is");
+          }
+          return "no throw";
+        }
+        function foldedInitializer() {
+          using c = true ? require("react") : null;
+          return "no throw";
+        }
+        function inLoopHead() {
+          for (using d = require("react"); ; ) {
+            return "no throw";
+          }
+        }
+        async function awaited() {
+          await using e = require("scheduler");
+          return "no throw";
+        }
+        const results = [];
+        for (const fn of [inFunction, inBlock, foldedInitializer, inLoopHead, awaited]) {
+          try {
+            results.push(await fn());
+          } catch (error) {
+            results.push(error.constructor.name);
+          }
+        }
+        console.log(results.join(" "));
+      `,
+      ...unwrapListPackages,
+    },
+    run: {
+      stdout: "TypeError TypeError TypeError TypeError TypeError",
+    },
+  });
+  // The `bun` target does not lower `using`: the declaration is printed as written.
+  itBundled("cjs2esm/UnwrappedRequireUsingOfExternalPackage", {
+    files: {
+      "/entry.js": /* js */ `
+        function inFunction() {
+          using a = require("react");
+          return "no throw";
+        }
+        try {
+          console.log(inFunction());
+        } catch (error) {
+          console.log(error.constructor.name);
+        }
+      `,
+    },
+    external: ["react"],
+    runtimeFiles: unwrapListPackages,
+    target: "bun",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("using a = ");
+    },
+    run: {
+      stdout: "TypeError",
+    },
+  });
+  for (const minify of [false, true]) {
+    // An export of a TypeScript namespace is an assignment to a property of
+    // the namespace object, so that variable holds the namespace. Every other
+    // identifier in the body of a TypeScript namespace still becomes it.
+    itBundled(`cjs2esm/UnwrappedRequireInTypeScriptNamespace${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          namespace N {
+            const b = require("react-is");
+            export const c = b.is;
+            export function f() {
+              const d = require("react");
+              return d.react;
+            }
+          }
+          namespace Exported {
+            export const E = require("scheduler");
+          }
+          console.log(N.c, N.f(), Exported.E.sched);
+        `,
+        ...unwrapListPackages,
+      },
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      dce: true,
+      dceKeepMarkerCount: false,
+      run: {
+        stdout: "is react sched",
+      },
+    });
+  }
+  for (const target of ["browser", "bun"] as const) {
+    for (const minifyIdentifiers of [false, true]) {
+      // The React Compiler declares the locals of a function again. The
+      // namespace of the pattern is a symbol that no scope declares, so a
+      // component that holds such a pattern, also in a function inside it,
+      // stays as it is written.
+      itBundled(
+        `cjs2esm/UnwrappedRequireDestructuredInReactCompilerCandidate_${target}${minifyIdentifiers ? "Minified" : ""}`,
+        {
+          files: {
+            "/entry.js": /* js */ `
+              const components = require("./components.jsx");
+              for (const name of Object.keys(components)) {
+                console.log(name, components[name]({ on: true }), components[name]({ on: false }));
+              }
+            `,
+            "/components.jsx": /* jsx */ `
+              const { useEffect } = require("react");
+              // The namespace of "react-dom/server" has the name of this variable.
+              var server = { render: "user variable" };
+              function InBody(props) {
+                useEffect(() => {});
+                const { version } = require("react");
+                return props.on ? version : typeof version;
+              }
+              function InBodyWrapped(props) {
+                useEffect(() => {});
+                const { sched } = require("scheduler");
+                return props.on ? sched : typeof sched;
+              }
+              function TestedByIf(props) {
+                useEffect(() => {});
+                const has = () => {
+                  const { version } = require("react");
+                  return !!version;
+                };
+                if (has()) return props.on ? "on" : "off";
+                return "missing";
+              }
+              function TestedByTernary(props) {
+                useEffect(() => {});
+                const has = () => {
+                  const { sched } = require("scheduler");
+                  return !!sched;
+                };
+                return has() ? (props.on ? "on" : "off") : "missing";
+              }
+              function InMap(props) {
+                useEffect(() => {});
+                const items = [1, 2].map(n => {
+                  const { version } = require("react");
+                  return version + ":" + n;
+                });
+                return props.on ? items.join() : "off";
+              }
+              function InnerDeclaration(props) {
+                useEffect(() => {});
+                function read() {
+                  const { sched } = require("scheduler");
+                  return sched;
+                }
+                return props.on ? read() : "off";
+              }
+              function BesideUserVariable(props) {
+                useEffect(() => {});
+                const has = () => {
+                  const { render } = require("react-dom/server");
+                  return render === "package";
+                };
+                if (has()) return props.on ? "on" : "off";
+                return server.render;
+              }
+              function Control(props) {
+                useEffect(() => {});
+                const state = { on: props.on };
+                return state.on ? "on" : "off";
+              }
+              module.exports = {
+                InBody,
+                InBodyWrapped,
+                TestedByIf,
+                TestedByTernary,
+                InMap,
+                InnerDeclaration,
+                BesideUserVariable,
+                Control,
+              };
+            `,
+            "/node_modules/scheduler/package.json": /* json */ `
+              { "name": "scheduler", "version": "0.25.0", "main": "index.js" }
+            `,
+            "/node_modules/scheduler/index.js": /* js */ `
+              module.exports = { sched: "sched" };
+            `,
+            "/node_modules/react-dom/package.json": /* json */ `
+              { "name": "react-dom", "version": "19.0.0", "main": "index.js" }
+            `,
+            "/node_modules/react-dom/server.js": /* js */ `
+              exports.render = "package";
+            `,
+            "/node_modules/react/package.json": /* json */ `
+              { "name": "react", "version": "19.0.0", "main": "index.js" }
+            `,
+            "/node_modules/react/index.js": /* js */ `
+              exports.version = "19.0.0";
+              exports.useEffect = function () {};
+            `,
+            "/node_modules/react/compiler-runtime.js": /* js */ `
+              exports.c = function (size) {
+                return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+              };
+            `,
+          },
+          reactCompiler: true,
+          target,
+          minifyIdentifiers,
+          onAfterBundle(api) {
+            if (minifyIdentifiers) return;
+            const code = api.readFile("out.js");
+            // The compiler moves the empty effect callback of a function that it compiles out of the function.
+            const compiled = [
+              ...code.matchAll(/function (\w+)\(props\) \{\n\s+(?:let \$ = .*\n\s+)?useEffect\(_temp/g),
+            ];
+            expect(compiled.map(match => match[1])).toEqual(["Control"]);
+          },
+          run: {
+            stdout: [
+              "InBody 19.0.0 string",
+              "InBodyWrapped sched string",
+              "TestedByIf on off",
+              "TestedByTernary on off",
+              "InMap 19.0.0:1,19.0.0:2 off",
+              "InnerDeclaration sched off",
+              "BesideUserVariable on off",
+              "Control on off",
+            ].join("\n"),
+          },
+        },
+      );
+    }
+  }
   // `sideEffect(); module.exports = require("./main")` in an unwrapped package
   // becomes `sideEffect(); export * from "./main"`, so the file needs no
   // `__commonJS` wrapper and the named import binds to the export directly.

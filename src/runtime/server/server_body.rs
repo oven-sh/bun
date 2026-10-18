@@ -989,9 +989,12 @@ impl ServePlugins {
         // NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
         let plugin_list: Vec<_> = plugin_list.iter().collect();
         let bunfig_path: &[u8] = &global.bun_vm().transpiler.options.bunfig_path;
-        let bunfig_folder: &[u8] = bun_paths::resolve_path::dirname::<
-            bun_paths::resolve_path::platform::Auto,
-        >(bunfig_path);
+        // With no bunfig.toml, only `bake.config.ts` has plugins: their root is the project.
+        let bunfig_folder: &[u8] = if bunfig_path.is_empty() {
+            FileSystem::instance().top_level_dir
+        } else {
+            bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path)
+        };
 
         // NOTE: the keep-alive ref/deref pair
         // lives in the caller (`get_or_load_plugins`), which holds the heap-allocated
@@ -1007,6 +1010,13 @@ impl ServePlugins {
             bunstring_array.push(BunString::from_bytes(raw_plugin));
         }
         let plugin_js_array = bun_string_jsc::to_js_array(global, &bunstring_array)?;
+        // `bun bake`: the plugin objects of `bake.config.ts`, after the names of bunfig.toml.
+        if let Some(config_plugins) = global.bun_vm().bake_config_plugins.get() {
+            let mut iter = config_plugins.array_iterator(global)?;
+            while let Some(config_plugin) = iter.next()? {
+                plugin_js_array.push(global, config_plugin)?;
+            }
+        }
         let bunfig_folder_bunstr = bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
 
         self.state = ServePluginsState::Pending {

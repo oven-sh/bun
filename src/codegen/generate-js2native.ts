@@ -44,6 +44,7 @@ const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
 // and the Rust crate path (rustTarget). Adding a new $rust() call site
 // requires adding its entry below.
 const rustIdentifierPaths: Record<string, string> = {
+  "bake/config/plugins.rs": "runtime/bake/config/plugins.rs",
   "ipc.rs": "runtime/ipc_host.rs",
   "Counters.rs": "jsc/Counters.rs",
   "FrameworkRouter.rs": "runtime/bake/router/js.rs",

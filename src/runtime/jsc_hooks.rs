@@ -4003,6 +4003,13 @@ fn get_hardcoded_module(
             }
             Some(js_synthetic_module(b"internal:test/binding"))
         }
+        HardcodedModule::BunBake => {
+            // Only where `bun bake` is: canary and debug builds, or the Bake feature flag.
+            if !bun_core::FeatureFlags::bake() {
+                return None;
+            }
+            Some(js_synthetic_module(b"bun:bake"))
+        }
         HardcodedModule::BunWrap => {
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_ast::runtime`.

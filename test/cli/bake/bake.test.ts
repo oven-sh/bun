@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { symlinkSync } from "node:fs";
+import { rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const env = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1", NO_COLOR: "1" };
@@ -76,28 +76,6 @@ test.concurrent("bun bake takes a flag's value as the next argument", async () =
   expect(await get(url, "/")).toStartWith("200 ");
 });
 
-test.concurrent.each([
-  { name: "bun --check bake", args: ["--check", "bake"] },
-  { name: "bun bake --check", args: ["bake", "--check"] },
-])("$name does not serve a project with type errors", async ({ args }) => {
-  using dir = tempDir("bake-command-check", {
-    "tsconfig.json": checkedTsconfig,
-    "app/pages/index.html": page,
-    "app/server.ts": `
-      declare const Response: any;
-      const count: number = "not a number";
-      export default { fetch: () => new Response(String(count)) };
-    `,
-  });
-
-  await using proc = spawnBake(String(dir), [...args, "--port=0"]);
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toContain("TS2322");
-  expect(stdout).not.toContain("url: ");
-  expect(exitCode).toBe(1);
-});
-
 test.concurrent("bun bake --check serves a project with no type errors", async () => {
   using dir = tempDir("bake-command-check-ok", {
     "tsconfig.json": checkedTsconfig,
@@ -131,6 +109,7 @@ test.concurrent("bun bake runs the project's own bake script instead", async () 
 test.concurrent.each([
   {
     name: "a route that is also a page",
+    waits: true,
     files: {
       "app/pages/about.html": page,
       "app/server.ts": `export default { routes: { "/about": new Response("x") } };`,
@@ -144,11 +123,13 @@ test.concurrent.each([
   },
   {
     name: "routes that are not an object",
+    waits: true,
     files: { "app/server.ts": `export default { routes: null };` },
-    error: `The "routes" argument must be of type object`,
+    error: `"app/server.ts": "routes" must be an object.`,
   },
   {
     name: "a default export that is not an object",
+    waits: true,
     files: { "app/server.ts": `export default 42;` },
     error: `"app/server.ts" must have a default export with "routes", "fetch" or "websocket".`,
   },
@@ -175,7 +156,7 @@ test.concurrent.each([
   {
     name: "nothing to serve",
     files: { "README.md": "" },
-    error: `there are no pages in app/pages/ and no app/server.ts.`,
+    error: `Add a page, such as app/pages/index.html, or an app/server.ts.`,
   },
   {
     name: "an unknown argument",
@@ -190,21 +171,109 @@ test.concurrent.each([
     error: `"--port" needs a value.`,
   },
   {
+    name: "a port that is not a number",
+    files: { "app/pages/index.html": page },
+    args: ["--port=abc"],
+    error: `"--port" needs a port from 0 to 65535, not "abc".`,
+  },
+  {
+    name: "a port that is too large",
+    files: { "app/pages/index.html": page },
+    args: ["--port", "70000"],
+    error: `"--port" needs a port from 0 to 65535, not "70000".`,
+  },
+  {
+    name: "a port in hexadecimal",
+    files: { "app/pages/index.html": page },
+    args: ["--port=0x1F90"],
+    error: `"--port" needs a port from 0 to 65535, not "0x1F90".`,
+  },
+  {
+    name: "a port of spaces",
+    files: { "app/pages/index.html": page },
+    args: ["--port", "  "],
+    error: `"--port" needs a port from 0 to 65535, not "  ".`,
+  },
+  {
+    name: "a host with a port that is not a number",
+    files: { "app/pages/index.html": page },
+    args: ["--host=localhost:abc"],
+    error: `"--host" needs a port from 0 to 65535, not "abc".`,
+  },
+  {
+    name: "--watch, as it reloads on its own",
+    files: { "app/pages/index.html": page },
+    args: ["--watch"],
+    error: `Unknown argument "--watch".`,
+  },
+  {
     // An empty hostname would make the dev server listen on every interface, not on localhost.
     name: "an empty host",
     files: { "app/pages/index.html": page },
     args: ["--host="],
     error: `"--host" needs a hostname.`,
   },
-])("bun bake rejects $name", async ({ files, args, error }) => {
+  {
+    name: "a bake.config.ts option it does not use",
+    waits: true,
+    files: { "app/pages/index.html": page, "bake.config.ts": `export default { plugin: [] };` },
+    error: `"bake.config.ts": the config has "plugin", but "bun bake" only uses "plugins".`,
+  },
+  {
+    name: "a plugin in bake.config.ts with no setup()",
+    waits: true,
+    files: { "app/pages/index.html": page, "bake.config.ts": `export default { plugins: [{ name: "half" }] };` },
+    error: `"bake.config.ts": the plugin "half" has no setup() function. "bun bake" takes Bun plugins.`,
+  },
+  {
+    name: "plugins in bake.config.ts that are not an array",
+    waits: true,
+    files: { "app/pages/index.html": page, "bake.config.ts": `export default { plugins: {} };` },
+    error: `"bake.config.ts": "plugins" must be an array.`,
+  },
+  {
+    name: "a plugin in bake.config.ts that is not an object",
+    waits: true,
+    files: { "app/pages/index.html": page, "bake.config.ts": `export default { plugins: ["bun-plugin-tailwind"] };` },
+    error: `"bake.config.ts": plugins[0] is not a plugin object.`,
+  },
+  {
+    name: "a plugin in bake.config.ts with no name",
+    waits: true,
+    files: { "app/pages/index.html": page, "bake.config.ts": `export default { plugins: [{ setup() {} }] };` },
+    error: `"bake.config.ts": plugins[0] has no "name".`,
+  },
+  {
+    name: "a bake.config.ts default export that is not an object",
+    waits: true,
+    files: { "app/pages/index.html": page, "bake.config.ts": `export default 1;` },
+    error: `"bake.config.ts" must have a default export: a config object, or a function that returns one.`,
+  },
+])("bun bake rejects $name", async ({ files, args, error, waits }) => {
   using dir = tempDir("bake-command-error", files);
 
   await using proc = spawnBake(String(dir), ["bake", ...(args ?? ["--port=0"])]);
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const output = collectOutput(proc);
+  await output.waitFor(new RegExp(error.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 
-  expect(stderr).toContain(error);
-  expect(stdout).not.toContain("url: ");
-  expect(exitCode).toBe(1);
+  expect(output.text).not.toContain("url: ");
+  if (waits) {
+    // A change to a file that it loaded can fix this, so it waits for one, as `bun --hot` does. The
+    // file that is not loaded is written first: it does not start a reload.
+    const fixes = [
+      ["bake.config.ts", `export default {};`],
+      ["app/server.ts", `export default { fetch: () => new Response("fixed") };`],
+    ];
+    if ("bake.config.ts" in files) fixes.reverse();
+    for (const [file, contents] of fixes) await Bun.write(join(String(dir), file), contents);
+    await output.waitFor(/url: /);
+  } else {
+    expect(await proc.exited).toBe(1);
+    // One line, once: not a stack trace into Bun's own code, and not again as an unhandled rejection.
+    expect(output.text.trim()).toBe(`error: ${output.text.trim().slice("error: ".length)}`);
+    expect(output.text.split(error).length).toBe(2);
+  }
+  expect(output.text).not.toContain("internal:bake");
 });
 
 test.concurrent("bun bake --help", async () => {
@@ -252,6 +321,9 @@ function collectOutput(proc: Subprocess<"ignore", "pipe", "pipe">) {
   };
   const done = Promise.all([pump(proc.stdout), pump(proc.stderr)]);
   return {
+    get text() {
+      return text;
+    },
     async waitFor(pattern: RegExp) {
       while (!pattern.test(text)) {
         const closed = await Promise.race([changed.promise.then(() => false), done.then(() => true)]);
@@ -266,9 +338,8 @@ function collectOutput(proc: Subprocess<"ignore", "pipe", "pipe">) {
 }
 
 test.concurrent.each([
-  { name: "bun --check --watch bake", args: ["--check", "--watch", "bake"] },
-  { name: "bun --hot bake --check", args: ["--hot", "bake", "--check"] },
-  { name: "bun --check bake --hot", args: ["--check", "bake", "--hot"] },
+  { name: "bun bake --check", args: ["bake", "--check"] },
+  { name: "bun --check bake", args: ["--check", "bake"] },
 ])("$name starts the server once the type errors are fixed", async ({ args }) => {
   using dir = tempDir("bake-command-check-watch", {
     "tsconfig.json": checkedTsconfig,
@@ -283,6 +354,7 @@ test.concurrent.each([
   await using proc = spawnBake(String(dir), [...args, "--port=0"]);
   const output = collectOutput(proc);
   await output.waitFor(/TS2322/);
+  expect(output.text).not.toContain("url: ");
 
   await Bun.write(
     join(String(dir), "app/server.ts"),
@@ -341,55 +413,25 @@ test.concurrent("app/server.ts is not the entry module under bun bake", async ()
   expect(await res.json()).toEqual({ argv: ["--port=0"], main: "", metaMain: false });
 });
 
-test.concurrent.each([
-  { name: "bun bake --watch", flag: "--watch" },
-  { name: "bun bake --hot", flag: "--hot" },
-])("$name serves the new app/server.ts after a change", async ({ flag }) => {
+test.concurrent("bun bake serves the new app/server.ts after a change, on the same server", async () => {
   using dir = tempDir("bake-command-reload", {
     "app/server.ts": `export default { fetch: () => new Response("v1") };`,
   });
 
-  await using proc = spawnBake(String(dir), ["bake", flag, "--port=0"]);
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
   const output = collectOutput(proc);
   const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
   expect(await get(url, "/")).toBe("200 v1");
 
   await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("v2") };`);
-  // `--watch` starts the process again, on a new port; `--hot` keeps it. Each prints the URL again.
+  // The reload prints the URL again.
   const [, next] = await output.waitFor(/url: http:\/\/\S+[\s\S]*url: (http:\/\/\S+)/);
 
-  expect(await get(next, "/")).toBe("200 v2");
+  expect(next).toBe(url);
+  expect(await get(url, "/")).toBe("200 v2");
 });
 
-// Windows has no signal handlers to run before a reload.
-test.concurrent.skipIf(isWindows).each([{ args: ["--watch-kill-signal", "SIGINT", "bake", "--watch"] }])(
-  "bun $args.0 $args.1 ... sends that signal before a reload: %j",
-  async ({ args }) => {
-    using dir = tempDir("bake-command-kill-signal", {
-      "tsconfig.json": checkedTsconfig,
-      "app/server.ts": `
-      declare const Response: any;
-      declare const process: any;
-      process.on("SIGINT", () => console.log("SIGINT before reload"));
-      export default { fetch: () => new Response("v1") };
-    `,
-    });
-
-    await using proc = spawnBake(String(dir), [...args, "--port=0"]);
-    const output = collectOutput(proc);
-    await output.waitFor(/url: /);
-
-    await Bun.write(
-      join(String(dir), "app/server.ts"),
-      `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
-    );
-    const [line] = await output.waitFor(/SIG\w+ before reload/);
-
-    expect(line).toBe("SIGINT before reload");
-  },
-);
-
-test.concurrent("bun bake --hot keeps one server when it started on a later port", async () => {
+test.concurrent("bun bake keeps one server across reloads when it started on a later port", async () => {
   // Take the port that `bun bake` tries first, so it starts on the next one.
   await using blocker = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("blocker") });
   using dir = tempDir("bake-command-hot-port", {
@@ -397,7 +439,7 @@ test.concurrent("bun bake --hot keeps one server when it started on a later port
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "bake", "--hot", "--host=127.0.0.1"],
+    cmd: [bunExe(), "bake", "--host=127.0.0.1"],
     env: { ...env, PORT: String(blocker.port) },
     cwd: String(dir),
     stdin: "ignore",
@@ -446,11 +488,11 @@ test.concurrent("bun bake serves a Hono app exported from app/server.ts, with it
   ws.close();
 });
 
-test.concurrent("bun bake uses Bun.serve options from the export, and its flags come first", async () => {
+test.concurrent.each(["hostname", "host"])("bun bake uses Bun.serve options from the export, with %s", async key => {
   using dir = tempDir("bake-command-options", {
     "app/server.ts": `
       export default {
-        hostname: "127.0.0.1",
+        ${key}: "127.0.0.1",
         fetch: () => { throw new Error("boom"); },
         error: () => new Response("from the error option", { status: 500 }),
       };
@@ -481,7 +523,8 @@ test.concurrent.skipIf(isWindows)("bun bake keeps a unix socket from the export 
   const socket = join(String(dir), "s.sock");
   await Bun.write(
     join(String(dir), "app/server.ts"),
-    `export default { unix: ${JSON.stringify(socket)}, fetch: () => new Response("via unix") };`,
+    // `host` does not stop the socket: `bun bake` sets no address for it.
+    `export default { unix: ${JSON.stringify(socket)}, host: "localhost", fetch: () => new Response("via unix") };`,
   );
 
   await using proc = spawnBake(String(dir), ["bake"]);
@@ -491,3 +534,293 @@ test.concurrent.skipIf(isWindows)("bun bake keeps a unix socket from the export 
   const res = await fetch("http://localhost/", { unix: socket });
   expect(await res.text()).toBe("via unix");
 });
+
+/** The CSS that the page at `path` links to. */
+async function getPageCss(url: string, path: string) {
+  const html = await (await fetch(new URL(path, url))).text();
+  const hrefs = [...html.matchAll(/href="([^"]+\.css)"/g)].map(match => match[1]);
+  const css = await Promise.all(hrefs.map(async href => (await fetch(new URL(href, url))).text()));
+  return css.join("\n");
+}
+
+test.concurrent("bun bake loads the plugins of bake.config.ts, with those of bunfig.toml", async () => {
+  using dir = tempDir("bake-command-config", {
+    "bake.config.ts": `
+      import { defineConfig } from "bun:bake";
+      export default defineConfig(({ mode }) => ({
+        plugins: [{
+          name: "from-config",
+          setup(build) {
+            build.onLoad({ filter: /config\\.css$/ }, () => ({ contents: ".config-" + mode + " { color: red; }", loader: "css" }));
+          },
+        }],
+      }));
+    `,
+    "bunfig.toml": `[serve.static]\nplugins = ["./bunfig-plugin.ts"]\n`,
+    "bunfig-plugin.ts": `
+      export default {
+        name: "from-bunfig",
+        setup(build) {
+          build.onLoad({ filter: /bunfig\\.css$/ }, () => ({ contents: ".bunfig-plugin { color: red; }", loader: "css" }));
+        },
+      };
+    `,
+    "app/config.css": `.unchanged { color: red; }`,
+    "app/bunfig.css": `.unchanged { color: red; }`,
+    "app/pages/index.html": `<!doctype html><html><head><link rel="stylesheet" href="../config.css" /><link rel="stylesheet" href="../bunfig.css" /></head><body></body></html>`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const css = await getPageCss(url, "/");
+  expect(css).toContain(".config-development");
+  expect(css).toContain(".bunfig-plugin");
+  expect(css).not.toContain(".unchanged");
+});
+
+test.concurrent("bun bake listens on localhost when the export of app/server.ts has an empty hostname", async () => {
+  using dir = tempDir("bake-command-empty-hostname", {
+    "app/server.ts": `export default { hostname: "", fetch: () => new Response("ok") };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  expect(new URL(url).hostname).toBe("localhost");
+});
+
+test.concurrent("bun bake runs a plugin function from bake.config.ts, with the project as its root", async () => {
+  using dir = tempDir("bake-command-config-function", {
+    "bake.config.ts": `
+      function rootPlugin() {}
+      rootPlugin.setup = build => {
+        const root = build.config.root;
+        build.onLoad({ filter: /style\\.css$/ }, () => ({
+          contents: (root === process.cwd() ? ".project-root" : ".other-root") + " { color: red; }",
+          loader: "css",
+        }));
+      };
+      export default { plugins: [rootPlugin] };
+    `,
+    "app/style.css": `.unchanged { color: red; }`,
+    "app/pages/index.html": `<!doctype html><html><head><link rel="stylesheet" href="../style.css" /></head><body></body></html>`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  expect(await getPageCss(url, "/")).toContain(".project-root");
+});
+
+test.concurrent.each([
+  { name: "bun --watch bake", args: ["--watch", "bake"] },
+  { name: "bun --check --watch bake", args: ["--check", "--watch", "bake"] },
+])("$name fails, as bun bake reloads on its own", async ({ args }) => {
+  using dir = tempDir("bake-command-watch", { "app/pages/index.html": page });
+
+  await using proc = spawnBake(String(dir), [...args, "--port=0"]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`"bun bake" reloads app/server.ts on its own. Remove --watch.`);
+  expect(stdout).not.toContain("url: ");
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("bun bake asks for a restart when bake.config.ts changes, and only then", async () => {
+  using dir = tempDir("bake-command-config-change", {
+    "bake.config.ts": `export default { plugins: [] };`,
+    "app/pages/index.html": page,
+    "app/server.ts": `export default { fetch: () => new Response("v1") };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/url: /);
+
+  // A reload for another file evaluates bake.config.ts again, but it did not change.
+  await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("v2") };`);
+  await output.waitFor(/url: [\s\S]*url: /);
+  expect(output.text).not.toContain("changed");
+
+  await Bun.write(join(String(dir), "bake.config.ts"), `export default { plugins: [] }; // changed`);
+  const [line] = await output.waitFor(/"bake\.config\.ts" changed\..*/);
+
+  expect(line).toBe(`"bake.config.ts" changed. Restart "bun bake" to use the new plugins.`);
+});
+
+// Windows has no signal handlers to run before a restart.
+test.concurrent.skipIf(isWindows)(
+  "bun --watch-kill-signal ... bake --check sends that signal before a restart",
+  async () => {
+    using dir = tempDir("bake-command-kill-signal", {
+      "tsconfig.json": checkedTsconfig,
+      "app/server.ts": `
+      declare const Response: any;
+      declare const process: any;
+      declare const console: any;
+      process.on("SIGUSR2", () => console.log("SIGUSR2 before restart"));
+      export default { fetch: () => new Response("v1") };
+    `,
+    });
+
+    // `--check` starts the process again after a change, which sends the signal: SIGTERM without the flag.
+    await using proc = spawnBake(String(dir), ["--watch-kill-signal", "SIGUSR2", "bake", "--check", "--port=0"]);
+    const output = collectOutput(proc);
+    await output.waitFor(/url: /);
+
+    await Bun.write(
+      join(String(dir), "app/server.ts"),
+      `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
+    );
+    await output.waitFor(/SIGUSR2 before restart/);
+  },
+);
+
+test.concurrent("bun bake --port waits for a fix to an option of app/server.ts that Bun.serve rejects", async () => {
+  using dir = tempDir("bake-command-bad-option", {
+    "app/server.ts": `export default { idleTimeout: 300, fetch: () => new Response("v1") };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/idleTimeout to be 255 or less/);
+
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `export default { idleTimeout: 30, fetch: () => new Response("v2") };`,
+  );
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+
+  expect(await get(url, "/")).toBe("200 v2");
+});
+
+test.concurrent("bun bake keeps serving when a reload finds a page it cannot serve", async () => {
+  using dir = tempDir("bake-command-reload-error", {
+    "app/pages/index.html": page,
+    "app/server.ts": `export default { fetch: () => new Response("v1") };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+
+  // A page that `bun bake` rejects at the start: on a reload, it reports it instead of exiting.
+  await Bun.write(join(String(dir), "app/pages/[slug].html"), page);
+  await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("v2") };`);
+  await output.waitFor(/a page cannot have/);
+
+  expect(proc.exitCode).toBeNull();
+  expect(await get(url, "/missing")).toBe("200 v1");
+});
+
+test.concurrent("bun bake reads a bake.config.ts whose default export is a promise", async () => {
+  using dir = tempDir("bake-command-config-promise", {
+    "bake.config.ts": `
+      async function load() {
+        return {
+          plugins: [{
+            name: "from-promise",
+            setup(build) {
+              build.onLoad({ filter: /style\\.css$/ }, () => ({ contents: ".from-promise { color: red; }", loader: "css" }));
+            },
+          }],
+        };
+      }
+      export default load();
+    `,
+    "app/style.css": `.unchanged { color: red; }`,
+    "app/pages/index.html": `<!doctype html><html><head><link rel="stylesheet" href="../style.css" /></head><body></body></html>`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  expect(await getPageCss(url, "/")).toContain(".from-promise");
+});
+
+// On Windows, a manager process starts each restart with its own environment, so a restart cannot
+// tell it is one, and exits on this error as at the first start.
+test.concurrent.skipIf(isWindows)(
+  "bun bake --check waits for a fix when a restart finds a page it cannot serve",
+  async () => {
+    using dir = tempDir("bake-command-check-restart-error", {
+      "tsconfig.json": checkedTsconfig,
+      "app/pages/index.html": page,
+      "app/server.ts": `declare const Response: any;\nexport default { fetch: () => new Response("v1") };\n`,
+    });
+
+    await using proc = spawnBake(String(dir), ["bake", "--check", "--port=0"]);
+    const output = collectOutput(proc);
+    await output.waitFor(/url: /);
+
+    // `--check` starts the process again on a change: the error must not end the session.
+    const slug = join(String(dir), "app/pages/[slug].html");
+    await Bun.write(slug, page);
+    await Bun.write(
+      join(String(dir), "app/server.ts"),
+      `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
+    );
+    await output.waitFor(/a page cannot have/);
+
+    rmSync(slug);
+    await Bun.write(
+      join(String(dir), "app/server.ts"),
+      `declare const Response: any;\nexport default { fetch: () => new Response("v3") };\n`,
+    );
+    const [, url] = await output.waitFor(/a page cannot have[\s\S]*url: (http:\/\/\S+)/);
+
+    expect(await get(url, "/missing")).toBe("200 v3");
+  },
+);
+
+test.concurrent.each([
+  { name: "nothing to serve", files: { "README.md": "" }, error: "Nothing to serve in" },
+  { name: "a page it cannot serve", files: { "app/pages/[slug].html": page }, error: "a page cannot have" },
+])("bun bake --check exits at the start on $name", async ({ files, error }) => {
+  // `lib.ts` gives the type checker an input, so the check passes and `bun bake` runs.
+  using dir = tempDir("bake-command-check-first-error", {
+    "tsconfig.json": checkedTsconfig,
+    "lib.ts": `export const one: number = 1;`,
+    ...files,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--check", "--port=0"]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(error);
+  expect(stdout).not.toContain("url: ");
+  expect(exitCode).toBe(1);
+});
+
+// On Windows, a restart cannot tell it is one, as above.
+test.concurrent.skipIf(isWindows)(
+  "bun bake --check waits on a restart error also when the first start had a type error",
+  async () => {
+    using dir = tempDir("bake-command-check-typeerror-restart", {
+      "tsconfig.json": checkedTsconfig,
+      "app/pages/[slug].html": page,
+      "app/server.ts": `declare const Response: any;\nconst n: number = "x";\nexport default { fetch: () => new Response("v1") };\n`,
+    });
+
+    await using proc = spawnBake(String(dir), ["bake", "--check", "--port=0"]);
+    const output = collectOutput(proc);
+    await output.waitFor(/TS2322/);
+
+    // The fix restarts the process, which then finds the page it cannot serve: it must wait.
+    await Bun.write(
+      join(String(dir), "app/server.ts"),
+      `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
+    );
+    await output.waitFor(/a page cannot have/);
+
+    rmSync(join(String(dir), "app/pages/[slug].html"));
+    await Bun.write(
+      join(String(dir), "app/server.ts"),
+      `declare const Response: any;\nexport default { fetch: () => new Response("v3") };\n`,
+    );
+    const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+
+    expect(await get(url, "/missing")).toBe("200 v3");
+  },
+);

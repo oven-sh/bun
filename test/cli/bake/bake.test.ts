@@ -627,26 +627,41 @@ test.concurrent.each([
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("bun bake asks for a restart when bake.config.ts changes, and only then", async () => {
+test.concurrent("bun bake starts again when bake.config.ts changes, and only then", async () => {
+  const config = (cls: string) => `export default {
+    plugins: [{
+      name: "${cls}",
+      setup(build) {
+        build.onLoad({ filter: /style\\.css$/ }, () => ({ contents: ".${cls} { color: red; }", loader: "css" }));
+      },
+    }],
+  };`;
+  // \`globalThis\` lives through a reload in place, not through a new process.
+  const server = (version: string) =>
+    `globalThis.loads = (globalThis.loads ?? 0) + 1;
+    export default { fetch: () => new Response("${version} " + globalThis.loads) };`;
   using dir = tempDir("bake-command-config-change", {
-    "bake.config.ts": `export default { plugins: [] };`,
-    "app/pages/index.html": page,
-    "app/server.ts": `export default { fetch: () => new Response("v1") };`,
+    "bake.config.ts": config("first"),
+    "app/server.ts": server("v1"),
+    "app/style.css": `.unchanged { color: red; }`,
+    "app/pages/index.html": `<!doctype html><html><head><link rel="stylesheet" href="../style.css" /></head><body></body></html>`,
   });
 
   await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
   const output = collectOutput(proc);
-  await output.waitFor(/url: /);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  expect(await getPageCss(url, "/")).toContain(".first");
 
-  // A reload for another file evaluates bake.config.ts again, but it did not change.
-  await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("v2") };`);
+  // A change to another file reloads in place, although it evaluates bake.config.ts again.
+  await Bun.write(join(String(dir), "app/server.ts"), server("v2"));
   await output.waitFor(/url: [\s\S]*url: /);
-  expect(output.text).not.toContain("changed");
+  expect(await get(url, "/missing")).toBe("200 v2 2");
 
-  await Bun.write(join(String(dir), "bake.config.ts"), `export default { plugins: [] }; // changed`);
-  const [line] = await output.waitFor(/"bake\.config\.ts" changed\..*/);
-
-  expect(line).toBe(`"bake.config.ts" changed. Restart "bun bake" to use the new plugins.`);
+  // A change to bake.config.ts starts a new process, which loads the new plugins.
+  await Bun.write(join(String(dir), "bake.config.ts"), config("second"));
+  const [, next] = await output.waitFor(/url: [\s\S]*url: [\s\S]*url: (http:\/\/\S+)/);
+  expect(await get(next, "/missing")).toBe("200 v2 1");
+  expect(await getPageCss(next, "/")).toContain(".second");
 });
 
 // Windows has no signal handlers to run before a restart.

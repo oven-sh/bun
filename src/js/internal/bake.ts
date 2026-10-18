@@ -14,6 +14,7 @@ const {
 } = require("internal/serve_cli");
 const setConfigPlugins = $newRustFunction("bake/config/plugins.rs", "setConfigPlugins", 2);
 const isRestart = $newRustFunction("bake/config/plugins.rs", "isRestart", 0);
+const restartProcess = $newRustFunction("bake/config/plugins.rs", "restartProcess", 0);
 
 // `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
 const ObjectKeys = Object.keys;
@@ -123,7 +124,8 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
 
 /**
  * The `key` of the `bake.config.ts` that the server loaded its plugins from, once it started. The
- * server loads plugins once, and each reload evaluates the file again, so the text tells a change.
+ * server loads plugins once, so a change to the file starts the process again. Each reload
+ * evaluates the file again, so the text tells a change.
  */
 let configKeyInServer: string | undefined;
 
@@ -219,7 +221,7 @@ async function loadAppServer(
 
 /** How many times `start()` ran: once, then once more for each reload. */
 let runs = 0;
-/** Whether this process is `bun bake --check` started again after a change. */
+/** Whether this process is `bun bake` started again after a change: under `--check`, or of `bake.config.ts`. */
 let restarted = false;
 
 async function start() {
@@ -244,9 +246,7 @@ async function start() {
 
   const cwd = process.cwd();
   const config = await loadConfig(cwd);
-  if (configKeyInServer !== undefined && config.key !== configKeyInServer) {
-    console.warn(`"${config.name}" changed. Restart "bun bake" to use the new plugins.`);
-  }
+  if (configKeyInServer !== undefined && config.key !== configKeyInServer) restartProcess();
   // Before `Bun.serve()`: the server loads them with the plugins of bunfig.toml.
   setConfigPlugins(config.plugins, config.names);
   const pages = await loadPages(path.join(cwd, "app", "pages"));

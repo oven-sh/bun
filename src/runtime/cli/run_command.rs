@@ -2790,7 +2790,6 @@ impl RunCommand {
             if no_clear_screen {
                 ctx.debug.no_clear_screen = true;
             }
-            let hot_reload = ctx.debug.hot_reload;
             if ctx.debug.watch_flag {
                 pretty_errorln!(
                     "<r><red>error<r>: \"bun bake\" reloads app/server.ts on its own. Remove --watch."
@@ -2806,13 +2805,18 @@ impl RunCommand {
             }
             // Flags before `bake` that only apply in watch mode, which may only be on now.
             cli::apply_watch_mode_flags(ctx);
-            if hot_reload != ctx.debug.hot_reload {
-                cli::set_up_watch_restarts(ctx);
+            // A change to `bake.config.ts` starts `bun bake` again, also when it reloads in place
+            // otherwise. On Windows, that needs the watcher-manager parent in every mode.
+            #[cfg(windows)]
+            {
+                if !bun_sys::windows::is_watcher_child() {
+                    bun_sys::windows::become_watcher_manager();
+                } else if ctx.debug.hot_reload == cli::command::HotReload::Watch {
+                    bun_core::set_auto_reload_on_crash(true);
+                }
             }
             // Before the type check: a first start with type errors never runs `internal/bake.ts`.
-            if ctx.debug.hot_reload == cli::command::HotReload::Watch {
-                crate::bake::config::plugins::mark_restart();
-            }
+            crate::bake::config::plugins::mark_restart();
             Global::configure_allocator(core::Global::AllocatorConfiguration {
                 long_running: true,
                 ..Default::default()

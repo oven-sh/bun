@@ -3312,40 +3312,47 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut new_texts: Vec<Vec<u8>> = vec![self.atoms().bytes(texts[0]).to_vec()];
         let mut new_types: Vec<TypeId> = Vec::new();
+        // `textLength + sb.Len()`. Tested before each append, where tsgo tests after: the totals only grow.
+        let mut length = new_texts[0].len();
+        let mut fits = |more: usize, spans: usize| {
+            length += more;
+            length <= MAX_TEMPLATE_LITERAL_TYPE_LENGTH && spans <= MAX_TEMPLATE_LITERAL_TYPE_SPANS
+        };
         for (i, &ty) in types.iter().enumerate() {
-            let literal: Option<Vec<u8>> = match *self.data(ty.plain()) {
+            // The sign of a negative bigint, and the text.
+            let literal: Option<(&[u8], &[u8])> = match *self.data(ty.plain()) {
                 TypeData::StringLit { value, .. }
                 | TypeData::EnumLit {
                     value: EnumValue::String(value),
                     ..
-                } => Some(self.atoms().bytes(value).to_vec()),
+                } => Some((b"", self.atoms().bytes(value))),
                 TypeData::NumberLit { bits, .. }
                 | TypeData::EnumLit {
                     value: EnumValue::Number(bits),
                     ..
                 } => {
                     let name = self.number_name(f64::from_bits(bits));
-                    Some(self.atoms().bytes(name).to_vec())
+                    Some((b"", self.atoms().bytes(name)))
                 }
-                TypeData::BoolLit { value, .. } => Some(if value {
-                    b"true".to_vec()
-                } else {
-                    b"false".to_vec()
-                }),
+                TypeData::BoolLit { value, .. } => {
+                    Some((b"", if value { b"true" } else { b"false" }))
+                }
                 TypeData::BigIntLit { text, negative, .. } => {
-                    let mut t = if negative { b"-".to_vec() } else { Vec::new() };
-                    t.extend_from_slice(self.atoms().bytes(text));
-                    Some(t)
+                    Some((if negative { b"-" } else { b"" }, self.atoms().bytes(text)))
                 }
-                TypeData::Intrinsic(Intrinsic::Null) => Some(b"null".to_vec()),
-                TypeData::Intrinsic(Intrinsic::Undefined) => Some(b"undefined".to_vec()),
+                TypeData::Intrinsic(Intrinsic::Null) => Some((b"", b"null")),
+                TypeData::Intrinsic(Intrinsic::Undefined) => Some((b"", b"undefined")),
                 _ => None,
             };
             let next = self.atoms().bytes(texts[i + 1]);
             match literal {
-                Some(text) => {
+                Some((sign, text)) => {
+                    if !fits(sign.len() + text.len() + next.len(), new_types.len()) {
+                        return self.template_too_large();
+                    }
                     let last = new_texts.last_mut().unwrap();
-                    last.extend_from_slice(&text);
+                    last.extend_from_slice(sign);
+                    last.extend_from_slice(text);
                     last.extend_from_slice(next);
                 }
                 None => {
@@ -3354,18 +3361,29 @@ impl<'p, 's> Checker<'p, 's> {
                         types: inner_types,
                     } = self.data(ty)
                     {
-                        new_texts
-                            .last_mut()
-                            .unwrap()
-                            .extend_from_slice(self.atoms().bytes(inner_texts[0]));
+                        let first = self.atoms().bytes(inner_texts[0]);
+                        if !fits(first.len(), new_types.len()) {
+                            return self.template_too_large();
+                        }
+                        new_texts.last_mut().unwrap().extend_from_slice(first);
                         for (j, &t) in inner_types.iter().enumerate() {
+                            let text = self.atoms().bytes(inner_texts[j + 1]);
+                            if !fits(text.len(), new_types.len() + 1) {
+                                return self.template_too_large();
+                            }
                             new_types.push(t);
-                            new_texts.push(self.atoms().bytes(inner_texts[j + 1]).to_vec());
+                            new_texts.push(text.to_vec());
+                        }
+                        if !fits(next.len(), new_types.len()) {
+                            return self.template_too_large();
                         }
                         new_texts.last_mut().unwrap().extend_from_slice(next);
                     } else if self.is_generic_index_type(ty)
                         || self.is_pattern_literal_placeholder(ty)
                     {
+                        if !fits(next.len(), new_types.len() + 1) {
+                            return self.template_too_large();
+                        }
                         new_types.push(ty);
                         new_texts.push(next.to_vec());
                     } else {
@@ -3397,6 +3415,13 @@ impl<'p, 's> Checker<'p, 's> {
             texts: self.list_of(new_texts.iter().map(|t| self.atoms().intern(t))),
             types: self.list(&new_types),
         })
+    }
+
+    /// `getTemplateLiteralType` for a type over one of its two limits.
+    #[cold]
+    fn template_too_large(&mut self) -> TypeId {
+        self.size_limit_at_current_node(2589);
+        TypeId::ERROR
     }
 
     /// `applyStringMapping`
@@ -3510,6 +3535,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 }
+
+/// `maxTemplateLiteralTypeLength` (bytes of all the texts) and `maxTemplateLiteralTypeSpans`: microsoft/TypeScript#64194.
+const MAX_TEMPLATE_LITERAL_TYPE_LENGTH: usize = 50_000_000;
+const MAX_TEMPLATE_LITERAL_TYPE_SPANS: usize = 100_000;
 
 /// `CombineSurrogatePairs`: a lone high surrogate immediately before a lone low one combines with
 /// it into one character. Each is three bytes (`EncodeJSStringRune`).

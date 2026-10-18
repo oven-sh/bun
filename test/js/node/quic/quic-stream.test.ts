@@ -287,16 +287,21 @@ describe("HTTP/3 header blocks that follow another header block", () => {
 // A stream sends `pendingTrailers` itself when the body is out, so the caller
 // has no answer to read. Node v26.10.0 destroys the stream when the block
 // cannot be sent (nodejs/node#65863).
-describe("pendingTrailers that cannot be sent", () => {
+describe("pendingTrailers", () => {
   const encoder = new TextEncoder();
   const request = { ":method": "POST", ":scheme": "https", ":authority": "localhost" };
   // Longer than a test: an idle timeout must not be what ends the session.
   const transportParams = { maxIdleTimeout: 60 };
 
   // One response with a body and `trailers` as its pendingTrailers. Gives how
-  // `closed` settled for the server stream, and the body that the client read.
+  // `closed` settles for the server stream, and what the client gets.
   async function respondWith(trailers: Record<string, string>) {
     let closed = "open";
+    const settled = Promise.withResolvers<string>();
+    const settle = (how: string) => {
+      closed = how;
+      settled.resolve(how);
+    };
     const server = await listen(
       async serverSession => {
         serverSession.onstream = (stream: any) => {
@@ -307,14 +312,14 @@ describe("pendingTrailers that cannot be sent", () => {
       {
         sni: { "*": { keys: [key], certs: [cert] } },
         transportParams,
-        onheaders(this: any, headers: Record<string, string>) {
+        onheaders(this: any, headers: Record<string, any>) {
           if (headers[":path"] !== "/trailers") {
             this.sendHeaders({ ":status": "200" }, { terminal: true });
             return;
           }
           this.closed.then(
-            () => (closed = "resolved"),
-            (err: any) => (closed = err.code),
+            () => settle("resolved"),
+            (err: any) => settle(err.code),
           );
           this.sendHeaders({ ":status": "200" });
           this.pendingTrailers = trailers;
@@ -340,22 +345,32 @@ describe("pendingTrailers that cannot be sent", () => {
       } as SessionOptions);
       await client.opened;
 
+      const clientTrailers = Promise.withResolvers<Record<string, string>>();
       const stream = await client.createBidirectionalStream({
         headers: { ...request, ":path": "/trailers" },
         onheaders() {},
+        ontrailers: clientTrailers.resolve,
       });
-      stream.closed.catch(() => {});
+      // A stream gets its trailers before it closes.
+      stream.closed.then(
+        () => clientTrailers.reject(new Error("the stream closed with no trailers")),
+        clientTrailers.reject,
+      );
+      clientTrailers.promise.catch(() => {});
       const arrived = Promise.withResolvers<void>();
       const body = (async () => {
         let text = "";
-        for await (const batch of stream) {
-          for (const chunk of batch) text += Buffer.from(chunk).toString("latin1");
-          if (text === "body") arrived.resolve();
+        try {
+          for await (const batch of stream) {
+            for (const chunk of batch) text += Buffer.from(chunk).toString("latin1");
+            if (text === "body") arrived.resolve();
+          }
+          return text;
+        } finally {
+          arrived.resolve();
         }
-        arrived.resolve();
-        return text;
       })();
-      body.catch(arrived.reject);
+      body.catch(() => {});
       await arrived.promise;
 
       // The server asks the stream for its trailers when the body leaves, which
@@ -369,28 +384,42 @@ describe("pendingTrailers that cannot be sent", () => {
       });
       later.closed.then(() => answered.reject(new Error("the stream closed with no answer")), answered.reject);
       await answered.promise;
-      return { closed, body, [Symbol.asyncDispose]: dispose };
+      return {
+        closed,
+        settled: settled.promise,
+        body,
+        trailers: clientTrailers.promise,
+        [Symbol.asyncDispose]: dispose,
+      };
     } catch (err) {
       await dispose();
       throw err;
     }
   }
 
+  test("a block that is sent reaches the client, and the stream closes with no error", async () => {
+    await using response = await respondWith({ "x-checksum": "abc123" });
+    expect({
+      trailers: { ...(await response.trailers) },
+      body: await response.body,
+      closed: await response.settled,
+    }).toEqual({ trailers: { "x-checksum": "abc123" }, body: "body", closed: "resolved" });
+  });
+
   test("a block that sendTrailers() throws for destroys the stream with the error", async () => {
     await using response = await respondWith({ connection: "close" });
+    expect(response.closed).toBe("ERR_HTTP2_INVALID_CONNECTION_HEADERS");
     // destroy() still ends a response that the stream wrote and ended.
-    expect({ closed: response.closed, body: await response.body }).toEqual({
-      closed: "ERR_HTTP2_INVALID_CONNECTION_HEADERS",
-      body: "body",
-    });
+    expect(await response.body).toBe("body");
   });
 
   test("a block that sendTrailers() answers false for destroys the stream", async () => {
     // Latin-1 on the wire makes a NUL of U+0100. The block then has more
     // pairs than it declares, and the native side refuses it.
     await using response = await respondWith({ "x-bad": "a\u0100b" });
-    response.body.catch(() => {});
     expect(response.closed).toBe("ERR_QUIC_STREAM_ABORTED");
+    // The client's read ends. The native side decides how.
+    await response.body.catch(() => {});
   });
 });
 

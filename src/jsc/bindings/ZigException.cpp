@@ -255,18 +255,14 @@ public:
         if (offset >= stack.length())
             return false;
 
-        size_t start = 7;
-        // What Error.prepareStackTrace returns can begin with a frame.
-        if (offset || !stack.startsWith("    at "_s)) {
-            start = stack.find("\n    at "_s, offset);
+        auto start = stack.find("\n    at "_s, offset);
 
-            if (start == WTF::notFound) {
-                offset = stack.length();
-                return false;
-            }
-
-            start += 8;
+        if (start == WTF::notFound) {
+            offset = stack.length();
+            return false;
         }
+
+        start += 8;
         auto end = stack.find("\n"_s, start);
 
         if (end == WTF::notFound) {

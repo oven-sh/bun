@@ -587,11 +587,9 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
     }
 
     if (prepareStackTrace && prepareStackTrace.isCallable()) {
-        // V8 calls it when `stack` is read. Without frames there is nothing to keep until then.
-        if (!isReadOfStack && stackTrace.isEmpty()) {
-            errorInstance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
+        // Materializing an error without frames does not call it, and the error stays without a `stack`.
+        if (!isReadOfStack && stackTrace.isEmpty())
             return {};
-        }
         globalObject->isInsideErrorPrepareStackTraceCallback = true;
         auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
         globalObject->isInsideErrorPrepareStackTraceCallback = false;
@@ -705,14 +703,24 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
         return jsUndefined();
     }
 
+    // Nothing, for an error without frames, leaves it as it is. Error.captureStackTrace() has put an accessor that formats when read.
+    bool hasFrames = !stackTrace.isEmpty();
+    if (!hasFrames && errorInstance->getDirect(vm, vm.propertyNames->stack))
+        return {};
+
     JSValue result = computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance, /* isReadOfStack */ false);
+    if (!hasFrames && (scope.exception() || !result)) {
+        CLEAR_IF_EXCEPTION(scope);
+        return {};
+    }
 
     line_in = line.oneBasedInt();
     column_in = column.oneBasedInt();
 
-    // To materializeErrorInfoIfNeeded, nothing means that `stack` has been put already, which a formatter that failed has not done.
-    if (!result)
-        RETURN_IF_EXCEPTION(scope, jsUndefined());
+    // materializeErrorInfoIfNeeded putDirect()s this unconditionally; an empty JSValue
+    // in property storage crashes the next read. https://github.com/oven-sh/bun/issues/34095
+    if (!result) [[unlikely]]
+        RELEASE_AND_RETURN(scope, jsUndefined());
     RELEASE_AND_RETURN(scope, result);
 }
 
@@ -781,13 +789,6 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         return JSValue::encode(jsUndefined());
     }
 
-    // Before the formatter, which puts a `stack` for Error.prepareStackTrace to read.
-    unsigned attributes = JSC::PropertyAttribute::DontEnum | 0;
-    if (errorObject->isSealed(vm))
-        attributes |= JSC::PropertyAttribute::DontDelete;
-    if (errorObject->isFrozen(vm))
-        attributes |= JSC::PropertyAttribute::ReadOnly;
-
     OrdinalNumber line;
     OrdinalNumber column;
     String sourceURL;
@@ -797,13 +798,6 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
     if (stackTrace == nullptr) {
         WTF::Vector<JSC::StackFrame> emptyTrace;
         result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject);
-        // V8 calls an Error.prepareStackTrace that threw again on the next read.
-        if (scope.exception()) [[unlikely]] {
-            VM::DeletePropertyModeScope deleteScope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-            DeletePropertySlot slot;
-            JSObject::deleteProperty(errorObject, globalObject, vm.propertyNames->stack, slot);
-            errorObject->putDirectCustomAccessor(vm, vm.propertyNames->stack, defaultGlobalObject(globalObject)->m_lazyStackCustomGetterSetter.get(globalObject), (attributes & ~JSC::PropertyAttribute::ReadOnly) | JSC::PropertyAttribute::CustomAccessor);
-        }
     } else {
         // Re-entered from materializeErrorInfoIfNeeded's formatter, which still reads *stackTrace: copy, do not move.
         bool isBeingMaterialized = errorObject->hasMaterializedErrorInfo();
@@ -821,7 +815,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
             errorObject->setStackFrames(vm, {});
     }
     RETURN_IF_EXCEPTION(scope, {});
-    errorObject->putDirect(vm, vm.propertyNames->stack, result, attributes);
+    errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
     return JSValue::encode(result);
 }
 

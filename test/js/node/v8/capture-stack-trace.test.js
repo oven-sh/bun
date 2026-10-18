@@ -1,6 +1,6 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFile as readFileCallback } from "node:fs";
 import { opendir, readFile } from "node:fs/promises";
@@ -1454,21 +1454,17 @@ test.each([0, -1])("an error made under Error.stackTraceLimit = %p has its heade
   expect(errors.filter(e => "line" in e || "column" in e || "sourceURL" in e)).toEqual([]);
 });
 
-test("Error.prepareStackTrace gets no call sites under Error.stackTraceLimit = 0", () => {
-  const origLimit = Error.stackTraceLimit;
-  Error.stackTraceLimit = 0;
-  let stack;
-  try {
-    Error.prepareStackTrace = (error, callSites) => [error.message, callSites];
-    stack = new Error("m").stack;
-  } finally {
-    Error.stackTraceLimit = origLimit;
-  }
-  expect(stack).toEqual(["m", []]);
+test("after Error.prepareStackTrace threw, the next read gives the default stack", () => {
+  Error.prepareStackTrace = () => {
+    throw new RangeError("from prepareStackTrace");
+  };
+  const error = new Error("m");
+  expect(() => error.stack).toThrow(RangeError);
+  expect(error.stack).toStartWith("Error: m\n    at ");
 });
 
-test("Error.prepareStackTrace is called for an error with no frames when its stack is read, not before", async () => {
-  const withoutFrames = () => {
+describe("an error without frames is left as it is, for good", () => {
+  function withoutFrames() {
     const origLimit = Error.stackTraceLimit;
     Error.stackTraceLimit = 0;
     try {
@@ -1476,66 +1472,43 @@ test("Error.prepareStackTrace is called for an error with no frames when its sta
     } finally {
       Error.stackTraceLimit = origLimit;
     }
-  };
-  const prepareStackTrace = (Error.prepareStackTrace = mock(() => "prepared"));
-
-  // node (v26.7.0) has the same results, with its own order for ownKeys
-  expect({
-    hasOwn: Object.hasOwn(withoutFrames(), "stack"),
-    in: "stack" in withoutFrames(),
-    ownKeys: Reflect.ownKeys(withoutFrames()),
-    descriptor: Object.keys(Object.getOwnPropertyDescriptor(withoutFrames(), "stack")),
-    delete: delete withoutFrames().stack,
-    assign: (withoutFrames().stack = 1),
-    define: Object.defineProperty(withoutFrames(), "stack", { value: 1 }).stack,
-    freeze: Object.isFrozen(Object.freeze(withoutFrames())),
-    seal: Object.isSealed(Object.seal(withoutFrames())),
-    spread: { ...withoutFrames() },
-    otherReceiver: Reflect.get(withoutFrames(), "stack", {}),
-  }).toEqual({
-    hasOwn: true,
-    in: true,
-    ownKeys: ["message", "stack"],
-    descriptor: ["get", "set", "enumerable", "configurable"],
-    delete: true,
-    assign: 1,
-    define: 1,
-    freeze: true,
-    seal: true,
-    spread: {},
-    otherReceiver: undefined,
-  });
-  using dir = tempDir("parse-error-prepare", { "bad.js": `"".test(/[a-0]/);` });
-  const parseError = await import(join(String(dir), "bad.js")).catch(e => e);
-  expect(prepareStackTrace).toHaveBeenCalledTimes(0);
-
-  expect([parseError.stack, parseError.stack]).toEqual(["prepared", "prepared"]);
-  expect(prepareStackTrace).toHaveBeenCalledTimes(1);
-  expect(prepareStackTrace).toHaveBeenLastCalledWith(parseError, []);
-
-  for (const [restrict, check] of [
-    [Object.freeze, Object.isFrozen],
-    [Object.seal, Object.isSealed],
-    [Object.preventExtensions, e => !Object.isExtensible(e)],
-  ]) {
-    prepareStackTrace.mockClear();
-    const error = restrict(withoutFrames());
-    expect([error.stack, error.stack, check(error)]).toEqual(["prepared", "prepared", true]);
-    expect(prepareStackTrace).toHaveBeenCalledTimes(1);
   }
 
-  const touched = withoutFrames();
-  Object.hasOwn(touched, "stack");
-  Error.prepareStackTrace = origPrepareStackTrace;
-  expect(touched.stack).toBe("Error: m");
-
-  const thrower = withoutFrames();
-  Error.prepareStackTrace = mock(() => {
-    throw new RangeError("from prepareStackTrace");
+  test("where Error.prepareStackTrace is set, which is not called", () => {
+    Error.prepareStackTrace = mock(() => {
+      throw new RangeError("from prepareStackTrace");
+    });
+    const error = withoutFrames();
+    expect(Object.isFrozen(Object.freeze(error))).toBe(true);
+    expect(Bun.inspect(error)).toBe("error: m\n");
+    expect(Error.prepareStackTrace).not.toHaveBeenCalled();
+    Error.prepareStackTrace = undefined;
+    expect(error.stack).toBeUndefined();
   });
-  expect(() => thrower.stack).toThrow(RangeError);
-  expect(() => thrower.stack).toThrow(RangeError);
-  expect(Error.prepareStackTrace).toHaveBeenCalledTimes(2);
+
+  test("where Error.captureStackTrace() found no frames, which formats when the stack is read", () => {
+    const error = new Error("m");
+    Error.captureStackTrace(error, function notOnTheStack() {});
+    expect(Object.keys(Object.getOwnPropertyDescriptor(error, "stack"))).toContain("get");
+    error.message = "changed";
+    expect(error.stack).toBe("Error: changed");
+  });
+
+  test("where the stack that Error.captureStackTrace() put is deleted", () => {
+    const error = new Error("m");
+    Error.captureStackTrace(error, function notOnTheStack() {});
+    delete error.stack;
+    expect(error.stack).toBeUndefined();
+  });
+
+  test("where its header cannot be made", () => {
+    const error = withoutFrames();
+    error.name = Symbol("name");
+    expect("line" in error).toBe(false);
+    error.name = "Name";
+    expect(error.stack).toBeUndefined();
+    expect(Object.isFrozen(Object.freeze(error))).toBe(true);
+  });
 });
 
 test("an error that native code makes with no JavaScript on the stack has a stack", async () => {

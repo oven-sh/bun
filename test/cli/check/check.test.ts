@@ -660,6 +660,7 @@ describe.concurrent("bun check", () => {
             byteEnd: 84,
             code: 2322,
             category: "error",
+            message: `Type '{ a: { b: { c: string; }; }; }' is not assignable to type 'A'.`,
             text: [
               `Type '{ a: { b: { c: string; }; }; }' is not assignable to type 'A'.`,
               `  The types of 'a.b.c' are incompatible between these types.`,
@@ -668,9 +669,15 @@ describe.concurrent("bun check", () => {
             messageChain: [
               {
                 code: 2200,
+                category: "error",
                 text: "The types of 'a.b.c' are incompatible between these types.",
                 messageChain: [
-                  { code: 2322, text: "Type 'string' is not assignable to type 'number'.", messageChain: [] },
+                  {
+                    code: 2322,
+                    category: "error",
+                    text: "Type 'string' is not assignable to type 'number'.",
+                    messageChain: [],
+                  },
                 ],
               },
             ],
@@ -686,6 +693,7 @@ describe.concurrent("bun check", () => {
             byteEnd: 144,
             code: 2554,
             category: "error",
+            message: "Expected 2 arguments, but got 1.",
             text: "Expected 2 arguments, but got 1.",
             messageChain: [],
             related: [
@@ -699,6 +707,7 @@ describe.concurrent("bun check", () => {
                 byteEnd: 124,
                 code: 6210,
                 category: "message",
+                message: "An argument for 'b' was not provided.",
                 text: "An argument for 'b' was not provided.",
                 messageChain: [],
               },
@@ -732,14 +741,22 @@ describe.concurrent("bun check", () => {
       expect(results.map(it => [it.stdout, it.exitCode])).toEqual(spellings.map(() => [expected.stdout, 1]));
     });
 
+    // What a name selects is what the environment would have selected, on GitHub Actions too.
     test("the other formats by name", async () => {
       using dir = project({ "a.ts": `export const a: string = 1;\n` });
-      const [plain, noPretty, pretty, agent] = await Promise.all([
-        check(dir, ["--format", "plain"]),
-        check(dir, ["--no-pretty"]),
-        check(dir, ["--format", "pretty"]),
-        check(dir, ["--format", "agent"]),
-      ]);
+      const onGitHub = { GITHUB_ACTIONS: "true" };
+      const [plain, noPretty, pretty, prettyFlag, agent, agentEnv, agentOnGitHub, agentEnvOnGitHub] = await Promise.all(
+        [
+          check(dir, ["--format", "plain"]),
+          check(dir, ["--no-pretty"]),
+          check(dir, ["--format", "pretty"]),
+          check(dir, ["--pretty"]),
+          check(dir, ["--format", "agent"]),
+          check(dir, [], { AGENT: "1" }),
+          check(dir, ["--format", "agent"], onGitHub),
+          check(dir, [], { AGENT: "1", ...onGitHub }),
+        ],
+      );
       expect(plain.stdout).toBe(noPretty.stdout);
       expect(pretty.stdout).toMatchInlineSnapshot(`
         "1 | export const a: string = 1;
@@ -747,7 +764,79 @@ describe.concurrent("bun check", () => {
         error: TS2322: Type 'number' is not assignable to type 'string'.
             at a.ts:1:14"
       `);
+      expect(prettyFlag.stdout).toBe(pretty.stdout);
       expect(agent.stdout.split("\n")[0]).toBe(`<error file="a.ts" line="1" column="14" code="TS2322">`);
+      expect(agentEnv.stdout).toBe(agent.stdout);
+      expect(agentOnGitHub.stdout).toBe(agent.stdout);
+      expect(agentEnvOnGitHub.stdout).toBe(agent.stdout);
+    });
+
+    test("a clean project, and one with nothing but a file list", async () => {
+      using dir = project({ "a.ts": `export const a = 1;\n` });
+      const [clean, listed] = await Promise.all([
+        checkJson(dir, ["--format", "json"]),
+        checkJson(dir, ["--format", "json", "--listFilesOnly"]),
+      ]);
+      expect(JSON.parse(clean.stdout)).toEqual({
+        diagnostics: [],
+        incomplete: [],
+        resolutionTrace: [],
+        listedFiles: [],
+      });
+      expect(clean.stderr).toMatch(/^✓ No type errors in 1 file \[/);
+      expect(clean.exitCode).toBe(0);
+      const report = JSON.parse(listed.stdout);
+      expect(report.diagnostics).toEqual([]);
+      expect(report.listedFiles.map((line: string) => basename(line))).toContain("a.ts");
+      expect(listed.exitCode).toBe(0);
+    });
+
+    test("an error of Bun's own has no code, and a missing JSON value no length", async () => {
+      using empty = tempDir("bun-check", { "README.md": "" });
+      using dir = project({
+        "tsconfig.json": withResolveJsonModule,
+        "a.ts": `import data from "./data.json";\nexport { data };\n`,
+        "data.json": `{"a": }\n`,
+      });
+      const [nothing, missing] = await Promise.all([
+        checkJson(empty, ["--format", "json"]),
+        checkJson(dir, ["--format", "json"]),
+      ]);
+      const [own] = JSON.parse(nothing.stdout).diagnostics;
+      expect(own).toMatchObject({ file: null, code: null, category: "error", messageChain: [], related: [] });
+      expect(own.message).toStartWith("Nothing to check: no TypeScript files in '");
+      expect(own.text).toBe(own.message);
+      expect(nothing.exitCode).toBe(1);
+      const [value] = JSON.parse(missing.stdout).diagnostics;
+      expect(value).toMatchObject({
+        file: "data.json",
+        line: 1,
+        column: 7,
+        endLine: 1,
+        endColumn: 7,
+        byteStart: 6,
+        byteEnd: 6,
+        code: 1328,
+      });
+      expect(missing.exitCode).toBe(1);
+    });
+
+    // The structured fields are what a program reads. `text` is for display: an argument can have a line break.
+    test("a line break in an argument stays out of the message chain", async () => {
+      using dir = project({
+        "a.ts": `const o: {} = {};\nexport const v = o["x\\ny"];\n`,
+      });
+      const { stdout, exitCode } = await checkJson(dir, ["--format", "json"]);
+      const [error] = JSON.parse(stdout).diagnostics;
+      expect(error.code).toBe(7053);
+      expect(error.message).toBe(
+        `Element implicitly has an 'any' type because expression of type '"x\\ny"' can't be used to index type '{}'.`,
+      );
+      expect(error.messageChain).toEqual([
+        { code: 2339, category: "error", text: "Property 'x\ny' does not exist on type '{}'.", messageChain: [] },
+      ]);
+      expect(error.text).toBe(`${error.message}\n  ${error.messageChain[0].text}`);
+      expect(exitCode).toBe(1);
     });
 
     test("an unknown format", async () => {

@@ -522,6 +522,7 @@ bun check --format json > report.json
       "byteEnd": 59,
       "code": 2322,
       "category": "error",
+      "message": "Type 'string' is not assignable to type 'number'.",
       "text": "Type 'string' is not assignable to type 'number'.",
       "messageChain": [],
       "related": [
@@ -535,6 +536,7 @@ bun check --format json > report.json
           "byteEnd": 28,
           "code": 6500,
           "category": "message",
+          "message": "The expected type comes from property 'id' which is declared here on type 'User'",
           "text": "The expected type comes from property 'id' which is declared here on type 'User'",
           "messageChain": []
         }
@@ -554,8 +556,9 @@ bun check --format json > report.json
 | `byteStart`, `byteEnd`                   | The span as offsets into the UTF-8 text of the file, without a byte order mark. `null` when `file` is.                                  |
 | `code`                                   | The number of the TypeScript error, `2322` for TS2322. `null` for an error that is Bun's own.                                           |
 | `category`                               | `error`, `warning`, `suggestion` or `message`.                                                                                          |
-| `text`                                   | The whole message, with the lines of the message chain indented below the first, as `tsc` prints it.                                    |
-| `messageChain`                           | The lines below the first as a tree. Each element has its own `code`, `text` and `messageChain`.                                        |
+| `message`                                | The message alone, without the chain below it.                                                                                          |
+| `text`                                   | The message and the chain below it, indented, as `tsc` prints it. For display: `message` and `messageChain` are the parts.              |
+| `messageChain`                           | The chain below the message as a tree. Each element has its own `code`, `category`, `text` and `messageChain`.                          |
 | `related`                                | Related information, such as where a type or a parameter is declared. Each entry has the fields above, except `related`.                |
 | `incomplete`                             | Files whose errors may be missing, each with the reason. If there are any, the exit code is `1`.                                        |
 | `resolutionTrace`, `listedFiles`         | What `--traceResolution`, `--listFiles`, `--listFilesOnly` and `--explainFiles` print, one line per element.                            |

@@ -433,7 +433,10 @@ fn style_for(cwd: &[u8], layout: Option<Layout>, to: Destination, show_all: bool
         cwd,
         // Whoever prints a report has it from there.
         is_case_sensitive: true,
-        github_annotations: Output::is_github_action(),
+        // Not for an agent, whose context window they would waste, whichever way the layout was
+        // chosen. The JSON document has no room for them either.
+        github_annotations: Output::is_github_action()
+            && !matches!(layout, Layout::Agent | Layout::Json),
         width: if to.is_tty {
             bun_core::output::File::from(to.fd)
                 .winsize()

@@ -54,6 +54,11 @@ impl MessageChain {
         chain.collect()
     }
 
+    /// The category of this element's message: `chainDiagnosticMessages`.
+    pub fn category(&self) -> Category {
+        messages::message(self.code).map_or(Category::Error, |m| m.0)
+    }
+
     /// The text of this element alone, without those under it.
     pub fn write_text(&self, text: &mut Vec<u8>) {
         let template = messages::message(self.code).map_or("", |m| m.1);

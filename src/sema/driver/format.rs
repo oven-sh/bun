@@ -498,8 +498,9 @@ fn write_json(out: &mut Vec<u8>, report: &Report, style: &Style) {
 
 /// One diagnostic as a JSON object. The position is null for a diagnostic without a file. `line`,
 /// `column`, `endLine` and `endColumn` are 1-based and count UTF-16 code units, as TypeScript's
-/// do. `byteStart` and `byteEnd` are offsets in the UTF-8 text of the file. `with_related`:
-/// related information has none of its own.
+/// do. `byteStart` and `byteEnd` are offsets in the UTF-8 text of the file. The end of a missing
+/// value in a JSON file comes before its start (`Diagnostic::end`): it is the start then.
+/// `with_related`: related information has none of its own.
 fn write_json_diagnostic(out: &mut Vec<u8>, d: &Diagnostic, style: &Style, with_related: bool) {
     out.extend_from_slice(b"{\"file\":");
     if d.path.is_empty() {
@@ -526,7 +527,9 @@ fn write_json_diagnostic(out: &mut Vec<u8>, d: &Diagnostic, style: &Style, with_
             let _ = write!(out, ",\"code\":{code}");
         }
     }
-    let _ = write!(out, ",\"category\":\"{}\",\"text\":", d.category.name());
+    let _ = write!(out, ",\"category\":\"{}\",\"message\":", d.category.name());
+    json_stringify(&head_text(d), out);
+    out.extend_from_slice(b",\"text\":");
     json_stringify(&d.text, out);
     out.extend_from_slice(b",\"messageChain\":");
     write_json_chain(out, &d.message_chain);
@@ -543,6 +546,19 @@ fn write_json_diagnostic(out: &mut Vec<u8>, d: &Diagnostic, style: &Style, with_
     out.push(b'}');
 }
 
+/// The message of `d` without its chain: the first line of `d.text`, unless an argument has a line
+/// break in it. Rendered as `Explained::new` renders it. Bun's own diagnostics have no template.
+fn head_text(d: &Diagnostic) -> std::borrow::Cow<'_, [u8]> {
+    if d.code == 0 {
+        return std::borrow::Cow::Borrowed(&d.text);
+    }
+    let (_, template) =
+        bun_sema::messages::message(d.code).unwrap_or((Category::Error, "Unknown error."));
+    let mut text = Vec::new();
+    bun_sema::messages::format(&mut text, template, &d.args);
+    std::borrow::Cow::Owned(crate::in_terms_of_bun(text))
+}
+
 /// The lines under the first of a message, as a tree: each with its own text.
 fn write_json_chain(out: &mut Vec<u8>, chain: &[crate::MessageChain]) {
     out.push(b'[');
@@ -552,7 +568,12 @@ fn write_json_chain(out: &mut Vec<u8>, chain: &[crate::MessageChain]) {
         }
         let mut text = Vec::new();
         element.write_text(&mut text);
-        let _ = write!(out, "{{\"code\":{},\"text\":", element.code);
+        let _ = write!(
+            out,
+            "{{\"code\":{},\"category\":\"{}\",\"text\":",
+            element.code,
+            element.category().name()
+        );
         json_stringify(&crate::in_terms_of_bun(text), out);
         out.extend_from_slice(b",\"messageChain\":");
         write_json_chain(out, &element.message_chain);
@@ -958,7 +979,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         .max()
         .unwrap_or(1);
     for (first, count) in &by_file {
-        let path = if style.layout == Layout::Plain {
+        let path = if matches!(style.layout, Layout::Plain | Layout::Json) {
             relative_path(&first.path, style.cwd, style)
         } else {
             display_path(&first.path, style)

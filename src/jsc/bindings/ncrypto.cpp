@@ -1558,8 +1558,7 @@ DataPointer DHPointer::stateless(const EVPKeyPointer& ourKey,
 // ============================================================================
 // KDF
 
-// The digest-name registry (src/runtime/crypto/EVP.rs). One table resolves
-// every name node accepts, ASCII case-insensitively, and feeds getHashes().
+// The digest-name table in src/runtime/crypto/EVP.rs; ASCII case-insensitive.
 extern "C" const EVP_MD* Bun__Crypto__digestByName(const uint8_t* name, size_t len);
 
 const EVP_MD* getDigestByName(const WTF::StringView name)

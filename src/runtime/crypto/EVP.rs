@@ -126,17 +126,10 @@ bun_core::comptime_string_map! {
         b"sha-512_256" => Algorithm::Sha512_256,
     };
 }
-/// A digest name node accepts that is not an `Algorithm` tag. Node reads these
-/// from OpenSSL's object table (the signature OIDs and legacy spellings that
-/// `EVP_add_digest` registers as aliases). BoringSSL has no such table, so this
-/// array is the one place in bun that knows them. A `listed` name appears in
-/// `crypto.getHashes()`, in node's spelling. `dss1` is accepted on input only:
-/// node resolves it in `ncrypto` but does not list it.
-///
-/// `RSA-SHA3-*` and `RSA-SHA512/*` are listed because node lists them. They
-/// name a digest, not a working RSA signature: BoringSSL has no PKCS#1 v1.5
-/// prefix for SHA-3 or SHA-512/t, so `sign` with those digests fails unless the
-/// padding is PSS. The canonical names behave the same.
+
+/// Digest names node accepts beyond the `Algorithm` tags. OpenSSL registers
+/// its signature OIDs and legacy spellings as digest aliases, BoringSSL does
+/// not. A `listed` name appears in `crypto.getHashes()`, in node's spelling.
 struct DigestAlias {
     name: &'static str,
     algorithm: Algorithm,
@@ -176,12 +169,11 @@ static DIGEST_ALIASES: &[DigestAlias] = &[
     DigestAlias { name: "sha512-256WithRSAEncryption", algorithm: Algorithm::Sha512_256, listed: true },
     DigestAlias { name: "ssl3-md5", algorithm: Algorithm::Md5, listed: true },
     DigestAlias { name: "ssl3-sha1", algorithm: Algorithm::Sha1, listed: true },
+    // Node resolves dss1 in ncrypto but does not list it.
     DigestAlias { name: "dss1", algorithm: Algorithm::Sha1, listed: false },
 ];
 
-/// ASCII-case-insensitive name → `Algorithm`. Every digest-name input in bun
-/// resolves here: `node:crypto` (through `Bun__Crypto__digestByName`),
-/// `Bun.CryptoHasher` and `Bun.CSRF`.
+/// ASCII-case-insensitive name → `Algorithm`.
 pub(crate) fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
     if let Some(algorithm) = ALGORITHM_MAP.get_ascii_case_insensitive(bytes) {
         return Some(*algorithm);
@@ -192,11 +184,9 @@ pub(crate) fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
         .map(|alias| alias.algorithm)
 }
 
-/// `crypto.getHashes()`: every name with an `EVP_MD` that node lists too, in
-/// byte order like node. `Blake2b256` is bun-only. `blake2s256` has no
-/// `EVP_MD`, so `pbkdf2`/`hkdf` cannot take it and node's tests that push every
-/// listed name through them would fail. `shake128`/`shake256` stay unlisted
-/// until bun has DEP0198 and cSHAKE, which node's tests gate on that listing.
+/// `crypto.getHashes()`, in byte order like node. `Blake2b256` is bun-only.
+/// A name without an `EVP_MD` cannot feed `pbkdf2`/`hkdf`, and node's tests
+/// gate DEP0198 and cSHAKE on `shake128` being listed, so those stay out.
 pub(crate) fn node_hash_names() -> &'static [BunString] {
     static NAMES: std::sync::OnceLock<Vec<BunString>> = std::sync::OnceLock::new();
     NAMES
@@ -220,8 +210,7 @@ pub(crate) fn node_hash_names() -> &'static [BunString] {
         .as_slice()
 }
 
-/// `ncrypto::getDigestByName`. Null when the name is unknown or the digest has
-/// no `EVP_MD` (`blake2s256`, `shake128`, `shake256`).
+/// `ncrypto::getDigestByName`. Null for an unknown name or a digest without an `EVP_MD`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__Crypto__digestByName(
     name: *const u8,

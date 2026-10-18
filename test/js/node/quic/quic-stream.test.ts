@@ -454,15 +454,16 @@ describe("a header block that node:quic cannot send", () => {
   // One request, and the answer to it. When the answer is here, both ends
   // have handled everything that was sent before the request.
   async function answeredRequest(client: any) {
-    const status = Promise.withResolvers<string>();
+    const answered = Promise.withResolvers<{ status: string; self: unknown }>();
     const stream = await client.createBidirectionalStream({
       headers: request,
-      onheaders(headers: Record<string, string>) {
-        status.resolve(headers[":status"]);
+      onheaders(this: unknown, headers: Record<string, string>) {
+        answered.resolve({ status: headers[":status"], self: this });
       },
     });
-    stream.closed.then(() => status.reject(new Error("the stream closed with no answer")), status.reject);
-    return { id: stream.id, status: await status.promise };
+    stream.closed.then(() => answered.reject(new Error("the stream closed with no answer")), answered.reject);
+    const { status, self } = await answered.promise;
+    return { id: stream.id, status, boundToStream: self === stream };
   }
 
   test("create*Stream rejects and opens no stream", async () => {
@@ -495,7 +496,7 @@ describe("a header block that node:quic cannot send", () => {
     }).toEqual({
       beforeOpened: codes,
       afterOpened: codes,
-      next: { id: 0n, status: "200" },
+      next: { id: 0n, status: "200", boundToStream: true },
       serverStreams: 1,
     });
     await client.close();
@@ -533,7 +534,7 @@ describe("a header block that node:quic cannot send", () => {
         lockedFileHandleFirst: "ERR_INVALID_STATE",
         closedFileHandle: "EBADF",
       },
-      next: { id: 4n, status: "200" },
+      next: { id: 4n, status: "200", boundToStream: true },
     });
     await client.close();
   });
@@ -659,6 +660,7 @@ describe("a header block that node:quic cannot send", () => {
           for (const chunk of batch) text += Buffer.from(chunk).toString("latin1");
           if (text === "body") arrived.resolve();
         }
+        arrived.resolve();
         return text;
       })();
       body.catch(arrived.reject);

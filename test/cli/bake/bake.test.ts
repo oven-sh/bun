@@ -1258,6 +1258,8 @@ test.concurrent("bun bake rejects a route with dir and style in app/server.ts", 
   const output = collectOutput(proc);
   await output.waitFor(/does not support a route with "dir" and "style"/);
   expect(output.text).not.toContain("url: ");
+});
+
 test.concurrent("bun bake runs the data functions of a page of the default framework", async () => {
   using dir = tempDir("bake-command-page-data", {
     "app/secret.ts": `export const secret = "server-only-secret";`,

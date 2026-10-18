@@ -19,7 +19,7 @@ for (const layout of layouts) {
 hydrateRoot(document.getElementById("root")!, element);
 
 // An edit to the page or a layout comes here too, and Fast Refresh applies it in place. An edit
-// that only the server sees can change the props of a page with data functions: load it again.
+// that only the server sees can change the HTML or the props of the page: load it again.
 onServerSideReload(({ clientCodeChanged }) => {
-  if (hasData && !clientCodeChanged) location.reload();
+  if (!clientCodeChanged) location.reload();
 });

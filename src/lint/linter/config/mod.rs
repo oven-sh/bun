@@ -65,6 +65,7 @@ mod rust_regex;
 mod serde_json;
 mod shape;
 
+use super::RuleId;
 use super::globals::Tables;
 use super::registry::{Registry, formatting_rule};
 use super::resolved::{
@@ -75,6 +76,7 @@ use super::schema;
 use crate::context::Severity;
 use crate::js_plugin;
 use crate::language::{GlobalsOfOptions, InferGlobals, LanguageOptions};
+use crate::languages::{Dialect, Language, Refusal};
 use crate::options::Json;
 use crate::paths;
 use crate::rule::{Frameworks, Meta, Plugin};
@@ -236,7 +238,7 @@ impl Pattern {
 
     /// A `files` or `excludeFiles` pattern from an override in an `.oxlintrc.json`.
     fn of_oxlint(written: &[u8]) -> Pattern {
-        Pattern::of_override(bun_glob::Pattern::of_oxc_glob_set(written))
+        Pattern::of_override(bun_glob::Pattern::of_oxlint(written))
     }
 
     /// A `files` or `excludeFiles` pattern from `[[lint.overrides]]` in bunfig.toml.
@@ -1537,9 +1539,27 @@ impl Config {
             None => None,
         };
         // Another language validates its own.
-        if config.is_javascript() {
-            config.validate_language_options(&language_options);
+        match config.is_javascript() {
+            true => config.validate_language_options(&language_options),
+            false => config.options_of_other_language = Some(language_options.clone()),
         }
+        let language = self.language_of(registry, &config, &plugins);
+        let line_breaks = language.map_or_else(Default::default, |it| it.0.line_breaks());
+        let dialect = match language {
+            Some((language, name)) => match language.configure(name, &language_options) {
+                Ok(configured) => Some(Dialect {
+                    language,
+                    configured,
+                }),
+                Err(Refusal::Invalid(message)) => {
+                    config.error = Some([&b"Key \"languageOptions\": "[..], &message].concat());
+                    None
+                }
+                Err(Refusal::OnlyThePackage) => None,
+            },
+            None => None,
+        };
+        config.line_breaks = line_breaks;
         let whose = match (self.is_legacy, self.prefers_typescript_rules) {
             (true, _) => Tables::Eslint8,
             (false, true) => Tables::Oxlint,
@@ -1794,6 +1814,56 @@ impl Config {
             config.plugins = Some(implemented);
         }
         config.language.has_rule_that_requires_types = config.has_enabled(|it| it.requires_types);
+        let on = || (config.rules.iter()).filter(|it| it.severity != Severity::Off);
+        // ESLint 10 and later reject a rule that doesn't support the file's language.
+        let unsupported = on().filter(|it| !config.supports_language(it.entry.meta));
+        let unsupported: Vec<Vec<u8>> = unsupported
+            .map(|it| {
+                [
+                    b"\n\t- \"",
+                    &RuleId::Known(it.entry.meta).to_vec()[..],
+                    b"\"",
+                ]
+                .concat()
+            })
+            .collect();
+        // A rule that isn't specific to the language belongs to a package, or expects JavaScript that isn't there.
+        let is_all_here = on().all(|it| !it.entry.meta.languages.is_empty())
+            && unsupported.is_empty()
+            && (config.js_rules.iter()).all(|it| it.severity == Severity::Off)
+            && config.skipped == Skipped::None
+            && config.missing_rules.is_empty();
+        if !unsupported.is_empty() && config.error.is_none() && self.eslint_major >= 10 {
+            config.error = Some(
+                [
+                    b"Key \"rules\": The following rules do not support the language \"",
+                    config.normalized_language_name(),
+                    b"\":",
+                    &unsupported.concat(),
+                ]
+                .concat(),
+            );
+        }
+        config.dialect = dialect.filter(|_| is_all_here);
         config
+    }
+
+    /// The built-in language that `config`'s `language` refers to, and its name within the plugin. `plugins` has the
+    /// prefixes of the plugins that are configured for the file.
+    fn language_of<'c>(
+        &self,
+        registry: &Registry,
+        config: &'c ResolvedConfig,
+        plugins: &[&[u8]],
+    ) -> Option<(&'static dyn Language, &'c [u8])> {
+        let written = config.language_name.as_deref()?;
+        let slash = bun_core::strings::last_index_of_char(written, b'/')?;
+        let (prefix, name) = (&written[..slash], &written[slash + 1..]);
+        let is_built_in = plugins.contains(&prefix)
+            && !config.foreign_plugins.iter().any(|it| **it == *prefix)
+            && !self.is_legacy
+            && !self.prefers_typescript_rules;
+        let language = registry.language(Plugin::of_prefix(prefix)?, name)?;
+        is_built_in.then_some((language, name))
     }
 }

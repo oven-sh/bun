@@ -323,13 +323,12 @@ preserveDuplicates = true
     expect(result.files["a.jsx"]).toBe(sorted.replaceAll('"', "'"));
   });
 
-  test("fails when tailwindcss isn't installed", async () => {
-    const result = await format({ ...bunfig("sortTailwindcss = true"), "a.jsx": input, "b.js": "b  ;\n" });
-    expect(result.stderr).toContain("the tailwindcss package was not found");
-    expect(result.files["a.jsx"]).toBe(input);
-    // Files without classes don't need the package.
+  test("leaves the classes alone when tailwindcss isn't installed", async () => {
+    const result = await format({ ...bunfig("sortTailwindcss = true"), "a.jsx": `${input}a  ;\n`, "b.js": "b  ;\n" });
+    expect(result.stderr).toBe("");
+    expect(result.files["a.jsx"]).toBe(`${input}a;\n`);
     expect(result.files["b.js"]).toBe("b;\n");
-    expect(result.exitCode).toBe(2);
+    expect(result.exitCode).toBe(0);
   });
 
   test.each([
@@ -373,6 +372,55 @@ describe.concurrent("sortPackageJson", () => {
     expect(flag.files["package.json"]).toBe(sorted);
     expect(under.files["package.json"]).toBe(input);
     expect(table.files["package.json"]).toBe(withScripts);
+  });
+
+  // oxfmt 0.72 parses the text into values and writes those back. Bun only moves members.
+  test.each([
+    [
+      "keeps numbers as written",
+      '{ "b": 1.0, "a": -0, "c": 1e3, "d": 1E5, "f": 0.10 }',
+      '{\n  "a": -0,\n  "b": 1.0,\n  "c": 1e3,\n  "d": 1E5,\n  "f": 0.10\n}\n',
+      '{\n  "a": -0.0,\n  "b": 1.0,\n  "c": 1000.0,\n  "d": 100000.0,\n  "f": 0.1\n}\n',
+    ],
+    [
+      "keeps strings and keys as written, and compares what they stand for",
+      '{ "b": "\\u00e9\\/", "\\u0061": "é", "n\\u0061me": "x", "keywords": ["\\u0062", "b", "a"] }',
+      '{\n  "n\\u0061me": "x",\n  "keywords": [\n    "a",\n    "\\u0062"\n  ],\n  "\\u0061": "é",\n  "b": "\\u00e9\\/"\n}\n',
+      '{\n  "name": "x",\n  "keywords": [\n    "a",\n    "b"\n  ],\n  "a": "é",\n  "b": "é/"\n}\n',
+    ],
+    [
+      "keeps every member with a duplicate key, in the order they're written in",
+      '{ "b": 1, "a": 2, "b": { "d": 1 }, "bin": { "b": "1", "a": "", "b": "2" } }',
+      '{\n  "bin": {\n    "a": "",\n    "b": "1",\n    "b": "2"\n  },\n  "a": 2,\n  "b": 1,\n  "b": {\n    "d": 1\n  }\n}\n',
+      '{\n  "bin": {\n    "a": "",\n    "b": "2"\n  },\n  "a": 2,\n  "b": {\n    "d": 1\n  }\n}\n',
+    ],
+    [
+      "leaves a list alone that has something else than strings in it",
+      '{ "keywords": ["b", 1, "a", "b"], "files": ["b", null, "b"], "name": "x" }',
+      '{\n  "name": "x",\n  "keywords": [\n    "b",\n    1,\n    "a",\n    "b"\n  ],\n  "files": [\n    "b",\n    null,\n    "b"\n  ]\n}\n',
+      '{\n  "name": "x",\n  "keywords": [\n    "a",\n    "b"\n  ],\n  "files": [\n    "b"\n  ]\n}\n',
+    ],
+    [
+      "sorts a file with a trailing comma",
+      '{\n  "version": "1",\n  "name": "a",\n}\n',
+      '{\n  "name": "a",\n  "version": "1"\n}\n',
+      '{\n  "version": "1",\n  "name": "a"\n}\n',
+    ],
+  ])("%s", async (_, before, after, ofOxfmt) => {
+    expect(after).not.toBe(ofOxfmt);
+    for (const config of [bunfig("sortPackageJson = true"), { ".oxfmtrc.json": "{}\n" }]) {
+      const result = await format({ ...config, "package.json": before });
+      expect(result.files["package.json"]).toBe(after);
+      expect(result.exitCode).toBe(0);
+    }
+  });
+
+  test("doesn't sort with another parser than json-stringify, which can have comments", async () => {
+    const overrides = '[[fmt.overrides]]\nfiles = "package.json"\noptions = { parser = "jsonc" }\n';
+    const text = '{\n  // The version.\n  "version": "1",\n  "name": "a",\n}\n';
+    const result = await format({ "bunfig.toml": `[fmt]\nsortPackageJson = true\n${overrides}`, "package.json": text });
+    expect(result.files["package.json"]).toBe(text);
+    expect(result.exitCode).toBe(0);
   });
 
   test("is still an unknown option in a .prettierrc", async () => {
@@ -614,24 +662,18 @@ let a = 1;
 
   test("counts for more than a .prettierrc, like every key", async () => {
     const files = { "a.svelte": input };
-    const [without, on, named, off, other, byBun] = await Promise.all([
+    const [without, on, named, off, other, otherOff] = await Promise.all([
       format({ ".prettierrc": "{}\n", ...files }),
       format({ ".prettierrc": "{}\n", ...bunfig("svelte = true"), ...files }),
       format({ ...withPlugin, ...files }),
       format({ ...withPlugin, ...bunfig("svelte = false"), ...files }),
-      // Another version than the one that is built in. Nothing can format the file, since Prettier isn't installed.
-      format({ ...withPlugin, ...installed("3.4.0"), ...files }, ["--allow-unsupported", "."]),
-      format({ ...withPlugin, ...installed("3.4.0"), ...bunfig("svelte = true"), ...files }),
+      // The installed version of the plugin makes no difference.
+      format({ ...withPlugin, ...installed("3.4.0"), ...files }),
+      format({ ...withPlugin, ...installed("3.4.0"), ...bunfig("svelte = false"), ...files }),
     ]);
-    expect([without, on, named, off, other, byBun].map(it => it.files["a.svelte"])).toEqual([
-      input,
-      formatted,
-      formatted,
-      input,
-      input,
-      formatted,
-    ]);
-    expect([without, on, named, off, byBun].map(it => [it.stderr, it.exitCode])).toEqual(Array(5).fill(["", 0]));
+    const results = [without, on, named, off, other, otherOff];
+    expect(results.map(it => it.files["a.svelte"])).toEqual([input, formatted, formatted, input, formatted, input]);
+    expect(results.map(it => [it.stderr, it.exitCode])).toEqual(results.map(() => ["", 0]));
     // In the file itself it is still an unknown option.
     const inFile = await format({ ".prettierrc": `{ "svelte": true }`, ...files, "a.js": "a  ;\n" });
     expect(inFile.stderr).toBe("warn: Ignored unknown option { svelte: true }.\n");

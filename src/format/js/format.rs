@@ -1131,22 +1131,25 @@ fn write_type_in_parentheses<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     if matches!(tag, TypeTag::Keyword | TypeTag::BoolLit) {
         return write!(f, source_text(ty.span()));
     }
-    // No other kind of type ever needs parentheses. Flow's `renders T` writes its own.
-    let needs_parentheses = matches!(
-        tag,
+    // No other kind of type ever needs parentheses.
+    let may_need_parentheses = match tag {
         TypeTag::Fn
-            | TypeTag::Infer
-            | TypeTag::Union
-            | TypeTag::Intersection
-            | TypeTag::Cond
-            | TypeTag::Keyof
-            | TypeTag::Readonly
-            | TypeTag::UniqueSymbol
-            | TypeTag::Unique
-            | TypeTag::Typeof
-            | TypeTag::Import
-    ) && !(tag == TypeTag::Unique && f.file().is_flow())
-        && parentheses::ts_type::needs_parentheses(ty, f);
+        | TypeTag::Infer
+        | TypeTag::Union
+        | TypeTag::Intersection
+        | TypeTag::Cond
+        | TypeTag::Keyof
+        | TypeTag::Readonly
+        | TypeTag::UniqueSymbol
+        | TypeTag::Typeof
+        | TypeTag::Import => true,
+        // Flow's `renders T` writes its own.
+        TypeTag::Unique => !f.file().is_flow(),
+        // In Flow, as the return type of an arrow function: `(): (A<{ b: () => void }>) => c`.
+        TypeTag::Ref => f.file().is_flow(),
+        _ => false,
+    };
+    let needs_parentheses = may_need_parentheses && parentheses::ts_type::needs_parentheses(ty, f);
     if needs_parentheses {
         "(".fmt(f);
     }

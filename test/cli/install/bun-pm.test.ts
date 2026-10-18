@@ -294,7 +294,7 @@ it("should not list packages missing from node_modules", async () => {
   }
 });
 
-it("should error when node_modules does not exist", async () => {
+it("should list the packages in bun.lock when node_modules does not exist", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
   await writeFile(
@@ -330,9 +330,11 @@ it("should error when node_modules does not exist", async () => {
     stderr: "pipe",
     env,
   });
-  expect(await stderr.text()).toContain("node_modules not found");
-  expect(await stdout.text()).toBe("");
-  expect(await exited).toBe(1);
+  expect(await stderr.text()).toBe("");
+  expect(await stdout.text()).toBe(`${package_dir} node_modules (1 installed)
+└── bar@0.0.2
+`);
+  expect(await exited).toBe(0);
 });
 
 describe.concurrent("bun pm ls lists what is on disk", () => {
@@ -405,14 +407,37 @@ describe.concurrent("bun pm ls lists what is on disk", () => {
         listed("<dir> node_modules", ...(isolated ? ["├── a-dep@1.0.1"] : []), "└── one-fixed-dep@1.0.0"),
       );
 
+      // With no node_modules, it lists what's in bun.lock.
       await rm(join(packageDir, "node_modules"), { recursive: true });
-      expect(await bun("pm", "ls")).toEqual({
-        stdout: "",
-        stderr: "error: node_modules not found, nothing to list\nnote: run 'bun install' first\n",
-        exitCode: 1,
-      });
+      expect(await bun("pm", "ls")).toEqual(
+        listed("<dir> node_modules (3 installed)", "├── a-dep@1.0.1", "└── one-fixed-dep@1.0.0"),
+      );
+      expect(await bun("pm", "ls", "--all")).toEqual(
+        listed("<dir> node_modules", "├── a-dep@1.0.1", "├── no-deps@1.0.0", "└── one-fixed-dep@1.0.0"),
+      );
     },
   );
+
+  test("skips an optional peer dependency that isn't installed", async () => {
+    const { packageDir, bun } = await project(
+      { linker: "hoisted" },
+      {
+        "package.json": {
+          name: "foo",
+          dependencies: { "a-dep": "1.0.1" },
+          peerDependencies: { "no-deps": "1.0.0" },
+          peerDependenciesMeta: { "no-deps": { optional: true } },
+        },
+      },
+    );
+    expect(await bun("install")).toMatchObject({ exitCode: 0 });
+
+    const list = listed("<dir> node_modules (1 installed)", "└── a-dep@1.0.1");
+    expect(await bun("pm", "ls")).toEqual(list);
+    await rm(join(packageDir, "node_modules"), { recursive: true });
+    expect(await bun("pm", "ls")).toEqual(list);
+    expect(await bun("pm", "ls", "--all")).toEqual(listed("<dir> node_modules", "└── a-dep@1.0.1"));
+  });
 
   test("isolated: a dependency of the root that only a workspace member has linked", async () => {
     const { bun } = await project(
@@ -1657,7 +1682,7 @@ function refused(cacheDir: string, what: string, bunx = "Cleared") {
     stdout: `${bunx} 0 cached 'bunx' packages\n`,
     stderr:
       `error: refusing to clear "${cacheDir}": is or contains ${what}\n` +
-      "note: cache directory comes from $BUN_INSTALL_CACHE_DIR, --cache-dir or $BUN_INSTALL. " +
+      "note: cache directory comes from $BUN_INSTALL_CACHE_DIR, --cache-dir, ~/.bunfig.toml or $BUN_INSTALL. " +
       "point it at a directory used only for the bun install cache\n",
     exitCode: 1,
   };
@@ -2248,6 +2273,7 @@ describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cach
     return {
       envCache,
       mine,
+      home: join(String(side), "home"),
       proj: join(String(root), "proj"),
       spawnEnv: cacheEnv(String(side)),
       [Symbol.dispose]() {
@@ -2262,6 +2288,28 @@ describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cach
     expect(await pmCache([action, "--cache-dir", box.mine], box.proj, box.spawnEnv)).toEqual(done);
     expect(await entries(box.mine)).toEqual(left);
     expect(await entries(box.envCache)).toEqual(envCacheEntries);
+  });
+
+  test("~/.bunfig.toml names it", async () => {
+    using box = caches(`pm-cache-${action}-user-bunfig`);
+    const spawnEnv = { ...box.spawnEnv, XDG_CONFIG_HOME: undefined };
+    await writeFile(join(box.home, ".bunfig.toml"), `[install.cache]\ndir = ${JSON.stringify(box.mine)}\n`);
+    expect(await pmCache([], box.proj, spawnEnv)).toEqual({ stdout: box.mine, stderr: "", exitCode: 0 });
+
+    expect(await pmCache([action], box.proj, spawnEnv)).toEqual(done);
+    expect(await entries(box.mine)).toEqual(left);
+    expect(await entries(box.envCache)).toEqual(envCacheEntries);
+  });
+
+  // `cache` in .npmrc is also npm's cache directory, so it has npm's own files in it.
+  test("~/.npmrc does not", async () => {
+    using box = caches(`pm-cache-${action}-user-npmrc`);
+    await writeFile(join(box.home, ".npmrc"), `cache=${box.mine}\n`);
+    expect(await pmCache([], box.proj, box.spawnEnv)).toEqual({ stdout: box.mine, stderr: "", exitCode: 0 });
+
+    expect(await pmCache([action], box.proj, box.spawnEnv)).toEqual(done);
+    expect(await entries(box.mine)).toEqual(envCacheEntries);
+    expect(await entries(box.envCache)).toEqual(left);
   });
 
   test("the project's bunfig.toml does not", async () => {
@@ -2794,8 +2842,6 @@ describe.concurrent("the global bin directory and $PATH", () => {
       BUN_INSTALL_GLOBAL_DIR: join(String(dir), "global"),
       ...extraEnv,
     };
-    // Windows spells the inherited variable `Path`.
-    delete spawnEnv.Path;
     spawnEnv.PATH = path(bin) + (isWindows ? ";" : ":") + process.env.PATH;
 
     await using proc = spawn({

@@ -116,9 +116,13 @@ struct BytesOptions {
 template<typename Sink, BytesOptions>
 struct IDLBytes : WebCore::IDLType<Sink> {
     using SequenceStorageType = void;
+    using NullableType = Sink;
+    using NullableInnerParameterType = Sink;
+    static Sink nullValue() { return {}; }
 };
 
-// A BufferSource that is not shared, as the `JSValue` itself. See IDLRawAny.
+// A BufferSource as the `JSValue` itself. See IDLRawAny.
+template<bool allowShared>
 struct IDLRawBufferSource : WebCore::IDLType<JSC::JSValue> {
     using SequenceStorageType = void;
 };

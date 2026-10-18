@@ -265,7 +265,7 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect(outside.stderr).toMatch(/\n.*  fatal: not a git repository/);
     expect({ stdout: outside.stdout, exitCode: outside.exitCode }).toEqual({ stdout: "", exitCode: 2 });
 
-    const without = await bun(root, [command, flag], { PATH: join(root, "empty"), Path: undefined });
+    const without = await bun(root, [command, flag], { PATH: join(root, "empty") });
     expect(without.stderr).toContain("Cannot find git in PATH");
     expect({ stdout: without.stdout, exitCode: without.exitCode }).toEqual({ stdout: "", exitCode: 2 });
     expect(read(root, "a.js")).toBe(before);

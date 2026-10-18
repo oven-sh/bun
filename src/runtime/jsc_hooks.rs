@@ -1563,10 +1563,15 @@ unsafe fn apply_standalone_runtime_flags(
 unsafe fn parse_worker_exec_argv_flags(
     exec_argv: &[bun_core::WTFStringImpl],
 ) -> Option<WorkerExecArgvFlags> {
+    // SAFETY: per fn contract, a non-null entry is a live `WTFStringImpl*`.
+    let tokens = exec_argv
+        .iter()
+        .filter(|arg| !arg.is_null())
+        .map(|&arg| unsafe { &*arg });
     let mut flags = WorkerExecArgvFlags {
         allow_addons: true,
         allow_ffi_cc: true,
-        has_eval_string: false,
+        has_eval_string: exec_argv_has_eval_string(tokens),
         invalid: None,
     };
     for (index, &arg) in exec_argv.iter().enumerate() {
@@ -1591,22 +1596,58 @@ unsafe fn parse_worker_exec_argv_flags(
             Some([] | [b'=', ..])
         ) {
             flags.invalid.get_or_insert(index);
-        } else if let Some(code) = bytes.strip_prefix(b"--eval=".as_slice()) {
-            flags.has_eval_string = !code.is_empty();
-        } else if matches!(bytes, b"-e" | b"--eval" | b"-p" | b"--print" | b"-pe") {
-            // The next token is the code, unless it is a flag: a bare `-p` only prints.
-            // https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L1171-L1174
-            if let Some(&next) = exec_argv.get(index + 1) {
-                // SAFETY: per fn contract, a non-null `next` is a live `WTFStringImpl*`.
-                let code = (!next.is_null()).then(|| unsafe { &*next }.to_owned_slice_z());
-                let code = code.as_ref().map_or(b"".as_slice(), |code| code.as_bytes());
-                if code.first() != Some(&b'-') {
-                    flags.has_eval_string = !code.is_empty();
-                }
-            }
         }
     }
     Some(flags)
+}
+
+/// Whether `--eval` has a value as Node's parser reads `tokens`: a token after a flag can be that flag's value.
+fn exec_argv_has_eval_string<'a>(
+    tokens: impl Iterator<Item = &'a bun_core::WTFStringImplStruct>,
+) -> bool {
+    let is_flag = |token: &bun_core::WTFStringImplStruct| {
+        if token.is_8bit() {
+            token.latin1_slice().first() == Some(&b'-')
+        } else {
+            token.utf16_slice().first() == Some(&u16::from(b'-'))
+        }
+    };
+    let mut tokens = tokens.peekable();
+    let mut has_eval_string = false;
+    let mut value_may_follow = false;
+    while let Some(token) = tokens.next() {
+        if !is_flag(token) {
+            if !core::mem::take(&mut value_may_follow) {
+                break;
+            }
+            continue;
+        }
+        let flag = token.to_utf8();
+        let flag: &[u8] = &flag;
+        if flag == b"--" {
+            break;
+        }
+        value_may_follow = false;
+        let with_code = [b"--eval=".as_slice(), b"--print=", b"-e=", b"-p="];
+        if let Some(code) = with_code
+            .iter()
+            .find_map(|prefix| flag.strip_prefix(*prefix))
+        {
+            has_eval_string = !code.is_empty();
+        } else if matches!(flag, b"-e" | b"--eval" | b"-pe") {
+            if let Some(code) = tokens.next_if(|next| !is_flag(next)) {
+                has_eval_string = code.length() != 0;
+            }
+        } else if matches!(flag, b"-p" | b"--print") {
+            // https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L1171-L1174
+            has_eval_string |= tokens
+                .next_if(|next| next.length() != 0 && !is_flag(next))
+                .is_some();
+        } else {
+            value_may_follow = !bun_core::strings::contains_char(flag, b'=');
+        }
+    }
+    has_eval_string
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —

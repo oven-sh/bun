@@ -596,8 +596,6 @@ pub struct RuntimeOptions {
 pub struct Eval {
     pub script: Box<[u8]>,
     pub eval_and_print: bool,
-    /// `-e` / `-p` was passed. Stdin and `--interactive` also fill `script`.
-    pub provided: bool,
     /// Under `--interactive`, `script` holds the node:repl bootstrap; this
     /// holds the user's actual `-e` bytes so `process._eval` reports them
     /// (or `undefined` when empty). `None` = not `--interactive`.

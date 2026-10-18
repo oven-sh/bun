@@ -1080,8 +1080,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Some(Box::new(bun_ast::Source::init_path_string(entry, script)));
             vm.module_loader.interactive_eval_script =
                 ctx.runtime_options.eval.interactive_script.take();
-            // `bun run -e <code> <file>` runs the file, so `provided` alone is not enough.
-            vm.has_eval_string = ctx.runtime_options.eval.provided && entry.ends_with(EVAL_TRIGGER);
+            let interactive = vm.module_loader.interactive_eval_script.as_deref();
+            let has_code = interactive.is_none_or(|code| !code.is_empty());
+            // `bun run -e <code> <file>` runs the file, and `--interactive` can have no `-e` code.
+            vm.has_eval_string = entry.ends_with(EVAL_TRIGGER) && has_code;
             if ctx.runtime_options.eval.eval_and_print {
                 vm.transpiler.options.dead_code_elimination = false;
             }

@@ -527,6 +527,42 @@ describe("bundler", () => {
     },
   });
 
+  // An object `define` is a literal at each use. The automatic runtime passes a
+  // lone spread object as the props, and that must not take the properties
+  // away from the other uses of the define, in the same file or in another one.
+  describe("a spread of an object define", () => {
+    const config = { a: 1, nested: { list: [2, "three", { four: null }] } };
+    const withChild = { ...config, children: "kid" };
+
+    // "cli" passes the value as --define, "api" as Bun.build({ define }).
+    for (const backend of ["cli", "api"] as const) {
+      itBundled(`jsx/SpreadOfObjectDefineKeepsOtherUses-${backend}`, {
+        files: {
+          "/index.jsx": /* jsx */ `
+            import { inOtherFile } from "./other.jsx";
+            import { withoutJsx } from "./plain.js";
+            const before = CONFIG;
+            const spread = <div {...CONFIG} />;
+            const child = <div {...CONFIG}>kid</div>;
+            console.log(JSON.stringify([before, spread.props, child.props, CONFIG, inOtherFile, withoutJsx]));
+          `,
+          "/other.jsx": /* jsx */ `
+            const child = <a {...CONFIG}>kid</a>;
+            export const inOtherFile = [child.props, CONFIG];
+          `,
+          "/plain.js": /* js */ `
+            export const withoutJsx = CONFIG;
+          `,
+          ...helpers,
+        },
+        backend,
+        target: "bun",
+        define: { CONFIG: JSON.stringify(config) },
+        run: { stdout: JSON.stringify([config, config, withChild, config, [withChild, config], config]) },
+      });
+    }
+  });
+
   // The classic transform reads the first member of the factory and fragment
   // member lists. A factory or fragment option whose text has no identifier
   // in it ("." or "..") must keep the list that was configured before it,

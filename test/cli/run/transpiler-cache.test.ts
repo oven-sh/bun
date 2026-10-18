@@ -434,6 +434,27 @@ describe("transpiler cache", () => {
       expect(newCacheCount()).toBe(0);
     });
 
+    // The cache keeps what a module printed. A module that spreads an object define into JSX
+    // must not change what the module loaded after it gets for that define.
+    test("--define with an object value is whole in a module loaded after a JSX spread of it", () => {
+      const react = join(temp_dir, "node_modules", "react");
+      mkdirSync(react, { recursive: true });
+      writeFileSync(join(react, "jsx-dev-runtime.js"), `export const jsxDEV = (type, props) => props;\n`);
+      writeFileSync(join(react, "jsx-runtime.js"), `export const jsx = (type, props) => props;\n`);
+      writeFileSync(join(temp_dir, "b.js"), `console.log(JSON.stringify(OBJ));` + "\n//" + filler);
+      writeFileSync(
+        join(temp_dir, "a.jsx"),
+        `console.log(JSON.stringify(<div {...OBJ} />));\nawait import("./b.js");\n`,
+      );
+      const define = ["--define", 'OBJ={"k":"v"}'];
+
+      expect(run(temp_dir, [...define, "a.jsx"])).toBe('{"k":"v"}\n{"k":"v"}');
+      expect(newCacheCount()).toBe(1);
+      // This process has no JSX. It reads the entry that the first process wrote for b.js.
+      expect(run(temp_dir, [...define, "b.js"])).toBe('{"k":"v"}');
+      expect(newCacheCount()).toBe(0);
+    });
+
     test("--drop invalidates cache", () => {
       writeFileSync(
         join(temp_dir, "a.js"),

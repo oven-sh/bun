@@ -313,6 +313,56 @@ devTest("import.meta.hot.accept multiple modules", {
     await c.expectMessageInAnyOrder("Counter updated: 3", "Name updated: Charlie");
   },
 });
+// An array `define` is a literal at each use. `import.meta.hot.accept` replaces the items of its
+// dependency list, and that must not change what the next use or the next parse gets for the define.
+devTest("import.meta.hot.accept with a dependency list from a define", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      define = { DEPS = '["./counter.ts"]' }
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { count } from "./counter.ts";
+      console.log("Initial: " + count + " " + JSON.stringify(DEPS));
+
+      import.meta.hot.accept(DEPS, (newModules) => {
+        console.log("Counter updated: " + newModules[0].count);
+      });
+    `,
+    "counter.ts": `
+      export const count = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(`Initial: 1 ["./counter.ts"]`);
+
+    await dev.write(
+      "counter.ts",
+      `
+        export const count = 2;
+      `,
+    );
+    await c.expectMessage("Counter updated: 2");
+
+    // index.ts does not accept itself, so the page reloads. The dev server parses the list again.
+    await c.expectReload(async () => {
+      await dev.patch("index.ts", { find: "Initial", replace: "Again" });
+    });
+    await c.expectMessage(`Again: 2 ["./counter.ts"]`);
+
+    await dev.write(
+      "counter.ts",
+      `
+        export const count = 3;
+      `,
+    );
+    await c.expectMessage("Counter updated: 3");
+  },
+});
 devTest("import.meta.hot.data persistence", {
   files: {
     "index.html": emptyHtmlFile({

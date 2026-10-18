@@ -7114,9 +7114,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         // Callers gate on `!valueless()` before reaching here, so `value` is a
         // real Expr.Data by contract.
-        let value = define_data.value;
-        match value {
-            js_ast::ExprData::EIdentifier(id) => {
+        match define_data.identifier() {
+            Some(id) => {
                 // Identifier defines always carry a name. Match the
                 // contract so `handle_identifier`'s trailing `find_symbol`
                 // rebind runs against the *resolved* scope ref, not the
@@ -7130,7 +7129,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `Option<&'a [u8]>` param.
                 let original_name: &'a [u8] =
                     unsafe { bun_collections::detach_lifetime(original_name) };
-                return self.handle_identifier(
+                self.handle_identifier(
                     loc,
                     id,
                     Some(original_name),
@@ -7138,14 +7137,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .with_assign_target(assign_target)
                         .with_is_delete_target(is_delete_target)
                         .with_was_originally_identifier(true),
-                );
+                )
             }
-            js_ast::ExprData::EString(str_) => {
-                return self.new_expr(&*str_, loc);
-            }
-            _ => {}
+            None => define_data.value_for_use(loc),
         }
-        Expr { data: value, loc }
     }
 
     // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:

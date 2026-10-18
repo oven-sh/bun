@@ -356,6 +356,22 @@ impl DefineDataExt for DefineData {
             }
         }
 
+        let define = |value: ExprData, can_be_removed_if_unused: bool| {
+            DefineData::init(Options {
+                value,
+                original_name: if !value_str.is_empty() {
+                    Some(value_str)
+                } else {
+                    None
+                },
+                valueless: value_is_undefined,
+                can_be_removed_if_unused,
+                call_can_be_unwrapped_if_unused: bun_ast::E::CallUnwrap::Never,
+                method_call_must_be_replaced_with_undefined:
+                    method_call_must_be_replaced_with_undefined_,
+            })
+        };
+
         if is_ident {
             // Special-case undefined. it's not an identifier here
             // https://github.com/evanw/esbuild/issues/1407
@@ -367,25 +383,7 @@ impl DefineDataExt for DefineData {
                 )
             };
 
-            return Ok(DefineData {
-                value,
-                // upstream `DefineData` now owns `original_name:
-                // Option<Box<[u8]>>` (js_parser/lib.rs:1369) instead of a
-                // borrowed `ptr`/`len` pair. Dupe
-                // the value bytes — these are tiny startup-time copies.
-                original_name: if !value_str.is_empty() {
-                    Some(Box::<[u8]>::from(value_str))
-                } else {
-                    None
-                },
-                flags: Flags::new(
-                    /* valueless: */ value_is_undefined,
-                    /* can_be_removed_if_unused: */ true,
-                    /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
-                    /* method_call_must_be_replaced_with_undefined: */
-                    method_call_must_be_replaced_with_undefined_,
-                ),
-            });
+            return Ok(define(value, true));
         }
 
         // Fast path for the compile-time-constant literal define *values* that
@@ -399,21 +397,7 @@ impl DefineDataExt for DefineData {
         // (created lazily below only when a value really needs JSON parsing).
         if let Some(value) = const_default_define_value(value_str) {
             let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(value.tag());
-            return Ok(DefineData {
-                value,
-                original_name: if !value_str.is_empty() {
-                    Some(Box::<[u8]>::from(value_str))
-                } else {
-                    None
-                },
-                flags: Flags::new(
-                    /* valueless: */ value_is_undefined,
-                    /* can_be_removed_if_unused: */ can_be_removed_if_unused,
-                    /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
-                    /* method_call_must_be_replaced_with_undefined: */
-                    method_call_must_be_replaced_with_undefined_,
-                ),
-            });
+            return Ok(define(value, can_be_removed_if_unused));
         }
 
         // `parse_env_json` builds `E::String`/`E::Object` nodes in the
@@ -446,21 +430,7 @@ impl DefineDataExt for DefineData {
         let data: ExprData =
             bun_parsers::json_parser::clone_out_of_store(&expr, &source, log, bump)?.data;
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
-        Ok(DefineData {
-            value: data,
-            original_name: if !value_str.is_empty() {
-                Some(Box::<[u8]>::from(value_str))
-            } else {
-                None
-            },
-            flags: Flags::new(
-                /* valueless: */ value_is_undefined,
-                /* can_be_removed_if_unused: */ can_be_removed_if_unused,
-                /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
-                /* method_call_must_be_replaced_with_undefined: */
-                method_call_must_be_replaced_with_undefined_,
-            ),
-        })
+        Ok(define(data, can_be_removed_if_unused))
     }
 
     fn from_input(

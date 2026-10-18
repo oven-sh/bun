@@ -470,12 +470,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         None
                     };
 
-                    // `props` may be reassigned to point inside a spread object's
-                    // properties. Track it as a `StoreRef` (safe `Deref`/`DerefMut`) so
-                    // the spread-collapse walk and the `push`/`take` calls below stay
-                    // in safe code.
-                    let mut props_handle = js_ast::StoreRef::from_bump(&mut e_.properties);
-
                     // arguments needs to be like
                     // {
                     //    ...props,
@@ -508,34 +502,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // ->
                     // <div {{...foo}} />
                     // jsx("div", {...foo})
+                    let mut spread_object: Option<js_ast::StoreRef<E::Object>> = None;
                     loop {
-                        // `StoreRef<PropertyList>: Deref` — safe arena-backed read.
-                        if !(props_handle.len_u32() == 1
-                            && props_handle.slice()[0].kind == G::PropertyKind::Spread
-                            && matches!(
-                                props_handle.slice()[0].value.unwrap().data,
-                                Data::EObject(..)
-                            ))
-                        {
-                            break;
-                        }
-                        // Compute the next handle in a block so the `DerefMut`
-                        // borrow of `props_handle` ends before reassignment.
-                        let next = {
-                            let inner = props_handle.slice_mut()[0]
-                                .value
-                                .as_mut()
-                                .unwrap()
-                                .data
-                                .e_object_mut()
-                                .unwrap();
-                            js_ast::StoreRef::from_bump(&mut inner.properties)
+                        let properties = match &spread_object {
+                            Some(object) => &object.properties,
+                            None => &e_.properties,
                         };
-                        props_handle = next;
+                        let [
+                            G::Property {
+                                kind: G::PropertyKind::Spread,
+                                value:
+                                    Some(Expr {
+                                        data: Data::EObject(inner),
+                                        ..
+                                    }),
+                                ..
+                            },
+                        ] = properties.slice()
+                        else {
+                            break;
+                        };
+                        spread_object = Some(*inner);
                     }
-                    // `StoreRef: DerefMut` — safe arena-backed handle; no aliasing
-                    // `&mut` outstanding for the remainder of this arm.
-                    let props = &mut *props_handle;
+                    let mut props: G::PropertyList = match spread_object {
+                        // Other expressions can point at this object: each use of a
+                        // `const` that holds a macro result does. Copy its list.
+                        Some(object) => {
+                            let mut props = G::PropertyList::init_capacity(
+                                object.properties.len() + usize::from(!e_.children.is_empty()),
+                            );
+                            props.extend(object.properties.iter().map(G::Property::shallow_clone));
+                            props
+                        }
+                        None => bun_alloc::AstAlloc::take(&mut e_.properties),
+                    };
 
                     // Typescript defines static jsx as children.len > 1 or single spread
                     // https://github.com/microsoft/TypeScript/blob/d4fbc9b57d9aa7d02faac9b1e9bb7b37c687f6e9/src/compiler/transformers/jsx.ts#L340
@@ -582,7 +582,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         &mut args,
                         p.new_expr(
                             E::Object {
-                                properties: bun_alloc::AstAlloc::take(props),
+                                properties: props,
                                 ..Default::default()
                             },
                             expr.loc,

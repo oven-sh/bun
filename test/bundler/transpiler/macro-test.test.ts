@@ -220,6 +220,46 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
+// A `const` that holds a macro result is inlined at each use, so every use points at one object.
+// The automatic JSX runtime passes a lone spread object as the props. It has to copy the
+// properties of that object: taking them leaves `{}` at the other uses.
+describe.concurrent("a macro result spread into JSX keeps its properties at the other uses of its const", () => {
+  const files = {
+    "m.ts": `export function m() {\n  return { a: 1, b: [2] };\n}\n`,
+    "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => props;\n`,
+    "node_modules/react/jsx-runtime.js": `export const jsx = (type, props) => props;\nexport const jsxs = jsx;\n`,
+    "index.jsx": [
+      `import { m } from "./m.ts" with { type: "macro" };`,
+      `const x = m();`,
+      `const before = x;`,
+      `const child = <div {...x}>kid</div>;`,
+      `const spread = <div {...x} />;`,
+      `console.log(JSON.stringify([before, child, spread, x]));`,
+      ``,
+    ].join("\n"),
+  };
+  const expected = `[{"a":1,"b":[2]},{"a":1,"b":[2],"children":"kid"},{"a":1,"b":[2]},{"a":1,"b":[2]}]`;
+
+  async function run(cwd: string, args: string[]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { lastLine: stdout.trim().split("\n").pop(), stderr, exitCode };
+  }
+
+  test("at run time", async () => {
+    using dir = tempDir("macro-jsx-spread-run", files);
+    expect(await run(String(dir), ["run", "index.jsx"])).toEqual({ lastLine: expected, stderr: "", exitCode: 0 });
+  });
+
+  // The bundler inlines the const under --minify-syntax.
+  test("in bun build --minify-syntax", async () => {
+    using dir = tempDir("macro-jsx-spread-build", files);
+    const build = await run(String(dir), ["build", "--minify-syntax", "--target=bun", "--outfile=out.js", "index.jsx"]);
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(await run(String(dir), ["out.js"])).toEqual({ lastLine: expected, stderr: "", exitCode: 0 });
+  });
+});
+
 // A Response or Blob returned from a macro is inlined by its content type: JSON is parsed into an object
 // literal, text becomes a string, anything else becomes a base64 data URL. The type has to be classified
 // with its parameters stripped: `Response.json()` and most servers send `application/json;charset=utf-8`.

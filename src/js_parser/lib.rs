@@ -268,6 +268,7 @@ pub mod defines {
     use bun_core::strings;
 
     use bun_ast::E;
+    use bun_ast::Expr;
     use bun_ast::StoreRef;
     use bun_ast::expr::Data as ExprData;
 
@@ -359,7 +360,9 @@ pub mod defines {
 
     #[derive(Clone)]
     pub struct DefineData {
-        pub value: ExprData,
+        /// Nodes of the define table. Private: `value_for_use` is the only way
+        /// from here to an `Expr`, and it copies every node it returns.
+        value: ExprData,
         // The `RawDefines` value bytes are owned (`Box<[u8]>`), so borrowing
         // would be a use-after-free once the `RawDefines` map is dropped after
         // `Define::init`. Own the bytes here instead — these are tiny
@@ -370,12 +373,11 @@ pub mod defines {
         pub flags: Flags,
     }
 
-    // SAFETY: `ExprData` contains `StoreRef` raw pointers into immutable,
-    // process-lifetime AST stores. `DefineData` is only shared across threads
-    // via the read-only `Box<Define>` after init. Never written through.
+    // SAFETY: the nodes behind `value` are not written after init. They never
+    // enter an AST, which its passes edit in place: `value` is private and
+    // `value_for_use` returns copies. Threads share the table read-only.
     unsafe impl Send for DefineData {}
-    // SAFETY: see `Send` impl above — the `StoreRef` targets are immutable and
-    // process-lifetime, and `DefineData` is read-only after init.
+    // SAFETY: see the `Send` impl above.
     unsafe impl Sync for DefineData {}
 
     impl Default for DefineData {
@@ -450,6 +452,41 @@ pub mod defines {
         #[inline]
         pub(crate) fn valueless(&self) -> bool {
             self.flags.valueless()
+        }
+
+        /// The identifier this define names, for the parser to resolve.
+        #[inline]
+        pub(crate) fn identifier(&self) -> Option<E::Identifier> {
+            match self.value {
+                ExprData::EIdentifier(id) => Some(id),
+                _ => None,
+            }
+        }
+
+        /// The value as one use of the define gets it. A string, an object or
+        /// an array is a copy, so no pass over the AST can write to the table.
+        #[inline]
+        pub(crate) fn value_for_use(&self, loc: bun_ast::Loc) -> Expr {
+            if let ExprData::EString(string) = self.value {
+                return Expr::init(&*string, loc);
+            }
+            let expr = Expr {
+                data: self.value,
+                loc,
+            };
+            if matches!(self.value, ExprData::EObject(_) | ExprData::EArray(_)) {
+                return expr.clone_literal_tree();
+            }
+            expr
+        }
+
+        /// The string this define holds.
+        #[inline]
+        pub fn string(&self) -> Option<&E::EString> {
+            match &self.value {
+                ExprData::EString(string) => Some(string.get()),
+                _ => None,
+            }
         }
 
         pub fn init_boolean(value: bool) -> DefineData {

@@ -538,7 +538,7 @@ impl<'a> Transpiler<'a> {
         if had_explicit_node_env {
             if let Some(node_env) = self.options.define.dots.get(b"NODE_ENV".as_slice()) {
                 if !node_env.is_empty() {
-                    if let Some(s) = node_env[0].data.value.e_string() {
+                    if let Some(s) = node_env[0].data.string() {
                         if s.eql_comptime(b"production") {
                             is_production = true;
                         } else if s.eql_comptime(b"development") {

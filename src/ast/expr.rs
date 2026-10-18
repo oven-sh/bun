@@ -133,6 +133,87 @@ impl Expr {
     // `bun_js_parser_jsc::macro_::expr_from_blob`.
 }
 
+/// A copied object or array whose children still point at nodes of the source.
+enum LiteralContainer {
+    Object(StoreRef<E::Object>),
+    Array(StoreRef<E::Array>),
+}
+
+impl Expr {
+    /// Copies a tree of object, array and string literals. The copy shares
+    /// string bytes with `self` and no node; a node of any other kind is
+    /// copied by value. Nodes go in the thread-local `Store`, lists in the
+    /// active `AstAlloc` scope. Iterative: the tree can be deeper than the
+    /// stack of this thread allows a recursion.
+    #[cold]
+    pub fn clone_literal_tree(self) -> Expr {
+        let mut root = self;
+        let mut work: Vec<LiteralContainer> = Vec::new();
+        let mut next = root.own_literal_node();
+        while let Some(container) = next {
+            match container {
+                LiteralContainer::Object(mut object) => {
+                    for property in object.properties.slice_mut() {
+                        let children = [
+                            &mut property.key,
+                            &mut property.value,
+                            &mut property.initializer,
+                        ];
+                        for child in children.into_iter().flatten() {
+                            work.extend(child.own_literal_node());
+                        }
+                    }
+                }
+                LiteralContainer::Array(mut array) => {
+                    for item in array.items.slice_mut() {
+                        work.extend(item.own_literal_node());
+                    }
+                }
+            }
+            next = work.pop();
+        }
+        root
+    }
+
+    /// Points `self` at a field-wise copy of its string, object or array node.
+    fn own_literal_node(&mut self) -> Option<LiteralContainer> {
+        match self.data {
+            Data::EString(string) => {
+                self.data = Data::EString(data::Store::append(string.shallow_clone()));
+                None
+            }
+            Data::EObject(object) => {
+                let mut properties: G::PropertyList =
+                    Vec::with_capacity_in(object.properties.len(), bun_alloc::AstAlloc);
+                properties.extend(object.properties.iter().map(G::Property::shallow_clone));
+                let copy = data::Store::append(E::Object {
+                    properties,
+                    comma_after_spread: object.comma_after_spread,
+                    is_single_line: object.is_single_line,
+                    is_parenthesized: object.is_parenthesized,
+                    was_originally_macro: object.was_originally_macro,
+                    close_brace_loc: object.close_brace_loc,
+                });
+                self.data = Data::EObject(copy);
+                Some(LiteralContainer::Object(copy))
+            }
+            Data::EArray(array) => {
+                let copy = data::Store::append(E::Array {
+                    items: bun_alloc::AstAlloc::vec_from_slice(array.items.slice()),
+                    comma_after_spread: array.comma_after_spread,
+                    is_single_line: array.is_single_line,
+                    is_parenthesized: array.is_parenthesized,
+                    was_originally_macro: array.was_originally_macro,
+                    close_bracket_loc: array.close_bracket_loc,
+                });
+                self.data = Data::EArray(copy);
+                Some(LiteralContainer::Array(copy))
+            }
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Query {
     pub expr: Expr,

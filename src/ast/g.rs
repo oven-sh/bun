@@ -195,6 +195,21 @@ impl Property {
         self.class_static_block.as_deref_mut()
     }
 
+    /// Field-wise copy: every expression and the static block still point at
+    /// the nodes of `self`. The decorator list is a new list of the same items.
+    pub fn shallow_clone(&self) -> Property {
+        Property {
+            initializer: self.initializer,
+            kind: self.kind,
+            flags: self.flags,
+            class_static_block: self.class_static_block,
+            ts_decorators: bun_alloc::AstAlloc::vec_from_slice(self.ts_decorators.slice()),
+            key: self.key,
+            value: self.value,
+            ts_metadata: self.ts_metadata.clone(),
+        }
+    }
+
     pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,

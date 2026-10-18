@@ -2593,6 +2593,89 @@ export default <>hi</>
     expect(exitCode).toBe(0);
   });
 
+  // Each use of an object or array define is a literal of its own. The automatic JSX runtime
+  // passes a lone spread object as the props: `<div {...OBJ} />` is `jsxDEV("div", { a: 1 })`.
+  // That must not take the properties away from the other uses of the define.
+  describe("define with an object or array value", () => {
+    // One key for each place that substitutes a define: an identifier, a property access, `import.meta`.
+    it.each(["OBJ", "process.env.CFG", "import.meta"])("is whole at each use after JSX spreads %s", name => {
+      const transpiler = new Bun.Transpiler({ loader: "jsx", define: { [name]: '{"a":1}' } });
+      const source = [
+        `export const before = ${name};`,
+        `export const spread = <div {...${name}} />;`,
+        `export const child = <div {...{ ...${name} }}>kid</div>;`,
+        `export const after = ${name};`,
+      ].join("\n");
+      const expected = `export const before = { a: 1 };
+export const spread = jsxDEV_7x81h0kn("div", {
+  a: 1
+}, undefined, false, undefined, this);
+export const child = jsxDEV_7x81h0kn("div", {
+  a: 1,
+  children: "kid"
+}, undefined, false, undefined, this);
+export const after = { a: 1 };
+`;
+      // The define table lives as long as the transpiler, so the second call reads it again.
+      expect([transpiler.transformSync(source), transpiler.transformSync(source)]).toEqual([expected, expected]);
+    });
+
+    it("is whole at each use after a minified property access spreads a nested value", () => {
+      const transpiler = new Bun.Transpiler({
+        loader: "jsx",
+        minify: { syntax: true },
+        define: { CFG: '{"inner":{"__proto__":1,"q":"r"}}', LIST: '["s",{"k":[2]}]' },
+      });
+      const source = [
+        `export const before = [CFG, LIST];`,
+        `export const spread = [<div {...CFG.inner} />, <div {...LIST[1]}>kid</div>];`,
+        `export const after = [CFG, [...LIST, 3]];`,
+      ].join("\n");
+      const expected = `export const before = [{ inner: { ["__proto__"]: 1, q: "r" } }, ["s", { k: [2] }]], spread = [jsxDEV_7x81h0kn("div", {
+  ["__proto__"]: 1,
+  q: "r"
+}, void 0, !1, void 0, this), jsxDEV_7x81h0kn("div", {
+  k: [2],
+  children: "kid"
+}, void 0, !1, void 0, this)], after = [{ inner: { ["__proto__"]: 1, q: "r" } }, ["s", { k: [2] }, 3]];
+`;
+      expect([transpiler.transformSync(source), transpiler.transformSync(source)]).toEqual([expected, expected]);
+    });
+
+    it("is whole in transformSync() after scan() visited a JSX spread of it", () => {
+      const transpiler = new Bun.Transpiler({ loader: "jsx", define: { OBJ: '{"a":1}' } });
+      expect(transpiler.scan("export const a = <div {...OBJ} />;").exports).toEqual(["a"]);
+      expect(transpiler.transformSync("export const b = OBJ;")).toBe("export const b = { a: 1 };\n");
+    });
+
+    // transform() parses on a pool thread. Every call reads the one define table of the transpiler.
+    it("is whole in every concurrent transform()", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const object = Object.fromEntries(Array.from({ length: 200 }, (_, i) => ["k" + i, "v" + i]));
+            const transpiler = new Bun.Transpiler({ loader: "jsx", define: { OBJ: JSON.stringify(object) } });
+            const source = "export const a = <div {...OBJ}>kid</div>; export const b = OBJ;";
+            const outputs = await Promise.all(Array.from({ length: 64 }, () => transpiler.transform(source)));
+            const count = text => text.split('"v199"').length - 1;
+            console.log(JSON.stringify({ distinct: new Set(outputs).size, uses: count(outputs[0]) }));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ distinct: 1, uses: 2 }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

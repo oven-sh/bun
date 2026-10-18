@@ -143,7 +143,7 @@ pub(crate) fn create_multipart_upload(
     credentials: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
-    options: CreateMultipartOptions<'_>,
+    options: &CreateMultipartOptions<'_>,
     callback: fn(S3DownloadResult, *mut c_void) -> bun_jsc::JsResult<()>,
     callback_context: *mut c_void,
 ) -> bun_jsc::JsResult<()> {

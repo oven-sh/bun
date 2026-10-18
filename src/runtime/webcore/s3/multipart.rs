@@ -885,7 +885,7 @@ impl MultiPartUpload {
                 &self.credentials,
                 self.context(),
                 &self.path,
-                multipart_ops::CreateMultipartOptions {
+                &multipart_ops::CreateMultipartOptions {
                     content_type: self.content_type.as_deref(),
                     content_disposition: self.content_disposition.as_deref(),
                     content_encoding: self.content_encoding.as_deref(),

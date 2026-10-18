@@ -513,7 +513,7 @@ impl S3Ext for S3 {
             &aws_options.credentials,
             cx.context(),
             self.path(),
-            multipart_ops::CreateMultipartOptions {
+            &multipart_ops::CreateMultipartOptions {
                 content_type,
                 content_disposition: aws_options.content_disposition.as_deref(),
                 content_encoding: aws_options.content_encoding.as_deref(),

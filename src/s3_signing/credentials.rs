@@ -471,7 +471,9 @@ impl S3Credentials {
         let service_name: &str = "s3";
 
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
-        let mut tmp_buffer = [0u8; 4096];
+        // The canonical request: path, session token, upload id, the
+        // response overrides and the fixed parameters, all encoded.
+        let mut tmp_buffer = [0u8; 12288];
 
         let authorization: Box<[u8]> = 'brk: {
             // we hash the hash so we need 2 buffers

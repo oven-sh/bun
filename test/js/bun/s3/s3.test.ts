@@ -1706,8 +1706,8 @@ describe("multipart upload primitives", () => {
   it("percent-encodes a long upload id with reserved characters and the server verifies it", async () => {
     // Ids from S3-compatible stores carry `+`, `/` and `=`. 666 `+` and "ab"
     // encode to exactly 2000 bytes, the limit.
-    const uploadId = "+".repeat(666) + "ab";
-    const encoded = "%2B".repeat(666) + "ab";
+    const uploadId = Buffer.alloc(666, "+").toString() + "ab";
+    const encoded = Buffer.alloc(666 * 3, "%2B").toString() + "ab";
     const url = client.presign("k", { method: "PUT", uploadId, partNumber: 1, contentEncoding: "gzip" });
     expect(url).toContain(`&partNumber=1&response-content-encoding=gzip&uploadId=${encoded}`);
     expect(new URL(url).searchParams.get("uploadId")).toBe(uploadId);
@@ -1757,14 +1757,35 @@ describe("multipart upload primitives", () => {
     ]);
   });
 
+  it("presigns with a session token and a long upload id", () => {
+    const session = new S3Client({ ...credentials, sessionToken: Buffer.alloc(2000, "t").toString() });
+    const uploadId = Buffer.alloc(666, "+").toString() + "ab";
+    const query = new URL(
+      session.presign(Buffer.alloc(900, "k").toString(), {
+        method: "PUT",
+        uploadId,
+        partNumber: 10000,
+        contentDisposition: Buffer.alloc(400, "d").toString(),
+        type: Buffer.alloc(200, "t").toString(),
+      }),
+    ).searchParams;
+    expect(query.get("uploadId")).toBe(uploadId);
+    expect(query.get("X-Amz-Security-Token")).toHaveLength(2000);
+  });
+
   it("rejects an invalid uploadId or partNumber before any request", () => {
+    const invalidUploadId = "uploadId must be printable ASCII, at most 2000 bytes once percent-encoded";
     // 667 `+` encode to 2001 bytes.
-    for (const uploadId of ["", "a b", "é", "x".repeat(2001), "+".repeat(667)]) {
-      expect(() => client.presign("k", { uploadId })).toThrow();
-      expect(() => client.abortMultipartUpload("k", uploadId)).toThrow();
-      expect(() => client.completeMultipartUpload("k", uploadId, [{ partNumber: 1, etag: "e" }])).toThrow();
+    for (const uploadId of ["", "a b", "é", Buffer.alloc(2001, "x").toString(), Buffer.alloc(667, "+").toString()]) {
+      expect(() => client.presign("k", { uploadId })).toThrow(invalidUploadId);
+      expect(() => client.abortMultipartUpload("k", uploadId)).toThrow(invalidUploadId);
+      expect(() => client.completeMultipartUpload("k", uploadId, [{ partNumber: 1, etag: "e" }])).toThrow(
+        invalidUploadId,
+      );
     }
-    expect(() => client.presign("k", { uploadId: 1 as any })).toThrow(TypeError);
+    expect(() => client.presign("k", { uploadId: 1 as any })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
     for (const call of [
       () => (client as any).createMultipartUpload(),
       () => (client as any).abortMultipartUpload(),
@@ -1775,15 +1796,42 @@ describe("multipart upload primitives", () => {
     ]) {
       expect(call).toThrow(expect.objectContaining({ code: "ERR_MISSING_ARGS" }));
     }
-    expect(() => client.abortMultipartUpload("k", 1 as any)).toThrow(TypeError);
-    for (const partNumber of [0, 10001, 1.5, -1, NaN, "1" as any]) {
-      expect(() => client.presign("k", { partNumber })).toThrow();
-      expect(() => client.completeMultipartUpload("k", "u", [{ partNumber, etag: "e" }])).toThrow();
+    // The static forms report a missing path like the static presign() does.
+    for (const call of [
+      () => (S3Client as any).createMultipartUpload(),
+      () => (S3Client as any).abortMultipartUpload(),
+      () => (S3Client as any).completeMultipartUpload(),
+    ]) {
+      expect(call).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     }
-    expect(() => client.completeMultipartUpload("k", "u", [] as any)).toThrow();
-    expect(() => client.completeMultipartUpload("k", "u", {} as any)).toThrow(TypeError);
-    expect(() => client.completeMultipartUpload("k", "u", [{ partNumber: 1, etag: "" }])).toThrow();
-    expect(() => client.completeMultipartUpload("k", "u", [{ partNumber: 1 } as any])).toThrow(TypeError);
+    expect(() => client.abortMultipartUpload("k", 1 as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    for (const [partNumber, code] of [
+      [0, "ERR_OUT_OF_RANGE"],
+      [10001, "ERR_OUT_OF_RANGE"],
+      [-1, "ERR_OUT_OF_RANGE"],
+      [1.5, "ERR_INVALID_ARG_TYPE"],
+      [NaN, "ERR_INVALID_ARG_TYPE"],
+      ["1", "ERR_INVALID_ARG_TYPE"],
+    ] as const) {
+      expect(() => client.presign("k", { partNumber: partNumber as number })).toThrow(
+        expect.objectContaining({ code }),
+      );
+      expect(() => client.completeMultipartUpload("k", "u", [{ partNumber: partNumber as number, etag: "e" }])).toThrow(
+        expect.objectContaining({ code }),
+      );
+    }
+    expect(() => client.completeMultipartUpload("k", "u", [] as any)).toThrow("parts must have 1 to 10000 entries");
+    expect(() => client.completeMultipartUpload("k", "u", {} as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(() => client.completeMultipartUpload("k", "u", [{ partNumber: 1, etag: "" }])).toThrow(
+      "etag must not be empty",
+    );
+    expect(() => client.completeMultipartUpload("k", "u", [{ partNumber: 1 } as any])).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
     expect(() =>
       client.completeMultipartUpload("k", "u", [
         { partNumber: 1, etag: "e" },

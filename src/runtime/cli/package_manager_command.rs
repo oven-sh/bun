@@ -411,8 +411,8 @@ impl PackageManagerCommand {
                 let dry_run = pm.options.dry_run;
 
                 // Not `pm.options`: a project's `.env`, bunfig.toml or `.npmrc` does not choose what is deleted.
-                // The user's own `.bunfig.toml` does, because no project can write it. Their `.npmrc`
-                // does not: its `cache` is also npm's cache, which is not Bun's to delete.
+                // `~/.bunfig.toml` is honored because a project can't write to it. `~/.npmrc`
+                // isn't, because its `cache` setting is npm's cache, which Bun shouldn't delete.
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
                 let user_cache_dir = match cli.cache_dir {
@@ -622,7 +622,7 @@ impl PackageManagerCommand {
             Output::disable_buffering();
             let lockfile: &Lockfile = &pm.lockfile;
 
-            // Without a `node_modules`, everything that the lockfile resolves is listed.
+            // If there's no `node_modules`, list every dependency that the lockfile resolved.
             let mut on_disk = InstalledFilter::init();
             let mut is_installed =
                 |dir: &[u8], dep_id: DependencyID, or_in_store: bool| match on_disk.as_mut() {

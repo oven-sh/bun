@@ -405,20 +405,21 @@ impl PublishCommand {
 
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
 
-        // `bun --filter='*' publish` reads as "run the `publish` script of every workspace".
-        let mut flags_before =
+        // `bun --filter='*' publish` means "run every workspace's `publish` script", not "publish
+        // every workspace".
+        let mut args_before_publish =
             (bun_core::argv().into_iter().skip(1)).take_while(|arg| *arg != b"publish");
-        if let Some(flag) = flags_before.find(|arg| {
+        if let Some(flag) = args_before_publish.find(|arg| {
             matches!(*arg, b"-r" | b"--recursive" | b"--filter")
                 || arg.starts_with(b"--filter=")
                 || arg.starts_with(b"-F")
         }) {
             Output::err_generic(
-                "refusing to publish: {} is before \"publish\"",
+                "refusing to publish: {} must come after \"publish\"",
                 (bun_fmt::escape_control_chars(flag),),
             );
             bun_core::note!(
-                "use <b>bun publish {}<r>, or <b>bun run<r> for a script named \"publish\"",
+                "use <b>bun publish {}<r>, or <b>bun run publish<r> to run the \"publish\" script",
                 bun_fmt::escape_control_chars(flag)
             );
             Global::crash();

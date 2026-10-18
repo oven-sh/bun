@@ -649,9 +649,9 @@ describe.concurrent("dist-tag on the name of a workspace that the registry does 
 });
 
 // What the command installs and locks is what a clean install of the package.json it wrote gives.
-// The copy from the registry has the same name and version as the new workspace.
+// The installed registry package has the same name and version as the new workspace.
 test.concurrent.each(["hoisted", "isolated"])(
-  "an installed package that becomes a workspace at the same version is linked (%s)",
+  "links a new workspace that has the same name and version as an installed package (%s)",
   async linker => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;

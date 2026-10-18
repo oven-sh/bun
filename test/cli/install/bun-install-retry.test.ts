@@ -843,7 +843,7 @@ describe.concurrent("backoff", () => {
       expect({ requests, exitCode }).toEqual({ requests: 1, exitCode: 1 });
     });
 
-    it("says nothing about a retry", async () => {
+    it("doesn't print anything about a retry", async () => {
       let requests = 0;
       using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => (requests++, busy(503)) });
       const { err, exitCode } = await run(server.url.href, {
@@ -855,7 +855,7 @@ describe.concurrent("backoff", () => {
     });
   });
 
-  // The manifest fails twice.
+  // The manifest request fails twice.
   describe("two retries", () => {
     const run = async (...flags: string[]) => {
       using registry = flakyRegistry((kind, hit) => (kind === "manifest" && hit <= 2 ? busy(503) : undefined));
@@ -865,7 +865,7 @@ describe.concurrent("backoff", () => {
       return lines.filter(line => /retry/i.test(line));
     };
 
-    it("get no line", async () => {
+    it("print nothing", async () => {
       expect(await run()).toEqual([]);
     });
 

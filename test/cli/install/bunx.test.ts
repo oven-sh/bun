@@ -1673,11 +1673,11 @@ describe.skipIf(isWindows)("cache directory", () => {
     expect(await box.run(["tool"])).toMatchObject({ stdout: ran, stderr: "", exitCode: 0, requests: [] });
   });
 
-  it.concurrent.skipIf(!isLinux)("can be below a home directory whose name is not UTF-8", async () => {
-    // A shell script, because node cannot load a file from such a path.
+  it.concurrent.skipIf(!isLinux)("works when the home directory's name isn't valid UTF-8", async () => {
+    // The bin is a shell script, because node can't load a file from a non-UTF-8 path.
     using registry = await localRegistry(fixturePackage("tool", "1.0.0", "tool", "#!/bin/sh\necho tool ran\n"));
     using box = sandbox(registry);
-    // A JavaScript string cannot hold the byte E9 alone, so a shell script that is written as bytes sets HOME.
+    // A JavaScript string can't hold a lone 0xE9 byte, so HOME is set by a shell script written as raw bytes.
     writeFileSync(
       join(box.dir, "bunx.sh"),
       Buffer.concat([

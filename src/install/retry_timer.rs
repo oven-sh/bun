@@ -15,7 +15,8 @@ use crate::{NetworkTask, PackageManager};
 #[derive(Default)]
 pub(crate) struct RetryQueue {
     waiting: Vec<(Instant, *mut NetworkTask)>,
-    /// One line stands for every retry after a timeout.
+    /// True once "registry requests failed, retrying" has been printed. It's printed at most once
+    /// per install, after a timeout.
     announced: bool,
     /// The highest attempt for which a wait that the registry asked for was announced, since the
     /// queue was last empty.
@@ -52,7 +53,7 @@ pub(crate) fn retry(
     // A host that never answers costs minutes per attempt, so that is said at the first retry, also
     // with `--verbose`, whose lines are only printed once everything is resolved.
     let timed_out = matches!(response.fail, Some(bun_http::Error::Timeout));
-    // `--verbose` has a line for each retry of each request.
+    // `--verbose` prints a line for every retry of every request.
     let (queue, log_level) = (&mut manager.retry_queue, manager.options.log_level);
     // The requests of a later wave start at the first attempt again.
     if queue.len() == 0 {

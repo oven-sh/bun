@@ -2230,8 +2230,8 @@ impl<'a> Installer<'a> {
         } else {
             Default::default()
         };
-        // By name: an entry keeps the id of the first dependency that reached it, which can be the
-        // peer dependency of another package.
+        // Match by name, not by dependency id. A store entry keeps the id of whichever dependency
+        // reached it first, which may be another package's peer dependency.
         let is_direct = |name_hash: u64| {
             (parent_dependencies.get(dependencies).iter()).any(|own| {
                 own.name_hash == name_hash && bin_real::LinkOrder::declares(own.behavior)

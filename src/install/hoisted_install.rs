@@ -550,8 +550,8 @@ pub(crate) fn install_hoisted_packages(
         this.tick_lifecycle_scripts();
         this.report_slow_lifecycle_scripts();
 
-        // A folder is never completed if one of its packages could not be downloaded. What waited
-        // for it is installed now. force = true
+        // A tree never completes if one of its packages failed to download. Install everything
+        // that was still waiting on it (force = true).
         installer.install_available_packages::<true>(log_level);
         // Every package is linked; the scripts still to run need no lock.
         installer.staging_lock = None;

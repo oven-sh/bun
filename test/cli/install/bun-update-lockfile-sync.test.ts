@@ -442,9 +442,9 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     },
   );
 
-  // A library develops against the catalog's version and states by hand which versions it works with.
+  // A library tests against the catalog's version and lists the versions it supports by hand.
   test.each([">=1.0.0", "^1.0.0 || ^2.0.0", "*"])(
-    "bun update --latest leaves the peerDependencies range %s next to a catalog: devDependency",
+    "bun update --latest keeps the peerDependencies range %s when devDependencies uses catalog:",
     async range => {
       const library = { devDependencies: { "no-deps": "catalog:" }, peerDependencies: { "no-deps": range } };
       for (const update of [

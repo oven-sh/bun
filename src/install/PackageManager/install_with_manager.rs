@@ -1039,7 +1039,7 @@ pub fn install_with_manager(
     }
     let runs_root_scripts =
         manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;
-    // `skipped > 0` means that parts of an earlier install are still in place.
+    // `skipped > 0` means part of an earlier install is still on disk.
     if !install_summary.places.is_empty()
         && install_summary.success > 0
         && install_summary.skipped > 0

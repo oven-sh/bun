@@ -1,6 +1,6 @@
 // `--frozen-lockfile` / `bun ci` on a checkout where package.json and the lockfile disagree (an edited package.json, a
-// mis-merged bun.lock). A frozen install passes as long as every package resolves exactly as locked, and fails once
-// an edit adds a package, drops one or moves one to another version.
+// mis-merged bun.lock). It passes as long as every package still resolves to its locked version. It fails when an edit
+// adds a package, removes one, or changes a version.
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "fs/promises";
@@ -179,13 +179,13 @@ const dependencyRows: Record<string, Edit> = {
   },
 };
 
-// Each edit changes which packages are installed.
+// Each of these edits changes which packages get installed.
 const packageRows: Record<string, Edit & { names: string }> = {
-  "a dependency's range rules out the locked version": {
+  "a dependency's range no longer matches the locked version": {
     root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "^2.0.0" } }),
-    names: "no-deps is ^2.0.0, was ^1.0.0",
+    names: "no-deps changed from ^1.0.0 to ^2.0.0",
   },
-  "a dependency is added that the lockfile does not have": {
+  "a new dependency isn't in the lockfile": {
     root: json => ({ ...json, dependencies: { ...json.dependencies, "basic-1": "1.0.0" } }),
     names: "basic-1 was added",
   },
@@ -193,9 +193,9 @@ const packageRows: Record<string, Edit & { names: string }> = {
     root: json => ({ ...json, dependencies: without(json.dependencies, "no-deps") }),
     names: "no-deps was removed",
   },
-  "a workspace adds a dependency that the lockfile does not have": {
+  "a workspace adds a dependency that isn't in the lockfile": {
     member: json => ({ ...json, dependencies: { ...json.dependencies, "basic-1": "1.0.0" } }),
-    names: "basic-1 in packages/member was added",
+    names: "basic-1 was added in packages/member",
   },
 };
 

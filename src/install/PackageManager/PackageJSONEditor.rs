@@ -488,7 +488,8 @@ pub(crate) fn edit_update_entries(
             // it, and `--latest` leaves it alone when it already allows the resolved version.
             let is_peer = group.prop == DependencyGroup::PEER.prop;
             let resolved = resolution.npm().version;
-            // The lockfile has one entry for each group that names the package.
+            // A package in both devDependencies and peerDependencies has two lockfile entries, so
+            // check the peer one.
             let allowed = is_peer
                 && workspace_deps.iter().any(|row| {
                     row.behavior.is_peer()

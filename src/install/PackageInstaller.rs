@@ -92,8 +92,8 @@ pub struct PackageInstaller<'a> {
     //
     /// set of completed tree ids
     pub(crate) completed_trees: Bitset,
-    /// The total length of every tree's `pending_installs`. It is zero in a run that downloads
-    /// nothing, and then no tree has to be looked at when another one completes.
+    /// Number of entries across every tree's `pending_installs`. When it's zero, which is always
+    /// the case if nothing had to be downloaded, `install_available_packages` returns early.
     pub(crate) pending_install_count: usize,
     /// the tree ids a tree depends on before it can run the lifecycle scripts of it's immediate dependencies
     pub(crate) tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,

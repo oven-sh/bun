@@ -831,14 +831,13 @@ unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
 static Bun__userAgent: SyncCStr = SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
-/// Whether TLS connections also trust the system's certificate authorities. `root_certs.cpp` reads
-/// this when it builds the default store.
+/// True if TLS should also trust the system's certificate authorities. `root_certs.cpp` reads this
+/// when it builds the default certificate store.
 #[unsafe(no_mangle)]
 pub static Bun__Node__UseSystemCA: AtomicBool = AtomicBool::new(false);
 
-/// Applies `--use-system-ca`, `--use-openssl-ca` and `--use-bundled-ca`, and exits if more than one
-/// was passed. `has_flag` looks a flag up in the parsed arguments. Without a flag,
-/// `NODE_USE_SYSTEM_CA` decides.
+/// Handles `--use-system-ca`, `--use-openssl-ca` and `--use-bundled-ca`. Exits with an error if
+/// more than one is passed, and falls back to `NODE_USE_SYSTEM_CA` if none is.
 pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
     let flags: [&'static [u8]; 3] = [b"--use-system-ca", b"--use-openssl-ca", b"--use-bundled-ca"];
     let passed = flags.map(has_flag);

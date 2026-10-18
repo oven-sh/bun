@@ -1233,16 +1233,16 @@ fn plan_hoisted(
         None => Vec::new(),
     };
 
-    // Not every bun.lock says which dependencies are bundled. The package's own package.json does.
-    let bundles = |package: &Dir| {
+    // bun.lock doesn't always mark bundled dependencies, so also check the installed package.json.
+    let declares_bundled_deps = |package: &Dir| {
         crate::initialize_store();
         crate::git_runner::bundles_dependencies(package)
     };
-    // The parent tree and the folder name of each such package that has a tree of its own. A tree
-    // comes after its parent.
-    let mut bundlers: Vec<(tree::Id, &[u8])> = Vec::new();
-    // Their trees, and every tree below those.
-    let mut skipped: Vec<tree::Id> = Vec::new();
+    // Packages that bundle dependencies and also have their own tree, as (parent tree, folder
+    // name). Trees are ordered parent first.
+    let mut bundling_packages: Vec<(tree::Id, &[u8])> = Vec::new();
+    // Those packages' trees, and every tree nested under them.
+    let mut skipped_trees: Vec<tree::Id> = Vec::new();
 
     let mut visited = handle_oom(DynamicBitSet::init_empty(pkg_res.len()));
     for tree_idx in 0..hoisted.folders.len() {
@@ -1252,10 +1252,10 @@ fn plan_hoisted(
         }
         if tree_idx != 0 {
             let tree = &trees[tree_idx];
-            if skipped.contains(&tree.parent)
-                || bundlers.contains(&(tree.parent, tree.folder_name(deps, buf)))
+            if skipped_trees.contains(&tree.parent)
+                || bundling_packages.contains(&(tree.parent, tree.folder_name(deps, buf)))
             {
-                skipped.push(tree_idx as tree::Id);
+                skipped_trees.push(tree_idx as tree::Id);
                 continue;
             }
         }
@@ -1294,15 +1294,15 @@ fn plan_hoisted(
                 continue;
             };
             if nested_trees.binary_search(&(tree_id, alias)).is_ok() {
-                if bundles(&package) {
-                    bundlers.push((tree_id, alias));
+                if declares_bundled_deps(&package) {
+                    bundling_packages.push((tree_id, alias));
                 }
                 continue;
             }
             let Some(nested) = open_real_subdir(&package, b"node_modules") else {
                 continue;
             };
-            if bundles(&package) {
+            if declares_bundled_deps(&package) {
                 continue;
             }
             let nested_path = join(&join(folder_path, alias), b"node_modules");
@@ -1443,7 +1443,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
 
     let old_deps = before.buffers.dependencies.as_slice();
     let old_buf = before.buffers.string_bytes.as_slice();
-    // A workspace is the same one if it is in the same folder. Its name can change.
+    // Match workspaces by folder, because a workspace can be renamed.
     let old_member_folders: Vec<(Box<[u8]>, usize)> = (0..old.folders.len())
         .filter(|&old_idx| old.trees[old_idx].parent == 0 && is_member_tree(before, old_idx))
         .filter_map(|old_idx| {
@@ -1468,7 +1468,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
             continue;
         }
         let old_tree = &old.trees[old_idx];
-        // The `node_modules` of a workspace is left to the loop below.
+        // The loop below handles each workspace's own `node_modules`.
         if old_tree.parent == 0
             && (contains(&workspace_names, old_tree.folder_name(old_deps, old_buf))
                 || (old_member_folders.iter())
@@ -1492,28 +1492,29 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
                 continue;
             }
         }
-        // The path of a tree below a workspace starts with the workspace's name, as in
-        // `node_modules/two/node_modules/y/node_modules`. The workspace can have another name by now.
-        let top_now: Option<&[u8]> = match old_member_folders.iter().find(|it| it.1 == top) {
+        // A tree path under a workspace starts with the workspace's name, e.g.
+        // `node_modules/two/node_modules/y/node_modules`. If it was renamed, swap in the new name.
+        let renamed_top: Option<&[u8]> = match old_member_folders.iter().find(|it| it.1 == top) {
             Some((folder, _)) if member_folders.contains(folder) => {
                 match new_member_folders.iter().find(|it| it.0 == *folder) {
                     Some(&(_, new_top)) => {
                         Some(new.path(new_top)).filter(|now| *now != old.path(top))
                     }
-                    // Nothing is nested in it anymore. The loop below removes what was.
+                    // The workspace has no nested packages anymore. The loop below removes the
+                    // old ones.
                     None => continue,
                 }
             }
             _ => None,
         };
-        let path_now = |old_idx: usize| match top_now {
-            Some(top_now) => {
-                Cow::Owned([top_now, &old.path(old_idx)[old.path(top).len()..]].concat())
+        let current_path = |old_idx: usize| match renamed_top {
+            Some(renamed_top) => {
+                Cow::Owned([renamed_top, &old.path(old_idx)[old.path(top).len()..]].concat())
             }
             None => Cow::Borrowed(old.path(old_idx)),
         };
         let old_expected = old.expected(old_idx);
-        let surviving = new_tree_at(&path_now(old_idx));
+        let surviving = new_tree_at(&current_path(old_idx));
         // A workspace's name is only kept in the root `node_modules`. In a nested one, a package
         // from the registry can have the same name.
         let still_placed = |alias: &[u8]| {
@@ -1527,7 +1528,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
             Some(id) => new.trees[id as usize].parent,
             // The root has no dependencies left, so `new` has no tree for it.
             None if old_idx == 0 => tree::INVALID_ID,
-            None => match new_tree_at(&path_now(old.trees[old_idx].parent as usize)) {
+            None => match new_tree_at(&current_path(old.trees[old_idx].parent as usize)) {
                 Some(parent_id) => parent_id,
                 None => continue,
             },
@@ -1729,7 +1730,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
 
 /// When a run skipped dependencies, Bun 1.4.3 and earlier installed nested copies in folders that
 /// have no key in bun.lock. This removes them, because they hide the package further up the tree.
-/// It keeps any folder that the owning package's tarball may have shipped.
+/// Keeps any folder that may have come from the owning package's tarball.
 pub(crate) fn remove_copies_of_the_older_layout(
     manager: &mut PackageManager,
     install_root_dependencies: bool,
@@ -1755,13 +1756,19 @@ pub(crate) fn remove_copies_of_the_older_layout(
     manager.lockfile.buffers.resolutions = resolutions;
 }
 
-/// Whether `node_modules/<alias>` may be part of the package itself, in which case it must be kept.
-/// The caller has ruled out bundled dependencies.
-fn may_ship(manager: &PackageManager, cache: sys::Fd, pkg_id: PackageID, alias: &[u8]) -> bool {
+/// Returns true if `node_modules/<alias>` may have shipped inside the package's own tarball, so it
+/// must not be deleted. The caller handles bundled dependencies.
+fn tarball_may_contain(
+    manager: &PackageManager,
+    cache: sys::Fd,
+    pkg_id: PackageID,
+    alias: &[u8],
+) -> bool {
     let lockfile: &Lockfile = &manager.lockfile;
     let res = &lockfile.packages.items_resolution()[pkg_id as usize];
     let entry: Box<[u8]> = match res.tag {
-        // Bun installs no other `node_modules` out of a workspace, a `file:` folder or a git checkout.
+        // Apart from bundled dependencies, Bun doesn't install the `node_modules` folder of a
+        // workspace, a `file:` folder or a git checkout.
         ResolutionTag::Workspace | ResolutionTag::Folder | ResolutionTag::Git => return false,
         ResolutionTag::Npm => {
             let name = lockfile.packages.items_name()[pkg_id as usize];
@@ -1775,13 +1782,13 @@ fn may_ship(manager: &PackageManager, cache: sys::Fd, pkg_id: PackageID, alias: 
         ResolutionTag::Github => {
             crate::package_manager::cached_github_folder_name(manager, res.github(), None)
         }
-        // A tarball can hold anything.
+        // A tarball dependency can contain anything.
         _ => return true,
     }
     .as_bytes()
     .into();
-    // A package that is already installed is never downloaded again, so a missing cache entry stays
-    // missing. It counts as one without the folder.
+    // An installed package is never downloaded again, so a missing cache entry won't come back.
+    // Treat it as not having the folder.
     let folder = zname(&join(&join(&entry, b"node_modules"), alias));
     sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&folder)).unwrap_or(true)
 }
@@ -1832,8 +1839,8 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
         if !is_member_tree(lockfile, id) && today(folders[id]) != Some(owner) {
             continue;
         }
-        // A package with bundled dependencies ships folders at any depth, so a tree inside one is
-        // skipped.
+        // A package with bundled dependencies can ship folders at any depth, so skip every tree
+        // inside one.
         let mut above = id;
         while above != 0 && !has_bundled_deps(lockfile, tree_owner(lockfile, above)) {
             above = trees[above].parent as usize;
@@ -1853,7 +1860,7 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
                 let name_hash = bun_semver::semver_string::Builder::string_hash(entry.alias);
                 entry.kind != EntryKind::Directory
                     || !only_older.contains(&name_hash)
-                    || may_ship(manager, cache, owner, entry.alias)
+                    || tarball_may_contain(manager, cache, owner, entry.alias)
             },
             &mut plan,
         );

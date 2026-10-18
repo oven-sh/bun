@@ -4715,7 +4715,7 @@ snapshots:
       },
     });
     const bunLock = await bunLockOf(dir);
-    // The registry's no-deps@1.0.0 declares no a-dep, so the rule added it. It gets the range of the rule.
+    // The registry's no-deps@1.0.0 doesn't declare a-dep, so the extension added it. It gets the extension's range.
     expect(bunLock).toMatch(
       /"no-deps": \["no-deps@1\.0\.0", "[^"]*", \{ "dependencies": \{ "a-dep": "\^1\.0\.1" \} \}/,
     );
@@ -4725,8 +4725,8 @@ snapshots:
     expect(bunLock).toContain(`"a-dep": ["a-dep@1.0.1"`);
   });
 
-  // pnpm-lock.yaml lists what a rule added among a package's own dependencies. The registry tells them apart:
-  // no-deps@1.0.0 declares nothing, and one-dep@1.0.0 declares no-deps itself, so its rule never did anything.
+  // pnpm-lock.yaml doesn't separate the dependencies that packageExtensions added from a package's own. The registry
+  // does: no-deps@1.0.0 declares nothing, and one-dep@1.0.0 already declares no-deps, so its extension had no effect.
   describe("packageExtensions after the migration", () => {
     const rules = {
       "no-deps@1": { dependencies: { "a-dep": "1.0.1" } },
@@ -4787,20 +4787,17 @@ snapshots:
     }
     const locked = async (dir: string) => Object.keys((Bun.JSON5.parse(await bunLockOf(dir)) as any).packages).sort();
 
-    test.concurrent(
-      "only what the package does not declare counts as added, and the next install changes nothing",
-      async () => {
-        const dir = await migrated();
-        const bunLock = await bunLockOf(dir);
-        expect((Bun.JSON5.parse(bunLock) as any).packageExtensions).toEqual({
-          "no-deps@1.0.1": { dependencies: ["a-dep"] },
-        });
-        expect(await run(dir, "install", "--frozen-lockfile")).toMatchObject({ exitCode: 0 });
-        await expectInstallToLeaveUnchanged(dir, bunLock);
-      },
-    );
+    test.concurrent("only undeclared dependencies count as added, and the next install changes nothing", async () => {
+      const dir = await migrated();
+      const bunLock = await bunLockOf(dir);
+      expect((Bun.JSON5.parse(bunLock) as any).packageExtensions).toEqual({
+        "no-deps@1.0.1": { dependencies: ["a-dep"] },
+      });
+      expect(await run(dir, "install", "--frozen-lockfile")).toMatchObject({ exitCode: 0 });
+      await expectInstallToLeaveUnchanged(dir, bunLock);
+    });
 
-    test.concurrent("an edited rule is followed", async () => {
+    test.concurrent("an edited extension takes effect", async () => {
       const dir = await migrated();
       await setRules(dir, { ...rules, "no-deps@1": { dependencies: { "a-dep": "1.0.2" } } });
       expect(await run(dir, "install", "--frozen-lockfile")).toMatchObject({
@@ -4811,16 +4808,19 @@ snapshots:
       expect(await bunLockOf(dir)).toContain(`"a-dep": ["a-dep@1.0.2"`);
     });
 
-    test.concurrent("removed rules take what they added, and nothing that a package declares", async () => {
-      const dir = await migrated();
-      await setRules(dir, {});
-      expect(await run(dir, "install", "--frozen-lockfile")).toMatchObject({
-        stderr: expect.stringContaining("note: packageExtensions in package.json changed since bun.lock was saved"),
-        exitCode: 1,
-      });
-      expect(await run(dir, "install")).toMatchObject({ exitCode: 0 });
-      expect(await locked(dir)).toEqual(["no-deps", "one-dep"]);
-    });
+    test.concurrent(
+      "removing extensions removes what they added and nothing that a package declares itself",
+      async () => {
+        const dir = await migrated();
+        await setRules(dir, {});
+        expect(await run(dir, "install", "--frozen-lockfile")).toMatchObject({
+          stderr: expect.stringContaining("note: packageExtensions in package.json changed since bun.lock was saved"),
+          exitCode: 1,
+        });
+        expect(await run(dir, "install")).toMatchObject({ exitCode: 0 });
+        expect(await locked(dir)).toEqual(["no-deps", "one-dep"]);
+      },
+    );
   });
 
   test.concurrent("link: version with a semver specifier resolves to the workspace (pnpm/pnpm#7712)", async () => {

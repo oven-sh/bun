@@ -16799,7 +16799,7 @@ describe.concurrent("the flags of the runtime that take no value", () => {
   ];
   // What some of these commands have themselves, with another meaning.
   const taken = ["--help", "--silent", "--prefer-offline", "--no-env-file", "--check", "--interactive"];
-  // Only one of these and --use-system-ca can be passed at a time.
+  // These flags and --use-system-ca are mutually exclusive.
   const exclusive = ["--use-openssl-ca", "--use-bundled-ca"];
   async function runtimeFlags() {
     const { stdout, exitCode } = await bunIn(import.meta.dir, ["--help"]);

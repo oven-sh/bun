@@ -294,7 +294,7 @@ it("should not list packages missing from node_modules", async () => {
   }
 });
 
-it("should list what bun.lock has when node_modules does not exist", async () => {
+it("should list the packages in bun.lock when node_modules does not exist", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
   await writeFile(
@@ -407,7 +407,7 @@ describe.concurrent("bun pm ls lists what is on disk", () => {
         listed("<dir> node_modules", ...(isolated ? ["├── a-dep@1.0.1"] : []), "└── one-fixed-dep@1.0.0"),
       );
 
-      // Without node_modules, what bun.lock has is listed.
+      // With no node_modules, it lists what's in bun.lock.
       await rm(join(packageDir, "node_modules"), { recursive: true });
       expect(await bun("pm", "ls")).toEqual(
         listed("<dir> node_modules (3 installed)", "├── a-dep@1.0.1", "└── one-fixed-dep@1.0.0"),
@@ -418,7 +418,7 @@ describe.concurrent("bun pm ls lists what is on disk", () => {
     },
   );
 
-  test("an optional peer dependency that nothing provides is left out", async () => {
+  test("skips an optional peer dependency that isn't installed", async () => {
     const { packageDir, bun } = await project(
       { linker: "hoisted" },
       {
@@ -2290,7 +2290,7 @@ describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cach
     expect(await entries(box.envCache)).toEqual(envCacheEntries);
   });
 
-  test("the user's own .bunfig.toml names it", async () => {
+  test("~/.bunfig.toml names it", async () => {
     using box = caches(`pm-cache-${action}-user-bunfig`);
     const spawnEnv = { ...box.spawnEnv, XDG_CONFIG_HOME: undefined };
     await writeFile(join(box.home, ".bunfig.toml"), `[install.cache]\ndir = ${JSON.stringify(box.mine)}\n`);
@@ -2301,8 +2301,8 @@ describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cach
     expect(await entries(box.envCache)).toEqual(envCacheEntries);
   });
 
-  // `cache` in .npmrc is npm's cache as well, so npm's own files are in that directory.
-  test("the user's own .npmrc does not", async () => {
+  // `cache` in .npmrc is also npm's cache directory, so it has npm's own files in it.
+  test("~/.npmrc does not", async () => {
     using box = caches(`pm-cache-${action}-user-npmrc`);
     await writeFile(join(box.home, ".npmrc"), `cache=${box.mine}\n`);
     expect(await pmCache([], box.proj, box.spawnEnv)).toEqual({ stdout: box.mine, stderr: "", exitCode: 0 });

@@ -892,7 +892,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             if stdout_len > 0 {
                 let stdout = self.stdout.final_buffer();
-                // Written as it is: a formatter would replace what is not UTF-8.
+                // Write the raw bytes. Formatting them would replace invalid UTF-8 with U+FFFD.
                 let _ = Output::error_writer().write_all(stdout.as_slice());
                 let _ = Output::error_writer().write_all(b"\n");
                 stdout.clear();

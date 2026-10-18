@@ -487,7 +487,8 @@ impl BunxCommand {
         Ok(Self::get_bin_from_subpath(transpiler, Fd::cwd(), &subpath, preferred)?.name)
     }
 
-    /// Joins bytes. A formatter would replace what is not UTF-8 and name another directory.
+    /// Concatenates raw bytes. Formatting the path would replace invalid UTF-8 and point at a
+    /// different directory.
     fn path_in_cache(parts: &[&[u8]]) -> crate::Result<ZBox> {
         let path = parts.concat();
         if path.len() >= bun_paths::MAX_PATH_BYTES {

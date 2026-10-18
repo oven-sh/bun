@@ -4907,7 +4907,7 @@ describe.concurrent("bins of a package that dependents reach under different nam
     expect(memberBin(packageDir, "a-first", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
   });
 
-  test("of two direct dependencies with one command, the first by name keeps it if another package has it as a peer", async () => {
+  test("when two direct dependencies have the same bin, the first by name wins even if another package has it as a peer", async () => {
     const tarball = await new Bun.Archive(
       {
         "package/package.json": JSON.stringify({

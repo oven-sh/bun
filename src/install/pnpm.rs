@@ -1200,7 +1200,8 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     update_package_json_after_migration(Some(&mut *lockfile), manager, log, &found_patches)?;
 
-    // The `packageExtensions` that were just copied. The install reports the ones that it ignores.
+    // Parse the `packageExtensions` that were just copied into package.json. Warnings are dropped
+    // here because the install that follows reports them.
     if let Some(root) = root_package_json(manager, log) {
         let extensions = &mut lockfile.package_extensions;
         extensions.parse(&mut bun_ast::Log::init(), &root.source, &root.root);

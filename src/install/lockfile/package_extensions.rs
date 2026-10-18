@@ -300,8 +300,8 @@ impl PackageExtensions {
         );
     }
 
-    /// The names that the rules add to a package, each with whether it is added as a peer.
-    pub(crate) fn names_added_to(
+    /// Returns the dependencies `packageExtensions` adds to a package, as `(name hash, is peer)`.
+    pub(crate) fn dependencies_added_to(
         &self,
         name_hash: PackageNameHash,
         version: semver::Version,
@@ -536,25 +536,26 @@ impl Lockfile {
         }
     }
 
-    /// For a migration from pnpm-lock.yaml, which lists what the rules added among a package's own
-    /// dependencies. `added` has the rows that the package's manifest does not declare, as
-    /// `(package, name hash, is a peer)`. Each gets the rule's range and keeps what it resolved to.
+    /// Used when migrating from pnpm-lock.yaml, which doesn't say which dependencies came from
+    /// `packageExtensions`. `added` lists the ones that the package's manifest doesn't declare, as
+    /// `(package, name hash, is peer)`. Each one gets the extension's range, keeps its resolved
+    /// version, and is recorded as added by an extension.
     #[cold]
     #[inline(never)]
-    pub(crate) fn adopt_package_extension_rows(
+    pub(crate) fn record_migrated_package_extensions(
         &mut self,
         log: &mut bun_ast::Log,
         added: &[(PackageID, PackageNameHash, bool)],
     ) -> Result<(), AllocError> {
         let rules = core::mem::take(&mut self.package_extensions.rules);
-        let adopted = added.iter().try_for_each(|&(id, name_hash, is_peer)| {
-            self.adopt_package_extension_row(&rules, log, id, name_hash, is_peer)
+        let result = added.iter().try_for_each(|&(id, name_hash, is_peer)| {
+            self.record_migrated_package_extension(&rules, log, id, name_hash, is_peer)
         });
         self.package_extensions.rules = rules;
-        adopted
+        result
     }
 
-    fn adopt_package_extension_row(
+    fn record_migrated_package_extension(
         &mut self,
         rules: &[Rule],
         log: &mut bun_ast::Log,
@@ -580,7 +581,7 @@ impl Lockfile {
             return Ok(());
         };
         let version = self.package_extension_row(wanted, log)?.version;
-        // An override can have resolved it to something else. Then the row stays as it is.
+        // Leave the dependency alone if an override resolved it outside the extension's range.
         let buf = self.buffers.string_bytes.as_slice();
         let resolved =
             (self.packages.items_resolution()).get(self.buffers.resolutions[at] as usize);

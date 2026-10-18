@@ -380,8 +380,8 @@ describe.concurrent("certificate authority", () => {
     expect(proxy.targets).toEqual([`localhost:${server.port}`, `localhost:${server.port}`]);
   });
 
-  // With the system store on, every file in $SSL_CERT_DIR is read. The default store only finds files there that are
-  // named after a hash of the certificate, so `my-ca.pem` tells the two apart. Other systems keep their store elsewhere.
+  // With --use-system-ca, every file in $SSL_CERT_DIR is loaded. The default store only loads files named after the
+  // certificate's hash, so `my-ca.pem` is only trusted with the flag. Linux only: other systems don't use $SSL_CERT_DIR.
   describe.skipIf(!isLinux)("--use-system-ca", () => {
     async function run(args: string[], extraEnv: Record<string, string> = {}) {
       const { packageDir, packageJson, env } = await setupTest();
@@ -422,7 +422,7 @@ describe.concurrent("certificate authority", () => {
       return { out, err, exitCode };
     }
 
-    test("the certificate is not trusted without it", async () => {
+    test("doesn't trust the certificate without the flag", async () => {
       const { out, err, exitCode } = await run(["install"]);
       expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(out).not.toContain("+ no-deps@");
@@ -441,7 +441,7 @@ describe.concurrent("certificate authority", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("is refused together with --use-bundled-ca", async () => {
+    test("errors when combined with --use-bundled-ca", async () => {
       const { err, exitCode } = await run(["install", "--use-system-ca", "--use-bundled-ca"]);
       expect(err).toBe("error: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca\n");
       expect(exitCode).toBe(1);
@@ -7302,33 +7302,33 @@ describe.concurrent("hoisting", async () => {
       expect(await versionSeenFrom(dir, ["peer-deps-fixed"], "no-deps")).toBe("1.0.0");
     });
 
-    // For example, elysia needs @sinclair/typebox >=0.34.0 as a peer, and @jest/schemas depends on ^0.27.8.
-    describe("a copy that only an unrelated package depends on is not used", () => {
-      // one-fixed-dep@2.0.0 depends on no-deps@2.0.0. peer-deps-fixed needs ^1.0.0.
-      async function expectOwnCopies(dir: string, unrelated: string[]) {
+    // Example: elysia has a peer dependency on @sinclair/typebox >=0.34.0, and @jest/schemas depends on ^0.27.8.
+    describe("doesn't fall back to a version that only unrelated packages depend on", () => {
+      // one-fixed-dep@2.0.0 depends on no-deps@2.0.0. peer-deps-fixed has a peer dependency on no-deps@^1.0.0.
+      async function expectSeparateVersions(dir: string, unrelated: string[]) {
         expect(await versionSeenFrom(dir, ["peer-deps-fixed"], "no-deps")).toBe("1.1.0");
         expect(await versionSeenFrom(dir, unrelated, "no-deps")).toBe("2.0.0");
       }
 
-      test("in a fresh install", async () => {
+      test("on a fresh install", async () => {
         const dir = await project({
           "package.json": { name: "foo", dependencies: { "one-fixed-dep": "2.0.0", "peer-deps-fixed": "1.0.0" } },
         });
         expect(await peerWarnings(dir)).toEqual([]);
-        await expectOwnCopies(dir, ["one-fixed-dep"]);
+        await expectSeparateVersions(dir, ["one-fixed-dep"]);
 
         const lock = await file(join(dir, "bun.lock")).text();
         await rm(join(dir, "node_modules"), { recursive: true, force: true });
         expect(await peerWarnings(dir, "--frozen-lockfile")).toEqual([]);
-        await expectOwnCopies(dir, ["one-fixed-dep"]);
+        await expectSeparateVersions(dir, ["one-fixed-dep"]);
         expect(await file(join(dir, "bun.lock")).text()).toBe(lock);
       });
 
-      test("when the package with the peer is added later", async () => {
+      test("when the package with the peer dependency is added later", async () => {
         const dir = await project({ "package.json": { name: "foo", dependencies: { "one-fixed-dep": "2.0.0" } } });
         expect(await peerWarnings(dir)).toEqual([]);
         expect(await peerWarnings(dir, "peer-deps-fixed@1.0.0")).toEqual([]);
-        await expectOwnCopies(dir, ["one-fixed-dep"]);
+        await expectSeparateVersions(dir, ["one-fixed-dep"]);
       });
 
       test("when the unrelated package is another workspace", async () => {
@@ -7343,8 +7343,8 @@ describe.concurrent("hoisting", async () => {
       });
     });
 
-    test("a workspace shares its copy with a package two levels below it", async () => {
-      // dedupe-divergent-peers depends on dedupe-divergent-strict, which needs no-deps@^2.0.0.
+    test("a package two levels below a workspace uses the workspace's version", async () => {
+      // dedupe-divergent-peers depends on dedupe-divergent-strict, which has a peer dependency on no-deps@^2.0.0.
       const dir = await project({
         "package.json": { name: "mono", workspaces: ["packages/*"] },
         "packages/a/package.json": {
@@ -7360,8 +7360,8 @@ describe.concurrent("hoisting", async () => {
       expect(await versionSeenFrom(join(dir, "packages", "a"), below, "no-deps")).toBe("1.0.0");
     });
 
-    test("a workspace's own peer dependency decides for the packages below it", async () => {
-      // one-fixed-dep@1.0.0 depends on no-deps@1.0.0. dedupe-divergent-strict needs ^2.0.0.
+    test("packages below a workspace use the version that satisfies the workspace's own peer dependency", async () => {
+      // one-fixed-dep@1.0.0 depends on no-deps@1.0.0. dedupe-divergent-strict has a peer dependency on no-deps@^2.0.0.
       const dir = await project({
         "package.json": { name: "mono", workspaces: ["packages/*"] },
         "packages/a/package.json": {
@@ -7378,7 +7378,7 @@ describe.concurrent("hoisting", async () => {
       expect(await file(join(dir, "bun.lock")).text()).not.toContain("no-deps@2.0.0");
     });
 
-    test("the project's own peer dependency does not take an unrelated package's copy either", async () => {
+    test("the root's own peer dependency doesn't fall back to an unrelated package's version either", async () => {
       // one-fixed-dep@2.0.0 depends on no-deps@2.0.0.
       const dir = await project({
         "package.json": {
@@ -7393,7 +7393,7 @@ describe.concurrent("hoisting", async () => {
       expect(await versionSeenFrom(dir, ["one-fixed-dep"], "no-deps")).toBe("2.0.0");
     });
 
-    test("a workspace that depends on both shares its copy", async () => {
+    test("a direct dependency of a workspace uses the workspace's version", async () => {
       const dir = await project({
         "package.json": { name: "mono", workspaces: ["packages/*"] },
         "packages/a/package.json": {

@@ -816,10 +816,10 @@ pub(crate) struct DroppedRow {
     pub(crate) package: PackageID,
 }
 
-/// A dependency that differs between a package.json and the lockfile.
+/// A dependency that differs between package.json and the lockfile.
 pub(crate) struct ChangedDependency {
     name: Box<[u8]>,
-    /// The folder of the workspace whose package.json has it. Empty for the root.
+    /// Path of the workspace whose package.json changed. Empty for the root.
     workspace: Box<[u8]>,
     change: DependencyChange,
 }
@@ -827,9 +827,9 @@ pub(crate) struct ChangedDependency {
 enum DependencyChange {
     Added,
     Removed,
-    /// From `dependencies` to `devDependencies`, for example, or out of one of two groups.
-    Regrouped,
-    /// A peer dependency became optional, or is no longer optional.
+    /// Moved to a different group, e.g. from `dependencies` to `devDependencies`.
+    MovedGroup,
+    /// Became an optional peer, or stopped being one.
     PeerMeta,
     Range {
         now: Box<[u8]>,
@@ -841,18 +841,21 @@ impl core::fmt::Display for ChangedDependency {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         use bun_core::fmt::escape_control_chars as text;
         write!(f, "{}", text(&self.name))?;
+        match &self.change {
+            DependencyChange::Added => f.write_str(" was added")?,
+            DependencyChange::Removed => f.write_str(" was removed")?,
+            DependencyChange::MovedGroup => {
+                f.write_str(" moved to a different dependency group")?
+            }
+            DependencyChange::PeerMeta => f.write_str(" changed in peerDependenciesMeta")?,
+            DependencyChange::Range { now, before } => {
+                write!(f, " changed from {} to {}", text(before), text(now))?;
+            }
+        }
         if !self.workspace.is_empty() {
             write!(f, " in {}", text(&self.workspace))?;
         }
-        match &self.change {
-            DependencyChange::Added => f.write_str(" was added"),
-            DependencyChange::Removed => f.write_str(" was removed"),
-            DependencyChange::Regrouped => f.write_str(" is listed in other dependency groups"),
-            DependencyChange::PeerMeta => f.write_str(" changed in peerDependenciesMeta"),
-            DependencyChange::Range { now, before } => {
-                write!(f, " is {}, was {}", text(now), text(before))
-            }
-        }
+        Ok(())
     }
 }
 
@@ -860,7 +863,8 @@ impl core::fmt::Display for ChangedDependency {
 pub struct DiffSummary {
     pub(crate) add: u32,
     pub(crate) remove: u32,
-    /// Set for a frozen install only, which names it in its error.
+    /// The first changed dependency, shown in the `--frozen-lockfile` error. Only set for frozen
+    /// installs.
     pub(crate) first_change: Option<ChangedDependency>,
     /// The dependencies removed from the package.json of the root and of each workspace.
     pub(crate) dropped_rows: Vec<DroppedRow>,
@@ -891,8 +895,14 @@ pub struct DiffSummary {
 }
 
 impl DiffSummary {
-    /// `owner` is the package in the lockfile that `buf` belongs to.
-    fn note_change(&mut self, owner: &Package, buf: &[u8], name: &[u8], change: DependencyChange) {
+    /// `buf` is the string buffer of the lockfile that `owner` belongs to.
+    fn record_first_change(
+        &mut self,
+        owner: &Package,
+        buf: &[u8],
+        name: &[u8],
+        change: DependencyChange,
+    ) {
         if self.first_change.is_some() {
             return;
         }
@@ -1157,11 +1167,11 @@ impl Diff {
                         });
                     let change = match (is_still_listed, is_still_peer) {
                         (_, true) => DependencyChange::PeerMeta,
-                        (true, false) => DependencyChange::Regrouped,
+                        (true, false) => DependencyChange::MovedGroup,
                         (false, false) => DependencyChange::Removed,
                     };
                     let name = from_dep.name.slice(from_buf!());
-                    summary.note_change(from, from_buf!(), name, change);
+                    summary.record_first_change(from, from_buf!(), name, change);
                 }
                 // The root's implicit dependency on a workspace listed in "workspaces" is skipped:
                 // the isolated linker creates no link for it, so there is none to remove.
@@ -1404,15 +1414,15 @@ impl Diff {
             let recorded_request = (from_dep.version.tag == dependency::version::Tag::DistTag
                 || from_dep.version.literal.is_empty())
                 && still_satisfied();
-            let keeps_dependencies = retyped || recorded_request || range_link;
-            summary.script_only_updates += keeps_dependencies as u32;
-            if frozen && !keeps_dependencies && !from_dep.behavior.is_workspace() {
+            let is_equivalent = retyped || recorded_request || range_link;
+            summary.script_only_updates += is_equivalent as u32;
+            if frozen && !is_equivalent && !from_dep.behavior.is_workspace() {
                 let change = DependencyChange::Range {
                     now: (to_deps!()[cur_to_i].version.literal.slice(to_buf!())).into(),
                     before: from_dep.version.literal.slice(from_buf!()).into(),
                 };
                 let name = from_dep.name.slice(from_buf!());
-                summary.note_change(from, from_buf!(), name, change);
+                summary.record_first_change(from, from_buf!(), name, change);
             }
         }
 
@@ -1451,7 +1461,7 @@ impl Diff {
         summary.add = added.len() as u32;
         if frozen && let Some(added) = added.iter().find(|dep| !dep.behavior.is_workspace()) {
             let name = added.name.slice(to_buf!());
-            summary.note_change(from, from_buf!(), name, DependencyChange::Added);
+            summary.record_first_change(from, from_buf!(), name, DependencyChange::Added);
         }
         if is_root {
             summary.remove = removed_names.len() as u32;

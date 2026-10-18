@@ -123,7 +123,7 @@ afterAll(async () => {
   await Promise.all(createdDirs.map(dir => rm(dir, { recursive: true, force: true })));
 });
 
-// Stands in for api.github.com. It answers every request with the archive of `me/n`.
+// Fake api.github.com. Responds to every request with the `me/n` archive.
 let github: Bun.Server<undefined> | undefined;
 const githubFiles = {
   "package.json": JSON.stringify({ name: "n", version: "1.0.0", dependencies: { b: "^2.0.0" } }),
@@ -1870,9 +1870,10 @@ describe.concurrent("a peer dependency is the package that its dependent loads",
   });
 });
 
-// Up to 1.4.3 what a run left out took no place, so the rest moved: here m's b@1.0.0 to the root, which gave n a b of
-// its own, where bun.lock has no key. Nothing is laid there now, and the b that n is linked to is at the root.
-describe.concurrent("a node_modules that an older bun laid for a run that leaves something out", () => {
+// Up to 1.4.3, packages that a run skipped (e.g. devDependencies under --production) were ignored when hoisting. Here
+// that put m's b@1.0.0 at the root and nested a b under n, a path that bun.lock has no key for. Newer versions never
+// install there, and n is supposed to load the root's b.
+describe.concurrent("upgrading a node_modules that Bun <= 1.4.3 installed with some dependencies skipped", () => {
   const both = { m: "1.0.0", n: "1.0.0" };
   const otherOs = process.platform === "darwin" ? "linux" : "darwin";
   const otherCpu = process.arch === "arm64" ? "x64" : "arm64";
@@ -1891,9 +1892,9 @@ describe.concurrent("a node_modules that an older bun laid for a run that leaves
       leftOut: { devDependencies: { b: "^2.0.0" } },
       atOnce: true,
     },
-    // `n` stays installed, so it is never downloaded again and never gets a cache entry.
+    // `n` is already installed, so it's never downloaded again and never gets a cache entry.
     {
-      title: "--production, without the older bun's cache",
+      title: "--production, with an empty cache",
       args: ["--production"],
       leftOut: { devDependencies: { b: "^2.0.0" } },
       noCache: true,
@@ -1910,7 +1911,7 @@ describe.concurrent("a node_modules that an older bun laid for a run that leaves
       script: "echo built",
     },
     {
-      title: "a package for another os, without the older bun's cache",
+      title: "a package for another os, with an empty cache",
       args: [],
       leftOut: { optionalDependencies: { "a-os": "1.0.0" } },
       noCache: true,
@@ -1948,13 +1949,15 @@ describe.concurrent("a node_modules that an older bun laid for a run that leaves
     };
     await run(dev, "install");
 
-    // What an older bun lays with these arguments is what every bun lays when package.json lacks what they leave out.
+    // Reproduce the old layout: installing without the skipped dependencies in package.json gives the same tree that
+    // Bun <= 1.4.3 produced with these flags.
     await run(dir, "install");
     expect(layout(dir)).toEqual(["b@1.0.0", ...(member ? [] : ["m@1.0.0"]), "n@1.0.0", "n/b@2.0.0"]);
     if (noCache) rmSync(join(dir, ".bun-cache"), { recursive: true });
     await pull();
     if (!atOnce) {
-      // The copy has the version in bun.lock. It goes all the same: what it loads from further up moves on without it.
+      // The nested copy is removed even though its version matches bun.lock. Later updates only touch the hoisted
+      // copy, so this one would go stale.
       await run(dir, "install", ...args);
       expect(layout(dir)).not.toContain("n/b@2.0.0");
     }
@@ -1973,80 +1976,78 @@ describe.concurrent("a node_modules that an older bun laid for a run that leaves
   });
 });
 
-// Bun installs no node_modules out of a folder or a git checkout, so `n/node_modules/b` is not a part of `n`. An archive
-// from GitHub can hold one. It only counts if the cache entry has it.
-test.concurrent.each([
-  "file: folder",
-  "git repository",
-  "github repository",
-  "github repository, without the older bun's cache",
-])("an older bun's nested copy goes below a %s", async kind => {
-  const graph: Record<string, Record<string, object>> = {
-    m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
-    b: { "1.0.0": {}, "2.0.0": {}, "2.1.0": {} },
-  };
-  using server = await serveGraph(graph);
-  const { "2.1.0": published, ...before } = graph.b;
-  graph.b = before;
+// Bun never installs the `node_modules` of a `file:` folder or a git checkout, so `n/node_modules/b` can't be part of
+// `n`. A GitHub archive can contain one, so it's kept only if the cached archive has it.
+test.concurrent.each(["file: folder", "git repository", "github repository", "github repository, with an empty cache"])(
+  "removes the nested copy that Bun <= 1.4.3 left under a %s",
+  async kind => {
+    const graph: Record<string, Record<string, object>> = {
+      m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
+      b: { "1.0.0": {}, "2.0.0": {}, "2.1.0": {} },
+    };
+    using server = await serveGraph(graph);
+    const { "2.1.0": published, ...before } = graph.b;
+    graph.b = before;
 
-  const n = githubFiles;
-  using repository = tempDir("hoist-older-owner-repository", n);
-  if (kind === "git repository") {
-    for (const args of [
-      ["init", "-q"],
-      ["add", "."],
-      ["commit", "-q", "-m", "n"],
-    ]) {
-      const identity = ["-c", "user.name=n", "-c", "user.email=n@example.com"];
-      await using git = Bun.spawn({ cmd: ["git", ...identity, ...args], cwd: String(repository) });
-      expect(await git.exited).toBe(0);
+    const n = githubFiles;
+    using repository = tempDir("hoist-older-owner-repository", n);
+    if (kind === "git repository") {
+      for (const args of [
+        ["init", "-q"],
+        ["add", "."],
+        ["commit", "-q", "-m", "n"],
+      ]) {
+        const identity = ["-c", "user.name=n", "-c", "user.email=n@example.com"];
+        await using git = Bun.spawn({ cmd: ["git", ...identity, ...args], cwd: String(repository) });
+        expect(await git.exited).toBe(0);
+      }
     }
-  }
-  const files = (root: object) => ({
-    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
-    "vendor/n/package.json": n["package.json"],
-    "vendor/n/index.js": n["index.js"],
-    "package.json": JSON.stringify({
-      name: "app",
-      dependencies: {
-        m: "1.0.0",
-        n:
-          kind === "git repository"
-            ? `git+${pathToFileURL(String(repository))}`
-            : kind === "file: folder"
-              ? "file:./vendor/n"
-              : "github:me/n#abcdef1",
-      },
-      ...root,
-    }),
-  });
-  using laptop = tempDir("hoist-older-owner-laptop", files({ devDependencies: { b: "^2.0.0" } }));
-  using machine = tempDir("hoist-older-owner-machine", files({}));
-  const [dev, dir] = [String(laptop), String(machine)];
-  const pull = async () => {
-    await write(join(dir, "package.json"), file(join(dev, "package.json")));
-    await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
-  };
-  await run(dev, "install");
+    const files = (root: object) => ({
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+      "vendor/n/package.json": n["package.json"],
+      "vendor/n/index.js": n["index.js"],
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: {
+          m: "1.0.0",
+          n:
+            kind === "git repository"
+              ? `git+${pathToFileURL(String(repository))}`
+              : kind === "file: folder"
+                ? "file:./vendor/n"
+                : "github:me/n#abcdef1",
+        },
+        ...root,
+      }),
+    });
+    using laptop = tempDir("hoist-older-owner-laptop", files({ devDependencies: { b: "^2.0.0" } }));
+    using machine = tempDir("hoist-older-owner-machine", files({}));
+    const [dev, dir] = [String(laptop), String(machine)];
+    const pull = async () => {
+      await write(join(dir, "package.json"), file(join(dev, "package.json")));
+      await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
+    };
+    await run(dev, "install");
 
-  // What an older bun lays with --production is what every bun lays when package.json lacks devDependencies.
-  await run(dir, "install");
-  expect(layout(dir)).toEqual(["b@1.0.0", "m@1.0.0", "n@1.0.0", "n/b@2.0.0"]);
-  if (kind.endsWith("cache")) rmSync(join(dir, ".bun-cache"), { recursive: true });
-  await pull();
-  await run(dir, "install", "--production");
-  expect(layout(dir)).not.toContain("n/b@2.0.0");
+    // Reproduce the old --production layout by installing without devDependencies in package.json.
+    await run(dir, "install");
+    expect(layout(dir)).toEqual(["b@1.0.0", "m@1.0.0", "n@1.0.0", "n/b@2.0.0"]);
+    if (kind.endsWith("cache")) rmSync(join(dir, ".bun-cache"), { recursive: true });
+    await pull();
+    await run(dir, "install", "--production");
+    expect(layout(dir)).not.toContain("n/b@2.0.0");
 
-  graph.b = { ...before, "2.1.0": published };
-  await run(dev, "update", "b");
-  await pull();
-  await run(dir, "install", "--production");
-  expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("2.1.0\n");
-});
+    graph.b = { ...before, "2.1.0": published };
+    await run(dev, "update", "b");
+    await pull();
+    await run(dir, "install", "--production");
+    expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("2.1.0\n");
+  },
+);
 
-// Bun installed `pk/w1/node_modules/n`, so it is not a part of the workspace.
+// Bun itself installed `pk/w1/node_modules/n`, so it isn't one of the workspace's own files.
 test.concurrent(
-  "an older bun's nested copy goes below a package in the node_modules of a workspace with a script",
+  "removes the nested copy that Bun <= 1.4.3 left under a package in the node_modules of a workspace with a script",
   async () => {
     const graph: Record<string, Record<string, object>> = {
       m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
@@ -2077,7 +2078,7 @@ test.concurrent(
     using machine = tempDir("hoist-older-in-workspace-machine", files({}));
     const [dev, dir] = [String(laptop), String(machine)];
 
-    // What an older bun lays with --production is what every bun lays when package.json lacks devDependencies.
+    // Reproduce the old --production layout by installing without devDependencies in package.json.
     await run(dir, "install");
     expect(layout(dir, "pk/w1")).toContain("pk/w1/n/b@2.0.0");
 
@@ -2090,11 +2091,12 @@ test.concurrent(
   },
 );
 
-// What is in `pk/two/node_modules` is judged by what bun.lock now places in that folder, whatever the workspace is called.
-describe.concurrent("the copies in the node_modules of a workspace", () => {
+// Whether a package in `pk/two/node_modules` is kept depends on what bun.lock now places there, not on the workspace's
+// name.
+describe.concurrent("packages nested in a workspace's node_modules", () => {
   const json = (name: string, dependencies: object) => JSON.stringify({ name, dependencies });
 
-  /** Installs, writes `edits`, installs again. Returns what is at the top and in `pk/two` before and after. */
+  /** Installs, applies `edits`, and installs again. Returns the root and `pk/two` layouts before and after. */
   async function edited(members: Record<string, string>, edits: Record<string, string>) {
     using server = await serveGraph({
       y: { "1.0.0": {}, "2.0.0": {} },
@@ -2117,40 +2119,40 @@ describe.concurrent("the copies in the node_modules of a workspace", () => {
     "pk/one/package.json": json("one", { y: "1.0.0" }),
     "pk/two/package.json": json("two", { y: "2.0.0" }),
   };
-  test("one stays if the workspace gets another name", async () => {
+  test("are kept when the workspace is renamed", async () => {
     expect(await edited(own, { "pk/two/package.json": json("zwei", { y: "2.0.0" }) })).toEqual({
       before: ["y@1.0.0", "pk/two/y@2.0.0"],
       after: ["y@1.0.0", "pk/two/y@2.0.0"],
     });
   });
-  test("one goes if the workspace gets another name and the version at the top", async () => {
+  test("are removed when the workspace is renamed and now wants the hoisted version", async () => {
     expect(await edited(own, { "pk/two/package.json": json("zwei", { y: "1.0.0" }) })).toEqual({
       before: ["y@1.0.0", "pk/two/y@2.0.0"],
       after: ["y@1.0.0"],
     });
   });
-  test("one goes if the folder is no workspace anymore", async () => {
+  test("are removed when the folder is no longer a workspace", async () => {
     expect(await edited(own, { "package.json": JSON.stringify({ name: "app", workspaces: ["pk/one"] }) })).toEqual({
       before: ["y@1.0.0", "pk/two/y@2.0.0"],
       after: ["y@1.0.0"],
     });
   });
 
-  // `pk/two/node_modules/nn/node_modules/y` is one level deeper.
+  // Same thing one level deeper, at `pk/two/node_modules/nn/node_modules/y`.
   const deeper = {
     "pk/one/package.json": json("one", { nn: "2.0.0", y: "2.0.0" }),
     "pk/three/package.json": json("three", { y: "1.0.0" }),
     "pk/two/package.json": json("two", { nn: "1.0.0" }),
   };
   const nested = ["nn@2.0.0", "y@2.0.0", "pk/two/nn@1.0.0", "pk/two/nn/y@1.0.0"];
-  test("one below a package stays if another workspace takes the name", async () => {
+  test("under another package, are kept when a different workspace takes the old name", async () => {
     const edits = {
       "pk/two/package.json": json("zwei", { nn: "1.0.0" }),
       "pk/three/package.json": json("two", { y: "1.0.0" }),
     };
     expect(await edited(deeper, edits)).toEqual({ before: nested, after: nested });
   });
-  test("one below a package goes if the workspace gets another name and the version is at the top", async () => {
+  test("under another package, are removed when the workspace is renamed and the hoisted version now matches", async () => {
     const edits = {
       "pk/two/package.json": json("zwei", { nn: "1.0.0" }),
       "pk/one/package.json": json("one", { nn: "2.0.0", y: "1.0.0" }),
@@ -2231,8 +2233,8 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
     }
   });
 
-  // Without the root's own b, an older bun gave m's b@1.0.0 the root, and `ships` a b of its own.
-  test("below a package, from its tarball, where an older bun nested a copy", async () => {
+  // Without b in the root's dependencies, Bun <= 1.4.3 hoisted m's b@1.0.0 to the root and nested a b under `ships`.
+  test("below a package, from its tarball, at a path where Bun <= 1.4.3 nested a copy", async () => {
     const own = JSON.stringify({ name: "b", version: "2.0.0", from: "the tarball" });
     using server = await serveGraph(
       {
@@ -2253,18 +2255,18 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
     });
     const dir = String(tmp);
     await run(dir, "install", "--omit=dev");
-    // The run that installs `ships` keeps m, and the next one keeps `ships`.
+    // m is already installed when `ships` is added, and `ships` is already installed when `other` is added.
     for (const added of ["ships", "other"]) {
       await run(dir, "add", added, "--omit=dev");
       expect(await file(join(dir, "node_modules", "ships", "node_modules", "b", "package.json")).text()).toBe(own);
     }
   });
 
-  // The registry's metadata does not say that `ships` bundles `dep`, so bun.lock places `dep` at the root alone.
+  // The registry manifest doesn't say that `ships` bundles `dep`, so bun.lock only places `dep` at the root.
   test.each([
     ["", {}],
-    // The root's other@2.0.0 is at the top, so bun.lock has the key "ships/other".
-    [", next to a copy that bun.lock places there", { other: "2.0.0" }],
+    // The root's other@2.0.0 is hoisted, so bun.lock nests other@1.0.0 at "ships/other".
+    [", next to a package that bun.lock nests there", { other: "2.0.0" }],
   ])("below a package that bundles it%s: bun prune", async (_, more) => {
     const own = JSON.stringify({ name: "dep", version: "1.0.0", from: "the tarball" });
     const dependencies = { dep: "^1.0.0", other: "^1.0.0" };
@@ -2289,7 +2291,7 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
     const dir = String(tmp);
     await run(dir, "install");
     expect(await file(join(dir, "bun.lock")).text()).not.toContain("bundled");
-    // As in a Docker stage that copies node_modules alone.
+    // Like a Docker stage that only copies node_modules.
     rmSync(join(dir, ".bun-cache"), { recursive: true });
     await run(dir, "prune");
     expect(await file(join(dir, "node_modules", "ships", "node_modules", "dep", "package.json")).text()).toBe(own);

@@ -2024,19 +2024,22 @@ test.concurrent.each(
   },
 );
 
-// --production freezes the lockfile, and the packages stay the same.
-test.concurrent("add --dev --production of an entry moves it in package.json and leaves bun.lock", async () => {
-  const dir = await makeMonorepo({ root: { ...ROOT, dependencies: { "what-bin": "1.0.0" } } }, "hoisted");
-  await installOk(dir, "hoisted");
-  const lock = await file(join(dir, "bun.lock")).text();
+// --production implies --frozen-lockfile, which passes here because the same packages are installed.
+test.concurrent(
+  "add --dev --production moves an existing dependency in package.json and doesn't touch bun.lock",
+  async () => {
+    const dir = await makeMonorepo({ root: { ...ROOT, dependencies: { "what-bin": "1.0.0" } } }, "hoisted");
+    await installOk(dir, "hoisted");
+    const lock = await file(join(dir, "bun.lock")).text();
 
-  const { stderr, exitCode } = await run(["add", "what-bin@1.0.0", "--dev", "--production"], dir);
+    const { stderr, exitCode } = await run(["add", "what-bin@1.0.0", "--dev", "--production"], dir);
 
-  expect(stderr).toBe("");
-  expect(await pkg(dir, "root")).toStrictEqual({ ...ROOT, devDependencies: { "what-bin": "1.0.0" } });
-  expect(await file(join(dir, "bun.lock")).text()).toBe(lock);
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    expect(await pkg(dir, "root")).toStrictEqual({ ...ROOT, devDependencies: { "what-bin": "1.0.0" } });
+    expect(await file(join(dir, "bun.lock")).text()).toBe(lock);
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("a local path that does not exist relative to the cwd fails and writes nothing", async () => {
   const dir = await makeMonorepo();

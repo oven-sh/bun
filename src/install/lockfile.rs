@@ -1864,10 +1864,12 @@ impl Lockfile {
                 continue;
             }
 
-            // pnpm-lock.yaml lists what `packageExtensions` added among a package's own
-            // dependencies. The manifest only has the package's own.
+            // pnpm-lock.yaml mixes the dependencies that `packageExtensions` added in with the
+            // package's own. Anything the manifest doesn't declare came from an extension.
             let extensions = &self.package_extensions;
-            for (name_hash, is_peer) in extensions.names_added_to(pkg_name_hash, npm_ver, buf) {
+            for (name_hash, is_peer) in
+                extensions.dependencies_added_to(pkg_name_hash, npm_ver, buf)
+            {
                 let groups = if is_peer {
                     [pkg.package.peer_dependencies; 2]
                 } else {
@@ -1932,7 +1934,7 @@ impl Lockfile {
                 pkg_meta.integrity = pkg.package.integrity;
             }
         }
-        self.adopt_package_extension_rows(manager.log_mut(), &added_by_extensions)
+        self.record_migrated_package_extensions(manager.log_mut(), &added_by_extensions)
     }
 }
 

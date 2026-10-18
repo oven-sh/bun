@@ -1528,7 +1528,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         Global::crash();
     }
 
-    // `bun x` drops the entry of PATH that equals BUN_WHICH_IGNORE_CWD, so both get the same bytes.
+    // `bun x` removes the PATH entry that equals BUN_WHICH_IGNORE_CWD, so the two must be identical.
     let parts: [&[u8]; 3] = [
         strings::without_trailing_slash(tempdir.name),
         &[SEP],

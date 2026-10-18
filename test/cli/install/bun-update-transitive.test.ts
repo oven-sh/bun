@@ -1560,7 +1560,7 @@ test.concurrent.each([
   expect(exitCode).toBe(0);
 });
 
-// The tag `pre-3` names 3.0.1. A dist-tag is rewritten to a range, as it is in `dependencies`.
+// The `pre-3` tag points to 3.0.1. A dist-tag is rewritten to a range, same as in `dependencies`.
 test.concurrent.each([
   ["a pin", "3.0.1", "3.0.1"],
   ["a range", "^3.0.1", "^3.0.1"],

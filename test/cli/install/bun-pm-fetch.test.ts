@@ -136,9 +136,9 @@ it("should fetch packages missing from cache when lockfile exists", async () => 
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);
 });
 
-// A Docker layer: `COPY package.json bun.lock ./`, then `RUN bun pm fetch`.
+// Simulates a Docker layer: `COPY package.json bun.lock ./` followed by `RUN bun pm fetch`.
 it.each(["packages/*", "packages/web"])(
-  "should fetch for a workspace in %s that is not on disk yet",
+  "should fetch the dependencies of a workspace in %s that isn't on disk yet",
   async workspace => {
     const urls: string[] = [];
     setHandler(dummyRegistry(urls));
@@ -174,7 +174,7 @@ it.each(["packages/*", "packages/web"])(
 );
 
 it.each(["*", "^1.0.0", "workspace:*"])(
-  "should not ask the registry for a workspace that the root depends on as %s and that is not on disk yet",
+  "should not look up a missing workspace in the registry when the root depends on it as %s",
   async range => {
     const urls: string[] = [];
     setHandler(dummyRegistry(urls));

@@ -416,7 +416,7 @@ fn strip_node_modules(checkout: &bun_sys::Dir) -> bun_sys::Maybe<()> {
     checkout.delete_tree(b"node_modules")
 }
 
-/// The caller has initialized an AST store for this thread.
+/// The caller must initialize an AST store on this thread first.
 pub(crate) fn bundles_dependencies(package_dir: &bun_sys::Dir) -> bool {
     let Ok(contents) = read_package_json_in(package_dir) else {
         return false;
@@ -425,7 +425,7 @@ pub(crate) fn bundles_dependencies(package_dir: &bun_sys::Dir) -> bool {
     crate::bun_json::ParsedJson::parse_package_json(&source, &mut bun_ast::Log::init()).is_ok_and(
         |parsed| {
             let root = &parsed.root;
-            // `true` or a list of names. `as_array` is `None` for an empty list.
+            // Either `true` or a non-empty list of names. `as_array` returns `None` for `[]`.
             (root.get(b"bundleDependencies"))
                 .or_else(|| root.get(b"bundledDependencies"))
                 .is_some_and(|field| field.as_bool() == Some(true) || field.as_array().is_some())

@@ -324,7 +324,7 @@ describe("bun", () => {
   test.each([
     ["prescript", ["dep0 prescript: Exited with code 7", "dep0 script: Skipped", "dep0 postscript: Skipped"]],
     ["script", ["dep0 prescript: Exited with code 0", "dep0 script: Exited with code 7", "dep0 postscript: Skipped"]],
-  ])("a failed %s skips the scripts after it, and other packages still run", (failing, lines) => {
+  ])("a failing %s script skips the rest of its chain, and other packages still run", (failing, lines) => {
     const scripts = { prescript: "echo ran-pre", script: "echo ran-main", postscript: "echo ran-post" };
     using dir = tempDir("testworkspace", {
       dep0: { "package.json": JSON.stringify({ name: "dep0", scripts: { ...scripts, [failing]: "exit 7" } }) },
@@ -349,7 +349,7 @@ describe("bun", () => {
     expect(exitCode).toBe(7);
   });
 
-  test("a failed script does not skip the script of another package with the same name", () => {
+  test("a failing script doesn't skip scripts in a different package with the same name", () => {
     using dir = tempDir("testworkspace", {
       a: { "package.json": JSON.stringify({ name: "same", scripts: { script: "exit 7" } }) },
       b: { "package.json": JSON.stringify({ name: "same", scripts: { script: "echo ran-b" } }) },

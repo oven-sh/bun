@@ -4458,7 +4458,7 @@ it.each<OrderedShape>([
     z: { "z": "z@2.0.0", "o/z": "z@1.0.5" },
   },
   {
-    // kit and the r it depends on use one z, the one that kit's range accepts, though it came with o.
+    // kit and its dependency r should share one z. o's z@1.0.5 satisfies kit's range, so both use it.
     shape: "kit peers z@~1.0.0 and -> r, r peers z@^2.0.0, o -> z@1.0.5",
     manifests: {
       kit: { "1.0.0": { dependencies: { r: "1.0.0" }, peerDependencies: { z: "~1.0.0" } } },
@@ -4474,7 +4474,7 @@ it.each<OrderedShape>([
     z: { "z": "z@1.0.5" },
   },
   {
-    // p and r lead to each other and have the same peer. Neither provides it, so o's copy is for neither.
+    // p and r depend on each other and have the same peer range. o's z doesn't satisfy it, so neither uses it.
     shape: "p peers z@^2.0.0 and -> r, r peers z@^2.0.0 and p, o -> z@1.0.5",
     manifests: {
       o: { "1.0.0": { dependencies: { z: "1.0.5" } } },
@@ -4490,7 +4490,7 @@ it.each<OrderedShape>([
     z: { "z": "z@1.0.5", "p/z": "z@2.0.0", "r/z": "z@2.0.0" },
   },
   {
-    // s and the b it depends on use one z. A second z for p would be first at the top, where b finds it.
+    // s and its dependency b share one z. A second z for p would be hoisted to the top, where b would load it.
     shape: "s -> z@^1.0.0 and b, b peers z@>=1.0.0, p peers z@^2.0.0",
     manifests: {
       b: { "1.0.0": { peerDependencies: { z: ">=1.0.0" } } },
@@ -4506,7 +4506,7 @@ it.each<OrderedShape>([
     z: { "z": "z@1.1.0" },
   },
   {
-    // t is above r and has the same peer, which o's copy does not fit either.
+    // t depends on r and has the same peer range. o's z doesn't satisfy either of them.
     shape: "r peers z@^2.0.0, t peers z@^2.0.0 and -> r, o -> z@1.0.5",
     manifests: {
       o: { "1.0.0": { dependencies: { z: "1.0.5" } } },
@@ -4522,7 +4522,7 @@ it.each<OrderedShape>([
     z: { "z": "z@1.0.5", "r/z": "z@2.0.0", "t/z": "z@2.0.0" },
   },
   {
-    // Nothing above r names z, so o's copy is not for it.
+    // Nothing that depends on r also depends on z, so r doesn't use o's z.
     shape: "r peers z@^2.0.0, o -> z@1.0.5",
     manifests: {
       o: { "1.0.0": { dependencies: { z: "1.0.5" } } },

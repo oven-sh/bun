@@ -459,7 +459,7 @@ describe.each(linkers)("linker: %s", linker => {
     const { packageDir, pruned } = await prunedTree(linker);
     await editApp(packageDir, app => (app.dependencies["no-deps"] = "2.0.0"));
 
-    await frozenFails(packageDir, linker, frozenFailure(dependencyNote("no-deps in packages/app was added")));
+    await frozenFails(packageDir, linker, frozenFailure(dependencyNote("no-deps was added in packages/app")));
 
     expect(await lockText(packageDir)).toBe(pruned);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
@@ -514,7 +514,7 @@ describe.each(linkers)("linker: %s", linker => {
 
     await editApp(packageDir, app => (app.dependencies["is-number"] = "2.0.0"));
 
-    const note = dependencyNote("is-number in packages/app was added");
+    const note = dependencyNote("is-number was added in packages/app");
     await frozenFails(packageDir, linker, [skippedNote("other", "other2"), ...frozenFailure(note)]);
 
     expect(await lockText(packageDir)).toBe(full);
@@ -1443,7 +1443,7 @@ describe("hoisted", () => {
 
     await editApp(packageDir, app => (app.dependencies["is-number"] = "1.0.0"));
 
-    const note = dependencyNote("is-number in packages/app was added");
+    const note = dependencyNote("is-number was added in packages/app");
     await fails(packageDir, linker, [...frozenInstall, "--dry-run"], [prunedNote, ...frozenFailure(note)]);
 
     expect(await lockText(packageDir)).toBe(full);
@@ -1470,9 +1470,9 @@ describe("hoisted", () => {
     expect(await installedPackages(productionDir, linker)).toEqual(survivorsOnDisk);
   });
 
-  // The locked a-dep is what package.json asks for, so no package moves.
+  // package.json asks for the a-dep version that's already locked, so no package changes.
   test.concurrent(
-    "a hand-edited specifier in the pruned bun.lock passes frozen and is rewritten by a plain install",
+    "a hand-edited specifier in the pruned bun.lock passes --frozen-lockfile and is fixed by a regular install",
     async () => {
       const { packageDir, pruned, full } = await prunedTree(linker);
       const edited = pruned.replace('"a-dep": "1.0.1"', '"a-dep": "1.0.0"');
@@ -1981,7 +1981,7 @@ describe("hoisted", () => {
     const { packageDir, full } = await verbatimScenario(linker, hookTree, survivors);
     await editApp(packageDir, app => (app.dependencies["no-deps"] = "2.0.0"));
 
-    const note = dependencyNote("no-deps in packages/app was added");
+    const note = dependencyNote("no-deps was added in packages/app");
     await frozenFails(packageDir, linker, [prunedNote, ...frozenFailure(note)]);
 
     expect(await lockText(packageDir)).toBe(full);

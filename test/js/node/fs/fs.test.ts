@@ -1116,6 +1116,36 @@ describe("a falsy flag option means the default flag", () => {
     const falseFlag: any = false;
     expect(() => openSync(file, falseFlag)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
   });
+
+  it("a flag on Object.prototype does not reach readFile, writeFile or appendFile", async () => {
+    using dir = tempDir("fs-flag-object-prototype", { "f.txt": "old" });
+    const script = `
+      const fs = require("node:fs");
+      const cb = fn => new Promise((resolve, reject) => fn((err, data) => (err ? reject(err) : resolve(data))));
+      (async () => {
+        Object.prototype.flag = "w";
+        const read = [
+          await fs.promises.readFile("f.txt", { encoding: "utf8" }),
+          fs.readFileSync("f.txt", { encoding: "utf8" }),
+          await cb(done => fs.readFile("f.txt", { encoding: "utf8" }, done)),
+        ];
+        fs.appendFileSync("f.txt", "1", {});
+        await fs.promises.appendFile("f.txt", "2", {});
+        await cb(done => fs.appendFile("f.txt", "3", {}, done));
+        const appended = fs.readFileSync("f.txt", "utf8");
+        Object.prototype.flag = "a";
+        fs.writeFileSync("f.txt", "4", {});
+        await fs.promises.writeFile("f.txt", "5", {});
+        await cb(done => fs.writeFile("f.txt", "6", {}, done));
+        console.log(JSON.stringify({ read, appended, written: fs.readFileSync("f.txt", "utf8") }));
+      })();
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ read: ["old", "old", "old"], appended: "old123", written: "6" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // A write that dies partway through must not leave the old tail sitting behind

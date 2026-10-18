@@ -1526,7 +1526,7 @@ impl FileSystemFlags {
             .throw())
     }
 
-    /// Node's `options.flag || default` in writeFile and appendFile: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2343
+    /// Node's `options.flag || default` in writeFile, appendFile and `fs.promises.readFile`: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2343
     #[inline]
     pub(crate) fn from_js_if_truthy(
         ctx: &JSGlobalObject,

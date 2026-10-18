@@ -987,6 +987,15 @@ mod _async_tasks {
     // NewAsyncFSTask — runs a NodeFS method on the thread pool.
     // ──────────────────────────────────────────────────────────────────────────
 
+    /// Which arm of an async binding was called.
+    #[derive(Clone, Copy)]
+    pub(crate) enum AsyncArm {
+        /// `node:fs/promises`: returns a promise.
+        Promise,
+        /// Argument 0 is the callback. `fs.promises` forwards user arguments, so a trailing function cannot mark this arm.
+        Callback,
+    }
+
     /// One `fs.*` operation's parsed arguments.
     pub(crate) trait FsArgument: Sized + ThreadIsolatedArg {
         const HAVE_ABORT_SIGNAL: bool = false;
@@ -995,14 +1004,24 @@ mod _async_tasks {
         /// `from_js`; the trait forwards to it so the generic `Bindings` in
         /// `node_fs_binding.rs` can call it without per-type macro arms.
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self>;
-        /// [`from_js`](Self::from_js) for a work-pool job: paths and data parse
+        /// [`from_js`](Self::from_js) for one arm of an async binding. Node parses both arms alike, except for the `flag` of `readFile`.
+        #[inline]
+        fn from_js_for_arm(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+            _arm: AsyncArm,
+        ) -> JsResult<Self> {
+            Self::from_js(ctx, arguments)
+        }
+        /// [`from_js_for_arm`](Self::from_js_for_arm) for a work-pool job: paths and data parse
         /// thread-isolated / pinned and rooted under `will_be_async`.
         fn from_js_async(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
+            arm: AsyncArm,
         ) -> JsResult<ThreadIsolated<Self>> {
             arguments.will_be_async = true;
-            let args = Self::from_js(ctx, arguments)?;
+            let args = Self::from_js_for_arm(ctx, arguments, arm)?;
             // SAFETY: parsed with `will_be_async`.
             Ok(unsafe { ThreadIsolated::new(args) })
         }
@@ -1075,6 +1094,17 @@ mod _async_tasks {
         #[inline]
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             args::ReadFile::from_js(ctx, arguments)
+        }
+        #[inline]
+        fn from_js_for_arm(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+            arm: AsyncArm,
+        ) -> JsResult<Self> {
+            match arm {
+                AsyncArm::Promise => args::ReadFile::from_js_promises(ctx, arguments),
+                AsyncArm::Callback => args::ReadFile::from_js(ctx, arguments),
+            }
         }
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
@@ -2719,7 +2749,8 @@ mod _async_tasks {
     }
 } // mod _async_tasks
 pub(crate) use _async_tasks::{
-    AsyncCpTask, AsyncReaddirRecursiveTask, FsArgument, FsReturn, ShellAsyncCpTask, async_,
+    AsyncArm, AsyncCpTask, AsyncReaddirRecursiveTask, FsArgument, FsReturn, ShellAsyncCpTask,
+    async_,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4143,6 +4174,20 @@ pub(crate) mod args {
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<Self> {
+            Self::parse(ctx, arguments, FileSystemFlags::from_js)
+        }
+        /// `fs.promises.readFile`: Node reads `options.flag || 'r'` there. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1928
+        pub(crate) fn from_js_promises(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
+            Self::parse(ctx, arguments, FileSystemFlags::from_js_if_truthy)
+        }
+        fn parse(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+            flag_from_js: fn(&JSGlobalObject, JSValue) -> JsResult<Option<FileSystemFlags>>,
+        ) -> JsResult<Self> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
@@ -4164,7 +4209,7 @@ pub(crate) mod args {
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
+                        flag = flag_from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {

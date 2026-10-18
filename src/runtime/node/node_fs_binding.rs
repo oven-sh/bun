@@ -7,7 +7,7 @@ use bun_sys_jsc::SystemErrorJsc as _;
 
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
-    self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
+    self, AsyncArm, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
     NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
 };
 
@@ -50,15 +50,6 @@ where
     }
 }
 
-/// Which arm of an async binding was called.
-#[derive(Clone, Copy)]
-enum AsyncArm {
-    /// `node:fs/promises`: returns a promise.
-    Promise,
-    /// Argument 0 is the callback. `fs.promises` forwards user arguments, so a trailing function cannot mark this arm.
-    Callback,
-}
-
 /// The arguments of the operation, and the callback for [`AsyncArm::Callback`].
 fn split_callback<'a>(
     global: &JSGlobalObject,
@@ -96,7 +87,7 @@ fn run_async<A: FsArgument>(
     ) -> JSValue,
 ) -> JsResult<JSValue> {
     let (callback, arguments) = split_callback(global, frame, arm)?;
-    let args = match parse_async_args::<A>(global, arguments)? {
+    let args = match parse_async_args::<A>(global, arguments, arm)? {
         ParsedAsyncArgs::Args(args) => args,
         ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, callback, error),
     };
@@ -120,10 +111,11 @@ enum ParsedAsyncArgs<A> {
 fn parse_async_args<A: FsArgument>(
     global: &JSGlobalObject,
     arguments: &[JSValue],
+    arm: AsyncArm,
 ) -> JsResult<ParsedAsyncArgs<A>> {
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, arguments);
-    let args = A::from_js_async(global, &mut slice)?;
+    let args = A::from_js_async(global, &mut slice, arm)?;
 
     if A::HAVE_ABORT_SIGNAL {
         if let Some(abort_error) = args
@@ -213,7 +205,11 @@ impl Binding {
 
     /// `callAsync(.cp)`.
     pub(crate) fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let cp_args = match parse_async_args::<args::Cp<'static>>(global, frame.arguments())? {
+        let cp_args = match parse_async_args::<args::Cp<'static>>(
+            global,
+            frame.arguments(),
+            AsyncArm::Promise,
+        )? {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
         };
@@ -271,7 +267,7 @@ impl Binding {
         arm: AsyncArm,
     ) -> JsResult<JSValue> {
         let (callback, arguments) = split_callback(global, frame, arm)?;
-        let rd_args = match parse_async_args::<args::Readdir<'static>>(global, arguments)? {
+        let rd_args = match parse_async_args::<args::Readdir<'static>>(global, arguments, arm)? {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => {
                 return reject_before_schedule(global, callback, error);

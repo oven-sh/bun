@@ -2357,4 +2357,65 @@ c {
       "/across-files-url.css",
     ],
   });
+
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`css/PropertyRuleStringSyntax_${backend}`, {
+      backend,
+      files: {
+        "/entry.css": /* css */ `
+          .page { color: green; }
+          @property --label { syntax: "<string>"; inherits: false; initial-value: "a"; }
+        `,
+      },
+      outfile: "/out.css",
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+          /* entry.css */
+          .page {
+            color: green;
+          }
+          @property --label {
+            syntax: "<string>";
+            inherits: false;
+            initial-value: "a";
+          }
+        `);
+      },
+    });
+    itBundled(`css/PropertyRuleUniversalSyntaxTrailingSpace_${backend}`, {
+      backend,
+      files: {
+        "/entry.css": /* css */ `
+          .page { color: green; }
+          @property --label { syntax: "* "; inherits: false; }
+        `,
+      },
+      outfile: "/out.css",
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+          /* entry.css */
+          .page {
+            color: green;
+          }
+          @property --label {
+            syntax: "*";
+            inherits: false
+          }
+        `);
+      },
+    });
+    itBundled(`css/PropertyRuleUnknownSyntaxName_${backend}`, {
+      backend,
+      files: {
+        "/entry.css": /* css */ `
+          .page { color: green; }
+          @property --label { syntax: "<strings>"; inherits: false; initial-value: "a"; }
+        `,
+      },
+      outfile: "/out.css",
+      bundleErrors: {
+        "/entry.css": ["Invalid value"],
+      },
+    });
+  }
 });

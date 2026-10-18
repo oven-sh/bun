@@ -66,7 +66,7 @@ impl SyntaxString {
     /// Parses a syntax string.
     fn parse_string(input: &[u8]) -> Result<SyntaxString, ()> {
         // https://drafts.css-houdini.org/css-properties-values-api/#parsing-syntax
-        let mut trimmed_input = strings::trim_left(input, SPACE_CHARACTERS);
+        let mut trimmed_input = strings::trim(input, SPACE_CHARACTERS);
         if trimmed_input.is_empty() {
             return Err(());
         }

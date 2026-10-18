@@ -360,6 +360,7 @@ pub use resolve_path::{
 pub use path_buffer_pool::os_path_buffer_pool;
 #[path = "Path.rs"]
 pub mod path;
+pub mod typed;
 pub use path::{
     AbsPath, AutoAbsPath, AutoAbsPathChecked, AutoRelPath, Path, PathUnit, RelPath,
     options as path_options,

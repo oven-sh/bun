@@ -1322,7 +1322,7 @@ impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> Drop
 // the input element type, so they're hoisted to generics over `C: PathUnit`)
 // ──────────────────────────────────────────────────────────────────────────
 
-fn root_len<C: PathUnit>(input: &[C]) -> Option<usize> {
+pub(crate) fn root_len<C: PathUnit>(input: &[C]) -> Option<usize> {
     #[cfg(windows)]
     {
         if input.len() > 2

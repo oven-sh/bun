@@ -5058,9 +5058,11 @@ dynamic.getSSRProps = binding => {
     });
 
     // The expected output is TypeScript 7.1's. 7.0 misses the errors in issue_v0.ts and issue_v1.ts and some in order_b.ts.
-    test.each([1, 8])("reports the errors of TypeScript 7.1 in cycles of generic types, on %d threads", async threads => {
-      using dir = project({
-        "issue_v0.ts": `interface Box<N extends Record<string, Box<any, any> | undefined>, X> {
+    test.each([1, 8])(
+      "reports the errors of TypeScript 7.1 in cycles of generic types, on %d threads",
+      async threads => {
+        using dir = project({
+          "issue_v0.ts": `interface Box<N extends Record<string, Box<any, any> | undefined>, X> {
   get: () => Fn<N, X>;
 }
 type Wrap<N> = { [K in keyof N]: N[K] extends Box<infer M, any> ? never : never };
@@ -5069,7 +5071,7 @@ type B<C> = Box<{}, C extends Fn<any, infer X> ? X : never>;
 
 export const v: B<any> = {} as B<Fn<{}, {}>>;
 `,
-        "issue_v1.ts": `type Entry<C> = Shape<
+          "issue_v1.ts": `type Entry<C> = Shape<
   C extends Comp<infer N, any> ? N : never,
   C extends Comp<any, infer X> ? X : never
 >;
@@ -5102,7 +5104,7 @@ create({
 
 export {}
 `,
-        "issue_v2.ts": `interface Internal<N extends Record<string, Entry<any> | undefined>, X extends {} | null> {
+          "issue_v2.ts": `interface Internal<N extends Record<string, Entry<any> | undefined>, X extends {} | null> {
   root: Comp<N, X>;
 }
 type Preloaded<E> = E extends { [k: string]: Internal<any, any> | undefined }
@@ -5119,7 +5121,7 @@ declare const parent: Entry<Comp<{ inner: typeof inner }>>;
 declare const props: Props<{ parent?: typeof parent }, {}>;
 export const x = props.entryPoints.parent;
 `,
-        "issue_v3.ts": `interface Internal<N extends Record<string, Entry<any> | undefined>, X extends {} | null> {
+          "issue_v3.ts": `interface Internal<N extends Record<string, Entry<any> | undefined>, X extends {} | null> {
   root: Comp<N, X>;
 }
 type Preloaded<E> = E extends { [k: string]: Internal<any, any> | undefined }
@@ -5137,7 +5139,7 @@ create<Comp<{ inner: typeof inner }>>({ run: ({ id }) => {} });
 
 export {}
 `,
-        "issue_v4.ts": `interface Internal<
+          "issue_v4.ts": `interface Internal<
   Nested extends Record<string, Entry<any> | undefined>,
   Extra extends {} | null,
 > {
@@ -5172,7 +5174,7 @@ type CompOf<E> = E extends Entry<infer C> ? C : never;
 declare const inner: Entry<Comp<{}, null>>;
 export type Outer = Comp<{ inner: typeof inner }>;
 `,
-        "order_a.ts": `interface Box<N extends Record<string, Box<any, any> | undefined>, X> {
+          "order_a.ts": `interface Box<N extends Record<string, Box<any, any> | undefined>, X> {
   get: () => Fn<N, X>;
 }
 type Wrap<N> = { [K in keyof N]: N[K] extends Box<infer M, any> ? never : never };
@@ -5187,7 +5189,7 @@ declare let f1: Fn<{}, {}>; declare let f2: Fn<{}, unknown>; declare let f3: Fn<
 f2 = f1; f1 = f2; f3 = f4; f4 = f3;
 export const sentinel: number = '';
 `,
-        "order_b.ts": `interface Box<N extends Record<string, Box<any, any> | undefined>, X> {
+          "order_b.ts": `interface Box<N extends Record<string, Box<any, any> | undefined>, X> {
   get: () => Fn<N, X>;
 }
 type Wrap<N> = { [K in keyof N]: N[K] extends Box<infer M, any> ? never : never };
@@ -5200,11 +5202,11 @@ wide = narrow; narrow = wide; str = num; num = str;
 export const v: B<any> = {} as B<Fn<{}, {}>>;
 export const sentinel: number = '';
 `,
-        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "es2022", "module": "esnext", "moduleResolution": "bundler", "types": [], "moduleDetection": "force"}, "files": ["issue_v0.ts", "issue_v1.ts", "issue_v2.ts", "issue_v3.ts", "issue_v4.ts", "order_a.ts", "order_b.ts"]}`,
-      });
-      const { stdout } = await check(dir, ["--threads", String(threads)]);
-      expect(stdout).toBe(
-        `
+          "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "es2022", "module": "esnext", "moduleResolution": "bundler", "types": [], "moduleDetection": "force"}, "files": ["issue_v0.ts", "issue_v1.ts", "issue_v2.ts", "issue_v3.ts", "issue_v4.ts", "order_a.ts", "order_b.ts"]}`,
+        });
+        const { stdout } = await check(dir, ["--threads", String(threads)]);
+        expect(stdout).toBe(
+          `
 issue_v0.ts(8,14): error TS2322: Type 'B<Fn<{}, {}>>' is not assignable to type 'B<any>'.
   The types returned by 'get()' are incompatible between these types.
     Type 'Fn<{}, {}>' is not assignable to type 'Fn<{}, unknown>'.
@@ -5313,8 +5315,9 @@ order_b.ts(11,14): error TS2322: Type 'B<Fn<{}, {}>>' is not assignable to type 
             Type 'unknown' is not assignable to type '{}'.
 order_b.ts(12,14): error TS2322: Type 'string' is not assignable to type 'number'.
 `.slice(1, -1),
-      );
-    });
+        );
+      },
+    );
 
     test("an intersection with a conditional type whose constraint is any", async () => {
       using dir = project({

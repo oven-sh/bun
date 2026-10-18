@@ -3758,6 +3758,123 @@ export {};
 (9,7): error TS2322: Type 'any' is not assignable to type 'never'.
 `,
   },
+  "a mapped type over a type parameter and the type parameter, in either order": {
+    sizes: [0],
+    program: () => {
+      const types = [
+        "Partial<T> & T",
+        "T & Partial<T>",
+        "Required<T> & P",
+        "P & Required<T>",
+        "Readonly<T> & T",
+        "{ [K in keyof T]: T[K] } & T",
+        'Omit<T, "id"> & P',
+        'P & Omit<T, "id">',
+        'Pick<T, "id"> & T',
+        "Record<string, unknown> & T",
+      ];
+      const bodies = [
+        "return register(make<V>());",
+        "return register(null! as V);",
+        "return Object.keys(make<V>());",
+        "return register(v!);",
+        "return v!.id;",
+        "const made = make<V>(); return register(made);",
+      ];
+      const programs = types
+        .flatMap(type => bodies.map(body => [type, body]))
+        .map(
+          ([type, body], n) => `
+interface Page${n} { id: string; title?: string }
+interface Link${n} { id: string; to?: keyof typeof routes${n} }
+function load${n}<T extends Page${n} | Link${n}, P extends T>(v?: ${type}) { ${body.replace("V", type)} }
+const routes${n} = { home: load${n}() };`,
+        );
+      return `
+declare function register(entry: { id: string }): number;
+declare function make<M>(): M;${programs.join("")}\nexport {};\n`;
+    },
+    errors: `
+(21,31): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(22,10): error TS7023: 'load4' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(23,7): error TS7022: 'routes4' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(29,31): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(30,10): error TS7023: 'load6' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(31,7): error TS7022: 'routes6' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(33,31): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(34,10): error TS7023: 'load7' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(35,7): error TS7022: 'routes7' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(45,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(46,10): error TS7023: 'load10' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(47,7): error TS7022: 'routes10' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(69,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(70,10): error TS7023: 'load16' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(71,7): error TS7022: 'routes16' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(77,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(78,10): error TS7023: 'load18' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(79,7): error TS7022: 'routes18' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(81,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(82,10): error TS7023: 'load19' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(83,7): error TS7022: 'routes19' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(93,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(94,10): error TS7023: 'load22' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(95,7): error TS7022: 'routes22' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(117,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(118,10): error TS7023: 'load28' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(119,7): error TS7022: 'routes28' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(141,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(142,10): error TS7023: 'load34' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(143,7): error TS7022: 'routes34' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+`,
+  },
+  "the properties of the constraint are created where a union with such an intersection is reduced to its supertypes": {
+    sizes: [2, 9],
+    program: count => {
+      const inInitializer = [
+        ["v: (U & { extra: 1 }) | undefined", "v || (null! as { id: string })"],
+        ["v: (U & { extra: 1 }) | undefined", "v ?? (null! as { id: string })"],
+        ["v: U & { extra: 1 }", "v || (null! as { id: string })"],
+        ["v: U & { extra: 1 }", "[v, null! as { id: string }]"],
+        ["v: U & { extra: 1 }, c?: boolean", "c ? v : (null! as { id: string })"],
+        ["v: U & { extra: 1 }", "v || 1"],
+        ["v: U & { extra: 1 }", "[v, v]"],
+        ["v: U", "v || (null! as { id: string })"],
+        ["v: U", "[v, null! as { id: string }]"],
+        ["v: { extra: 1 } & { id: string }", "v || (null! as { id: string })"],
+      ];
+      const programs = inInitializer.map(
+        ([parameters, returned], n) => `
+interface A${n} { id: string; shape?: 1 }
+interface B${n} { id: string; shape?: keyof typeof shapes${n} }
+type Members${n} = A${n} | B${n}${each(count - 2, i => ` | (A${n} & { t${i}?: ${i} })`, "")};
+const shapes${n} = { circle: (<U extends Members${n}>(${parameters}) => ${returned})(null!) };
+const whole${n}: never = shapes${n};`,
+      );
+      return `${programs.join("")}\nexport {};\n`;
+    },
+    errors: `
+(3,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(5,7): error TS7022: 'shapes0' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(6,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(8,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(10,7): error TS7022: 'shapes1' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(11,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(16,7): error TS2322: Type '{ circle: never; }' is not assignable to type 'never'.
+(18,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(20,7): error TS7022: 'shapes3' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(20,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(21,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(23,28): error TS2502: 'shape' is referenced directly or indirectly in its own type annotation.
+(25,7): error TS7022: 'shapes4' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(25,28): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(26,7): error TS2322: Type 'any' is not assignable to type 'never'.
+(31,7): error TS2322: Type '{ circle: never; }' is not assignable to type 'never'.
+(36,7): error TS2322: Type '{ circle: never[]; }' is not assignable to type 'never'.
+(41,7): error TS2322: Type '{ circle: never; }' is not assignable to type 'never'.
+(46,7): error TS2322: Type '{ circle: { id: string; }[]; }' is not assignable to type 'never'.
+(51,7): error TS2322: Type '{ circle: { extra: 1; } & { id: string; }; }' is not assignable to type 'never'.
+`,
+  },
   "an intersection with a type parameter whose constraint is a union, compared with object types": {
     sizes: [2, 9, 130],
     program: count => {

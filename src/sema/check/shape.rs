@@ -7588,13 +7588,23 @@ impl<'p, 's> Checker<'p, 's> {
         // here, with the errors and the cycles of that.
         if let TypeData::Intersection(members) = self.data(ty) {
             let members: SmallVec<[TypeId; 4]> = members.iter().copied().collect();
+            let mut has_union = false;
             for &member in &members {
                 if self.is_instantiable(member) {
                     let apparent = self.apparent_type(member);
-                    // The properties of a union are created when they are listed, each with the types of what it
-                    // combines, whether or not another member has the name.
-                    if LISTS_UNION_CONSTRAINTS && self.is_union(apparent) {
+                    has_union |= self.is_union(apparent);
+                }
+            }
+            // The properties of a union are created when they are listed, each with the types of what it combines,
+            // whether or not another member has the name. The members are listed in their order: in `Partial<T> & T`
+            // the mapped type has its members in place, none so far, while it lists the constraint of `T`.
+            if LISTS_UNION_CONSTRAINTS && has_union {
+                for &member in &members {
+                    let apparent = self.apparent_type(member);
+                    if self.is_union(apparent) {
                         self.union_as_object(apparent);
+                    } else {
+                        self.members(apparent);
                     }
                 }
             }

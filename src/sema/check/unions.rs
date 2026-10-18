@@ -1298,7 +1298,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// that type. The types of the preceding properties are resolved on the way, as
     /// `removeSubtypes` does.
     fn first_unit_property(&mut self, ty: TypeId) -> Option<(Atom, TypeId)> {
-        let apparent = self.apparent_type(ty);
+        // `getPropertiesOfType`
+        let apparent = self.reduced_apparent_type(ty);
+        let apparent = match self.is_union(apparent) {
+            true => self.union_as_object(apparent),
+            false => apparent,
+        };
         let members = self.members(apparent)?;
         for prop in &members.shape().props {
             let of_prop = self.type_of_prop(prop, members.mapper);

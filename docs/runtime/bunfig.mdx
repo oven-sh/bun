@@ -1272,7 +1272,7 @@ The same flag makes the lifecycle scripts of `bun install` run `node` as `bun`:
 bun install --bun
 ```
 
-In a workspace, `bun install` reads the `bunfig.toml` of the workspace root, and `bun run` reads the one of the directory it runs in. Set `run.bun` at the root to cover both.
+In a workspace, `bun install` reads the `bunfig.toml` of the workspace root. `bun run` reads the `bunfig.toml` of the directory it runs in.
 
 Set to `false` to disable the `node` symlink.
 

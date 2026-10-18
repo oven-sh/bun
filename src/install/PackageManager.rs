@@ -1351,9 +1351,8 @@ static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: core::sync::atomic::AtomicPtr<ScriptsEnv>
 /// The environment every lifecycle script inherits.
 pub(crate) struct ScriptsEnv {
     pub(crate) transpiler: transpiler::Transpiler<'static>,
-    /// The directory where bun is `node`, with a trailing delimiter. It goes first on the
-    /// script PATH, as `RunCommand::path_for_run` orders it. Empty when the scripts use a
-    /// real `node`.
+    /// The bun-node shim dir with a trailing delimiter, first on the script PATH. Empty
+    /// when a real `node` runs the scripts.
     pub(crate) node_shim_path: Vec<u8>,
 }
 
@@ -1403,8 +1402,7 @@ fn configure_env_for_scripts_run(
         }
     }
 
-    // Like `RunCommand::path_for_run`: bun is `node` when `run.bun` asks for it, or when
-    // there is no `node`.
+    // `run.bun` or no `node`: bun is `node`, as in `RunCommand::path_for_run`.
     let mut node_shim_path: Vec<u8> = Vec::new();
     {
         let mut node_path = bun_paths::path_buffer_pool::get();
@@ -1422,8 +1420,7 @@ fn configure_env_for_scripts_run(
             if RunCommand::create_fake_temporary_node_executable(&mut node_shim_path, &mut bun_path)
                 .is_ok()
             {
-                // `NODE` is the shim, which runs as `node`, not the bun binary, which runs as
-                // `bun`. Without a shim, the `node` of PATH.
+                // `NODE` is the shim: it runs as `node`. Without a shim, the `node` of PATH.
                 let mut node_file: Vec<u8> = Vec::new();
                 if let Some(dir) = node_shim_path.strip_suffix(&[bun_paths::DELIMITER]) {
                     node_file.extend_from_slice(dir);

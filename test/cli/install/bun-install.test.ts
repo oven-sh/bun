@@ -16855,14 +16855,17 @@ describe.concurrent("the flags of the runtime that take no value", () => {
 // like `bun run --bun` does, and first on PATH: ahead of a `node` that a package puts in `.bin`.
 describe.concurrent("node in lifecycle scripts", () => {
   const probe = `node -e "console.log('Bun is ' + typeof Bun)"`;
-  const realNode = Bun.which("node", { PATH: env.PATH ?? "" });
+  // `bunEnv` spells the inherited variable `Path` on Windows. `process.env` finds it.
+  const realNode = Bun.which("node", { PATH: process.env.PATH ?? "" });
   // The PATH without any `node`, for the fallback that makes bun `node`.
   const noNode = {
-    PATH: (env.PATH ?? "")
+    Path: undefined,
+    PATH: (process.env.PATH ?? "")
       .split(delimiter)
       .filter(dir => !Bun.which("node", { PATH: dir }))
       .join(delimiter),
   };
+  const samePath = (path: string | undefined) => path?.replaceAll("\\", "/").toLowerCase();
   const project = (files: Record<string, string> = {}, pkg: Record<string, unknown> = {}) =>
     tempDir("install-lifecycle-node", {
       "package.json": JSON.stringify({ name: "foo", version: "0.0.1", scripts: { prepare: probe }, ...pkg }),
@@ -16896,7 +16899,7 @@ describe.concurrent("node in lifecycle scripts", () => {
 
     if (realNode) {
       const plain = await bunIn(String(dir), ["install"]);
-      expect(node(plain.stdout)).toBe(realNode);
+      expect(samePath(node(plain.stdout))).toBe(samePath(realNode));
       expect(ranIn(plain)).toBe("undefined as node");
     }
   });
@@ -16907,8 +16910,13 @@ describe.concurrent("node in lifecycle scripts", () => {
     [["--bun", "install"]],
     [["-b", "install"]],
     [["add", "--bun", "./dep"]],
+    [["remove", "--bun", "dep"]],
+    [["update", "--bun"]],
   ])("is bun with %j", async cmd => {
-    using dir = project({ "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }) });
+    using dir = project(
+      { "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }) },
+      cmd[0] === "add" ? {} : { dependencies: { dep: "./dep" } },
+    );
     expect(ranIn(await bunIn(String(dir), cmd))).toBe("object");
   });
 
@@ -16933,6 +16941,21 @@ describe.concurrent("node in lifecycle scripts", () => {
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
     expect(await file(join(String(dir), "node_modules", "dep", "out.txt")).text()).toBe("Bun is object");
+  });
+
+  it("is bun in the scripts that bun pm trust runs", async () => {
+    const postinstall = `node -e "require('fs').writeFileSync('out.txt', 'Bun is ' + typeof Bun)"`;
+    using dir = project(
+      { "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", scripts: { postinstall } }) },
+      { scripts: {}, dependencies: { dep: "./dep" } },
+    );
+    const out = join(String(dir), "node_modules", "dep", "out.txt");
+    expect((await bunIn(String(dir), ["install"])).exitCode).toBe(0);
+    expect(await exists(out)).toBeFalse();
+    const { stderr, exitCode } = await bunIn(String(dir), ["pm", "trust", "dep", "--bun"]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(await file(out).text()).toBe("Bun is object");
   });
 
   it("is ahead of a node in node_modules/.bin", async () => {

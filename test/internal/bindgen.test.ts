@@ -1392,18 +1392,18 @@ describe("a string or a buffer, as bytes", () => {
     const written = (await Bun.build({ entrypoints, outdir: join(String(dir), "out") })).outputs[0];
     const code = [...new Uint8Array(await inMemory.arrayBuffer())];
     expect(code.length).toBeGreaterThan(0);
+    const fileBlob = expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: "File blob cannot be used here",
+    });
     for (const f of [bindgen.bytesOfBufferOrBlob, bindgen.bytesOfOrToString]) {
       expect(f(inMemory)).toEqual(code);
-      expect(() => f(written)).toThrow(
-        expect.objectContaining({
-          name: "TypeError",
-          code: "ERR_INVALID_ARG_TYPE",
-          message: "File blob cannot be used here",
-        }),
-      );
+      expect(() => f(written)).toThrow(fileBlob);
     }
     expect(bindgen.bytesBeforeAndAfterCallback(inMemory, () => Bun.gc(true))).toEqual([code, code]);
     expect(bindgen.stringAsIsOrBytes(inMemory)).toEqual([0, ...code]);
+    expect(() => bindgen.stringAsIsOrBytes(written)).toThrow(fileBlob);
     expect(bindgen.bytesOfRefusingUndefined(inMemory)).toEqual(utf8("[object BuildArtifact]"));
   });
 

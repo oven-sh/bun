@@ -100,11 +100,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
         )?;
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
-        // For `export async function`, `loc` is that of the `export`.
-        if !p.react_compiler_fn_spans.is_empty()
-            && let Some(span) = p.react_compiler_fn_spans.get_mut(&func.body.loc.start)
-        {
-            span.start = async_range.map_or(loc, |range| range.loc);
+        if !p.react_compiler_fn_spans.is_empty() {
+            // For `export async function`, `loc` is that of the `export`.
+            let start = async_range.map_or(loc, |range| range.loc);
+            p.record_react_compiler_fn_start(func.body.loc, start);
         }
 
         if Self::IS_TYPESCRIPT_ENABLED {
@@ -613,5 +612,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 end: end as i32,
             },
         );
+    }
+
+    /// Notes that the function statement whose body is at `body_loc` starts at `start`, if its end is on record.
+    #[cold]
+    fn record_react_compiler_fn_start(&mut self, body_loc: bun_ast::Loc, start: bun_ast::Loc) {
+        if let Some(span) = self.react_compiler_fn_spans.get_mut(&body_loc.start) {
+            span.start = start;
+        }
     }
 }

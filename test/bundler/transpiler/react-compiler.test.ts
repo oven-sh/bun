@@ -3011,6 +3011,206 @@ describe("bundler", () => {
     run: { stdout: '{"h":"div","props":{"title":"A"},"children":["hi"]}' },
   });
 
+  // A default value and a `case` test are evaluated out of source order, so
+  // the compiler takes one only if each of its operands is safe to reorder.
+  // The operands of a JSX element are its tag, props and key. The
+  // `isStaticChildren, source, self` that end a `jsxDEV` call are not, so
+  // development gives each form the verdict that production gives it.
+  const jsxInDefaultForms = /* jsx */ `
+    import React, { memo } from "react";
+    const Spinner = () => null;
+    Spinner.displayName = "Spinner";
+    const UI = { Spinner };
+
+    export function ObjectPattern({ title, icon = <Spinner /> }) {
+      return <div title={title}>{icon}</div>;
+    }
+    export function ArrayPattern({ pair }) {
+      const [first = <Spinner />] = pair;
+      return <div>{first}</div>;
+    }
+    export function useParameter(props, icon = <Spinner />) {
+      return <div>{icon}</div>;
+    }
+    export function AssignmentPattern(props) {
+      let icon;
+      ({ icon = <Spinner /> } = props);
+      return <div>{icon}</div>;
+    }
+    export function CaseTest({ title }) {
+      switch (title) {
+        case <Spinner />:
+          return <b />;
+        default:
+          return <i>{title}</i>;
+      }
+    }
+    export function InAnArray({ list = [<Spinner key="a" />, <b key="b">x</b>] }) {
+      return <div>{list}</div>;
+    }
+    export function InAnObject({ slots = { icon: <Spinner /> } }) {
+      return <div>{slots.icon}</div>;
+    }
+    export function InALogical({ title, icon = title && <Spinner /> }) {
+      return <div>{icon}</div>;
+    }
+    export function InAConditional({ title, icon = title ? <Spinner /> : null }) {
+      return <div>{icon}</div>;
+    }
+    export function FragmentDefault({ icon = <>text</> }) {
+      return <div>{icon}</div>;
+    }
+    export function MemberTag({ icon = <UI.Spinner /> }) {
+      return <div>{icon}</div>;
+    }
+    export function KeyChildrenAndLocalProp({ title, icon = <ul key="k" title={title}><li>1</li><li>2</li></ul> }) {
+      return <div>{icon}</div>;
+    }
+    export const MemoCallback = memo(({ icon = <Spinner /> }) => <div>{icon}</div>);
+    export function NestedFunction({ rows }) {
+      const item = ({ value, fallback = <Spinner /> }) => <li>{value ?? fallback}</li>;
+      return <ul>{rows.map(row => item(row))}</ul>;
+    }
+    export function LocalTag({ title: Title, icon = <Title /> }) {
+      return <div>{icon}</div>;
+    }
+    export function LocalKey({ title, icon = <Spinner key={title} /> }) {
+      return <div>{icon}</div>;
+    }
+    export function ArrowReturningJsx(props) {
+      const { render = () => <Spinner /> } = props;
+      return <div>{render()}</div>;
+    }
+
+    // The tag, the props and the key are each judged: one that is not safe to
+    // reorder keeps the function as written.
+    export function MemberOfLocalTag({ rest, icon = <rest.id /> }) {
+      return <div>{icon}</div>;
+    }
+    export function SpreadProp({ rest, icon = <Spinner {...rest} /> }) {
+      return <div>{icon}</div>;
+    }
+    export function MemberOfLocalKey({ rest, icon = <Spinner key={rest.id} /> }) {
+      return <div>{icon}</div>;
+    }
+    // With the classic runtime this is createElement(Spinner, null, 1, 2, 3, rest.id): as many
+    // arguments as a jsxDEV call has.
+    export function MemberOfLocalChild({ rest, icon = <Spinner>{1}{2}{3}{rest.id}</Spinner> }) {
+      return <div>{icon}</div>;
+    }
+    // An arrow that is a default may not read a local.
+    export function LocalInArrow(props) {
+      const { title, render = () => <Spinner title={title} /> } = props;
+      return <div>{render()}</div>;
+    }
+    // The arrow reads its own parameters, so the component stays as written. The arrow is not
+    // compiled in its place.
+    export function ArrowInParameterList({ rows, item = ({ value, fallback = <Spinner /> }) => <li>{value ?? fallback}</li> }) {
+      return <ul>{rows.map(row => item(row))}</ul>;
+    }
+  `;
+  const jsxInDefaultFiles = {
+    // Calls each form with and without its defaulted values, and the same form as written.
+    "/entry.js": /* js */ `
+      import runtime from "react/compiler-runtime";
+      import * as forms from "./forms";
+      import * as plain from "./plain";
+      const defaults = { title: "T", pair: [], rows: [{}, { value: "v" }], rest: { id: "r" } };
+      const given = {
+        ...defaults,
+        icon: "I",
+        list: "L",
+        slots: { icon: "S" },
+        pair: ["P"],
+        rows: [{ fallback: "F" }],
+        render: () => "R",
+      };
+      const compiled = {};
+      const differs = [];
+      for (const [name, Form] of Object.entries(forms)) {
+        const Plain = plain[name];
+        for (const props of [defaults, given]) {
+          const before = runtime.caches;
+          const rendered = JSON.stringify(Form(props, props.icon));
+          compiled[name] = runtime.caches > before;
+          if (rendered !== JSON.stringify(Plain(props, props.icon))) differs.push(name);
+        }
+      }
+      console.log(JSON.stringify({ compiled, differs }));
+    `,
+    "/forms.jsx": jsxInDefaultForms,
+    "/plain.jsx": `"use no memo";\n` + jsxInDefaultForms,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": /* js */ `
+      exports.Fragment = "Fragment";
+      exports.memo = component => component;
+      exports.element = callee => (type, props, ...rest) => ({ [callee]: type.displayName ?? type, props, rest });
+      exports.createElement = exports.element("createElement");
+    `,
+    "/node_modules/react/jsx-runtime.js": /* js */ `
+      const { Fragment, element } = require("react");
+      module.exports = { Fragment, jsx: element("jsx"), jsxs: element("jsxs") };
+    `,
+    "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+      const { Fragment, element } = require("react");
+      const jsxDEV = element("jsxDEV");
+      module.exports = { Fragment, jsxDEV: (type, props, key, isStaticChildren) => jsxDEV(type, props, key, isStaticChildren) };
+    `,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      exports.caches = 0;
+      exports.c = function useMemoCache(size) {
+        exports.caches++;
+        return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
+    `,
+  };
+  const jsxInDefaultModes: Record<string, Pick<BundlerTestInput, "env" | "jsx">> = {
+    Development: {},
+    Production: { env: { NODE_ENV: "production" } },
+    Classic: { jsx: { runtime: "classic" } },
+  };
+  for (const [mode, options] of Object.entries(jsxInDefaultModes)) {
+    itBundled(`react-compiler/JsxInDefaultValue-${mode}`, {
+      files: jsxInDefaultFiles,
+      ...options,
+      reactCompiler: true,
+      target: "browser",
+      backend: "cli",
+      run: {
+        validate({ stdout }) {
+          expect(JSON.parse(stdout)).toEqual({
+            compiled: {
+              ObjectPattern: true,
+              ArrayPattern: true,
+              useParameter: true,
+              AssignmentPattern: true,
+              CaseTest: true,
+              InAnArray: true,
+              InAnObject: true,
+              InALogical: true,
+              InAConditional: true,
+              FragmentDefault: true,
+              MemberTag: true,
+              KeyChildrenAndLocalProp: true,
+              MemoCallback: true,
+              NestedFunction: true,
+              LocalTag: true,
+              LocalKey: true,
+              ArrowReturningJsx: true,
+              MemberOfLocalTag: false,
+              SpreadProp: false,
+              MemberOfLocalKey: false,
+              MemberOfLocalChild: false,
+              LocalInArrow: false,
+              ArrowInParameterList: false,
+            },
+            differs: [],
+          });
+        },
+      },
+    });
+  }
+
   // `a.b = a = c` and `a[i] = i++` read `a` and `i` for the member target
   // before the right-hand side runs. The compiler removes assignments and
   // propagates constants by the order of its own instructions, so it has to

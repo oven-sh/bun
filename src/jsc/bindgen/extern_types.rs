@@ -137,10 +137,6 @@ unsafe extern "C" {
         values: *const JSValue,
         count: usize,
     ) -> JSValue;
-    pub(super) safe fn Bun__Bindgen__createRecord(
-        global: &JSGlobalObject,
-        capacity: usize,
-    ) -> JSValue;
     pub(super) fn Bun__Bindgen__enumerationValueToJS(
         global: *mut JSGlobalObject,
         index: u32,

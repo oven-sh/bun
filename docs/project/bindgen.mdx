@@ -238,7 +238,10 @@ These are results only:
 | `b.u64.asBigInt` | `u64`                                         | always a BigInt                                                                                                                                                                      |
 | `b.f64.asDate`   | `f64`                                         | a `Date` with that time value                                                                                                                                                        |
 | `b.string.local` | `JsLocal<'a, JSString>`                       | the string the body made: `heap.create_latin1_string(bytes)`, `heap.create_utf16_string_from_vec(units)`, `heap.create_utf8_string(bytes)` or `heap.common_string(CommonString::..)` |
-| `b.record(T)`    | anything that is `IntoIterator` of `(key, T)` | an object with an own property for each pair; a key is UTF-8, and `T` holds no JS value                                                                                              |
+| `b.record(T)`    | anything that is `IntoIterator` of `(key, T)` | an object with an own property for each pair; a key is UTF-8 and one that comes again takes the new value, `T` holds no JS value, and it is not a member or an alternative           |
+
+A body that returns `b.any` makes the value with what the generated code calls:
+`bindgen::to_js::record`, `to_js::array`, `to_js::utf8` and the others of that module.
 
 ### Numbers
 
@@ -350,8 +353,8 @@ loaded. Choosing tests whether the value is a cell once, loads the type byte onc
 repeats no test. Strings as UTF-8, dictionaries and unions are then converted in the
 place they end up in.
 
-A union is returned as what the alternative it holds is. Like a dictionary, one that is only
-returned owns its strings.
+A union is returned as what the alternative it holds is. One that is only returned owns its
+strings: `b.string.utf8` in it is a `Vec<u8>`.
 
 ### Buffers
 

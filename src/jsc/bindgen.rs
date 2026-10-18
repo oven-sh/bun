@@ -87,6 +87,12 @@ impl<'a> JsHeap<'a> {
         ))
     }
 
+    /// An object as `{}` makes it.
+    #[inline]
+    pub fn create_empty_object(&self) -> JsLocal<'a, JSObject> {
+        JsLocal::from_raw(JSValue::create_empty_object(self.global_object(), 0))
+    }
+
     /// One of the strings every global object has.
     #[inline]
     pub fn common_string(&self, string: CommonString) -> JsLocal<'a, JSString> {
@@ -856,7 +862,7 @@ pub mod to_js {
         Ok(JsLocal::from_raw(array))
     }
 
-    /// The value of a key that comes again replaces the one before. The object has inline room for the most pairs `entries` says it has.
+    /// A key that comes again keeps its place and takes the new value. The inline room is the upper `size_hint`.
     #[inline]
     pub fn record<'a, K: AsRef<[u8]>, V>(
         heap: &JsHeap<'a>,
@@ -866,7 +872,7 @@ pub mod to_js {
         let global = heap.global_object();
         let entries = entries.into_iter();
         let (at_least, at_most) = entries.size_hint();
-        let record = extern_types::Bun__Bindgen__createRecord(global, at_most.unwrap_or(at_least));
+        let record = JSValue::create_empty_object(global, at_most.unwrap_or(at_least));
         for (key, value) in entries {
             let (key, value) = (key.as_ref(), convert(heap, value)?);
             // SAFETY: `record` is the object made above, and the key is read before this returns.

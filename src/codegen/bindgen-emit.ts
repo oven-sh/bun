@@ -1117,7 +1117,7 @@ ${
 }`;
 }
 
-/** One that is only returned owns what it holds. */
+/** An owner that is only returned owns what it holds. */
 function rustFieldType(owner: DictionaryType | UnionType, type: Type, scope: RustScope): string {
   return owner.accepted ? type.rustType(scope) : type.rustResultFieldType(scope);
 }

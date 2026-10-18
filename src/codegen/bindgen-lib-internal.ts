@@ -1340,7 +1340,10 @@ export class RecordResultType extends ResultType {
   readonly value: Type;
   constructor(value: Type) {
     super();
-    assert(!value.holdsJSValue, "the pairs of a record can be a Vec, where the GC does not see JS values");
+    assert(
+      !value.holdsJSValue,
+      "the pairs of a record can be a Vec, where the GC does not see JS values: return b.any and make it with to_js::record",
+    );
     this.value = value;
   }
   get tsType(): string {
@@ -1353,7 +1356,7 @@ export class RecordResultType extends ResultType {
     return [this.value];
   }
   rustType(): never {
-    throw new TypeError("b.record is a result as it is: not a member, an alternative or an element");
+    throw new TypeError("b.record has no Rust type to name, so it is not a member or an alternative");
   }
   rustReturnType(scope: RustScope): string {
     return `impl IntoIterator<Item = (impl AsRef<[u8]>, ${this.value.rustReturnType(scope)})>`;
@@ -1756,7 +1759,8 @@ export class Signature {
       `length: ${this.length} is not a count`,
     );
     for (const { name, type } of this.args) {
-      assert(!resultTypeIn(type), `${name}: ${resultTypeIn(type)?.refusal}`);
+      const result = resultTypeIn(type);
+      assert(!result, `${name}: ${result?.refusal}`);
       assert(
         !type.borrowsHeap || this.capability !== "js",
         `${name}: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read`,
@@ -1940,6 +1944,7 @@ export class Getter {
     this.throws = options.throws ?? false;
     this.hasSetter = options.setter ?? false;
     assert(!(options.cache && options.setter), `${name}: a cached getter has no setter`);
+    assert(!this.hasSetter || !resultTypeIn(this.type), `${name}: ${resultTypeIn(this.type)?.refusal}`);
     assert(!(isStatic && (options.cache || options.setter)), `${name}: a static getter has no cache and no setter`);
     assert(
       !this.type.holdsJSValue || this.capability !== "none",

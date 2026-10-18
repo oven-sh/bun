@@ -452,22 +452,26 @@ impl MatchedRoute {
     }
 
     /// A name that comes once has a string, and one that comes again has an array of them.
-    fn query_object<'a>(
+    fn create_query_object<'a>(
         heap: &JsHeap<'a>,
         map: Option<&QueryStringMap>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
-        let mut values: [&[u8]; 256] = [b""; 256];
-        let mut names = map.map(QueryStringMap::iter);
+        let Some(map) = map else {
+            return Ok(heap.create_empty_object().as_value());
+        };
+        let mut buffer: [&[u8]; 256] = [b""; 256];
+        let mut names = map.iter();
         let entries = core::iter::from_fn(|| {
-            let entry = names.as_mut()?.next(&mut values)?;
+            let entry = names.next(&mut buffer)?;
             let value = match &*entry.values {
                 [value] => to_js::utf8(heap, value),
-                values => to_js::array(heap, values, |heap, value| to_js::utf8(heap, value)),
+                values => to_js::array(heap, values, to_js::utf8),
             };
             Some((entry.name, value))
         });
-        let count = map.map_or(0, QueryStringMap::get_name_count);
-        to_js::record(heap, entries.take(count), |_, value| value)
+        // Never cuts: it tells `record` how many names there can be.
+        let entries = entries.take(map.get_name_count());
+        to_js::record(heap, entries, |_, value| value)
     }
 }
 
@@ -497,7 +501,7 @@ impl MatchedRouteClass for MatchedRoute {
 
     fn params<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         if self.params_list.is_empty() {
-            return Self::query_object(heap, None);
+            return Self::create_query_object(heap, None);
         }
 
         if self.param_map.get().is_none() {
@@ -511,7 +515,7 @@ impl MatchedRouteClass for MatchedRoute {
                 .set(QueryStringMap::init_with_scanner(scanner)?);
         }
 
-        Self::query_object(heap, self.param_map.get().as_ref())
+        Self::create_query_object(heap, self.param_map.get().as_ref())
     }
 
     fn pathname(&self) -> impl AsRef<[u8]> {
@@ -534,7 +538,7 @@ impl MatchedRouteClass for MatchedRoute {
                 &self.params_list,
             ))?
         };
-        Self::query_object(heap, map.as_ref())
+        Self::create_query_object(heap, map.as_ref())
     }
 
     fn script_src(&self) -> impl AsRef<[u8]> {

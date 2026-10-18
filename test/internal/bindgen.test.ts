@@ -177,6 +177,9 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   for (const value of [b.any, b.string.local, b.bufferSource]) {
     expect(() => b.record(value)).toThrow("the pairs of a record can be a Vec, where the GC does not see JS values");
   }
+  expect(() => b.class({ rustPath: "T", proto: { when: { getter: b.f64.asDate, setter: true } } })).toThrow(
+    "when: .asDate is a result",
+  );
   expect(() => b.namespace({ f: {} }, { call: "g" })).toThrow("call: g is not one of its functions");
   for (const element of [b.any, b.bufferSource, b.dictionary({ value: b.any }), b.class({ rustPath: "T" })]) {
     expect(() => b.array(element)).toThrow("an array is a Vec, where the GC does not see JS values");

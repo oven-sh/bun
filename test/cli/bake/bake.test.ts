@@ -33,6 +33,8 @@ function spawnBake(dir: string, args: string[]) {
     cmd: [bunExe(), ...args],
     env,
     cwd: dir,
+    // Some fixtures catch SIGTERM, so the cleanup of `await using` would wait for an exit that never comes.
+    killSignal: "SIGKILL",
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -779,6 +781,7 @@ test.concurrent.skipIf(isWindows)(
       cmd: [bunExe(), "bake", "--port=0"],
       env,
       cwd: String(dir),
+      killSignal: "SIGKILL",
       terminal: {
         cols: 200,
         rows: 50,
@@ -1175,8 +1178,9 @@ test.concurrent("bun bake sends a page's new code to a page load after an edit",
   const url = await getServerUrl(proc);
   const bundle = async () => {
     const html = await (await fetch(url)).text();
-    const src = html.match(/<script type="module" src="([^"]+)"/)![1];
-    return await (await fetch(new URL(src, url))).text();
+    // While the edit is written, the file can be empty for a moment, and the page an error with no script.
+    const src = html.match(/<script type="module" src="([^"]+)"/)?.[1];
+    return src === undefined ? "" : await (await fetch(new URL(src, url))).text();
   };
   expect(await bundle()).toContain("first-version");
 

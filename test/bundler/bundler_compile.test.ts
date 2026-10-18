@@ -1324,6 +1324,24 @@ describe("bundler", () => {
     },
     run: { stdout: new Array(7).fill("true").join("\n") },
   });
+  // Only the entry point is the main module of the executable. A module that it
+  // imports has its own `import.meta`, whose `main` is false.
+  itBundled("compile/ImportMetaMainNonEntryIndirect", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { lib } from "./lib.ts";
+        const { main } = import.meta;
+        console.log(JSON.stringify({ entry: [import.meta.main, main], lib }));
+      `,
+      "/lib.ts": /* js */ `
+        const { main } = import.meta;
+        const meta = import.meta;
+        export const lib = [import.meta.main, main, meta.main, import.meta?.main, (m => m.main)(import.meta)];
+      `,
+    },
+    run: { stdout: '{"entry":[true,true],"lib":[false,false,false,false,false]}' },
+  });
   itBundled("compile/SourceMap", {
     target: "bun",
     compile: true,

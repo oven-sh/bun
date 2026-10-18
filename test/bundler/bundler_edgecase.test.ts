@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
@@ -2336,6 +2336,212 @@ describe("bundler", () => {
       api.expectFile("/out.js").toMatch(/\brequire\b/); // __require is not ok
       api.expectFile("/out.js").toMatch(/[^\.:]module/); // `.module` and `node:module` are not ok.
     },
+  });
+
+  // A module that is not the entry point of its chunk has its own `import.meta`
+  // object, whose `main` is false. Only `import.meta.main` is a literal, so each
+  // other way to reach `main` reads that object.
+  const importMetaMainSpellings = /* js */ `
+    const readMain = meta => meta.main;
+    const key = ["ma", "in"].join("");
+    const spellings = {
+      destructure() { const { main } = import.meta; return main; },
+      destructureRenamed() { const { main: renamed } = import.meta; return renamed; },
+      destructureAssignment() { let main; ({ main } = import.meta); return main; },
+      destructureParameter() { return (({ main }) => main)(import.meta); },
+      optionalChain() { return import.meta?.main; },
+      optionalIndex() { return import.meta?.["main"]; },
+      alias() { const meta = import.meta; return meta.main; },
+      argument() { return readMain(import.meta); },
+      dynamicKey() { return import.meta[key]; },
+      reflect() { return Reflect.get(import.meta, "main"); },
+      comma() { return (0, import.meta).main; },
+      logical() { return (import.meta || {}).main; },
+      returned() { return (() => import.meta)().main; },
+      classField() { return new (class { meta = import.meta; })().meta.main; },
+    };
+    export const wrong = Object.keys(spellings).filter(name => spellings[name]() !== false);
+  `;
+  for (const [variant, options] of Object.entries({
+    TargetBun: { target: "bun" },
+    TargetNode: { target: "node", run: { runtime: "node", stdout: "[]" } },
+    TargetBrowser: { target: "browser" },
+    FormatIife: { target: "bun", format: "iife" },
+    FormatCjs: { target: "node", format: "cjs" },
+    Minify: { target: "bun", minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true },
+    Splitting: { target: "bun", splitting: true, outdir: "/out", run: { file: "/out/entry.js", stdout: "[]" } },
+    BuildAPI: { target: "bun", backend: "api" },
+  } as const)) {
+    itBundled(`edgecase/ImportMetaMainIsFalseInNonEntry${variant}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { wrong } from "./lib.js";
+          console.log(JSON.stringify(wrong));
+        `,
+        "/lib.js": importMetaMainSpellings,
+      },
+      run: { stdout: "[]" },
+      ...options,
+    });
+  }
+  for (const target of ["bun", "node"] as const) {
+    itBundled(`edgecase/ImportMetaNonEntryModuleHasItsOwnObjectTarget${target === "bun" ? "Bun" : "Node"}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { meta, sameWithinModule, readBack, constructed } from "./lib.js";
+          const real = import.meta;
+          console.log(JSON.stringify({
+            main: meta.main,
+            entryKeepsTheRealObject: real.main !== false,
+            ownObject: meta !== real,
+            sameWithinModule,
+            readBack,
+            constructed,
+            writeStaysInModule: real.written === undefined,
+            url: meta.url === real.url,
+            dirname: meta.dirname === real.dirname,
+            filename: meta.filename === real.filename,
+            resolve: meta.resolve("./x.js") === real.resolve("./x.js"),
+          }));
+        `,
+        "/lib.js": /* js */ `
+          export const meta = import.meta;
+          export const sameWithinModule = meta === import.meta;
+          import.meta.written = "lib";
+          export const readBack = meta.written;
+          import.meta.Made = class {};
+          export const constructed = new import.meta.Made() instanceof meta.Made;
+        `,
+      },
+      target,
+      run: {
+        runtime: target,
+        stdout: JSON.stringify({
+          main: false,
+          entryKeepsTheRealObject: true,
+          ownObject: true,
+          sameWithinModule: true,
+          readBack: "lib",
+          constructed: true,
+          writeStaysInModule: true,
+          url: true,
+          dirname: true,
+          filename: true,
+          resolve: true,
+        }),
+      },
+    });
+  }
+  // The object copies Bun's `import.meta` members by name. The names here come
+  // from the table that defines them: a member added there fails this test
+  // until the printer copies it too.
+  const bunImportMetaMembers = Array.from(
+    readFileSync(join(import.meta.dir, "../../src/jsc/bindings/ImportMetaObject.cpp"), "utf8")
+      .match(/ ImportMetaObjectPrototypeValues\[\] = \{\n(.*?)\n\};/s)![1]
+      .matchAll(/^\s*\{ "(\w+)"_s/gm),
+    match => match[1],
+  ).sort();
+  itBundled("edgecase/ImportMetaNonEntryModuleHasEveryBunMember", {
+    files: {
+      "/entry.js": /* js */ `
+        import { meta } from "./lib.js";
+        const real = import.meta;
+        const names = Object.getOwnPropertyNames(meta).sort();
+        console.log(JSON.stringify({ names, differs: names.filter(name => name !== "main" && meta[name] !== real[name]) }));
+      `,
+      "/lib.js": `export const meta = import.meta;`,
+    },
+    target: "bun",
+    run: { stdout: JSON.stringify({ names: bunImportMetaMembers, differs: [] }) },
+  });
+  // `b.js` calls into `a.js` before any statement of `a.js` has run.
+  itBundled("edgecase/ImportMetaNonEntryModuleInImportCycle", {
+    files: {
+      "/entry.js": /* js */ `
+        import { early } from "./a.js";
+        console.log(early);
+      `,
+      "/a.js": /* js */ `
+        export { early } from "./b.js";
+        export function metaOfA() { return import.meta; }
+      `,
+      "/b.js": /* js */ `
+        import { metaOfA } from "./a.js";
+        export const early = metaOfA().main;
+      `,
+    },
+    target: "bun",
+    run: { stdout: "false" },
+  });
+  // Without code splitting, `a.js` holds a copy of `b.js`, and `b.js` is not the entry point there.
+  itBundled("edgecase/ImportMetaMainEntryPointInAnotherEntryPoint", {
+    files: {
+      "/a.js": /* js */ `
+        import { b } from "./b.js";
+        console.log("a " + import.meta.main + " " + b);
+      `,
+      "/b.js": /* js */ `
+        const { main } = import.meta;
+        export const b = "b " + import.meta.main + " " + main;
+        if (import.meta.main) console.log(b);
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    target: "bun",
+    run: [
+      { file: "/out/a.js", stdout: "a true b false false" },
+      { file: "/out/b.js", stdout: "b true true" },
+    ],
+  });
+  for (const target of ["bun", "node"] as const) {
+    itBundled(`edgecase/ImportMetaMainAssignmentTarget${target === "bun" ? "Bun" : "Node"}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { seen } from "./lib.js";
+          import.meta.main = "entry";
+          const meta = import.meta;
+          console.log(seen + " " + meta.main);
+        `,
+        "/lib.js": /* js */ `
+          import.meta.main = "lib";
+          const meta = import.meta;
+          export const seen = meta.main;
+        `,
+      },
+      target,
+      run: { runtime: target, stdout: "lib entry" },
+    });
+  }
+  // No use of `import.meta` as a value is left in `lib.js`, and `entry.js` is the
+  // entry point of its chunk: both keep the `import.meta` of the chunk.
+  itBundled("edgecase/ImportMetaStaticReadsKeepTheChunkObject", {
+    files: {
+      "/entry.js": /* js */ `
+        import { url, call, element, live } from "./lib.js";
+        const meta = import.meta;
+        console.log(url === meta.url, call === meta.resolve("./x.js"), element === meta["dirname"], live());
+      `,
+      "/lib.js": /* js */ `
+        export const url = import.meta.url;
+        export const call = import.meta.resolve("./x.js");
+        export const element = import.meta["dirname"];
+        export function live() {
+          import.meta;
+          void import.meta;
+          if (false) console.log(import.meta);
+          return "live";
+        }
+        function unused() { return import.meta; }
+        const alsoUnused = import.meta;
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("import_meta");
+      api.expectFile("/out.js").toContain("var meta = import.meta;");
+    },
+    run: { stdout: "true true true live" },
   });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {

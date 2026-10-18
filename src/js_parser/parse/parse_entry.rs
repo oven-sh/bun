@@ -142,6 +142,11 @@ pub struct Options<'a> {
     /// Used for inlining the state of import.meta.main during visiting
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
+    /// The linker can print this file into a chunk that another module is
+    /// the entry point of, where `import.meta` is that module's object. Count
+    /// each `import.meta` used as a value on `P::import_meta_ref`, so that the
+    /// linker can give the file its own object. Bundler only.
+    pub own_import_meta: bool,
 
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
@@ -191,6 +196,7 @@ impl<'a> Default for Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            own_import_meta: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: false,
@@ -279,6 +285,7 @@ impl<'a> Options<'a> {
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
+            own_import_meta: self.own_import_meta,
             framework: self.framework,
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
@@ -354,6 +361,7 @@ impl<'a> Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            own_import_meta: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
@@ -1310,6 +1318,80 @@ impl<'a> Parser<'a> {
                 });
                 uses_dirname = false;
                 uses_filename = false;
+            }
+        }
+
+        // `options.own_import_meta`: when an `import.meta` used as a value is
+        // left, declare what the printer calls in its place where this module
+        // is not the entry point of the chunk:
+        //
+        //    function import_meta() { return import_meta.value ||= <object>; }
+        //
+        // A function declaration, because a module of an import cycle can call
+        // into this one before a statement of this one has run.
+        if p.options.own_import_meta && !p.import_meta_ref.is_empty() {
+            let import_meta_ref = p.import_meta_ref;
+            if p.symbols.as_slice()[import_meta_ref.inner_index() as usize].use_count_estimate == 0
+            {
+                // `Ast::import_meta_ref` says whether the part below exists.
+                p.import_meta_ref = bun_ast::Ref::NONE;
+            } else {
+                VecExt::append(&mut p.module_scope_mut().generated, import_meta_ref);
+                let memoized = p.new_expr(
+                    E::Dot {
+                        target: Expr::init_identifier(import_meta_ref, bun_ast::Loc::EMPTY),
+                        name: b"value".into(),
+                        name_loc: bun_ast::Loc::EMPTY,
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                );
+                let value = p.new_expr(
+                    E::Binary {
+                        op: js_ast::op::Code::BinLogicalOrAssign,
+                        left: memoized,
+                        right: Expr {
+                            data: js_ast::ExprData::ESpecial(E::Special::OwnImportMeta),
+                            loc: bun_ast::Loc::EMPTY,
+                        },
+                    },
+                    bun_ast::Loc::EMPTY,
+                );
+                let body = p.arena.alloc_slice_fill_with(1, |_| {
+                    p.s(S::Return { value: Some(value) }, bun_ast::Loc::EMPTY)
+                });
+                let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
+                    p.s(
+                        S::Function {
+                            func: G::Fn {
+                                name: Some(js_ast::LocRef {
+                                    loc: bun_ast::Loc::EMPTY,
+                                    ref_: import_meta_ref,
+                                }),
+                                body: G::FnBody {
+                                    loc: bun_ast::Loc::EMPTY,
+                                    stmts: bun_ast::StoreSlice::new_mut(body),
+                                },
+                                ..Default::default()
+                            },
+                        },
+                        bun_ast::Loc::EMPTY,
+                    )
+                });
+                let mut declared_symbols =
+                    bun_ast::DeclaredSymbolList::init_capacity(1).expect("unreachable");
+                declared_symbols.append_assume_capacity(DeclaredSymbol {
+                    ref_: import_meta_ref,
+                    is_top_level: true,
+                });
+                before.push(js_ast::Part {
+                    stmts: part_stmts.into(),
+                    declared_symbols,
+                    can_be_removed_if_unused: true,
+                    force_tree_shaking: true,
+                    tag: bun_ast::PartTag::OwnImportMeta,
+                    ..Default::default()
+                });
             }
         }
 

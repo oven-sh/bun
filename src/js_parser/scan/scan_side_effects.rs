@@ -147,9 +147,12 @@ impl SideEffects {
             | ExprData::ERegExp(_)
             | ExprData::EFunction(_)
             | ExprData::EArrow(_)
-            | ExprData::EImportMeta(_)
             | ExprData::EInlinedEnum(_) => return None,
 
+            ExprData::EImportMeta(_) => {
+                p.ignore_usage_of_import_meta();
+                return None;
+            }
             ExprData::EDot(dot) => {
                 if dot.can_be_removed_if_unused {
                     return None;
@@ -985,7 +988,8 @@ impl SideEffects {
             ExprData::ESpecial(special) => match special {
                 E::Special::ModuleExports
                 | E::Special::ResolvedSpecifierString(_)
-                | E::Special::HotData => None,
+                | E::Special::HotData
+                | E::Special::OwnImportMeta => None,
                 E::Special::HotAccept | E::Special::HotAcceptVisited | E::Special::HotEnabled => {
                     Some(Known {
                         value: true,

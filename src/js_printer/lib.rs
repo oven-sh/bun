@@ -1002,6 +1002,17 @@ macro_rules! ws {
     }};
 }
 
+/// `E::Special::OwnImportMeta`: the `import.meta` of a module that is not
+/// the entry point of its chunk. The object has the own properties of the
+/// chunk's `import.meta`, then the members that Bun defines on a hidden
+/// prototype (`ImportMetaObjectPrototypeValues`: an object that inherits from
+/// `import.meta` does not reach them, so they are copied by name), and
+/// `main: false`. `{}.constructor` is `Object`: the renamer does not see this
+/// text, so the text names no binding.
+const OWN_IMPORT_META: Whitespacer = ws!(
+    b"((m, O, d, o, v, u) => (d = O.getOwnPropertyDescriptors(m), d.main = { value: false, writable: true, configurable: true, enumerable: !!d.main && d.main.enumerable }, o = O.create(null, d), [\"dir\", \"dirname\", \"env\", \"file\", \"filename\", \"path\", \"require\", \"resolve\", \"resolveSync\", \"url\"].forEach((k) => d[k] || (v = m[k]) === u || O.defineProperty(o, k, { value: v, writable: true, configurable: true })), o))(import.meta, {}.constructor)"
+);
+
 // PERF: `ascii_only`/`quote_char` are runtime args — collapses
 // the monomorphization fan-out; the inner branches are cheap and well-predicted.
 
@@ -1323,7 +1334,14 @@ pub struct Options<'a> {
     /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkId), import(path))`.
     pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
+    /// What an `import.meta` prints as where the host's object is not this
+    /// module's. When bundling, it is the function that the module declares
+    /// for a chunk it is not the entry point of, and the printer calls it.
+    /// For a CommonJS module of the runtime, it is a parameter of the wrapper.
     pub import_meta_ref: Ref,
+    /// The value of `import.meta.main` where the bundler did not know it
+    /// when it parsed the file: `false` in a chunk of another entry point.
+    pub import_meta_main_value: Option<bool>,
     pub hmr_ref: Ref,
     pub indent: Indentation,
     // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
@@ -1409,6 +1427,7 @@ impl<'a> Default for Options<'a> {
             module_preload_ref: Ref::NONE,
             require_ref: None,
             import_meta_ref: Ref::NONE,
+            import_meta_main_value: None,
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
             source_map_handler: None,
@@ -3279,7 +3298,14 @@ pub(crate) mod __gated_printer {
                     self.print(b"new.target");
                 }
                 ExprData::EImportMeta(_) => {
-                    self.print_space_before_identifier();
+                    let is_call = self.options.bundling && self.options.import_meta_ref.is_valid();
+                    let wrap =
+                        is_call && (level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall));
+                    if wrap {
+                        self.print(b"(");
+                    } else {
+                        self.print_space_before_identifier();
+                    }
                     self.add_source_mapping(expr.loc);
                     if self.options.module_type == bundle_opts::Format::InternalBakeDev {
                         debug_assert!(self.options.hmr_ref.is_valid());
@@ -3291,21 +3317,33 @@ pub(crate) mod __gated_printer {
                             mi.flags.contains_import_meta = true;
                         }
                         self.print(b"import.meta");
+                    } else if is_call {
+                        // The chunk's `import.meta` is the object of the entry
+                        // point of the chunk. This module is another one, and it
+                        // declares a function that returns its own object.
+                        self.print_symbol(self.options.import_meta_ref);
+                        self.print(b"()");
                     } else {
-                        // Note: The bundler will not hit this code path. The bundler will replace
-                        // the ImportMeta AST node with a regular Identifier AST node.
-                        //
-                        // This is currently only used in Bun's runtime for CommonJS modules
-                        // referencing import.meta
-                        //
-                        // TODO: This assertion trips when using `import.meta` with `--format=cjs`
+                        // A CommonJS module that the runtime transpiles takes
+                        // `import.meta` as a parameter of its wrapper function.
                         debug_assert!(self.options.module_type == bundle_opts::Format::Cjs);
 
                         self.print_symbol(self.options.import_meta_ref);
                     }
+                    if wrap {
+                        self.print(b")");
+                    }
                 }
                 ExprData::EImportMetaMain(data) => {
-                    if self.options.module_type == bundle_opts::Format::Esm
+                    if let Some(main) = self.options.import_meta_main_value {
+                        self.print_space_before_identifier();
+                        self.add_source_mapping(expr.loc);
+                        self.print(if main != data.inverted {
+                            b"true".as_slice()
+                        } else {
+                            b"false".as_slice()
+                        });
+                    } else if self.options.module_type == bundle_opts::Format::Esm
                         && self.options.target != bun_ast::Target::Node
                     {
                         // Node.js doesn't support import.meta.main
@@ -3421,6 +3459,12 @@ pub(crate) mod __gated_printer {
                             self.import_record(*index as usize).path.pretty,
                             true,
                         );
+                    }
+                    E::Special::OwnImportMeta => {
+                        if let Some(mi) = self.module_info() {
+                            mi.flags.contains_import_meta = true;
+                        }
+                        self.print_whitespacer(OWN_IMPORT_META);
                     }
                 },
                 ExprData::ECommonjsExportIdentifier(id) => {

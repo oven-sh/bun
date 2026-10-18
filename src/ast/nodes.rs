@@ -1065,6 +1065,10 @@ pub enum PartTag {
     DeadDueToInlining,
     CommonjsNamedExport,
     ImportToConvertFromRequire,
+    /// Declares the function that a module calls for its own `import.meta`
+    /// (the parser's `Options::own_import_meta`). The linker does not print
+    /// it in the chunk that the module is the entry point of.
+    OwnImportMeta,
 }
 
 pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use, AutoContext, bun_alloc::AstAlloc>;

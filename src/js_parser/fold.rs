@@ -595,6 +595,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EImportMeta(_) => {
+                    // A write or a delete needs the object: a value in its
+                    // place prints `false = x`.
+                    if identifier_opts.assign_target() != js_ast::AssignTarget::None
+                        || identifier_opts.is_delete_target()
+                    {
+                        return None;
+                    }
+                    // The read becomes a value below, or it is of a member that
+                    // the chunk's `import.meta` has too.
+                    p.ignore_usage_of_import_meta();
+
                     if name == b"main" {
                         return Some(p.value_for_import_meta_main(false, target.loc));
                     }

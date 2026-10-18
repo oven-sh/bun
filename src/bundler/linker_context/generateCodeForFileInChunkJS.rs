@@ -11,7 +11,7 @@ use crate::analyze_transpiled_module::ModuleInfo;
 use crate::generic_path_with_pretty_initialized;
 use crate::linker_context_mod::{StmtList, StmtListWhich};
 use crate::options::Format as OutputFormat;
-use crate::{Chunk, Index, LinkerContext, Part, PartRange, WrapKind};
+use crate::{Chunk, EntryPoint, Index, LinkerContext, Part, PartRange, WrapKind};
 
 use bun_ast::StoreRef;
 use bun_ast::binding::ToExprWrapper;
@@ -226,6 +226,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 Ref::NONE,
                 Ref::NONE,
                 None,
+                Ref::NONE,
+                None,
                 part_range.source_index,
                 source,
                 module_info,
@@ -279,6 +281,28 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // reallocate after `tree_shaking_and_code_splitting` initializes it.
     let parts_live: bun_ptr::BackRef<bun_collections::AutoBitSet> =
         bun_ptr::BackRef::new(&c.graph.parts_live[source_index]);
+
+    // The chunk's `import.meta` is the object of the chunk's entry point. Any
+    // other module in the chunk calls the function that it declares for its
+    // own (`PartTag::OwnImportMeta`). Without code splitting, that includes a
+    // copy of another entry point.
+    let is_user_entry_point =
+        c.graph.files.items_entry_point_kind()[source_index] == EntryPoint::Kind::UserSpecified;
+    let uses_chunk_import_meta =
+        is_user_entry_point && chunk.is_entry_point_file(source_index as u32);
+    let import_meta_ref =
+        if ast.flags.contains(AstFlags::HAS_OWN_IMPORT_META) && !uses_chunk_import_meta {
+            // One file can print as several part ranges, so look in all of its parts.
+            c.graph.ast.items_parts()[source_index]
+                .as_slice()
+                .iter()
+                .enumerate()
+                .find(|(_, part)| part.tag == bun_ast::PartTag::OwnImportMeta)
+                .filter(|(index, _)| parts_live.is_set(*index))
+                .map_or(Ref::NONE, |(_, part)| part.declared_symbols.refs()[0])
+        } else {
+            Ref::NONE
+        };
 
     // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
@@ -351,6 +375,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         if index == wrapper_part_index.get() {
             // Skip the wrapper part because we already handled it above
             needs_wrapper = true;
+            continue;
+        }
+
+        if uses_chunk_import_meta && part.tag == bun_ast::PartTag::OwnImportMeta {
             continue;
         }
 
@@ -987,6 +1015,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         to_esm_ref,
         to_common_js_ref,
         runtime_require_ref,
+        import_meta_ref,
+        // In the chunk of another entry point, this one is not the main module.
+        if is_user_entry_point && chunk.is_entry_point() && !uses_chunk_import_meta {
+            Some(false)
+        } else {
+            None
+        },
         part_range.source_index,
         source,
         module_info,

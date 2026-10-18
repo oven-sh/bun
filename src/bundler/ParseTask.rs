@@ -2645,6 +2645,13 @@ pub mod parse_worker {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
+        // Without code splitting, an entry point also prints in each entry
+        // point that imports it. The dev server has `hmr.importMeta`, and the
+        // runtime's `__require` is the chunk's `import.meta.require`.
+        opts.own_import_meta = output_format != options::Format::InternalBakeDev
+            && !task.source_index.is_runtime()
+            && (!task.is_entry_point || (!topts.code_splitting && topts.entry_points.len() > 1));
+
         opts.tree_shaking = if task.source_index.is_runtime() {
             true
         } else {

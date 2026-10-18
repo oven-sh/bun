@@ -153,6 +153,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
         }
+
+        if p.options.own_import_meta {
+            p.record_usage_of_import_meta();
+        }
     }
 
     fn e_identifier(p: &mut Self, e: &mut Expr, in_: ExprIn) {
@@ -1269,6 +1273,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     Op::UnVoid => {
                         if p.expr_can_be_removed_if_unused(&e_.value) {
+                            if matches!(e_.value.data, Data::EImportMeta(..)) {
+                                p.ignore_usage_of_import_meta();
+                            }
                             *e = p.new_expr(E::Undefined {}, e_.value.loc);
                             return;
                         }

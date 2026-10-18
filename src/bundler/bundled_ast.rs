@@ -157,7 +157,9 @@ bitflags::bitflags! {
         const HAS_IMPORT_META = 1 << 8;
         /// See `Ast::commonjs_lifted_to_esm`.
         const COMMONJS_LIFTED_TO_ESM = 1 << 9;
-        // _padding: u6 fills the rest
+        /// A part of this file has `PartTag::OwnImportMeta`.
+        const HAS_OWN_IMPORT_META = 1 << 10;
+        // _padding: u5 fills the rest
     }
 }
 
@@ -297,6 +299,7 @@ impl<'arena> BundledAst<'arena> {
             ast.directive.is_some_and(|d| d == b"use strict"),
         );
         flags.set(Flags::HAS_IMPORT_META, ast.has_import_meta);
+        flags.set(Flags::HAS_OWN_IMPORT_META, ast.import_meta_ref.is_valid());
 
         Self {
             approximate_newline_count: ast.approximate_newline_count as u32,

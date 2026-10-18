@@ -281,6 +281,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) module_ref: Ref,
     pub(crate) filename_ref: Ref,
     pub(crate) dirname_ref: Ref,
+    /// What `import.meta` is where the host's object is not this module's:
+    /// the `$Bun_import_meta` wrapper parameter of a runtime CommonJS module,
+    /// or the function the bundler declares under `options.own_import_meta`.
     pub(crate) import_meta_ref: Ref,
     pub(crate) hmr_api_ref: Ref,
 
@@ -6202,6 +6205,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr {
             loc,
             data: js_ast::ExprData::EImportMetaMain(E::ImportMetaMain { inverted }),
+        }
+    }
+
+    /// `options.own_import_meta`: counts one `import.meta` used as a value.
+    /// The node stays an `EImportMeta`. Only the linker knows which chunk the
+    /// file prints in, so the printer decides there what the node is.
+    pub(crate) fn record_usage_of_import_meta(&mut self) {
+        debug_assert!(self.options.own_import_meta);
+        if self.import_meta_ref.is_empty() {
+            self.import_meta_ref =
+                self.new_symbol(js_ast::symbol::Kind::HoistedFunction, b"import_meta");
+        }
+        self.record_usage(self.import_meta_ref);
+    }
+
+    /// Takes back the use that `record_usage_of_import_meta` counted for an
+    /// `import.meta` that is gone, or that only reads a member the chunk's
+    /// object has as well.
+    pub(crate) fn ignore_usage_of_import_meta(&mut self) {
+        if self.options.own_import_meta && !self.import_meta_ref.is_empty() {
+            self.ignore_usage(self.import_meta_ref);
         }
     }
 

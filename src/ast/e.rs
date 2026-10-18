@@ -251,6 +251,10 @@ pub enum Special {
     /// Prints the resolved specifier string for an import record
     /// (an `ImportRecord` index).
     ResolvedSpecifierString(u32),
+    /// A new object with the members of the chunk's `import.meta` and
+    /// `main: false`, for a module that is not the entry point of its chunk
+    /// (the parser's `Options::own_import_meta`). The printer holds its text.
+    OwnImportMeta,
 }
 
 pub struct Call {

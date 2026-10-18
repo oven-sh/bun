@@ -25,6 +25,7 @@ pub(crate) fn set_config_plugins(global: &JSGlobalObject, frame: &CallFrame) -> 
 
 /// Set in the environment by the first start of `bun bake --check`, so that the process that a
 /// change starts again (`execve` keeps the environment) knows it is a restart.
+#[cfg(not(windows))]
 const RESTART_ENV_VAR: &bun_core::ZStr = bun_core::zstr!("BUN_INTERNAL_BAKE_RESTART");
 
 static RESTARTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);

@@ -317,11 +317,14 @@ async function start() {
       useUnix ? undefined : (flags.port ?? exportedPort),
     );
   } catch (error: any) {
-    // Cannot listen where `--port` or `--host` says: no change to a file fixes it. Any other error
-    // comes from the options of `app/server.ts`, which an edit can fix.
-    if (error?.syscall === "listen" && (flags.port !== undefined || flags.hostname !== undefined)) {
-      exitWith(error);
-    }
+    // Cannot listen at an address that the export of `app/server.ts` did not give (a flag, `PORT`,
+    // or the default): no change to a file fixes it. Any other error comes from the export, which
+    // an edit can fix.
+    const addressFromExport =
+      useUnix ||
+      (flags.port === undefined && exportedPort !== undefined) ||
+      (flags.hostname === undefined && exportedHostname !== undefined);
+    if (error?.syscall === "listen" && !addressFromExport) exitWith(error);
     throw error;
   }
   configKeyInServer ??= config.key;

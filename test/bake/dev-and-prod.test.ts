@@ -193,10 +193,10 @@ devTest("using runtime import", {
             // TODO: all of these should be `hmr.require`
             "()=>hmr.require",
             "()=>module.require", // not being visited
-            "()=>hmr.importMeta.require", // not being visited
+            "()=>hmr.require",
             true,
             false,
-            false,
+            true,
           ]
         : []),
     );

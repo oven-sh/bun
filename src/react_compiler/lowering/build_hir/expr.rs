@@ -331,15 +331,16 @@ pub(crate) fn lower_expression(
             loc,
         }),
         Data::ESpecial(special) => match special {
-            E::Special::ModuleExports | E::Special::ResolvedSpecifierString(_) => {
-                Ok(InstructionValue::LoadGlobal {
-                    binding: NonLocalBinding {
-                        ref_: Ref::NONE,
-                        kind: NonLocalKind::BunOpaque(*expr),
-                    },
-                    loc,
-                })
-            }
+            E::Special::ModuleExports
+            | E::Special::ResolvedSpecifierString(_)
+            | E::Special::ImportMetaRequire(_)
+            | E::Special::RequireAlias(_) => Ok(InstructionValue::LoadGlobal {
+                binding: NonLocalBinding {
+                    ref_: Ref::NONE,
+                    kind: NonLocalKind::BunOpaque(*expr),
+                },
+                loc,
+            }),
             E::Special::HotEnabled
             | E::Special::HotDisabled
             | E::Special::HotData

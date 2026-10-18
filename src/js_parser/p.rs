@@ -262,6 +262,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_top_level_return: bool,
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
+    /// The file starts with the `// @bun` line of Bun's bundler. Set in a bundle parse of a file with `import.meta`.
+    pub(crate) is_written_by_bun: bool,
+    /// `(loc of the binding, declared symbol)` of each declaration that `read_require_aliases` read, in source order.
+    pub(crate) require_aliases: Vec<(bun_ast::Loc, Ref)>,
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -4924,7 +4928,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///   argument). Returns the user's existing ref.
     /// - Otherwise: returns a fresh ref appended to `module_scope.generated`
     ///   (so generated code referencing it still gets a renamer-unique name)
-    ///   and leaves the user's member entry untouched.
+    ///   and leaves the user's member entry untouched ([`Self::read_require_aliases`] is the exception).
     ///
     /// Callers that only want to emit when the ambient was actually reached check
     /// `symbols[ref].use_count_estimate > 0` after visit: a fresh shadowed ref
@@ -4995,6 +4999,143 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // generated code may still reference the symbol).
         VecExt::append(&mut self.module_scope_mut().generated, ref_);
         Ok(ref_)
+    }
+
+    /// Reads `var {require}=import.meta;` and, in a file that Bun's bundler wrote, `var __require = import.meta.require;`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn read_require_aliases(&mut self, stmts: &mut [Stmt]) {
+        use js_ast::ExprData;
+        use js_ast::b::B as BindingData;
+
+        // A define of `import.meta` or `import.meta.require` replaces the initializer in the visit pass.
+        let defines = self.define;
+        let is_defined = |last: &[u8], parts: usize| {
+            defines.dots_for(last).is_some_and(|dots| {
+                dots.iter().any(|dot| {
+                    dot.parts.len() == parts
+                        && &*dot.parts[0] == b"import"
+                        && &*dot.parts[1] == b"meta"
+                })
+            })
+        };
+        // In a `with` body a name is not looked up for defines or for `require`.
+        if is_defined(b"meta", 2) || is_defined(b"require", 3) || self.module_scope().contains_with
+        {
+            return;
+        }
+
+        let mut names_in_use: Option<NamesInUse<'a>> = None;
+        for index in 0..stmts.len() {
+            let js_ast::StmtData::SLocal(mut local) = stmts[index].data else {
+                continue;
+            };
+            if local.kind != S::Kind::KVar || local.is_export {
+                continue;
+            }
+
+            for decl in local.decls.iter_mut() {
+                // The binding of the alias, and for `{ require: alias } = import.meta` the loc of the key.
+                let (binding, key_loc) = match (
+                    decl.binding.data,
+                    decl.value.map(|value| value.data),
+                ) {
+                    (BindingData::BObject(object), Some(ExprData::EImportMeta(_))) => {
+                        match object.properties() {
+                            [property]
+                                if property.flags.is_empty()
+                                    && property.default_value.is_none()
+                                    && matches!(property.key.data, ExprData::EString(key) if key.eql_comptime(b"require")) =>
+                            {
+                                (property.value, Some(property.key.loc))
+                            }
+                            _ => continue,
+                        }
+                    }
+                    (BindingData::BIdentifier(_), Some(ExprData::EDot(dot)))
+                        if self.is_written_by_bun
+                            && dot.name == b"require"
+                            && dot.optional_chain.is_none()
+                            && matches!(dot.target.data, ExprData::EImportMeta(_)) =>
+                    {
+                        (decl.binding, None)
+                    }
+                    _ => continue,
+                };
+                let BindingData::BIdentifier(id) = binding.data else {
+                    continue;
+                };
+                let alias = id.r#ref;
+                let name = self.load_name_from_ref(alias);
+                let in_use =
+                    names_in_use.get_or_insert_with(|| NamesInUse::of(&*self, stmts, defines));
+                if !self.is_only_declaration(alias, binding.loc)
+                    || in_use
+                        .linked_symbols
+                        .binary_search(&alias.inner_index())
+                        .is_ok()
+                    || in_use.exported.binary_search(&name).is_ok()
+                    || in_use.define_roots.binary_search(&name).is_ok()
+                    || defines.for_identifier(name).is_some()
+                {
+                    continue;
+                }
+
+                if let (Some(name_loc), Some(import_meta)) = (key_loc, decl.value) {
+                    decl.binding = binding;
+                    decl.value = Some(self.new_expr(
+                        E::Dot {
+                            target: import_meta,
+                            name: E::Str::new(b"require"),
+                            name_loc,
+                            can_be_removed_if_unused: true,
+                            ..Default::default()
+                        },
+                        import_meta.loc,
+                    ));
+                }
+
+                let require = js_ast::scope::Member {
+                    ref_: self.require_ref,
+                    loc: binding.loc,
+                };
+                // SAFETY: `name` is the `original_name` of a symbol, which lives as long as the scope.
+                unsafe { self.module_scope_mut().members.put(name, require) };
+                // The declared symbol is out of `members` and still needs a name from the renamer.
+                VecExt::append(&mut self.module_scope_mut().generated, alias);
+                self.require_aliases.push((binding.loc, alias));
+            }
+        }
+        self.require_aliases
+            .sort_unstable_by_key(|alias| alias.0.start);
+    }
+
+    /// The declared symbol of the name that `read_require_aliases` read at `declare_loc`, with its index.
+    pub(crate) fn require_alias_at(&self, declare_loc: bun_ast::Loc) -> Option<(u32, Ref)> {
+        let index = self
+            .require_aliases
+            .binary_search_by_key(&declare_loc.start, |alias| alias.0.start)
+            .ok()?;
+        Some((index as u32, self.require_aliases[index].1))
+    }
+
+    /// Whether the binding at `loc` made its symbol and is the last declaration of it in the module scope.
+    fn is_only_declaration(&self, r#ref: Ref, loc: bun_ast::Loc) -> bool {
+        let symbol = &self.symbols[r#ref.inner_index() as usize];
+        let name = symbol.original_name.slice();
+        // A `var` after another declaration of the name reuses that symbol, named by the source text there.
+        let made_the_symbol = usize::try_from(loc.start)
+            .ok()
+            .and_then(|start| self.source.contents.get(start..))
+            .is_some_and(|text| core::ptr::eq(text.as_ptr(), name.as_ptr()));
+        made_the_symbol
+            && !symbol.has_link()
+            // Each declaration of the name writes its own `loc` here.
+            && self
+                .module_scope()
+                .members
+                .get(name)
+                .is_some_and(|member| member.ref_.eql(r#ref) && member.loc == loc)
     }
 
     /// Hashed generated-symbol name; arena-owned for symbol lifetime.
@@ -6190,6 +6331,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             | js_ast::ExprData::EArrow(_)
             | js_ast::ExprData::EImportMeta(_) => return true,
 
+            // A bundle always gives `require` a value, so an unused `var x = require` goes like `var x = import.meta.require`.
+            js_ast::ExprData::ERequireCallTarget => return self.options.bundle,
+
             js_ast::ExprData::EInlinedEnum(e) => {
                 return self.expr_can_be_removed_if_unused_without_dce_check(&e.value);
             }
@@ -7197,6 +7341,44 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
         false
+    }
+}
+
+/// What a name must not be for `read_require_aliases` to read it. Made once for a file, at the first declaration that matches.
+struct NamesInUse<'a> {
+    /// Names in `export { }` clauses, sorted.
+    exported: Vec<&'a [u8]>,
+    /// The first part of each dot define, sorted.
+    define_roots: Vec<&'a [u8]>,
+    /// Symbols that a `var` of a nested block is hoisted onto through a link, sorted.
+    linked_symbols: Vec<u32>,
+}
+
+impl<'a> NamesInUse<'a> {
+    fn of<const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+        p: &P<'a, TYPESCRIPT, SCAN_ONLY>,
+        stmts: &[Stmt],
+        defines: &'a Define,
+    ) -> Self {
+        let mut exported = Vec::new();
+        for stmt in stmts {
+            if let js_ast::StmtData::SExportClause(clause) = stmt.data {
+                let names = clause.items.slice().iter();
+                exported.extend(names.map(|item| p.load_name_from_ref(item.name.ref_)));
+            }
+        }
+        exported.sort_unstable();
+        let roots = defines.dots.values().flatten();
+        let mut define_roots: Vec<&'a [u8]> = roots.map(|dot| &*dot.parts[0]).collect();
+        define_roots.sort_unstable();
+        let links = p.symbols.iter().filter(|symbol| symbol.has_link());
+        let mut linked_symbols: Vec<u32> = links.map(|s| s.link.get().inner_index()).collect();
+        linked_symbols.sort_unstable();
+        Self {
+            exported,
+            define_roots,
+            linked_symbols,
+        }
     }
 }
 
@@ -9066,6 +9248,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.symbols[member.ref_.inner_index() as usize].set_must_not_be_renamed(true);
                 }
             }
+            // A declaration that `read_require_aliases` read is out of `members`. CommonJS output has its own `require`.
+            let keeps_require = self.options.output_format != options::Format::Cjs;
+            for index in 0..self.require_aliases.len() {
+                let alias = self.require_aliases[index].1;
+                self.record_assignment(alias);
+                let symbol = &mut self.symbols[alias.inner_index() as usize];
+                if pin && (keeps_require || symbol.original_name.slice() != b"require") {
+                    symbol.set_must_not_be_renamed(true);
+                }
+            }
         }
 
         if wrap_mode == WrapMode::BunCommonjs && !self.options.features.remove_cjs_module_wrapper {
@@ -9710,6 +9902,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_top_level_return: false,
             latest_return_had_semicolon: false,
             has_import_meta: false,
+            is_written_by_bun: false,
+            require_aliases: Vec::new(),
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,

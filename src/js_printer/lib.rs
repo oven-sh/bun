@@ -2937,10 +2937,10 @@ pub(crate) mod __gated_printer {
                     self.print(b"(");
                 }
 
-                if record
-                    .flags
-                    .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE)
-                {
+                // An `IMPORT_META_REQUIRE` record is a call that Bun wrote this way: its base is this chunk as well.
+                if record.flags.intersects(
+                    ImportRecordFlags::CROSS_CHUNK_REQUIRE | ImportRecordFlags::IMPORT_META_REQUIRE,
+                ) {
                     // A split `require()`: the path is a sibling chunk, resolved
                     // relative to this chunk — not through the runtime's
                     // `__require`, which would resolve it relative to the
@@ -3422,6 +3422,20 @@ pub(crate) mod __gated_printer {
                             true,
                         );
                     }
+                    E::Special::ImportMetaRequire(name_loc) => {
+                        self.print_expr(
+                            Expr {
+                                data: ExprData::EImportMeta(E::ImportMeta {}),
+                                loc: expr.loc,
+                            },
+                            Level::Postfix,
+                            ExprFlag::none(),
+                        );
+                        self.print(b".");
+                        self.add_source_mapping(*name_loc);
+                        self.print(b"require");
+                    }
+                    E::Special::RequireAlias(_) => unreachable!("`e_call` replaces it"),
                 },
                 ExprData::ECommonjsExportIdentifier(id) => {
                     self.print_commonjs_export_identifier(*id, expr.loc, false);

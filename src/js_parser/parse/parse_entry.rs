@@ -142,6 +142,8 @@ pub struct Options<'a> {
     /// Used for inlining the state of import.meta.main during visiting
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
+    /// The output cannot evaluate `import.meta.require` (not for Bun, or CommonJS): read it as `require`.
+    pub lower_import_meta_require: bool,
 
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
@@ -191,6 +193,7 @@ impl<'a> Default for Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            lower_import_meta_require: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: false,
@@ -279,6 +282,7 @@ impl<'a> Options<'a> {
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
+            lower_import_meta_require: self.lower_import_meta_require,
             framework: self.framework,
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
@@ -354,6 +358,7 @@ impl<'a> Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            lower_import_meta_require: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
@@ -1000,6 +1005,12 @@ impl<'a> Parser<'a> {
             // The bundler requires a part for generated module wrappers. This
             // part must be at the start as it is referred to by index.
             before.push(js_ast::Part::default());
+
+            if p.has_import_meta && !p.is_source_runtime() {
+                p.is_written_by_bun =
+                    Self::is_written_by_bun(&source.contents, !hashbang.is_empty());
+                p.read_require_aliases(stmts);
+            }
         }
 
         // --inspect-brk
@@ -2539,6 +2550,20 @@ impl<'a> Parser<'a> {
     // because `_parse` consumes `self` by value and destructures it before this
     // call site; the source contents are passed explicitly.
     // called from gated `_parse` body above
+    /// Whether the file starts with the `// @bun` line of Bun's bundler. `has_bun_pragma` also takes `// @bundle`.
+    fn is_written_by_bun(contents: &[u8], has_hashbang: bool) -> bool {
+        let line = if has_hashbang {
+            match strings::index_of_char_usize(contents, b'\n') {
+                Some(end) => &contents[end + 1..],
+                None => return false,
+            }
+        } else {
+            contents
+        };
+        line.strip_prefix(b"// @bun")
+            .is_some_and(|rest| matches!(rest.first(), None | Some(b' ' | b'\r' | b'\n')))
+    }
+
     fn has_bun_pragma(contents: &[u8], has_hashbang: bool) -> Option<crate::AlreadyBundled> {
         const BUN_PRAGMA: &[u8] = b"// @bun";
         let end = contents.len();

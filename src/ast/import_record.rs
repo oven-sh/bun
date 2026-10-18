@@ -107,6 +107,12 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// A `require("x")` that Bun wrote through `import.meta.require`, in output that can evaluate that: a call left for run time prints as `import.meta.require("x")`.
+        const IMPORT_META_REQUIRE = 1 << 19;
+
+        /// A `require("x")` that Bun wrote through `import.meta.require`: when `x` does not resolve at build time, the call stays for run time and is no error.
+        const RUNTIME_IF_UNRESOLVED = 1 << 20;
     }
 }
 

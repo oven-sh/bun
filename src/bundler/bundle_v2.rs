@@ -2065,6 +2065,25 @@ pub mod bv2_impl {
             // outlives `BundleV2`.
             self.transpiler.log_mut()
         }
+
+        /// A `RUNTIME_IF_UNRESOLVED` record did not resolve. Only a debug line says so: the dev server's log is for failures.
+        fn note_left_for_run_time(
+            &self,
+            source: &bun_ast::Source,
+            loc: bun_ast::Loc,
+            specifier: &[u8],
+        ) {
+            if self.dev_server.is_none() {
+                self.transpiler.log_mut().add_debug_fmt(
+                    Some(source),
+                    loc,
+                    format_args!(
+                        "Could not resolve \"{}\" at build time. The call stays for run time.",
+                        bstr::BStr::new(specifier)
+                    ),
+                );
+            }
+        }
     }
 
     pub(crate) struct ReachableFileVisitor<'a> {
@@ -2765,6 +2784,36 @@ pub mod bv2_impl {
                 ) {
                     Ok(r) => break r,
                     Err(err) => {
+                        // A `require` that Bun wrote through `import.meta.require` stays a run-time call, after the same retry.
+                        if self.graph.ast.items_import_records()
+                            [import_record.importer_source_index as usize]
+                            .as_slice()[import_record.import_record_index as usize]
+                            .flags
+                            .contains(bun_ast::ImportRecordFlags::RUNTIME_IF_UNRESOLVED)
+                        {
+                            if err == _resolver::Error::ModuleNotFound
+                                && self.dev_server.is_some()
+                                && !had_busted_dir_cache
+                                // SAFETY: see `transpiler` note above.
+                                && unsafe { &mut *transpiler }
+                                    .resolver
+                                    .bust_dir_cache_from_specifier(
+                                        &import_record.source_file,
+                                        &import_record.specifier,
+                                    )
+                            {
+                                had_busted_dir_cache = true;
+                                continue;
+                            }
+                            self.note_left_for_run_time(
+                                &self.graph.input_files.items_source()
+                                    [import_record.importer_source_index as usize],
+                                import_record.range.loc,
+                                &import_record.specifier,
+                            );
+                            return;
+                        }
+
                         // Only perform directory busting when hot-reloading is enabled
                         if err == _resolver::Error::ModuleNotFound {
                             if let Some(dev) = &self.dev_server {
@@ -6886,6 +6935,30 @@ pub mod bv2_impl {
                     ) {
                         Ok(r) => break r,
                         Err(err) => {
+                            // A `require` that Bun wrote through `import.meta.require` stays a run-time call, after the same retry.
+                            if import_record
+                                .flags
+                                .contains(bun_ast::ImportRecordFlags::RUNTIME_IF_UNRESOLVED)
+                            {
+                                if err == _resolver::Error::ModuleNotFound
+                                    && self.bun_watcher.is_some()
+                                    && !had_busted_dir_cache
+                                    && transpiler.resolver.bust_dir_cache_from_specifier(
+                                        source.path.text,
+                                        import_record.path.text,
+                                    )
+                                {
+                                    had_busted_dir_cache = true;
+                                    continue 'inner;
+                                }
+                                self.note_left_for_run_time(
+                                    source,
+                                    import_record.range.loc,
+                                    import_record.path.text,
+                                );
+                                continue 'outer;
+                            }
+
                             // borrowck — `log_for_resolution_failures` returns
                             // `&mut Log` tied to `&mut self`, but it's always a raw-ptr
                             // deref (DevServer vtable or `transpiler.log`). Detach via

@@ -1140,6 +1140,7 @@ pub(crate) fn scan_imports_and_exports(
                             // nor does a split `require()` (`import.meta.require`).
                             if kind != ImportKind::Dynamic
                                 && !is_external_dyn
+                                && !rec_flags.contains(ImportRecordFlags::IMPORT_META_REQUIRE)
                                 && should_call_runtime_require(output_format)
                             {
                                 runtime_require_uses += 1;

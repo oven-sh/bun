@@ -251,6 +251,10 @@ pub enum Special {
     /// Prints the resolved specifier string for an import record
     /// (an `ImportRecord` index).
     ResolvedSpecifierString(u32),
+    /// The call target `import.meta.require` in a bundle, until `e_call` has the arguments. Holds `name_loc`.
+    ImportMetaRequire(crate::Loc),
+    /// The call target that names a `var x = import.meta.require`, until `e_call` has the arguments. Holds the index into `P::require_aliases`.
+    RequireAlias(u32),
 }
 
 pub struct Call {

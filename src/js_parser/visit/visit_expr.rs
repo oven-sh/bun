@@ -300,6 +300,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Substitute uncalled "require" for the require target
             if p.require_ref.eql(e_.ref_) && !p.is_source_runtime() {
+                if !p.require_aliases.is_empty()
+                    && Self::use_of_require_alias(
+                        p,
+                        e,
+                        result.declare_loc,
+                        in_.assign_target,
+                        in_.is_property_access_target,
+                    )
+                {
+                    return;
+                }
+
                 // mark a reference to __require only if this is not about to be used for a call target
                 if !(matches!(p.call_target.tag(), Tag::EIdentifier)
                     && expr.data.e_identifier().unwrap().ref_.eql(
@@ -337,6 +349,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_was_originally_identifier(true)
                 .with_is_property_access_target(in_.is_property_access_target),
         );
+    }
+
+    /// A use of a name that `read_require_aliases` read. A call target waits for `e_call`. Any other use is a use of the declared symbol.
+    #[cold]
+    #[inline(never)]
+    fn use_of_require_alias(
+        p: &mut Self,
+        e: &mut Expr,
+        declare_loc: Option<bun_ast::Loc>,
+        assign_target: js_ast::AssignTarget,
+        is_property_access_target: bool,
+    ) -> bool {
+        let Some((index, declared)) = declare_loc.and_then(|loc| p.require_alias_at(loc)) else {
+            return false;
+        };
+        // `find_symbol` counted a use of `require`, which makes a file with no import or export CommonJS.
+        p.ignore_usage(p.require_ref);
+
+        let written = e.data.e_identifier().expect("infallible: variant checked");
+        if matches!(p.call_target, Data::EIdentifier(target) if target.ref_.eql(written.ref_)) {
+            e.data = Data::ESpecial(E::Special::RequireAlias(index));
+            return true;
+        }
+
+        p.record_usage(declared);
+        if assign_target != js_ast::AssignTarget::None {
+            p.record_assignment(declared);
+        }
+        *e = p.handle_identifier(
+            e.loc,
+            E::Identifier {
+                ref_: declared,
+                ..Default::default()
+            },
+            None,
+            IdentifierOpts::default()
+                .with_assign_target(assign_target)
+                .with_was_originally_identifier(true)
+                .with_is_property_access_target(is_property_access_target),
+        );
+        true
     }
     // PERF(port:frame): keep these large, infrequently-taken arms out of the
     // `visit_expr_in_out` dispatcher frame. Without `inline(never)` LLVM folds the
@@ -2268,6 +2321,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return;
                     }
                 }
+                E::Special::ImportMetaRequire(name_loc) => {
+                    if Self::import_meta_require_call(p, e, name_loc) {
+                        return;
+                    }
+                }
+                E::Special::RequireAlias(index) => {
+                    if Self::require_alias_call(p, e, index) {
+                        return;
+                    }
+                }
                 _ => {}
             }
         }
@@ -2458,6 +2521,107 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
         }
+    }
+
+    /// `import.meta.require(...)` in a bundle. One string in a file that Bun wrote is a `require("x")`.
+    #[cold]
+    #[inline(never)] // PERF(port:frame): an `Expr` result or an `ExprIn` parameter costs every `e_call`.
+    fn import_meta_require_call(p: &mut Self, e: &mut Expr, name_loc: bun_ast::Loc) -> bool {
+        if p.is_written_by_bun && Self::read_as_require_call(p, e) {
+            return true;
+        }
+
+        let mut call = e.data.e_call().expect("infallible: variant checked");
+        let loc = call.target.loc;
+        if !p.options.lower_import_meta_require {
+            call.target = p.new_expr(
+                E::Dot {
+                    target: Expr {
+                        data: Data::EImportMeta(E::ImportMeta {}),
+                        loc,
+                    },
+                    name: E::Str::new(b"require"),
+                    name_loc,
+                    can_be_removed_if_unused: true,
+                    ..Default::default()
+                },
+                loc,
+            );
+            return false;
+        }
+
+        // The output has no `import.meta.require`: a call of `require` at run time, like the end of the `ERequireCallTarget` block.
+        if p.is_control_flow_dead {
+            *e = p.new_expr(E::Null {}, e.loc);
+            return true;
+        }
+        call.target = p.value_for_require(name_loc);
+        call.can_be_unwrapped_if_unused = E::CallUnwrap::Never;
+        if let Some(first) = call.args.slice().first()
+            && !matches!(first.data, Data::EString(..))
+        {
+            p.check_dynamic_specifier(*first, loc, "require()")
+                .expect("unreachable");
+        }
+        if p.options.features.allow_runtime {
+            p.record_usage_of_runtime_require();
+        }
+        true
+    }
+
+    /// A call through a name that `read_require_aliases` read. One string is a `require("x")`. Any other call is a call of the declared symbol.
+    #[cold]
+    #[inline(never)]
+    fn require_alias_call(p: &mut Self, e: &mut Expr, index: u32) -> bool {
+        if Self::read_as_require_call(p, e) {
+            return true;
+        }
+
+        let mut call = e.data.e_call().expect("infallible: variant checked");
+        let declared = p.require_aliases[index as usize].1;
+        p.record_usage(declared);
+        call.target = p.handle_identifier(
+            call.target.loc,
+            E::Identifier {
+                ref_: declared,
+                ..Default::default()
+            },
+            None,
+            IdentifierOpts::default()
+                .with_is_call_target(true)
+                .with_was_originally_identifier(true),
+        );
+        false
+    }
+
+    /// Makes the call `e`, which Bun wrote through `import.meta.require`, a `require("x")` when it has one string argument.
+    fn read_as_require_call(p: &mut Self, e: &mut Expr) -> bool {
+        let call = e.data.e_call().expect("infallible: variant checked");
+        if call.optional_chain.is_some()
+            || call.args.len_u32() != 1
+            || !p.options.features.allow_runtime
+        {
+            return false;
+        }
+        let first = call.args.slice()[0];
+        if !matches!(first.data, Data::EString(..)) {
+            return false;
+        }
+
+        let first_record = p.import_records.len();
+        // The call is lazy where Bun wrote it. An `import` statement in its place is not.
+        let unwrap = core::mem::take(&mut p.options.features.unwrap_commonjs_to_esm);
+        *e = p.transpose_require(first, &TransposeState::default());
+        p.options.features.unwrap_commonjs_to_esm = unwrap;
+
+        let mut flags = bun_ast::ImportRecordFlags::RUNTIME_IF_UNRESOLVED;
+        if !p.options.lower_import_meta_require {
+            flags |= bun_ast::ImportRecordFlags::IMPORT_META_REQUIRE;
+        }
+        for record in &mut p.import_records.items_mut()[first_record..] {
+            record.flags.insert(flags);
+        }
+        true
     }
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.

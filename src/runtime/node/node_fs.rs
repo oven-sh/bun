@@ -213,8 +213,6 @@ pub(crate) use super::node_fs_binding::Binding;
 use bun_jsc::JSPromiseStrong;
 
 use super::dir_iterator as DirIterator;
-#[cfg(not(windows))]
-use bun_resolver::fs::FileSystem;
 
 // On POSIX the libuv-backed code paths (`UVFSRequest`, `uv_fs_*`) are absent:
 // `UVFSRequest` aliases `AsyncFSTask` and every `uv::*` reference is gated
@@ -7599,7 +7597,7 @@ impl NodeFS {
     // For `fs.realpath`, Node.js uses `lstat`, exposing the native system call under
     // `fs.realpath.native`. In Bun, the system call is the default, but the error
     // code must be changed to make it seem like it is using lstat (tests expect this),
-    // in addition, some more subtle things depend on the variant.
+    // and the path goes through `path.resolve` first, as it does in Node.js.
     pub(crate) fn realpath_inner(
         &mut self,
         args: &args::Realpath,
@@ -7632,17 +7630,8 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
-            let mut buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
-            if variant == RealpathVariant::Emulated {
-                // remove the trailing slash
-                //
-                // `buf` is an immutable view and every consumer below copies by
-                // length, so just shrink the slice — writing a NUL back through
-                // `ptr.cast_mut()` while `buf` is live would be Stacked-Borrows UB.
-                if buf.last() == Some(&b'\\') {
-                    buf = &buf[..buf.len() - 1];
-                }
-            }
+            let buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
+            let _ = variant;
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
@@ -7657,27 +7646,26 @@ impl NodeFS {
         {
             let mut outbuf = bun_paths::path_buffer_pool::get();
             let inbuf = &mut self.sync_error_buf;
-            // SAFETY: single-threaded init flag (resolver/fs.rs).
-            debug_assert!(
-                bun_resolver::fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed)
-            );
 
-            let path_slice = args.path.slice();
-            // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
-            let fs = FileSystem::get();
-            let parts = [fs.top_level_dir, path_slice];
-            let inbuf_len = inbuf.len();
-            let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
-                return Err(sys::Error {
-                    errno: E::ENAMETOOLONG as _,
-                    syscall: sys::Tag::realpath,
-                    path: args.path.slice().into(),
-                    ..Default::default()
-                });
+            let path = match variant {
+                RealpathVariant::Native => args.path.slice_z(inbuf),
+                RealpathVariant::Emulated => {
+                    let parts = [args.path.slice()];
+                    let len = bun_node_path::resolve_buf_len(false, &parts);
+                    let mut bufs = vec![0u8; 2 * len];
+                    let (buf, buf2) = bufs.split_at_mut(len);
+                    let resolved = bun_node_path::resolve_posix_t(&parts, buf, buf2)?;
+                    if resolved.len() >= inbuf.len() {
+                        return Err(sys::Error {
+                            errno: E::ENAMETOOLONG as _,
+                            syscall: sys::Tag::realpath,
+                            path: args.path.slice().into(),
+                            ..Default::default()
+                        });
+                    }
+                    paths::resolve_path::z(resolved, inbuf)
+                }
             };
-            let path_len = joined.len();
-            inbuf[path_len] = 0;
-            let path = ZStr::from_buf(&inbuf[..], path_len);
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let flags = sys::O::PATH; // O_PATH is faster
@@ -7695,7 +7683,6 @@ impl NodeFS {
                 Ok(buf_) => buf_,
             };
 
-            let _ = variant;
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {

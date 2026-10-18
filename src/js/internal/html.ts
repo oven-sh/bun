@@ -1,11 +1,17 @@
 // This is the file that loads when you pass a '.html' entry point to Bun.
 // It imports the entry points and initializes a server.
-import type { HTMLBundle, Server } from "bun";
+import type { HTMLBundle } from "bun";
 const initial = performance.now();
 const argv = process.argv;
 
 // `import` cannot be used in this file and only Bun builtin modules can be used.
 const path = require("node:path");
+const {
+  defaultServeFlags,
+  parseServeFlag,
+  serveOnFreePort,
+  printBannerAndHandleShortcuts,
+} = require("internal/serve_cli");
 
 const env = Bun.env;
 
@@ -13,35 +19,14 @@ const env = Bun.env;
 async function start() {
   let args: string[] = [];
   const cwd = process.cwd();
-  let hostname = "localhost";
-  let port: number | undefined = undefined;
-  let enableConsoleLog = false;
+  const flags = defaultServeFlags();
   // Step 1. Resolve all HTML entry points
   for (let i = 1, argvLength = argv.length; i < argvLength; i++) {
     const arg = argv[i];
 
     if (!arg.endsWith(".html")) {
-      if (arg.startsWith("--hostname=")) {
-        hostname = arg.slice("--hostname=".length);
-        if (hostname.includes(":")) {
-          const [host, portString] = hostname.split(":");
-          hostname = host;
-          port = parseInt(portString, 10);
-        }
-      } else if (arg.startsWith("--port=")) {
-        port = parseInt(arg.slice("--port=".length), 10);
-      } else if (arg.startsWith("--host=")) {
-        hostname = arg.slice("--host=".length);
-        if (hostname.includes(":")) {
-          const [host, portString] = hostname.split(":");
-          hostname = host;
-          port = parseInt(portString, 10);
-        }
-      } else if (arg === "--console") {
-        enableConsoleLog = true;
-      } else if (arg === "--no-console") {
-        enableConsoleLog = false;
-      }
+      const used = parseServeFlag(argv, i, flags);
+      if (used > 1) i += used - 1;
 
       if (arg === "--help") {
         console.log(`
@@ -52,8 +37,8 @@ Usage:
 
 Options:
 
-  --port=<NUM>
-  --host=<STR>, --hostname=<STR>
+  --port <NUM>
+  --host <STR>, --hostname <STR>
   --console # print console logs from browser
   --no-console # don't print console logs from browser
 Examples:
@@ -219,194 +204,51 @@ yourself with Bun.serve().
     },
     {} as Record<string, HTMLBundle>,
   );
-  var server: Server<undefined>;
-  getServer: {
-    try {
-      server = Bun.serve({
-        routes: staticRoutes,
-        development:
-          env.NODE_ENV !== "production"
-            ? {
-                console: enableConsoleLog,
-                hmr: undefined,
-              }
-            : false,
-
-        hostname,
-        port,
-
-        // use the default port via existing port detection code.
-        // port: 3000,
-
-        fetch(_req: Request) {
-          return new Response("Not found", { status: 404 });
-        },
-      });
-      break getServer;
-    } catch (error: any) {
-      if (error?.code === "EADDRINUSE") {
-        let defaultPort = port || parseInt(env.PORT || env.BUN_PORT || env.NODE_PORT || "3000", 10);
-        for (let remainingTries = 5; remainingTries > 0; remainingTries--) {
-          try {
-            server = Bun.serve({
-              routes: staticRoutes,
-              development:
-                env.NODE_ENV !== "production"
-                  ? {
-                      console: enableConsoleLog,
-                      hmr: undefined,
-                    }
-                  : false,
-
-              hostname,
-
-              // Retry with a different port up to 4 times.
-              port: defaultPort++,
-
-              fetch(_req: Request) {
-                return new Response("Not found", { status: 404 });
-              },
-            });
-            break getServer;
-          } catch (error: any) {
-            if (error?.code === "EADDRINUSE") {
-              continue;
+  const server = serveOnFreePort(
+    "bun html",
+    port => ({
+      routes: staticRoutes,
+      development:
+        env.NODE_ENV !== "production"
+          ? {
+              console: flags.console,
+              hmr: undefined,
             }
-            throw error;
-          }
-        }
-      }
+          : false,
 
-      throw error;
-    }
-  }
+      hostname: flags.hostname ?? "localhost",
+      // `undefined` uses the default port via existing port detection code.
+      port,
+
+      fetch(_req: Request) {
+        return new Response("Not found", { status: 404 });
+      },
+    }),
+    flags.port,
+  );
   const elapsed = (performance.now() - initial).toFixed(2);
-  const enableANSIColors = Bun.enableANSIColors;
-  function printInitialMessage(isFirst: boolean) {
-    let pathnameToPrint;
-    if (servePaths.length === 1) {
-      pathnameToPrint = servePaths[0];
-    } else {
-      const indexRoute = servePaths.find(a => {
-        return a === "index" || a === "" || a === "/";
-      });
-      pathnameToPrint = indexRoute !== undefined ? indexRoute : servePaths[0];
-    }
 
-    pathnameToPrint ||= "/";
-    if (pathnameToPrint === "*") {
-      pathnameToPrint = "/";
-    }
-
-    if (enableANSIColors) {
-      let topLine = `${server.development ? "\x1b[34;7m DEV \x1b[0m " : ""}\x1b[1;34m\x1b[5mBun\x1b[0m \x1b[1;34mv${Bun.version}\x1b[0m`;
-      if (isFirst) {
-        topLine += ` \x1b[2mready in\x1b[0m \x1b[1m${elapsed}\x1b[0m ms`;
-      }
-      if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_DevServer) {
-        topLine += `\x1b[2m (PID ${process.pid})\x1b[0m`;
-      }
-      console.log(topLine + "\n");
-      console.log(`\x1b[1;34m➜\x1b[0m \x1b[36m${new URL(pathnameToPrint, server!.url)}\x1b[0m`);
-    } else {
-      let topLine = `Bun v${Bun.version}`;
-      if (isFirst) {
-        if (server.development) {
-          topLine += " dev server";
-        }
-        topLine += ` ready in ${elapsed} ms`;
-      }
-      console.log(topLine + "\n");
-      console.log(`url: ${new URL(pathnameToPrint, server!.url)}`);
-    }
-    if (htmlImports.length > 1 || (servePaths[0] !== "" && servePaths[0] !== "*")) {
-      console.log("\nRoutes:");
-
-      const pairs: { route: string; importPath: string }[] = [];
-
-      for (let i = 0, length = servePaths.length; i < length; i++) {
-        const route = servePaths[i];
-        const importPath = args[i];
-        pairs.push({ route, importPath });
-      }
-      pairs.sort((a, b) => {
-        if (b.route === "") return 1;
-        if (a.route === "") return -1;
-        return a.route.localeCompare(b.route);
-      });
-      for (let i = 0, length = pairs.length; i < length; i++) {
-        const { route, importPath } = pairs[i];
-        const isLast = i === length - 1;
-        const prefix = isLast ? "  └── " : "  ├── ";
-        if (enableANSIColors) {
-          console.log(`${prefix}\x1b[36m/${route}\x1b[0m \x1b[2m→ ${path.relative(process.cwd(), importPath)}\x1b[0m`);
-        } else {
-          console.log(`${prefix}/${route} → ${path.relative(process.cwd(), importPath)}`);
-        }
-      }
-    }
-
-    if (isFirst && process.stdin.isTTY) {
-      if (enableANSIColors) {
-        console.log();
-        console.log("\x1b[2mPress \x1b[2;36mh + Enter\x1b[39;2m to show shortcuts\x1b[0m");
-      } else {
-        console.log();
-        console.log("Press h + Enter to show shortcuts");
-      }
-    }
-  }
-
-  printInitialMessage(true);
-
-  // Keyboard shortcuts
-  if (process.stdin.isTTY) {
-    // Handle Ctrl+C and other termination signals
-    process.on("SIGINT", () => process.exit());
-    process.on("SIGHUP", () => process.exit());
-    process.on("SIGTERM", () => process.exit());
-    process.stdin.on("data", data => {
-      const key = data.toString().toLowerCase().replaceAll("\r\n", "\n");
-
-      switch (key) {
-        case "\x03": // Ctrl+C
-        case "q\n":
-          process.exit();
-          break;
-
-        case "c\n":
-          console.clear();
-          printInitialMessage(false);
-          break;
-
-        case "o\n":
-          const url = server.url.toString();
-
-          if (process.platform === "darwin") {
-            // TODO: copy the AppleScript from create-react-app or Vite.
-            Bun.spawn(["open", url]).exited.catch(() => {});
-          } else if (process.platform === "win32") {
-            Bun.spawn(["start", url]).exited.catch(() => {});
-          } else if (process.platform === "android") {
-            Bun.spawn(["/system/bin/am", "start", "-a", "android.intent.action.VIEW", "-d", url]).exited.catch(
-              () => {},
-            );
-          } else {
-            Bun.spawn(["xdg-open", url]).exited.catch(() => {});
-          }
-          break;
-
-        case "h\n":
-          console.clear();
-          printInitialMessage(false);
-          console.log("\n  Shortcuts\x1b[2m:\x1b[0m\n");
-          console.log("  \x1b[2m→\x1b[0m   \x1b[36mc + Enter\x1b[0m   clear screen");
-          console.log("  \x1b[2m→\x1b[0m   \x1b[36mo + Enter\x1b[0m   open in browser");
-          console.log("  \x1b[2m→\x1b[0m   \x1b[36mq + Enter\x1b[0m   quit (or Ctrl+C)\n");
-          break;
-      }
+  let pathnameToPrint;
+  if (servePaths.length === 1) {
+    pathnameToPrint = servePaths[0];
+  } else {
+    const indexRoute = servePaths.find(a => {
+      return a === "index" || a === "" || a === "/";
     });
+    pathnameToPrint = indexRoute !== undefined ? indexRoute : servePaths[0];
   }
+
+  pathnameToPrint ||= "/";
+  if (pathnameToPrint === "*") {
+    pathnameToPrint = "/";
+  }
+
+  const routes =
+    htmlImports.length > 1 || (servePaths[0] !== "" && servePaths[0] !== "*")
+      ? servePaths.map((route, i) => ({ route, file: args[i] }))
+      : [];
+
+  printBannerAndHandleShortcuts({ server, elapsed, pathname: pathnameToPrint, routes });
 }
 
 export default start;

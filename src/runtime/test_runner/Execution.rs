@@ -315,13 +315,35 @@ impl Execution {
         self.sequences = core::mem::take(&mut order.sequences).into_boxed_slice();
     }
 
-    /// Only wakes the runner. `step_sequence_one` decides that an entry timed out, and kills its processes on that decision.
-    pub(crate) fn handle_timeout(&mut self) -> JsResult<()> {
+    /// Wakes the runner. `step_sequence_one` decides that an entry timed out, and kills its processes on that decision.
+    pub(crate) fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         let _g = group_begin!();
         let buntest = self.bun_test();
+        // SAFETY: `in_run_loop` is a sibling field of `self` in `BunTest`, read without forming a `&BunTest`.
+        if unsafe { (*buntest).in_run_loop } {
+            self.handle_timeout_under_callback(global_this);
+        }
         // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
         unsafe { (*buntest).add_result(RefDataValue::Start) };
         Ok(())
+    }
+
+    /// A callback on the stack of `run` is turning the event loop (`expect().resolves`), so the runner does not step until it returns. Its wait can be for a child, so the kill at its deadline happens here. A timer that fired for an earlier entry is armed again, because `run` does that only after the callback returns.
+    fn handle_timeout_under_callback(&mut self, global_this: &JSGlobalObject) {
+        let Some(entry) = self.on_stack_entry.get() else {
+            return;
+        };
+        // SAFETY: arena-owned entry, alive for lifetime of BunTest
+        let deadline = unsafe { entry.as_ref() }.timespec;
+        if deadline.eql(&Timespec::EPOCH) {
+            return;
+        }
+        if deadline.order(&Timespec::now_force_real_time()) == core::cmp::Ordering::Less {
+            self.kill_dangling_processes_on_timeout(global_this);
+        } else {
+            // SAFETY: deref parent at point-of-use; `update_min_timeout` touches the timer of `BunTest`, not `self`.
+            unsafe { (*self.bun_test()).update_min_timeout(global_this, &deadline) };
+        }
     }
 
     /// Reaps what the entry that timed out leaves without a cleanup. It does not touch the runner's queue, so it may run from inside `spawnSync`'s isolated loop.

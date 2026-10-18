@@ -868,7 +868,7 @@ impl BunTest {
             match (*this).phase {
                 Phase::Collection => {}
                 Phase::Execution => {
-                    if let Err(e) = (*this).execution.handle_timeout() {
+                    if let Err(e) = (*this).execution.handle_timeout(global) {
                         (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, &RefDataValue::Done);
                     }
                 }
@@ -959,7 +959,7 @@ impl BunTest {
         Ok(())
     }
 
-    fn update_min_timeout(&mut self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
+    pub(crate) fn update_min_timeout(&mut self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
         let _g = group_begin!();
         let _ = global_this;
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.

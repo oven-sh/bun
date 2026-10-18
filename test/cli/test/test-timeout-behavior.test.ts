@@ -521,8 +521,12 @@ testKill("a test timeout kills all of its children after an earlier child exited
 
 // The timer of a test that finished stays armed. When it fires, the test that is
 // running has not timed out, so its child stays. The first test is not asserted on:
-// a slow machine can take longer than its timeout to return.
-testKill("the timer of a finished test does not kill the child of the test that is running", async () => {
+// a slow machine can take longer than its timeout to return. `resolves` waits in
+// place, so in the second case the timer fires under the test callback.
+testKill.each([
+  ["", "await Bun.sleep(timeout * 2)"],
+  [" and waits in expect()", "await expect(Bun.sleep(timeout * 2)).resolves.toBeUndefined()"],
+])("the timer of a finished test does not kill the child of the test that is running%s", async (_, wait) => {
   const { combined } = await runTestFile(/* ts */ `
     import { expect, test } from "bun:test";
 
@@ -532,7 +536,7 @@ testKill("the timer of a finished test does not kill the child of the test that 
     test("is running when that timer fires", async () => {
       const child = spawnEcho();
       // This sleep ends after the deadline of the first test, so that timer fires first.
-      await Bun.sleep(timeout * 2);
+      ${wait};
       expect(await echo(child, "still here")).toBe("still here");
       child.kill();
     }, 0);
@@ -540,6 +544,33 @@ testKill("the timer of a finished test does not kill the child of the test that 
 
   expect(combined).not.toContain("dangling process");
   expect(combined).toContain("(pass) is running when that timer fires");
+});
+
+// `resolves` waits in place: the event loop turns under the test callback, and the
+// runner cannot step until the callback returns. Only the kill at the deadline ends
+// the wait for the child. In the second case the timer first fires for the test before.
+testKill.each([
+  ["", ""],
+  [" after the timer of an earlier test fired", `test("finishes and leaves its timer armed", () => {}, 100);`],
+])("a test that waits for its child in expect() is ended by its timeout%s", async (_, earlierTest) => {
+  const { combined, exitCode } = await runTestFile(/* ts */ `
+    import { expect, test } from "bun:test";
+
+    ${earlierTest}
+
+    test("waits for its child", async () => {
+      const child = Bun.spawn({
+        cmd: [process.execPath, "-e", "await Bun.sleep(5000)"],
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      await expect(child.exited).resolves.toBeNumber();
+    }, 300);
+  `);
+
+  expect(combined.match(/killed \d+ dangling process(?:es)?/g)).toEqual(["killed 1 dangling process"]);
+  expect(combined).toContain("(fail) waits for its child");
+  expect(exitCode).toBe(1);
 });
 
 // The timer fires after the callback returned and before the runner steps past the entry.

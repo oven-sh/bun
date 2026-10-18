@@ -511,6 +511,8 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
   });
 });
 
+const madeAtTopLevel = new Error("m\n    at fake (/nonexistent/fake.js:1:5)");
+
 describe("lines of the name and the message that look like stack frames are not printed as stack frames", () => {
   const at = "\n    at ";
   const fake = at + "fake (/nonexistent/fake.js:1:5)";
@@ -537,23 +539,36 @@ describe("lines of the name and the message that look like stack frames are not 
     ["in the name", "m", { beforeRead: e => (e.name = "N" + fake) }],
     ["in both", "m" + fake, { beforeRead: e => (e.name = "m" + fake) }],
     [
-      "none, the message is now as long as all that is before the second frame",
-      "m",
-      { afterRead: e => (e.message = "x".repeat(e.stack.indexOf(at, e.stack.indexOf(at) + 1) - "Error: ".length)) },
-    ],
-    [
       "none, the message now ends in the line break before the first frame",
       "m",
       { afterRead: e => (e.message += "\n") },
     ],
     ["none, the name now ends in the first frame", "", { afterRead: e => (e.name += at + "make") }],
     [
-      "none, the message now ends in the last frame",
+      "none, the message now ends with the first frame",
       "m",
-      { afterRead: e => (e.message = e.stack.slice("Error: ".length)) },
+      { afterRead: e => (e.message += at + e.stack.split(at)[1]) },
     ],
   ])("%s", (_, message, changes) => {
     expect(printedFrames(make(message, changes))).toEqual(["at make (this file)", "at this file"]);
+  });
+
+  test("in the message of an error made at the top level, whose frame has no parentheses", () => {
+    madeAtTopLevel.stack;
+    expect(printedFrames(madeAtTopLevel)).toEqual(["at this file"]);
+  });
+
+  test("none, the message is now as long as all that is before the first frame with a position", () => {
+    function make() {
+      try {
+        "".repeat(-1);
+      } catch (err) {
+        return err;
+      }
+    }
+    const err = make();
+    err.message = "x".repeat(err.stack.indexOf(at + "make") - "RangeError: ".length);
+    expect(printedFrames(err)).toEqual(["at repeat (unknown:1:1)", "at make (this file)", "at this file"]);
   });
 
   test("in the message of an error without frames", () => {

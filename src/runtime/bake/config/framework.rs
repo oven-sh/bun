@@ -497,11 +497,11 @@ impl Framework {
                     ])
                 };
 
-                let ignore_dirs = if let Some(exts_js) = fsr_opts.get(global, "ignoreDirs")? {
+                let ignore_dirs = if let Some(dirs_js) = fsr_opts.get(global, "ignoreDirs")? {
                     'exts: {
-                        if exts_js.is_array() {
-                            let mut it_2 = array.array_iterator(global)?;
-                            let mut dirs = Vec::with_capacity(len as usize);
+                        if dirs_js.is_array() {
+                            let mut it_2 = dirs_js.array_iterator(global)?;
+                            let mut dirs = Vec::with_capacity(dirs_js.get_length(global)? as usize);
                             while let Some(array_item) = it_2.next()? {
                                 dirs.push(array_item.to_utf8(global)?);
                             }
@@ -509,7 +509,7 @@ impl Framework {
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
-                            "'ignoreDirs' must be an array of strings or \"*\" for all extensions"
+                            "'ignoreDirs' must be an array of strings"
                         )));
                     }
                 } else {

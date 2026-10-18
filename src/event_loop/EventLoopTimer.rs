@@ -235,8 +235,8 @@ impl Tag {
 /// fields on owners defined elsewhere, so each owner exports a named thunk per
 /// slot. The input is `*const` (so `*mut` / `&mut` / `&` all coerce at the
 /// call site); the field may be a bare `EventLoopTimer` or any
-/// `#[repr(transparent)]` wrapper such as `JsCell<EventLoopTimer>` — the
-/// underlying `from_field_ptr!` infers the field type.
+/// `#[repr(transparent)]` wrapper such as `JsCell<EventLoopTimer>`, and may be
+/// a field of a field (`timers.timer`).
 ///
 /// ```ignore
 /// bun_event_loop::impl_timer_owner!(JSValkeyClient;
@@ -246,20 +246,20 @@ impl Tag {
 /// ```
 #[macro_export]
 macro_rules! impl_timer_owner {
-    ($Owner:ty; $($method:ident => $field:ident),+ $(,)?) => {
+    ($Owner:ty; $($method:ident => $($field:ident).+),+ $(,)?) => {
         impl $Owner {
             $(
                 /// Recover `*mut Self` from a pointer to its intrusive
-                #[doc = concat!("`", stringify!($field), "` [`EventLoopTimer`] slot.")]
+                #[doc = concat!("`", stringify!($($field).+), "` [`EventLoopTimer`] slot.")]
                 /// # Safety
-                #[doc = concat!("`t` must point at the `", stringify!($field), "` field of a live `Self`.")]
+                #[doc = concat!("`t` must point at the `", stringify!($($field).+), "` field of a live `Self`.")]
                 #[inline]
                 pub unsafe fn $method(
                     t: *const $crate::EventLoopTimer::EventLoopTimer,
                 ) -> *mut Self {
                     // SAFETY: caller contract — `t` addresses `Self.$field`
                     // with whole-`Self` provenance.
-                    unsafe { ::bun_core::from_field_ptr!(Self, $field, t) }
+                    unsafe { ::bun_core::container_of(t, ::core::mem::offset_of!(Self, $($field).+)) }
                 }
             )+
         }

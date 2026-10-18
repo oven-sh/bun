@@ -132,7 +132,9 @@ pub struct BundleV2<'a> {
     /// If false we can skip TLA validation and propagation.
     pub(crate) has_any_top_level_await_modules: bool,
 
-    /// Set by `scan_module_graph_from_cli`: the import graph is the result, and nothing is printed.
+    /// The import graph is the result, and nothing is printed: set by
+    /// `scan_module_graph_from_cli`, and by `generate_from_cli` for a
+    /// `DependenciesScanner`.
     pub(crate) scan_only: bool,
 
     /// Barrel optimization: tracks which exports have been requested from each
@@ -4432,6 +4434,7 @@ pub mod bv2_impl {
                 alloc,
             )?;
             this.unique_key = generate_unique_key();
+            this.scan_only = fetcher.is_some();
 
             // Wrap so every exit path (incl. `?`) hits the cleanup below.
             let result = (|| -> Result<BuildResult, Error> {

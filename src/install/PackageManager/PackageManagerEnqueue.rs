@@ -4084,13 +4084,13 @@ fn installed_version_in_any_range(
 ) -> Option<PackageID> {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let resolutions = lockfile.packages.items_resolution();
-    let shared = (lockfile.packages_named(name_hash).iter().copied()).find(|&id| {
+    (lockfile.packages_named(name_hash).iter().copied()).find(|&id| {
         let resolution = &resolutions[id as usize];
         resolution.tag == ResolutionTag::Npm
             && (ranges.iter())
                 .any(|range| (range.npm().version).satisfies(resolution.npm().version, buf, buf))
-    })?;
-    (!would_revive_leftover(lockfile, row, shared)).then_some(shared)
+            && !would_revive_leftover(lockfile, row, id)
+    })
 }
 
 /// Returns the package that `row`'s owner, or the nearest package above it, loads under this name. As
@@ -4123,6 +4123,14 @@ fn peer_provided_from_above(
         return Some(own);
     }
 
+    // A project's own peer dependency is resolved like one of its regular dependencies.
+    let packages = lockfile.packages.items_resolution();
+    let is_project = |package: usize| {
+        matches!(
+            packages[package].tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        )
+    };
     let mut seen = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
     let mut level = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
     seen.set(owner as usize);
@@ -4137,7 +4145,7 @@ fn peer_provided_from_above(
             for (parent, list) in lists.iter().enumerate() {
                 if seen.is_set(parent)
                     || !(list.begin() as usize..list.end() as usize).any(|id| {
-                        (follows_peers || !deps[id].behavior.is_peer())
+                        (follows_peers || !deps[id].behavior.is_peer() || is_project(parent))
                             && level.is_set_allow_out_of_bound(resolutions[id] as usize, false)
                     })
                 {

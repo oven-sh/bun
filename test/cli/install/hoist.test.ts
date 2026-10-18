@@ -2652,7 +2652,7 @@ test.concurrent.each(["hoisted", "isolated"])(
 );
 
 // hostdom needs host@2 and lib needs host@1, so no version can satisfy both, and lib shares the installed host@2. The
-// registry can't change that, so it isn't asked about host, and it doesn't matter that it can't answer.
+// registry can't change that, so it isn't asked about host.
 test.concurrent("peers whose ranges don't overlap are resolved without a request for their manifest", async () => {
   using graph = await serveGraph({
     host: { "1.5.0": {}, "2.1.0": {} },
@@ -2660,13 +2660,14 @@ test.concurrent("peers whose ranges don't overlap are resolved without a request
     hostdom: { "2.1.0": { peerDependencies: { host: "^2.1.0" } } },
     lib: { "1.0.0": { peerDependencies: { host: "^1.0.0" } } },
   });
-  let isHostDown = false;
+  const requested: string[] = [];
   using server = Bun.serve({
     port: 0,
-    fetch: request =>
-      isHostDown && new URL(request.url).pathname === "/host"
-        ? new Response("not found", { status: 404 })
-        : fetch(new URL(new URL(request.url).pathname, graph.url)),
+    fetch: request => {
+      const { pathname } = new URL(request.url);
+      requested.push(pathname);
+      return fetch(new URL(pathname, graph.url));
+    },
   });
   using tmp = tempDir("hoist-disjoint-peers-no-request", {
     "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
@@ -2675,9 +2676,10 @@ test.concurrent("peers whose ranges don't overlap are resolved without a request
   const dir = String(tmp);
   await run(dir, "install");
 
-  isHostDown = true;
+  requested.length = 0;
   await rm(join(dir, ".bun-cache"), { recursive: true, force: true });
   await run(dir, "add", "lib@1.0.0");
+  expect(requested).toEqual(["/lib"]);
   expect(layout(dir)).toEqual(["holder@1.0.0", "host@2.1.0", "hostdom@2.1.0", "lib@1.0.0"]);
 });
 
@@ -2710,6 +2712,27 @@ test.concurrent("a package that's installed for a peer dependency uses the versi
   await run(dir, "add", "client@1.0.0");
   expect(requested.sort()).toEqual(["/client", "/server"]);
   expect(layout(dir)).toEqual(["client@1.0.0", "compiler@7.0.2", "server@1.0.0"]);
+});
+
+// The project's own peer dependency counts like a regular one, so the project provides compiler@7 to plugin.
+test.concurrent("the project provides its dependencies to a package that it has a peer dependency on", async () => {
+  using server = await serveGraph({
+    compiler: { "5.9.3": {}, "7.0.2": {} },
+    plugin: { "1.0.0": { peerDependencies: { compiler: "^5.0.0" } } },
+  });
+  using tmp = tempDir("hoist-peer-of-project-peer", {
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({
+      name: "root",
+      peerDependencies: { plugin: "1.0.0" },
+      devDependencies: { compiler: "^7.0.0" },
+    }),
+  });
+  const dir = String(tmp);
+  await run(dir, "install");
+  expect(layout(dir)).toEqual(["compiler@7.0.2", "plugin@1.0.0"]);
+  const downloaded = readdirSync(join(dir, ".bun-cache")).filter(name => name.startsWith("compiler@"));
+  expect(downloaded.map(name => name.split("@")[1])).toEqual(["7.0.2"]);
 });
 
 // The host bundles no-deps@1.0.0, which is what peer-deps-fixed (peer no-deps@^1.0.0) finds next to

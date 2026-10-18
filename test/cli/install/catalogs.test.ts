@@ -444,7 +444,7 @@ describe.concurrent("basic", () => {
           cmd: [bunExe(), ...command, "--linker", linker],
           cwd: packageDir,
           env: bunEnv,
-          stdout: "pipe",
+          stdout: "ignore",
           stderr: "pipe",
         });
         const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

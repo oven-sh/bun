@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
@@ -114,6 +114,9 @@ describe("bun test", () => {
     expect(stderr).toContain(path);
   });
 
+  // Deep enough to run out of stack: with 8 MB of it, a release build prints up to 21,500 of these levels and a
+  // debug build about 700. A debug build also takes 50µs to create each class or event, over 5s for 100,000.
+  const tooDeep = isDebug ? 10_000 : 100_000;
   test.each([
     ["arrays and objects", "i % 2 ? [value] : { a: value }"],
     ["instances of a class", "new (class A { a = value; })()"],
@@ -135,7 +138,7 @@ describe("bun test", () => {
           }
         }
         test("deep", () => {
-          expect([thrownFor(10), thrownFor(100_000)]).toEqual(["Error", "RangeError"]);
+          expect([thrownFor(10), thrownFor(${tooDeep})]).toEqual(["Error", "RangeError"]);
         });
       `,
       expectExitCode: 0,

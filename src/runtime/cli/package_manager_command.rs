@@ -13,7 +13,7 @@ use bun_install::package_manager_real::{
 };
 use bun_install::{DependencyID, PackageID, PackageManager, ResolutionTag, migration};
 use bun_paths::platform::{Loose, Posix};
-use bun_paths::{self as Path, AbsPathBuf, sub_path};
+use bun_paths::{self as Path, AbsPath, sub_path};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
 
@@ -41,19 +41,16 @@ struct NodeModulesFolder {
 
 /// `bun pm ls` lists what is on disk: the lockfile also has never-installed optionals and pruned entries.
 struct InstalledFilter {
-    top_level_dir: AbsPathBuf,
+    top_level_dir: AbsPath,
     store: BunStore,
 }
 
 impl InstalledFilter {
     /// `None` when there is no `node_modules`.
     fn init() -> Option<Self> {
-        let mut top_level_dir = AbsPathBuf::init_top_level_dir();
-        let has_node_modules = (top_level_dir
-            .save()
-            .append(sub_path!("node_modules"))
-            .as_path())
-        .is_ok_and(|node_modules| bun_sys::exists_z(node_modules.slice_z()));
+        let mut top_level_dir = AbsPath::init_top_level_dir();
+        let has_node_modules =
+            bun_sys::exists_path(top_level_dir.save().append(sub_path!("node_modules")));
         has_node_modules.then(|| Self {
             top_level_dir,
             store: BunStore::init(),
@@ -81,11 +78,10 @@ impl InstalledFilter {
             ResolutionTag::Root | ResolutionTag::Symlink => return true,
             // A pruned checkout (`turbo prune`, a Docker layer) lacks some of the lockfile's workspaces.
             ResolutionTag::Workspace => {
-                let mut member = AbsPathBuf::init_top_level_dir();
-                return (member
-                    .join::<Loose>(resolution.workspace().slice(buf))
-                    .as_path())
-                .is_ok_and(|member| bun_sys::exists_z(member.slice_z()));
+                let mut member = AbsPath::init_top_level_dir();
+                return bun_sys::exists_path(
+                    member.join::<Loose>(resolution.workspace().slice(buf)),
+                );
             }
             _ => {}
         }
@@ -93,11 +89,11 @@ impl InstalledFilter {
         let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
             .name
             .slice(buf);
-        let is_linked = (self.top_level_dir.save())
-            .join::<Loose>(dir)
-            .append_names::<Posix>(alias)
-            .as_path()
-            .is_ok_and(|path| bun_sys::exists_z(path.slice_z()));
+        let is_linked = bun_sys::exists_path(
+            (self.top_level_dir.save())
+                .join::<Loose>(dir)
+                .append_names::<Posix>(alias),
+        );
         is_linked
             || (or_in_store
                 && self

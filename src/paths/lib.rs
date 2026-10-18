@@ -357,8 +357,9 @@ pub use path_buffer_pool::os_path_buffer_pool;
 #[path = "Path.rs"]
 pub mod path;
 pub use path::{
-    AbsPath, AbsPathBuf, FileName, OSAbsPathBuf, OSPathBuf, Path, PathBuf, PathError, PathKind,
-    PathUnit, PathZ, RelPath, RelPathBuf, ResetScope, SubPath, SubPathBuf,
+    AbsPath, AbsPathSlice, AbsPathSliceZ, FileName, OSAbsPath, OSPath, Path, PathError, PathKind,
+    PathSlice, PathSliceZ, PathUnit, RelPath, RelPathSlice, RelPathSliceZ, ResetScope, SliceZ,
+    SubPath, SubPathSlice, SubPathSliceZ,
 };
 
 /// Width-generic dirname
@@ -730,7 +731,7 @@ pub mod fs {
     /// The bundler/resolver's logical
     /// path (display `pretty`, canonical `text`, `namespace`, parsed `name`).
     ///
-    /// NOTE: distinct from `crate::Path` (the buffer-backed AbsPath/RelPath). This is
+    /// NOTE: distinct from `crate::Path` (the buffer-backed AbsPathSlice/RelPathSlice). This is
     /// the *resolver* `Path`; addressed as `bun_paths::fs::Path`.
     ///
     /// CANONICAL: `bun_paths::fs::Path<'static>` / `bun_resolver::fs::Path` are re-exports

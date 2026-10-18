@@ -21,7 +21,7 @@ use bun_install::{
 };
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::platform::{Loose, Posix};
-use bun_paths::{AbsPathBuf, sub_path};
+use bun_paths::{AbsPath, sub_path};
 
 use crate::cli::Command;
 use crate::package_manager_command::PackageManagerCommand;
@@ -74,7 +74,7 @@ impl Blocked {
         lockfile: &Lockfile,
         dep_id: DependencyID,
         package_id: PackageID,
-        folder: &mut AbsPathBuf,
+        folder: &mut AbsPath,
     ) -> crate::Result<Option<ScriptsList>> {
         let buf = lockfile.buffers.string_bytes.as_slice();
         let packages = lockfile.packages.slice();
@@ -95,6 +95,10 @@ impl Blocked {
             return Ok(None);
         }
 
+        // A folder whose path cannot be written is not on disk.
+        if folder.try_slice().is_err() {
+            return Ok(None);
+        }
         let mut scripts = packages.items_scripts()[package_id];
         // `true`: the scripts that run once it is trusted.
         match scripts.get_list(log, lockfile, folder, alias, resolution, true) {
@@ -107,10 +111,9 @@ impl Blocked {
     fn find_all(pm: &mut PackageManager, linker: NodeLinker) -> crate::Result<Vec<Blocked>> {
         // If there is no `node_modules/.bun`, another tool created `node_modules`. In that case,
         // look for each package where it resolves from.
-        let mut store = AbsPathBuf::init_top_level_dir();
+        let mut store = AbsPath::init_top_level_dir();
         if linker == NodeLinker::Isolated
-            && (store.append(sub_path!("node_modules/.bun")).as_path())
-                .is_ok_and(|store| bun_sys::exists_z(store.slice_z()))
+            && bun_sys::exists_path(store.append(sub_path!("node_modules/.bun")))
         {
             return Self::find_in_store(pm);
         }
@@ -125,7 +128,7 @@ impl Blocked {
         let buf = lockfile.buffers.string_bytes.as_slice();
 
         let mut blocked: Vec<Blocked> = Vec::new();
-        let mut path = AbsPathBuf::init_top_level_dir();
+        let mut path = AbsPath::init_top_level_dir();
 
         let mut link_buf = bun_paths::path_buffer_pool::get();
         for folder in bun_install::isolated_install::store_folders(pm, lockfile)? {
@@ -138,23 +141,23 @@ impl Blocked {
             } else {
                 lockfile.packages.items_name()[folder.pkg_id as usize]
             };
-            let mut package = entry_dir.save();
-            package
-                .append(sub_path!("node_modules"))
-                .append_names::<Posix>(name.slice(buf));
-            let Some(scripts_list) =
+            let scripts_list = {
+                let mut package = entry_dir.save();
+                package
+                    .append(sub_path!("node_modules"))
+                    .append_names::<Posix>(name.slice(buf));
                 Self::scripts_at(log, lockfile, folder.dep_id, folder.pkg_id, &mut package)?
-            else {
+            };
+            let Some(scripts_list) = scripts_list else {
                 continue;
             };
-            drop(package);
             blocked.push(Blocked {
                 dep_id: folder.dep_id,
                 package_id: folder.pkg_id,
                 depth: folder.depth,
                 scripts_list,
                 in_global_store: !is_link
-                    && (entry_dir.as_path()).is_ok_and(|entry_dir| {
+                    && (entry_dir.try_slice()).is_ok_and(|entry_dir| {
                         bun_sys::readlink(entry_dir.slice_z(), &mut link_buf[..]).is_ok()
                     }),
                 action: Action::Skip,
@@ -170,17 +173,13 @@ impl Blocked {
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
         let mut blocked: Vec<Blocked> = Vec::new();
-        let mut path = AbsPathBuf::init_top_level_dir();
+        let mut path = AbsPath::init_top_level_dir();
 
         let mut tree_iterator =
             tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
         while let Some(node_modules) = tree_iterator.next(None) {
             let mut path = path.save();
-            if !(path
-                .join::<Loose>(node_modules.relative_path.as_bytes())
-                .as_path())
-            .is_ok_and(|path| bun_sys::exists_z(path.slice_z()))
-            {
+            if !bun_sys::exists_path(path.join::<Loose>(node_modules.relative_path.as_bytes())) {
                 continue;
             }
 

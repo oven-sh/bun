@@ -259,7 +259,7 @@ test("--heap-prof-name and --heap-prof-dir work together", async () => {
   expectV8HeapSnapshotShape(profile);
 });
 
-// On Windows `\\` separates, so no name holds one.
+// On Windows `\` separates, so no name holds one.
 test.skipIf(isWindows)("a backslash in the cwd, --heap-prof-dir and --heap-prof-name is part of a name", async () => {
   using dir = tempDir("heap-prof-backslash-test", {
     "pro\\j": {},

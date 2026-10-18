@@ -174,7 +174,7 @@ fn root_package_json<'a>(
     log: &mut bun_ast::Log,
 ) -> Option<&'a mut crate::WorkspacePackageJsonCacheEntry> {
     let pkg_json_path = join_top_level_dir(&[b"package.json"]);
-    let pkg_json_path = pkg_json_path.as_path().ok()?;
+    let pkg_json_path = pkg_json_path.try_slice().ok()?;
     let options = crate::GetJsonOptions {
         guess_indentation: true,
         ..Default::default()
@@ -380,7 +380,7 @@ fn importer_package_json(
     path: &[u8],
 ) -> Result<Expr, MigratePnpmLockfileError> {
     let json_path = join_top_level_dir(&[path, b"package.json"]);
-    let json_path = json_path.as_path().map_err(|_| InvalidPnpmLockfile)?;
+    let json_path = json_path.try_slice().map_err(|_| InvalidPnpmLockfile)?;
     let cache = &mut manager.workspace_package_json_cache;
     match cache.get_with_path(log, json_path.slice(), Default::default()) {
         crate::GetJsonResult::Entry(entry) => Ok(entry.root),
@@ -583,7 +583,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         }
 
         let pkg_json_path = join_top_level_dir(&[importer_path, b"package.json"]);
-        let importer_pkg_json = match match pkg_json_path.as_path() {
+        let importer_pkg_json = match match pkg_json_path.try_slice() {
             Ok(path) => manager.workspace_package_json_cache.get_with_path(
                 log,
                 path.slice(),
@@ -667,7 +667,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         };
 
         let abs_path = join_top_level_dir(&[path]);
-        let abs_path = abs_path.as_path().map_err(|_| InvalidPnpmLockfile)?;
+        let abs_path = abs_path.try_slice().map_err(|_| InvalidPnpmLockfile)?;
         let workspace_root = importer_package_json(manager, log, path)?;
         let name = get_str(&workspace_root, b"name").unwrap();
         let name_hash = string_hash(name);
@@ -749,12 +749,12 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 // A link that does not fit a path buffer names no workspace.
                 let link_path_buf = join_top_level_dir(&[workspace_path, link_path]);
                 let link_path_buf = link_path_buf
-                    .as_path()
+                    .try_slice()
                     .map_err(|_| MigratePnpmLockfileError::NonExistentWorkspaceDependency)?;
 
                 for existing_workspace_path in lockfile.workspace_paths.values() {
                     if join_top_level_dir(&[existing_workspace_path.slice(string_bytes!(lockfile))])
-                        .as_path()
+                        .try_slice()
                         .is_ok_and(|existing| existing == link_path_buf)
                     {
                         continue 'next_dep;
@@ -768,7 +768,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let mut folder_buf = bun_paths::path_buffer_pool::get();
             let abs_link_path = join_top_level_dir(&[workspace_path, link_path]);
             let (Ok(abs_link_path), Some(folder)) = (
-                abs_link_path.as_path(),
+                abs_link_path.try_slice(),
                 lockfile::package::folder_relative_to_top_level_dir(
                     workspace_path,
                     link_path,
@@ -919,7 +919,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         // pnpm records injected workspace packages as `name@file:<workspace dir>`.
         if res.tag == resolution::Tag::Folder {
             let folder_path = join_top_level_dir(&[res.folder().slice(string_bytes!(lockfile))]);
-            let Ok(folder_path) = folder_path.as_path() else {
+            let Ok(folder_path) = folder_path.try_slice() else {
                 bail!(
                     log,
                     "pnpm-lock.yaml package '{}': directory path too long",
@@ -1076,7 +1076,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             if dep.behavior.is_workspace() {
                 let path = join_top_level_dir(&[dep.version.workspace().slice(string_buf)]);
                 if let Some(workspace_pkg_id) =
-                    (path.as_path().ok()).and_then(|path| pkg_map.get(path.slice()))
+                    (path.try_slice().ok()).and_then(|path| pkg_map.get(path.slice()))
                 {
                     lockfile.buffers.resolutions[dep_id as usize] = *workspace_pkg_id;
                     continue;
@@ -1118,7 +1118,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             if let Some(link_pkg_id) = reference
                 .strip_prefix(b"link:")
                 .map(|link_path| join_top_level_dir(&[workspace_path, link_path]))
-                .and_then(|path| pkg_map.get(path.as_path().ok()?.slice()))
+                .and_then(|path| pkg_map.get(path.try_slice().ok()?.slice()))
             {
                 lockfile.buffers.resolutions[dep_id as usize] = *link_pkg_id;
                 continue;
@@ -1172,7 +1172,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     VersionTag::Folder | VersionTag::Symlink | VersionTag::Workspace
                 ) && let Some(link_pkg_id) =
                     join_top_level_dir(&[strings::without_prefix(reference, b"link:")])
-                        .as_path()
+                        .try_slice()
                         .ok()
                         .and_then(|path| pkg_map.get(path.slice()))
                 {

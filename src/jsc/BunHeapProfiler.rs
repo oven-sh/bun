@@ -2,7 +2,7 @@ use crate::CrateError as Error;
 use bun_core::Output;
 use bun_core::String as BunString;
 use bun_paths::platform::Auto;
-use bun_paths::{AbsPath, AbsPathBuf, PathBuffer, PathZ};
+use bun_paths::{AbsPath, AbsPathSliceZ, PathBuffer};
 use bun_sys::{self as sys, E, Fd, FdDirExt};
 
 use crate::VM;
@@ -40,8 +40,8 @@ pub(crate) fn generate_and_write_profile(
 
     let profile_slice = profile_string.to_utf8();
 
-    let mut path_buf = AbsPathBuf::init_top_level_dir();
-    let output_path = build_output_path(&mut path_buf, config)?;
+    let mut output_path = AbsPath::init_top_level_dir();
+    let output_path = build_output_path(&mut output_path, config)?;
 
     // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
     #[cfg(windows)]
@@ -90,9 +90,9 @@ pub(crate) fn generate_and_write_profile(
 }
 
 fn build_output_path<'a>(
-    path: &'a mut AbsPathBuf,
+    path: &'a mut AbsPath,
     config: &HeapProfilerConfig,
-) -> Result<&'a PathZ<AbsPath>, Error> {
+) -> Result<&'a AbsPathSliceZ, Error> {
     // Generate filename
     let mut filename_buf = bun_paths::path_buffer_pool::get();
     let filename: &[u8] = if !config.name.is_empty() {
@@ -103,7 +103,7 @@ fn build_output_path<'a>(
 
     // node accepts absolute --heap-prof-dir/-name
     let path = path.join::<Auto>(config.dir).join::<Auto>(filename);
-    Ok(path.as_path()?)
+    Ok(path.try_slice()?)
 }
 
 fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<&[u8], Error> {

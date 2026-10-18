@@ -1,13 +1,15 @@
 use bun_core::strings;
 #[cfg(windows)]
-use bun_paths::AbsPath;
-use bun_paths::{self, Path, PathBuf, PathZ, RelPath, sub_path};
+use bun_paths::AbsPathSliceZ;
+use bun_paths::{self, Path, PathSlice, PathSliceZ, RelPathSliceZ, sub_path};
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
+use super::path_error_for;
+
 pub(crate) struct Symlinker<'a> {
-    pub(crate) dest: &'a PathZ<Path>,
+    pub(crate) dest: &'a PathSliceZ,
     /// Relative to the directory of `dest`.
-    pub(crate) target: &'a PathZ<RelPath>,
+    pub(crate) target: &'a RelPathSliceZ,
     /// The directories of `dest` after `dest[..real_len]` may be links that came with the project.
     pub(crate) real_len: usize,
     /// When greater than `real_len`, `dest[..node_modules_len]` is a workspace's `node_modules`. If
@@ -20,14 +22,14 @@ pub(crate) struct Symlinker<'a> {
     /// relative `target`. `LinkedNodeModules::resolve` explains why.
     pub(crate) is_absolute: bool,
     #[cfg(windows)]
-    pub(crate) fallback_junction_target: &'a PathZ<AbsPath>,
+    pub(crate) fallback_junction_target: &'a AbsPathSliceZ,
 }
 
 impl Symlinker<'_> {
     /// True if it looked at a directory, which may be gone now.
     fn remove_planted_parents(&mut self) -> bun_sys::Result<bool> {
         let Some(parent) =
-            (self.dest.dirname().map(Path::slice)).filter(|dir| dir.len() > self.real_len)
+            (self.dest.dirname().map(PathSlice::slice)).filter(|dir| dir.len() > self.real_len)
         else {
             return Ok(false);
         };
@@ -126,13 +128,12 @@ impl Symlinker<'_> {
                                 }
                                 // Kept: the copy `bun patch <pkg>` made, a mount point (EBUSY).
                                 _ => {
-                                    if PathBuf::<Path>::from(dest)
+                                    let mut package_json = Path::<PathSlice>::from(dest);
+                                    let package_json = package_json
                                         .append(sub_path!("package.json"))
-                                        .as_path()
-                                        .is_ok_and(|package_json| {
-                                            bun_sys::exists_z(package_json.slice_z())
-                                        })
-                                    {
+                                        .try_slice()
+                                        .map_err(path_error_for(bun_sys::Tag::symlink))?;
+                                    if bun_sys::exists_z(package_json.slice_z()) {
                                         return Ok(false);
                                     }
                                     if !self.is_behind_link {

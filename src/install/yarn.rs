@@ -19,7 +19,7 @@ use bun_install::install::{self, PackageID, PackageManager};
 use bun_install::integrity::Integrity;
 use bun_install::npm;
 use bun_paths::platform::Loose;
-use bun_paths::{AbsPathBuf, sub_path};
+use bun_paths::{AbsPath, sub_path};
 use bun_semver::{self as Semver, String as SemverString};
 
 #[derive(Default)]
@@ -431,11 +431,11 @@ fn append_package_json(
     log: &mut bun_ast::Log,
     workspace_path: Option<SemverString>,
 ) -> Result<LockfilePackage, Error> {
-    let mut path = AbsPathBuf::init_top_level_dir();
+    let mut path = AbsPath::init_top_level_dir();
     if let Some(workspace_path) = &workspace_path {
         path.join::<Loose>(workspace_path.slice(this.buffers.string_bytes.as_slice()));
     }
-    let path = path.append(sub_path!("package.json")).as_path()?;
+    let path = path.append(sub_path!("package.json")).try_slice()?;
     let (source, json) = match manager.workspace_package_json_cache.get_with_path(
         log,
         path.slice(),
@@ -790,7 +790,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             resolution.tag,
             crate::resolution::Tag::Folder | crate::resolution::Tag::Symlink
         ) && let Some(folder) = entry.file.or(entry.link.as_deref())
-            && let Ok(path) = lockfile::join_top_level_dir(&[folder, b"package.json"]).as_path()
+            && let Ok(path) = lockfile::join_top_level_dir(&[folder, b"package.json"]).try_slice()
             && let GetJsonResult::Entry(json) = manager.workspace_package_json_cache.get_with_path(
                 log,
                 path.slice(),

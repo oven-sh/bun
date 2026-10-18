@@ -1032,7 +1032,7 @@ impl Lockfile {
         let buf = self.buffers.string_bytes.as_slice();
         let folder = self.packages.items_resolution()[id as usize].folder();
         let selected = join_top_level_dir(&[folder.slice(buf)]);
-        let Ok(selected) = selected.as_path() else {
+        let Ok(selected) = selected.try_slice() else {
             return false;
         };
         (self.buffers.resolutions.iter().enumerate()).any(|(row, &target)| {
@@ -1042,7 +1042,7 @@ impl Lockfile {
                     .map(|rule| rule.version())
                     .filter(|version| version.tag == dependency::version::Tag::Folder)
                     .map(|version| join_top_level_dir(&[version.folder().slice(buf)]))
-                    .is_some_and(|named| named.as_path().is_ok_and(|named| named == selected))
+                    .is_some_and(|named| named.try_slice().is_ok_and(|named| named == selected))
         })
     }
 
@@ -2231,8 +2231,8 @@ pub(crate) fn linked_workspace_path_in(
 }
 
 /// For lockfile paths: `join` resolves an absolute one and `..`.
-pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> bun_paths::AbsPathBuf {
-    let mut path = bun_paths::AbsPathBuf::init_top_level_dir();
+pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> bun_paths::AbsPath {
+    let mut path = bun_paths::AbsPath::init_top_level_dir();
     for part in parts {
         path.join::<bun_paths::platform::Loose>(part);
     }
@@ -3631,7 +3631,7 @@ impl Lockfile {
             core::iter::once(b"".as_slice()).chain(members.map(|p| p.slice(string_bytes)))
         {
             let package_json_path = join_top_level_dir(&[relative_dir, b"package.json"]);
-            let Ok(package_json_path) = package_json_path.as_path() else {
+            let Ok(package_json_path) = package_json_path.try_slice() else {
                 continue;
             };
             let path = package_json_path.slice();

@@ -2,31 +2,31 @@
 use core::ptr;
 
 use bun_alloc::AllocError;
-use bun_paths::{self, OSPathBuf, OSPathSlice};
+use bun_paths::{self, OSPath, OSPathSlice};
 #[cfg(windows)]
-use bun_paths::{OSAbsPathBuf, SubPath};
+use bun_paths::{OSAbsPath, SubPathSlice};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
-use super::path_error;
+use super::path_error_for;
 
 pub(crate) struct FileCopier {
+    /// The path of `src_dir`, for the caller to set.
     #[cfg(windows)]
-    pub(crate) src_path: OSAbsPathBuf,
-    pub(crate) dest_subpath: OSPathBuf,
+    pub(crate) src_path: OSAbsPath,
+    pub(crate) dest: OSPath,
     pub(crate) walker: Walker,
 }
 
 impl FileCopier {
     pub(crate) fn init(
         src_dir: Fd,
-        #[cfg(windows)] src_path: OSAbsPathBuf,
-        dest_subpath: OSPathBuf,
+        dest: OSPath,
         skip_dirnames: &[&OSPathSlice],
     ) -> Result<FileCopier, AllocError> {
         Ok(FileCopier {
             #[cfg(windows)]
-            src_path,
-            dest_subpath,
+            src_path: OSAbsPath::init(),
+            dest,
             walker: {
                 let mut w = walker_skippable::walk(
                     src_dir,
@@ -44,8 +44,8 @@ impl FileCopier {
     // `Drop` impl is needed.
 
     pub(crate) fn copy(&mut self) -> sys::Result<()> {
-        let path_error = path_error(sys::Tag::copyfile);
-        let dest_subpath = self.dest_subpath.as_path().map_err(path_error)?;
+        let path_error = path_error_for(sys::Tag::copyfile);
+        let dest = self.dest.try_slice().map_err(path_error)?;
         // `make_open_path` is u8-only; on Windows the OS-unit path is u16 so
         // narrow it via the same infallible `from_w_path` transcode that
         // `bun_sys::make_path_w` uses. Don't synthesise EINVAL on
@@ -54,33 +54,29 @@ impl FileCopier {
         #[cfg(windows)]
         let mut dest_u8_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
-        let dest_subpath_u8: &[u8] =
-            bun_paths::string_paths::from_w_path(&mut dest_u8_buf[..], dest_subpath.slice())
-                .as_bytes();
+        let dest_u8: &[u8] =
+            bun_paths::string_paths::from_w_path(&mut dest_u8_buf[..], dest.slice()).as_bytes();
         #[cfg(not(windows))]
-        let dest_subpath_u8: &[u8] = dest_subpath.slice();
-        let dest_dir = match bun_sys::make_path::make_open_path(
-            &Dir::cwd(),
-            dest_subpath_u8,
-            Default::default(),
-        ) {
-            Ok(d) => d,
-            Err(e) => {
-                // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun
-                let errno: E = match e.get_errno() {
-                    E::EACCES => E::EPERM,
-                    other => other,
-                };
-                #[cfg(windows)]
-                let errno = if errno == E::ENOTDIR {
-                    E::ENOENT
-                } else {
-                    errno
-                };
+        let dest_u8: &[u8] = dest.slice();
+        let dest_dir =
+            match bun_sys::make_path::make_open_path(&Dir::cwd(), dest_u8, Default::default()) {
+                Ok(d) => d,
+                Err(e) => {
+                    // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun
+                    let errno: E = match e.get_errno() {
+                        E::EACCES => E::EPERM,
+                        other => other,
+                    };
+                    #[cfg(windows)]
+                    let errno = if errno == E::ENOTDIR {
+                        E::ENOENT
+                    } else {
+                        errno
+                    };
 
-                return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::copyfile));
-            }
-        };
+                    return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::copyfile));
+                }
+            };
 
         #[cfg(not(windows))]
         let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
@@ -93,10 +89,10 @@ impl FileCopier {
                     _ => continue,
                 }
 
-                let (mut src, mut dest) = (self.src_path.save(), self.dest_subpath.save());
-                let below = SubPath::new_unchecked(entry.path.as_slice());
-                let src = src.append(below).as_path().map_err(path_error)?;
-                let dest = dest.append(below).as_path().map_err(path_error)?;
+                let (mut src, mut dest) = (self.src_path.save(), self.dest.save());
+                let below = SubPathSlice::new_assume_valid(entry.path.as_slice());
+                let src = src.append(below).try_slice().map_err(path_error)?;
+                let dest = dest.append(below).try_slice().map_err(path_error)?;
 
                 match entry.kind {
                     EntryKind::Directory => {

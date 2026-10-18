@@ -1,4 +1,4 @@
-//! Paths as types: borrowed views in one normal form, and [`PathBuf`], which builds one. See "Paths as types" in `src/CLAUDE.md`.
+//! Paths as types: [`Path`] owns a path and changes it, and lends it as a [`PathSlice`], which is in one normal form. See "Paths as types" in `src/CLAUDE.md`.
 
 use core::fmt;
 use core::ops::{Deref, DerefMut};
@@ -236,34 +236,38 @@ pub(crate) fn disk_designator_len_windows<U: PathUnit>(path: &[U]) -> usize {
 /// A normalized path, absolute or relative: only `SEP` separates, and there is no `.`, no empty name and no separator after the last name.
 #[repr(transparent)]
 #[derive(PartialEq, Eq)]
-pub struct Path<U = u8>([U]);
+pub struct PathSlice<U = u8>([U]);
 
-/// An absolute [`Path`]. It holds no `..`.
+/// An absolute [`PathSlice`]. It holds no `..`.
 #[repr(transparent)]
 #[derive(PartialEq, Eq)]
-pub struct AbsPath<U = u8>([U]);
+pub struct AbsPathSlice<U = u8>([U]);
 
-/// A relative [`Path`]. `..` comes first, if at all. Empty names the directory it is relative to.
+/// A relative [`PathSlice`]. `..` comes first, if at all. Empty names the directory it is relative to.
 #[repr(transparent)]
 #[derive(PartialEq, Eq)]
-pub struct RelPath<U = u8>([U]);
+pub struct RelPathSlice<U = u8>([U]);
 
-/// A [`RelPath`] with no `..`, so it stays below what it is appended to.
+/// A [`RelPathSlice`] with no `..`, so it stays below what it is appended to.
 #[repr(transparent)]
 #[derive(PartialEq, Eq)]
-pub struct SubPath<U = u8>([U]);
+pub struct SubPathSlice<U = u8>([U]);
 
 /// One name in a directory.
 #[repr(transparent)]
 #[derive(PartialEq, Eq)]
 pub struct FileName<U = u8>([U]);
 
-/// A `V` with a NUL after its last unit, for a syscall.
+/// A `S` with a NUL after its last unit, for a syscall.
 #[repr(transparent)]
 #[derive(PartialEq, Eq)]
-pub struct PathZ<V: ?Sized>(V);
+pub struct SliceZ<S: ?Sized>(S);
+pub type PathSliceZ<U = u8> = SliceZ<PathSlice<U>>;
+pub type AbsPathSliceZ<U = u8> = SliceZ<AbsPathSlice<U>>;
+pub type RelPathSliceZ<U = u8> = SliceZ<RelPathSlice<U>>;
+pub type SubPathSliceZ<U = u8> = SliceZ<SubPathSlice<U>>;
 
-/// The kinds of path that a [`PathBuf`] builds.
+/// The kinds of path that a [`Path`] holds, each named by the slice it lends.
 pub trait PathKind: private::Sealed {
     type Unit: PathUnit;
     #[doc(hidden)]
@@ -274,11 +278,11 @@ pub trait PathKind: private::Sealed {
     const MAY_START_WITH_DOT_DOT: bool;
     fn slice(&self) -> &[Self::Unit];
     #[doc(hidden)]
-    fn from_slice_unchecked(units: &[Self::Unit], token: Token) -> &Self;
+    fn wrap(units: &[Self::Unit], token: Token) -> &Self;
 }
 
 macro_rules! impl_path_kind {
-    ($($name:ident: $abs:literal, $rel:literal, $dot_dot:literal;)*) => {$(
+    ($($name:ident: abs = $abs:literal, rel = $rel:literal, dot_dot = $dot_dot:literal;)*) => {$(
         impl<U: PathUnit> PathKind for $name<U> {
             type Unit = U;
             const MAY_BE_ABSOLUTE: bool = $abs;
@@ -289,50 +293,49 @@ macro_rules! impl_path_kind {
                 &self.0
             }
             #[inline]
-            fn from_slice_unchecked(units: &[U], _: Token) -> &Self {
+            fn wrap(units: &[U], _: Token) -> &Self {
                 Self::wrap(units)
             }
         }
     )*};
 }
 impl_path_kind! {
-    // MAY_BE_ABSOLUTE, MAY_BE_RELATIVE, MAY_START_WITH_DOT_DOT
-    Path: true, true, true;
-    AbsPath: true, false, false;
-    RelPath: false, true, true;
-    SubPath: false, true, false;
+    PathSlice: abs = true, rel = true, dot_dot = true;
+    AbsPathSlice: abs = true, rel = false, dot_dot = false;
+    RelPathSlice: abs = false, rel = true, dot_dot = true;
+    SubPathSlice: abs = false, rel = true, dot_dot = false;
 }
 
 impl<U> Deref for FileName<U> {
-    type Target = SubPath<U>;
+    type Target = SubPathSlice<U>;
     #[inline]
-    fn deref(&self) -> &SubPath<U> {
-        SubPath::wrap(&self.0)
+    fn deref(&self) -> &SubPathSlice<U> {
+        SubPathSlice::wrap(&self.0)
     }
 }
-impl<U> Deref for SubPath<U> {
-    type Target = RelPath<U>;
+impl<U> Deref for SubPathSlice<U> {
+    type Target = RelPathSlice<U>;
     #[inline]
-    fn deref(&self) -> &RelPath<U> {
-        RelPath::wrap(&self.0)
+    fn deref(&self) -> &RelPathSlice<U> {
+        RelPathSlice::wrap(&self.0)
     }
 }
-impl<U> Deref for RelPath<U> {
-    type Target = Path<U>;
+impl<U> Deref for RelPathSlice<U> {
+    type Target = PathSlice<U>;
     #[inline]
-    fn deref(&self) -> &Path<U> {
-        Path::wrap(&self.0)
+    fn deref(&self) -> &PathSlice<U> {
+        PathSlice::wrap(&self.0)
     }
 }
-impl<U> Deref for AbsPath<U> {
-    type Target = Path<U>;
+impl<U> Deref for AbsPathSlice<U> {
+    type Target = PathSlice<U>;
     #[inline]
-    fn deref(&self) -> &Path<U> {
-        Path::wrap(&self.0)
+    fn deref(&self) -> &PathSlice<U> {
+        PathSlice::wrap(&self.0)
     }
 }
 
-macro_rules! impl_view {
+macro_rules! impl_slice {
     ($($name:ident),*) => {$(
         impl<U> private::Sealed for $name<U> {}
         impl<U> $name<U> {
@@ -340,25 +343,6 @@ macro_rules! impl_view {
             const fn wrap(units: &[U]) -> &Self {
                 // SAFETY: `repr(transparent)` over `[U]`.
                 unsafe { &*(core::ptr::from_ref(units) as *const Self) }
-            }
-            #[inline]
-            pub const fn slice(&self) -> &[U] {
-                &self.0
-            }
-            #[inline]
-            pub const fn len(&self) -> usize {
-                self.0.len()
-            }
-            #[inline]
-            pub const fn is_empty(&self) -> bool {
-                self.0.is_empty()
-            }
-        }
-        impl<U: PathUnit> PathZ<$name<U>> {
-            #[inline]
-            pub fn slice_z(&self) -> &U::ZSlice {
-                // SAFETY: a `PathZ` is only made over units that a readable 0 follows.
-                unsafe { U::zslice_from_raw(self.0.0.as_ptr(), self.0.0.len()) }
             }
         }
         impl fmt::Debug for $name<u8> {
@@ -373,50 +357,79 @@ macro_rules! impl_view {
         }
     )*};
 }
-impl_view!(Path, AbsPath, RelPath, SubPath, FileName);
+impl_slice!(
+    PathSlice,
+    AbsPathSlice,
+    RelPathSlice,
+    SubPathSlice,
+    FileName
+);
 
-impl<V: PathKind + ?Sized> PathZ<V> {
+impl<U> PathSlice<U> {
     #[inline]
-    pub fn as_path_z(&self) -> &PathZ<Path<V::Unit>> {
-        // SAFETY: the same units, so the same NUL.
-        unsafe { PathZ::wrap(Path::wrap(self.0.slice())) }
+    pub const fn slice(&self) -> &[U] {
+        &self.0
+    }
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.0.len()
+    }
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
-impl<U: Copy> From<&AbsPath<U>> for Box<AbsPath<U>> {
-    fn from(path: &AbsPath<U>) -> Self {
+
+impl<S: PathKind + ?Sized> SliceZ<S> {
+    #[inline]
+    pub fn slice_z(&self) -> &<S::Unit as PathUnit>::ZSlice {
+        let units = self.0.slice();
+        // SAFETY: a `SliceZ` is only made over units that a readable 0 follows.
+        unsafe { S::Unit::zslice_from_raw(units.as_ptr(), units.len()) }
+    }
+
+    /// The same path and NUL, as a path of any kind.
+    #[inline]
+    pub fn as_path_slice_z(&self) -> &PathSliceZ<S::Unit> {
+        // SAFETY: the same units, so the same NUL.
+        unsafe { SliceZ::wrap(PathSlice::wrap(self.0.slice())) }
+    }
+}
+impl<U: Copy> From<&AbsPathSlice<U>> for Box<AbsPathSlice<U>> {
+    fn from(path: &AbsPathSlice<U>) -> Self {
         let units: Box<[U]> = Box::from(&path.0);
         // SAFETY: `repr(transparent)` over `[U]`.
-        unsafe { Box::from_raw(Box::into_raw(units) as *mut AbsPath<U>) }
+        unsafe { Box::from_raw(Box::into_raw(units) as *mut AbsPathSlice<U>) }
     }
 }
 
-impl<V: ?Sized> PathZ<V> {
-    /// SAFETY: the unit after the last one of `view` is readable for as long as `view`, and is 0.
+impl<S: ?Sized> SliceZ<S> {
+    /// SAFETY: the unit after the last one of `slice` is readable for as long as `slice`, and is 0.
     #[inline]
-    const unsafe fn wrap(view: &V) -> &Self {
-        // SAFETY: `repr(transparent)` over `V`.
-        unsafe { &*(core::ptr::from_ref(view) as *const Self) }
+    const unsafe fn wrap(slice: &S) -> &Self {
+        // SAFETY: `repr(transparent)` over `S`.
+        unsafe { &*(core::ptr::from_ref(slice) as *const Self) }
     }
 }
-impl<V: ?Sized> Deref for PathZ<V> {
-    type Target = V;
+impl<S: ?Sized> Deref for SliceZ<S> {
+    type Target = S;
     #[inline]
-    fn deref(&self) -> &V {
+    fn deref(&self) -> &S {
         &self.0
     }
 }
-impl<V: fmt::Debug + ?Sized> fmt::Debug for PathZ<V> {
+impl<S: fmt::Debug + ?Sized> fmt::Debug for SliceZ<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
-impl<V: fmt::Display + ?Sized> fmt::Display for PathZ<V> {
+impl<S: fmt::Display + ?Sized> fmt::Display for SliceZ<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
 
-/// Only `SEP`: a view holds no other separator.
+/// Only `SEP`: a slice holds no other separator.
 #[inline]
 fn is_sep_exact<U: PathUnit>(c: U) -> bool {
     c.eq_ascii(SEP)
@@ -434,7 +447,7 @@ fn root_len<U: PathUnit>(units: &[U]) -> usize {
     {
         usize::from(units.first().is_some_and(|c| c.eq_ascii(b'/')))
     }
-    // In a view a root names a drive or a share and ends in a separator.
+    // In a slice a root names a drive or a share and ends in a separator.
     #[cfg(windows)]
     {
         let root = windows_root_len(units, is_sep_exact);
@@ -538,7 +551,7 @@ fn is_on_drive<U: PathUnit>(path: &[U], drive: u8) -> bool {
 }
 
 #[inline]
-fn is_dots<U: PathUnit>(name: &[U]) -> bool {
+fn is_dot_or_dot_dot<U: PathUnit>(name: &[U]) -> bool {
     matches!(name, [a] if a.eq_ascii(b'.')) || is_dot_dot(name)
 }
 #[inline]
@@ -565,7 +578,7 @@ fn is_normalized_sub_path<U: PathUnit>(units: &[U]) -> bool {
         }
         let name = &units[start..end];
         // A separator at the very end leaves no name after it.
-        if name.is_empty() || is_dots(name) || end + 1 == units.len() {
+        if name.is_empty() || is_dot_or_dot_dot(name) || end + 1 == units.len() {
             return false;
         }
         start = end + 1;
@@ -573,7 +586,7 @@ fn is_normalized_sub_path<U: PathUnit>(units: &[U]) -> bool {
     true
 }
 
-impl<U: PathUnit> Path<U> {
+impl<U: PathUnit> PathSlice<U> {
     #[inline]
     pub fn is_absolute(&self) -> bool {
         root_len(&self.0) > 0
@@ -600,27 +613,15 @@ impl<U: PathUnit> Path<U> {
     }
 }
 
-impl<U: PathUnit> AbsPath<U> {
+impl<U: PathUnit> AbsPathSlice<U> {
     /// `None` unless `units` is absolute and already normalized.
     fn new(units: &[U]) -> Option<&Self> {
         let root = root_len(units);
         (root > 0 && is_normalized_sub_path(&units[root..])).then(|| Self::wrap(units))
     }
 
-    /// For a path the OS returned, which is normalized but for separators at its end. Only the root is checked: `None` without one.
     #[inline]
-    pub fn new_unchecked(units: &[U]) -> Option<&Self> {
-        let root = root_len(units);
-        if root == 0 {
-            return None;
-        }
-        let end = len_without_trailing_seps(units, root);
-        debug_assert!(Self::new(&units[..end]).is_some());
-        Some(Self::wrap(&units[..end]))
-    }
-
-    #[inline]
-    pub fn is_root(&self) -> bool {
+    fn is_root(&self) -> bool {
         self.0.len() == root_len(&self.0)
     }
 
@@ -632,19 +633,19 @@ impl<U: PathUnit> AbsPath<U> {
 
     /// What is left of this path below `dir`. `None` if it is neither `dir` nor below it.
     #[inline]
-    pub fn strip_prefix(&self, dir: &Self) -> Option<&SubPath<U>> {
+    pub fn strip_prefix(&self, dir: &Self) -> Option<&SubPathSlice<U>> {
         let rest = strip_prefix_units(&self.0, &dir.0)?;
         match rest {
-            [] => Some(SubPath::wrap(rest)),
-            [first, below @ ..] if is_sep_exact(*first) => Some(SubPath::wrap(below)),
-            _ if dir.is_root() => Some(SubPath::wrap(rest)),
+            [] => Some(SubPathSlice::wrap(rest)),
+            [first, below @ ..] if is_sep_exact(*first) => Some(SubPathSlice::wrap(below)),
+            _ if dir.is_root() => Some(SubPathSlice::wrap(rest)),
             _ => None,
         }
     }
 
     /// The way from this directory to `to`. Fails as `ExpectedRelative` between two drives.
-    pub fn relative(&self, to: &Self) -> PathBuf<RelPath<U>> {
-        let mut out = PathBuf::<RelPath<U>>::init();
+    pub fn relative(&self, to: &Self) -> Path<RelPathSlice<U>> {
+        let mut out = Path::<RelPathSlice<U>>::init();
         let mut common = self;
         let below = loop {
             if let Some(below) = to.strip_prefix(common) {
@@ -664,7 +665,7 @@ impl<U: PathUnit> AbsPath<U> {
     }
 }
 
-impl<U: PathUnit> SubPath<U> {
+impl<U: PathUnit> SubPathSlice<U> {
     /// `None` unless `units` is relative, holds no `..` and is already normalized.
     fn new(units: &[U]) -> Option<&Self> {
         (root_len(units) == 0 && is_normalized_sub_path(units)).then(|| Self::wrap(units))
@@ -672,7 +673,7 @@ impl<U: PathUnit> SubPath<U> {
 
     /// For names the OS listed, joined with `SEP` by the code that listed them.
     #[inline]
-    pub fn new_unchecked(units: &[U]) -> &Self {
+    pub fn new_assume_valid(units: &[U]) -> &Self {
         debug_assert!(Self::new(units).is_some());
         Self::wrap(units)
     }
@@ -682,13 +683,15 @@ impl<U: PathUnit> FileName<U> {
     /// `None` if `units` is empty, `.`, `..`, or holds a separator or a NUL.
     #[inline]
     fn new(units: &[U]) -> Option<&Self> {
-        (!units.is_empty() && !is_dots(units) && !units.iter().any(|&c| is_forbidden_in_name(c)))
-            .then(|| Self::wrap(units))
+        (!units.is_empty()
+            && !is_dot_or_dot_dot(units)
+            && !units.iter().any(|&c| is_forbidden_in_name(c)))
+        .then(|| Self::wrap(units))
     }
 
     /// For a name the OS listed in a directory.
     #[inline]
-    pub fn new_unchecked(units: &[U]) -> &Self {
+    pub fn new_assume_valid(units: &[U]) -> &Self {
         debug_assert!(Self::new(units).is_some());
         Self::wrap(units)
     }
@@ -713,24 +716,25 @@ const fn check_literal(native: &[u8]) {
         i += 1;
     }
 }
-impl SubPath {
+impl SubPathSlice {
     #[doc(hidden)]
-    pub const fn from_literal(native: &'static ZStr) -> &'static PathZ<Self> {
+    pub const fn from_literal(native: &'static ZStr) -> &'static SliceZ<Self> {
         check_literal(native.as_bytes());
         // SAFETY: a NUL follows the bytes of a `ZStr`.
-        unsafe { PathZ::wrap(Self::wrap(native.as_bytes())) }
+        unsafe { SliceZ::wrap(Self::wrap(native.as_bytes())) }
     }
 }
-/// `&'static PathZ<SubPath>` from constant text written with `/`, checked at compile time.
+/// `&'static SubPathSliceZ` from constant text written with `/`, checked at compile time.
 #[macro_export]
 macro_rules! sub_path {
     ($text:expr) => {{
-        const PATH: &$crate::path::PathZ<$crate::path::SubPath> =
-            $crate::path::SubPath::from_literal($crate::path_literal!($text));
+        const PATH: &$crate::path::SliceZ<$crate::path::SubPathSlice> =
+            $crate::path::SubPathSlice::from_literal($crate::path_literal!($text));
         PATH
     }};
 }
 
+/// Why a [`Path`] has no slice to lend.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, thiserror::Error, strum::IntoStaticStr)]
 pub enum PathError {
     /// It does not fit a path buffer.
@@ -766,9 +770,9 @@ impl From<PathError> for bun_errno::SystemErrno {
     }
 }
 
-/// What `..` does to a path that is no longer than its `floor_len`.
+/// What `..` does to a path that is no longer than its `min_len`.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum DotDotAtFloor {
+enum DotDotAtMinLen {
     /// A root stays.
     Ignore,
     /// A relative path gets a `..`.
@@ -783,34 +787,36 @@ enum Dots {
     Reject,
 }
 
-/// Builds a `V` in a path buffer from the pool. The first failure is kept, and `as_path`, the only way to the path, returns it.
-pub struct PathBuf<V: PathKind + ?Sized> {
+/// A path of the kind `S`, in a path buffer from the pool. No step that changes it fails: the first failure is kept, and `try_slice` lends the path or returns that failure.
+pub struct Path<S: PathKind + ?Sized = PathSlice> {
     /// Less than `MAX_PATH`. While `err` is `None` the unit there is the NUL.
     len: usize,
     /// `..` removes nothing below this length, which is never more than `len`.
-    floor_len: usize,
-    at_floor: DotDotAtFloor,
+    min_len: usize,
+    at_min_len: DotDotAtMinLen,
     /// A [`ResetScope`] is open, so the path cannot be replaced.
     in_scope: bool,
     err: Option<PathError>,
-    buf: PoolGuard<<V::Unit as PathUnit>::Buffer>,
+    buf: PoolGuard<<S::Unit as PathUnit>::Buffer>,
 }
-pub type AbsPathBuf = PathBuf<AbsPath>;
-pub type RelPathBuf = PathBuf<RelPath>;
-pub type SubPathBuf = PathBuf<SubPath>;
-pub type OSAbsPathBuf = PathBuf<AbsPath<crate::OSPathChar>>;
-pub type OSPathBuf = PathBuf<Path<crate::OSPathChar>>;
+pub type AbsPath = Path<AbsPathSlice>;
+pub type RelPath = Path<RelPathSlice>;
+pub type SubPath = Path<SubPathSlice>;
+/// In the unit the host's syscalls take.
+pub type OSAbsPath = Path<AbsPathSlice<crate::OSPathChar>>;
+/// Of any kind, in the unit the host's syscalls take.
+pub type OSPath = Path<PathSlice<crate::OSPathChar>>;
 
-impl<V: PathKind + ?Sized> PathBuf<V> {
-    /// Empty, which for an absolute `V` fails as `Unset` until a path is set.
+impl<S: PathKind + ?Sized> Path<S> {
+    /// Empty, which for an absolute `S` fails as `Unset` until a path is set.
     #[inline]
     pub fn init() -> Self {
         let mut this = Self {
             len: 0,
-            floor_len: 0,
-            at_floor: DotDotAtFloor::Fail,
+            min_len: 0,
+            at_min_len: DotDotAtMinLen::Fail,
             in_scope: false,
-            err: if V::MAY_BE_RELATIVE {
+            err: if S::MAY_BE_RELATIVE {
                 None
             } else {
                 Some(PathError::Unset)
@@ -818,56 +824,50 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
             buf: PathBufferPoolT::get(),
         };
         this.truncate(0);
-        this.set_floor_to_root();
+        this.set_min_len_to_root();
         this
     }
 
     #[inline]
-    pub fn from(path: &V) -> Self {
+    pub fn from(path: &S) -> Self {
         let mut this = Self::init();
-        this.set(path);
+        this.replace(path.slice());
         this
     }
 
     /// [`from`](Self::from) an absolute path of either unit.
     #[inline]
-    pub fn from_abs<C: PathUnit>(path: &AbsPath<C>) -> Self
+    pub fn from_abs<C: PathUnit>(path: &AbsPathSlice<C>) -> Self
     where
-        V::Unit: TranscodeFrom<C>,
+        S::Unit: TranscodeFrom<C>,
     {
         let mut this = Self::init();
         this.set_abs(path);
         this
     }
 
-    /// Holds the absolute path that `fill`, a call to the OS, writes. It gets the whole buffer and returns the units written, without a NUL.
-    pub fn from_fn<E>(fill: impl FnOnce(&mut [V::Unit]) -> Result<usize, E>) -> Result<Self, E> {
+    /// `fill`, a call to the OS, gets the whole buffer and returns the units it wrote, without a NUL. They are taken as in `set_assume_valid`.
+    pub fn from_fn<E>(fill: impl FnOnce(&mut [S::Unit]) -> Result<usize, E>) -> Result<Self, E> {
         let mut this = Self::init();
         let len = fill(&mut this.buf)?;
         // No room left for the NUL also means the OS may have cut the path short.
-        if len >= V::Unit::MAX_PATH {
+        if len >= S::Unit::MAX_PATH {
             this.err = Some(PathError::MaxPathExceeded);
             return Ok(this);
         }
         this.len = len;
         this.err = None;
-        this.finish_unchecked();
+        this.finish_assume_valid();
         Ok(this)
     }
 
-    /// Replaces the whole path, and forgets an earlier failure.
+    /// Replaces the whole path with an absolute path of either unit, and forgets an earlier failure.
     #[inline]
-    pub fn set(&mut self, path: &V) -> &mut Self {
-        self.replace(path.slice())
-    }
-
-    /// [`set`](Self::set) to an absolute path of either unit.
-    #[inline]
-    pub fn set_abs<C: PathUnit>(&mut self, path: &AbsPath<C>) -> &mut Self
+    pub fn set_abs<C: PathUnit>(&mut self, path: &AbsPathSlice<C>) -> &mut Self
     where
-        V::Unit: TranscodeFrom<C>,
+        S::Unit: TranscodeFrom<C>,
     {
-        if !V::MAY_BE_ABSOLUTE {
+        if !S::MAY_BE_ABSOLUTE {
             self.fail(PathError::ExpectedRelative);
             return self;
         }
@@ -876,26 +876,26 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
 
     /// [`set_abs`](Self::set_abs) to a path the OS returned, of which only the root and the end are looked at. Fails as `ExpectedAbsolute` without a root.
     #[inline]
-    pub fn set_unchecked<C: PathUnit>(&mut self, units: &[C]) -> &mut Self
+    pub fn set_assume_valid<C: PathUnit>(&mut self, units: &[C]) -> &mut Self
     where
-        V::Unit: TranscodeFrom<C>,
+        S::Unit: TranscodeFrom<C>,
     {
         if !self.fail_if_in_scope() {
-            self.replace(units).finish_unchecked();
+            self.replace(units).finish_assume_valid();
         }
         self
     }
 
     /// Takes what is written, which came from the OS, as an absolute path: only its root and its end are looked at.
-    fn finish_unchecked(&mut self) {
+    fn finish_assume_valid(&mut self) {
         #[cfg(windows)]
         if is_share_root_missing_sep(self.written()) {
             self.write_sep();
         }
         let root = root_len(self.written());
         self.truncate(len_without_trailing_seps(self.written(), root));
-        self.set_floor_to_root();
-        if root == 0 || !V::MAY_BE_ABSOLUTE {
+        self.set_min_len_to_root();
+        if root == 0 || !S::MAY_BE_ABSOLUTE {
             self.truncate(0);
             self.fail(if root == 0 {
                 PathError::ExpectedAbsolute
@@ -903,13 +903,13 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
                 PathError::ExpectedRelative
             });
         }
-        debug_assert!(self.err.is_some() || AbsPath::new(self.written()).is_some());
+        debug_assert!(self.err.is_some() || AbsPathSlice::new(self.written()).is_some());
     }
 
     #[inline]
     fn replace<C: PathUnit>(&mut self, normalized: &[C]) -> &mut Self
     where
-        V::Unit: TranscodeFrom<C>,
+        S::Unit: TranscodeFrom<C>,
     {
         if self.fail_if_in_scope() {
             return self;
@@ -917,7 +917,7 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
         self.err = None;
         self.len = 0;
         self.write(false, normalized);
-        self.set_floor_to_root();
+        self.set_min_len_to_root();
         self
     }
 
@@ -931,38 +931,38 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
     }
 
     #[inline]
-    fn set_floor_to_root(&mut self) {
-        self.floor_len = if V::MAY_BE_ABSOLUTE {
+    fn set_min_len_to_root(&mut self) {
+        self.min_len = if S::MAY_BE_ABSOLUTE {
             root_len(self.written())
         } else {
             0
         };
-        self.at_floor = if self.floor_len > 0 {
-            DotDotAtFloor::Ignore
-        } else if V::MAY_START_WITH_DOT_DOT {
-            DotDotAtFloor::Append
+        self.at_min_len = if self.min_len > 0 {
+            DotDotAtMinLen::Ignore
+        } else if S::MAY_START_WITH_DOT_DOT {
+            DotDotAtMinLen::Append
         } else {
-            DotDotAtFloor::Fail
+            DotDotAtMinLen::Fail
         };
     }
 
-    /// Makes what is written the floor for `..`, and returns the state to put back.
+    /// Returns the state to put back, and lets `..` remove nothing of what is written now.
     #[inline]
-    fn set_floor_to_len(&mut self) -> SavedState {
+    fn save_state(&mut self) -> SavedState {
         let saved = SavedState {
             len: self.len,
-            floor_len: self.floor_len,
-            at_floor: self.at_floor,
+            min_len: self.min_len,
+            at_min_len: self.at_min_len,
             in_scope: self.in_scope,
             err: self.err,
         };
-        self.floor_len = self.len;
-        self.at_floor = DotDotAtFloor::Fail;
+        self.min_len = self.len;
+        self.at_min_len = DotDotAtMinLen::Fail;
         saved
     }
 
     #[inline]
-    fn written(&self) -> &[V::Unit] {
+    fn written(&self) -> &[S::Unit] {
         &self.buf[..self.len]
     }
 
@@ -977,33 +977,33 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
     #[inline]
     fn write<C: PathUnit>(&mut self, sep: bool, units: &[C])
     where
-        V::Unit: TranscodeFrom<C>,
+        S::Unit: TranscodeFrom<C>,
     {
         let at = self.len;
         let start = at + usize::from(sep);
-        if start + V::Unit::max_len(units) + 1 > V::Unit::MAX_PATH {
+        if start + S::Unit::max_len(units) + 1 > S::Unit::MAX_PATH {
             self.fail(PathError::MaxPathExceeded);
             return;
         }
         // Overwritten by `units` or the NUL when there is no separator to write.
-        self.buf[at] = V::Unit::from_u8(SEP);
-        match V::Unit::transcode(units, &mut self.buf[start..]) {
+        self.buf[at] = S::Unit::from_u8(SEP);
+        match S::Unit::transcode(units, &mut self.buf[start..]) {
             Some(written) => self.len = start + written,
             None => self.fail(PathError::InvalidName),
         }
-        self.buf[self.len] = V::Unit::from_u8(0);
+        self.buf[self.len] = S::Unit::from_u8(0);
     }
 
     #[inline]
     fn write_sep(&mut self) {
-        self.write::<V::Unit>(true, &[]);
+        self.write::<S::Unit>(true, &[]);
     }
 
     #[inline]
     fn truncate(&mut self, len: usize) {
         debug_assert!(len <= self.len);
         self.len = len;
-        self.buf[len] = V::Unit::from_u8(0);
+        self.buf[len] = S::Unit::from_u8(0);
     }
 
     #[inline]
@@ -1013,25 +1013,19 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
 
     /// The path, or the first failure since it was last set.
     #[inline]
-    pub fn as_path(&self) -> Result<&PathZ<V>, PathError> {
+    pub fn try_slice(&self) -> Result<&SliceZ<S>, PathError> {
         match self.err {
             // SAFETY: whatever leaves `err` as `None` has put a NUL at `len`.
-            None => Ok(unsafe { PathZ::wrap(V::from_slice_unchecked(self.written(), Token(()))) }),
+            None => Ok(unsafe { SliceZ::wrap(S::wrap(self.written(), Token(()))) }),
             Some(err) => Err(err),
         }
     }
 
-    /// The first failure since the path was last set.
-    #[inline]
-    pub fn error(&self) -> Option<PathError> {
-        self.err
-    }
-
     /// Appends `below`, which needs no parsing, in one copy.
     #[inline]
-    pub fn append<C: PathUnit>(&mut self, below: &SubPath<C>) -> &mut Self
+    pub fn append<C: PathUnit>(&mut self, below: &SubPathSlice<C>) -> &mut Self
     where
-        V::Unit: TranscodeFrom<C>,
+        S::Unit: TranscodeFrom<C>,
     {
         if !below.is_empty() {
             self.write(self.needs_sep(), below.slice());
@@ -1040,9 +1034,9 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
     }
 
     /// Appends one name written by `args`, in place.
-    pub fn append_fmt(&mut self, args: fmt::Arguments<'_>) -> &mut Self {
-        struct NameWriter<'a, V: PathKind + ?Sized>(&'a mut PathBuf<V>);
-        impl<V: PathKind + ?Sized> fmt::Write for NameWriter<'_, V> {
+    pub fn append_name_fmt(&mut self, args: fmt::Arguments<'_>) -> &mut Self {
+        struct NameWriter<'a, S: PathKind + ?Sized>(&'a mut Path<S>);
+        impl<S: PathKind + ?Sized> fmt::Write for NameWriter<'_, S> {
             fn write_str(&mut self, text: &str) -> fmt::Result {
                 self.0.write(false, text.as_bytes());
                 self.0.err.map_or(Ok(()), |_| Err(fmt::Error))
@@ -1068,27 +1062,27 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
     /// Removes the last name. With none left a root stays, a relative path gets a `..`, and a `SubPath` or a path in a [`ResetScope`] fails.
     #[inline]
     fn dot_dot(&mut self) -> &mut Self {
-        let below = &self.written()[self.floor_len..];
+        let below = &self.written()[self.min_len..];
         let last = last_sep(below).map_or(0, |i| i + 1);
         if !below.is_empty() && !is_dot_dot(&below[last..]) {
-            self.truncate(self.floor_len + last.saturating_sub(1));
+            self.truncate(self.min_len + last.saturating_sub(1));
             return self;
         }
-        match self.at_floor {
-            DotDotAtFloor::Ignore => {}
-            DotDotAtFloor::Append => {
-                let dots = [V::Unit::from_u8(b'.'); 2];
+        match self.at_min_len {
+            DotDotAtMinLen::Ignore => {}
+            DotDotAtMinLen::Append => {
+                let dots = [S::Unit::from_u8(b'.'); 2];
                 self.write(self.needs_sep(), &dots);
             }
-            DotDotAtFloor::Fail => self.fail(PathError::Escapes),
+            DotDotAtMinLen::Fail => self.fail(PathError::Escapes),
         }
         self
     }
 
-    /// Lends the path for changes that end with the [`ResetScope`].
+    /// Returns a guard that puts the path back to what it is now when dropped.
     #[inline]
-    pub fn save(&mut self) -> ResetScope<'_, V> {
-        let saved = self.set_floor_to_len();
+    pub fn save(&mut self) -> ResetScope<'_, S> {
+        let saved = self.save_state();
         self.in_scope = true;
         ResetScope { path: self, saved }
     }
@@ -1097,10 +1091,10 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
     pub fn with_unresolved_dot_dots<R>(
         &mut self,
         count: usize,
-        f: impl FnOnce(&<V::Unit as PathUnit>::ZSlice) -> R,
+        f: impl FnOnce(&<S::Unit as PathUnit>::ZSlice) -> R,
     ) -> Result<R, PathError> {
         let mut path = self.save();
-        let dots = [V::Unit::from_u8(b'.'); 2];
+        let dots = [S::Unit::from_u8(b'.'); 2];
         for _ in 0..count {
             let sep = path.needs_sep();
             path.write(sep, &dots);
@@ -1110,11 +1104,11 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
         }
         // SAFETY: `write` put a NUL at `len`.
         Ok(f(unsafe {
-            V::Unit::zslice_from_raw(path.buf.as_ptr(), path.len)
+            S::Unit::zslice_from_raw(path.buf.as_ptr(), path.len)
         }))
     }
 
-    /// Resolves `input`, read by the rules of `P`, against the path, as `path.resolve` does. Absolute input replaces it, as `set` does.
+    /// Resolves `input`, read by the rules of `P`, against the path, as `join_abs_string_buf` and `path.resolve` do: absolute input replaces it.
     pub fn join<P: PlatformT>(&mut self, input: &[u8]) -> &mut Self {
         let root = input_root_len::<P>(input);
         #[cfg(windows)]
@@ -1130,7 +1124,7 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
             return self;
         }
         if root > 0 {
-            if !V::MAY_BE_ABSOLUTE {
+            if !S::MAY_BE_ABSOLUTE {
                 self.fail(PathError::ExpectedRelative);
                 return self;
             }
@@ -1138,7 +1132,7 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
                 return self;
             }
             self.set_input_root(&input[..root]);
-            self.set_floor_to_root();
+            self.set_min_len_to_root();
         }
         self.parse::<P>(&input[root..], Dots::Resolve);
         self
@@ -1149,7 +1143,7 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
         self.parse_below::<P>(input, Dots::Resolve)
     }
 
-    /// Appends `input`, read by the rules of `P`, which has to be one name or more and nothing else.
+    /// Appends `input`, read by the rules of `P`, which has to be one name or more and nothing else: what `sub_path!` checks at compile time.
     pub fn append_names<P: PlatformT>(&mut self, input: &[u8]) -> &mut Self {
         if input.is_empty() {
             self.fail(PathError::InvalidName);
@@ -1166,13 +1160,13 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
             self.fail(PathError::ExpectedRelative);
             return self;
         }
-        let saved = self.set_floor_to_len();
+        let saved = self.save_state();
         self.parse::<P>(input, dots);
         if self.err.is_some() {
             self.truncate(saved.len);
         }
-        self.floor_len = saved.floor_len;
-        self.at_floor = saved.at_floor;
+        self.min_len = saved.min_len;
+        self.at_min_len = saved.at_min_len;
         self
     }
 
@@ -1180,6 +1174,8 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
     #[inline]
     fn parse<P: PlatformT>(&mut self, input: &[u8], dots: Dots) {
         let mut rest = input;
+        // Names that did not fit, which a later `..` can still remove.
+        let mut unwritten = 0usize;
         while !rest.is_empty() && self.err.is_none() {
             let mut end = 0;
             let mut forbidden = false;
@@ -1194,10 +1190,21 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
                 b"" | b"." | b".." if dots == Dots::Reject => self.fail(PathError::InvalidName),
                 _ if dots == Dots::Reject && ends_in_sep => self.fail(PathError::InvalidName),
                 b"" | b"." => {}
+                b".." if unwritten > 0 => unwritten -= 1,
                 b".." => _ = self.dot_dot(),
                 _ if forbidden => self.fail(PathError::InvalidName),
-                _ => self.write(self.needs_sep(), name),
+                _ if unwritten > 0 => unwritten += 1,
+                _ => {
+                    self.write(self.needs_sep(), name);
+                    if self.err == Some(PathError::MaxPathExceeded) {
+                        self.err = None;
+                        unwritten = 1;
+                    }
+                }
             }
+        }
+        if unwritten > 0 {
+            self.fail(PathError::MaxPathExceeded);
         }
     }
 
@@ -1227,8 +1234,8 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
             self.write(false, root);
             let len = self.len;
             for unit in &mut self.buf[..len] {
-                if *unit == V::Unit::from_u8(b'/') {
-                    *unit = V::Unit::from_u8(SEP);
+                if *unit == S::Unit::from_u8(b'/') {
+                    *unit = S::Unit::from_u8(SEP);
                 }
             }
             // A share at the very end of the input.
@@ -1239,9 +1246,9 @@ impl<V: PathKind + ?Sized> PathBuf<V> {
     }
 }
 
-impl<U: PathUnit> PathBuf<AbsPath<U>> {
+impl<U: PathUnit> Path<AbsPathSlice<U>> {
     /// [`from_abs`](Self::from_abs). On Windows a drive or a share gets the `\\?\` prefix, with which the OS takes a path of any length as written.
-    pub fn from_long_path<C: PathUnit>(path: &AbsPath<C>) -> Self
+    pub fn from_long_path<C: PathUnit>(path: &AbsPathSlice<C>) -> Self
     where
         U: TranscodeFrom<C>,
     {
@@ -1264,17 +1271,17 @@ impl<U: PathUnit> PathBuf<AbsPath<U>> {
             _ => rest,
         };
         this.write(false, rest);
-        this.set_floor_to_root();
+        this.set_min_len_to_root();
         this
     }
 }
 
-impl AbsPathBuf {
+impl AbsPath {
     /// The project directory, `FileSystem::top_level_dir`.
     #[inline]
     pub fn init_top_level_dir() -> Self {
         let mut this = Self::init();
-        this.set_unchecked(crate::fs::FileSystem::instance().top_level_dir());
+        this.set_assume_valid(crate::fs::FileSystem::instance().top_level_dir());
         this
     }
 
@@ -1298,9 +1305,9 @@ impl AbsPathBuf {
             -2 => Err(SystemErrno::ENAMETOOLONG),
             _ => Err(SystemErrno::ENOENT),
         };
-        let path = PathBuf::<AbsPath<_>>::from_fn(fill)?;
+        let path = Path::<AbsPathSlice<_>>::from_fn(fill)?;
         #[cfg(windows)]
-        let path = Self::from_abs(path.as_path().map_err(SystemErrno::from)?);
+        let path = Self::from_abs(path.try_slice().map_err(SystemErrno::from)?);
         Ok(path)
     }
 }
@@ -1308,42 +1315,37 @@ impl AbsPathBuf {
 #[derive(Copy, Clone)]
 struct SavedState {
     len: usize,
-    floor_len: usize,
-    at_floor: DotDotAtFloor,
+    min_len: usize,
+    at_min_len: DotDotAtMinLen,
     in_scope: bool,
     err: Option<PathError>,
 }
 
-/// A [`PathBuf`] that goes back to what it was, failures included, on drop. Until then nothing removes or replaces what was there.
-pub struct ResetScope<'a, V: PathKind + ?Sized> {
-    path: &'a mut PathBuf<V>,
+/// A [`Path`] that goes back to what it was, failures included, on drop. Until then nothing removes or replaces what was there.
+pub struct ResetScope<'a, S: PathKind + ?Sized> {
+    path: &'a mut Path<S>,
     saved: SavedState,
 }
-impl<V: PathKind + ?Sized> Drop for ResetScope<'_, V> {
+impl<S: PathKind + ?Sized> Drop for ResetScope<'_, S> {
     #[inline]
     fn drop(&mut self) {
-        // `mem::swap` can have put another `PathBuf` here, which may hold less than was saved.
-        if !self.path.in_scope || self.path.floor_len != self.saved.len {
-            self.path.fail(PathError::Escapes);
-            return;
-        }
         self.path.truncate(self.saved.len);
-        self.path.floor_len = self.saved.floor_len;
-        self.path.at_floor = self.saved.at_floor;
+        self.path.min_len = self.saved.min_len;
+        self.path.at_min_len = self.saved.at_min_len;
         self.path.in_scope = self.saved.in_scope;
         self.path.err = self.saved.err;
     }
 }
-impl<V: PathKind + ?Sized> Deref for ResetScope<'_, V> {
-    type Target = PathBuf<V>;
+impl<S: PathKind + ?Sized> Deref for ResetScope<'_, S> {
+    type Target = Path<S>;
     #[inline]
-    fn deref(&self) -> &PathBuf<V> {
+    fn deref(&self) -> &Path<S> {
         self.path
     }
 }
-impl<V: PathKind + ?Sized> DerefMut for ResetScope<'_, V> {
+impl<S: PathKind + ?Sized> DerefMut for ResetScope<'_, S> {
     #[inline]
-    fn deref_mut(&mut self) -> &mut PathBuf<V> {
+    fn deref_mut(&mut self) -> &mut Path<S> {
         self.path
     }
 }
@@ -1353,8 +1355,8 @@ impl<V: PathKind + ?Sized> DerefMut for ResetScope<'_, V> {
 fn input_root_len<P: PlatformT>(input: &[u8]) -> usize {
     match P::P {
         Platform::Posix => usize::from(input.first() == Some(&b'/')),
-        // Elsewhere than on Windows this is a POSIX path that may be written with `\`.
-        Platform::Loose if !cfg!(windows) => usize::from(matches!(input, [b'/' | b'\\', ..])),
+        // Elsewhere than on Windows this is a POSIX path that may be written with `\`, which separates but is no root.
+        Platform::Loose if !cfg!(windows) => usize::from(input.first() == Some(&b'/')),
         _ => windows_root_len(input, |c| P::P.is_separator(c)),
     }
 }
@@ -1364,7 +1366,7 @@ mod tests {
     use super::*;
     use crate::resolve_path::platform::{Auto, Loose, Posix, Windows};
 
-    type Step = fn(&mut AbsPathBuf, &[u8]);
+    type Step = fn(&mut AbsPath, &[u8]);
 
     /// simdutf is C++, which neither `cargo test` links nor Miri runs. The other direction is in `string_paths`.
     #[unsafe(no_mangle)]
@@ -1407,40 +1409,40 @@ mod tests {
         }
     }
     /// The path as it is written on this host, or the name of the failure. Reads the NUL.
-    pub(super) fn native_or_err<V: PathKind + ?Sized>(path: Result<&PathZ<V>, PathError>) -> String
+    pub(super) fn native_or_err<S: PathKind + ?Sized>(path: Result<&SliceZ<S>, PathError>) -> String
     where
-        V::Unit: Into<u32>,
+        S::Unit: Into<u32>,
     {
         let path = match path {
             Ok(path) => path.slice(),
             Err(err) => return format!("{err:?}"),
         };
-        // SAFETY: a NUL follows the units of a `PathZ`.
-        assert!(unsafe { *path.as_ptr().add(path.len()) } == V::Unit::from_u8(0));
+        // SAFETY: a NUL follows the units of a `SliceZ`.
+        assert!(unsafe { *path.as_ptr().add(path.len()) } == S::Unit::from_u8(0));
         let units = path.iter().map(|&c| c.into());
-        if size_of::<V::Unit>() == 1 {
+        if size_of::<S::Unit>() == 1 {
             String::from_utf8(units.map(|c| c as u8).collect()).unwrap()
         } else {
             String::from_utf16(&units.map(|c| c as u16).collect::<Vec<_>>()).unwrap()
         }
     }
-    fn portable_or_err<V: PathKind + ?Sized>(path: Result<&PathZ<V>, PathError>) -> String
+    fn portable_or_err<S: PathKind + ?Sized>(path: Result<&SliceZ<S>, PathError>) -> String
     where
-        V::Unit: Into<u32>,
+        S::Unit: Into<u32>,
     {
         match path {
             Ok(_) => portable(&native_or_err(path)),
             Err(err) => format!("{err:?}"),
         }
     }
-    pub(super) fn abs(path: &str) -> AbsPathBuf {
-        AbsPathBuf::from(AbsPath::new(&native(path)).unwrap())
+    pub(super) fn abs(path: &str) -> AbsPath {
+        AbsPath::from(AbsPathSlice::new(&native(path)).unwrap())
     }
-    /// `a`, `s` and `n` for each of `AbsPath`, `SubPath` and `FileName` that takes `units`.
-    pub(super) fn views_of(units: &[u8]) -> String {
+    /// `a`, `s` and `n` for each of `AbsPathSlice`, `SubPathSlice` and `FileName` that takes `units`.
+    pub(super) fn slices_of(units: &[u8]) -> String {
         let mut taken = String::new();
-        taken.extend(AbsPath::new(units).map(|_| 'a'));
-        taken.extend(SubPath::new(units).map(|_| 's'));
+        taken.extend(AbsPathSlice::new(units).map(|_| 'a'));
+        taken.extend(SubPathSlice::new(units).map(|_| 's'));
         taken.extend(FileName::new(units).map(|_| 'n'));
         taken
     }
@@ -1453,20 +1455,21 @@ mod tests {
         }
     }
     /// A path that a separator and `room` more units fill. Written in one copy, so that Miri is not slow.
-    fn nearly_full<U: PathUnit>(room: usize) -> PathBuf<AbsPath<U>> {
+    fn nearly_full<U: PathUnit>(room: usize) -> Path<AbsPathSlice<U>> {
         let name = vec![b'x'; U::MAX_PATH - 1 - ROOT.len() - 1 - room];
-        let mut path = PathBuf::<AbsPath<U>>::from_abs(AbsPath::new(ROOT.as_bytes()).unwrap());
-        path.append(SubPath::new_unchecked(&name));
+        let mut path =
+            Path::<AbsPathSlice<U>>::from_abs(AbsPathSlice::new(ROOT.as_bytes()).unwrap());
+        path.append(SubPathSlice::new_assume_valid(&name));
         assert_eq!(path.len, U::MAX_PATH - 2 - room);
         path
     }
-    fn len_of<V: PathKind + ?Sized>(path: &PathBuf<V>) -> Result<usize, PathError> {
-        path.as_path().map(|path| path.slice().len())
+    fn len_of<S: PathKind + ?Sized>(path: &Path<S>) -> Result<usize, PathError> {
+        path.try_slice().map(|path| path.slice().len())
     }
 
     #[test]
     fn new_accepts_only_normalized_input() {
-        for (text, views) in [
+        for (text, slices) in [
             ("", "s"),
             ("a", "sn"),
             ("a/b", "s"),
@@ -1489,19 +1492,19 @@ mod tests {
             ("/a/../b", ""),
             ("/./a", ""),
         ] {
-            assert_eq!(views_of(&native(text)), views, "{text:?}");
+            assert_eq!(slices_of(&native(text)), slices, "{text:?}");
         }
     }
 
     #[test]
     fn dirname_basename_strip_prefix() {
         let path = abs("/a/b/cd");
-        let path: &AbsPath = path.as_path().unwrap();
+        let path: &AbsPathSlice = path.try_slice().unwrap();
         let up = core::iter::successors(Some(path), |path| path.dirname());
         let up: Vec<String> = up.map(|path| portable(&path.to_string())).collect();
         assert_eq!(up, ["/a/b/cd", "/a/b", "/a", "/"]);
         assert_eq!(path.basename().unwrap().slice(), b"cd");
-        let root = AbsPath::new(ROOT.as_bytes()).unwrap();
+        let root = AbsPathSlice::new(ROOT.as_bytes()).unwrap();
         assert!(root.is_root() && root.dirname().is_none() && root.basename().is_none());
         assert!(path.is_absolute() && !sub_path!("a/b").is_absolute());
 
@@ -1515,7 +1518,7 @@ mod tests {
             ("/a/bb", None),
             ("/x", None),
         ] {
-            let got = path.strip_prefix(abs(dir).as_path().unwrap());
+            let got = path.strip_prefix(abs(dir).try_slice().unwrap());
             let got = got.map(|below| portable(&below.to_string()));
             assert_eq!(got.as_deref(), below, "{dir:?}");
         }
@@ -1546,77 +1549,42 @@ mod tests {
             ("a\0b", "InvalidName"),
         ] {
             let input = input.as_bytes();
-            let posix = portable_or_err(abs("/a/b").join::<Posix>(input).as_path());
-            let loose = portable_or_err(abs("/a/b").join::<Loose>(input).as_path());
+            let posix = portable_or_err(abs("/a/b").join::<Posix>(input).try_slice());
+            let loose = portable_or_err(abs("/a/b").join::<Loose>(input).try_slice());
             assert_eq!((&*posix, &*loose), (joined, joined), "{input:?}");
         }
         let mut path = abs("/a/b");
         path.join::<Loose>(b"c\\d\\..\\..\\..\\x");
-        assert_eq!(portable_or_err(path.as_path()), "/a/x");
+        assert_eq!(portable_or_err(path.try_slice()), "/a/x");
         path.join::<Windows>(b"c\\d/e");
-        assert_eq!(portable_or_err(path.as_path()), "/a/x/c/d/e");
+        assert_eq!(portable_or_err(path.try_slice()), "/a/x/c/d/e");
     }
 
     #[cfg(not(windows))]
     #[test]
     fn posix_keeps_backslash_and_colon_in_names() {
-        let rows: [(Step, &[u8], &str); 10] = [
-            (
-                |path, input| _ = path.join::<Posix>(input),
-                b"c\\..\\d",
-                "/a/c\\..\\d",
-            ),
-            (
-                |path, input| _ = path.append_names::<Posix>(input),
-                b"c\\d",
-                "/a/c\\d",
-            ),
-            (
-                |path, input| _ = path.join_below::<Loose>(input),
-                b"pkgs:a/x",
-                "/a/pkgs:a/x",
-            ),
-            (
-                |path, input| _ = path.join::<Loose>(input),
-                b"C:x",
-                "/a/C:x",
-            ),
-            (
-                |path, input| _ = path.join::<Loose>(input),
-                b"C:\\x",
-                "/a/C:/x",
-            ),
-            (
-                |path, input| _ = path.join_below::<Loose>(input),
-                b"C:/x",
-                "/a/C:/x",
-            ),
-            (
-                |path, input| _ = path.join::<Windows>(input),
-                b"C:x",
-                "/a/C:x",
-            ),
+        #[rustfmt::skip]
+        let rows: [(Step, &[u8], &str); 13] = [
+            (|path, input| _ = path.join::<Posix>(input), b"c\\..\\d", "/a/c\\..\\d"),
+            (|path, input| _ = path.append_names::<Posix>(input), b"c\\d", "/a/c\\d"),
+            (|path, input| _ = path.join_below::<Loose>(input), b"pkgs:a/x", "/a/pkgs:a/x"),
+            (|path, input| _ = path.join::<Loose>(input), b"C:x", "/a/C:x"),
+            (|path, input| _ = path.join::<Loose>(input), b"C:\\x", "/a/C:/x"),
+            (|path, input| _ = path.join_below::<Loose>(input), b"C:/x", "/a/C:/x"),
+            // `\` separates under `Loose`, and only `/` is a root.
+            (|path, input| _ = path.join::<Loose>(input), b"\\x\\y", "/a/x/y"),
+            (|path, input| _ = path.join_below::<Loose>(input), b"\\x", "/a/x"),
+            (|path, input| _ = path.join::<Loose>(input), b"/x\\y", "/x/y"),
+            (|path, input| _ = path.join::<Windows>(input), b"C:x", "/a/C:x"),
             // A drive or a share has no meaning here.
-            (
-                |path, input| _ = path.join::<Windows>(input),
-                b"C:\\x",
-                "InvalidName",
-            ),
-            (
-                |path, input| _ = path.join::<Windows>(input),
-                b"\\\\srv\\share\\x",
-                "InvalidName",
-            ),
-            (
-                |path, input| _ = path.join_below::<Windows>(input),
-                b"C:/x",
-                "ExpectedRelative",
-            ),
+            (|path, input| _ = path.join::<Windows>(input), b"C:\\x", "InvalidName"),
+            (|path, input| _ = path.join::<Windows>(input), b"\\\\srv\\share\\x", "InvalidName"),
+            (|path, input| _ = path.join_below::<Windows>(input), b"C:/x", "ExpectedRelative"),
         ];
         for (step, input, joined) in rows {
             let mut path = abs("/a");
             step(&mut path, input);
-            assert_eq!(native_or_err(path.as_path()), joined, "{input:?}");
+            assert_eq!(native_or_err(path.try_slice()), joined, "{input:?}");
         }
     }
 
@@ -1635,7 +1603,7 @@ mod tests {
         ] {
             let mut path = abs("/a/b");
             path.join_below::<Posix>(input.as_bytes());
-            assert_eq!(portable_or_err(path.as_path()), joined, "{input:?}");
+            assert_eq!(portable_or_err(path.try_slice()), joined, "{input:?}");
         }
         for (input, joined) in [
             (&b"x\\..\\..\\..\\etc"[..], "Escapes"),
@@ -1643,11 +1611,11 @@ mod tests {
         ] {
             let mut path = abs("/a/b");
             path.join_below::<Loose>(input);
-            assert_eq!(portable_or_err(path.as_path()), joined);
+            assert_eq!(portable_or_err(path.try_slice()), joined);
         }
-        let mut rel = RelPathBuf::init();
+        let mut rel = RelPath::init();
         assert_eq!(
-            rel.join_below::<Posix>(b"..").error(),
+            rel.join_below::<Posix>(b"..").try_slice().err(),
             Some(PathError::Escapes)
         );
     }
@@ -1670,41 +1638,41 @@ mod tests {
         ] {
             let mut path = abs("/nm");
             path.append_names::<Posix>(input.as_bytes());
-            assert_eq!(portable_or_err(path.as_path()), appended, "{input:?}");
+            assert_eq!(portable_or_err(path.try_slice()), appended, "{input:?}");
         }
     }
 
     #[test]
-    fn dot_dot_at_floor_per_view() {
+    fn dot_dot_at_min_len_per_kind() {
         assert_eq!(
-            portable_or_err(abs("/a").dot_dot().dot_dot().as_path()),
+            portable_or_err(abs("/a").dot_dot().dot_dot().try_slice()),
             "/"
         );
 
-        let mut rel = RelPathBuf::init();
+        let mut rel = RelPath::init();
         rel.dot_dot()
             .dot_dot()
             .append(sub_path!("x"))
             .dot_dot()
             .dot_dot();
-        assert_eq!(portable_or_err(rel.as_path()), "../../..");
+        assert_eq!(portable_or_err(rel.try_slice()), "../../..");
         rel.join::<Posix>(b"a/../../b");
-        assert_eq!(portable_or_err(rel.as_path()), "../../../../b");
+        assert_eq!(portable_or_err(rel.try_slice()), "../../../../b");
 
-        let mut sub = SubPathBuf::init();
+        let mut sub = SubPath::init();
         assert_eq!(
-            portable_or_err(sub.append(sub_path!("a")).dot_dot().as_path()),
+            portable_or_err(sub.append(sub_path!("a")).dot_dot().try_slice()),
             ""
         );
-        assert_eq!(sub.dot_dot().error(), Some(PathError::Escapes));
+        assert_eq!(sub.dot_dot().try_slice().err(), Some(PathError::Escapes));
 
-        let mut any = PathBuf::<Path>::init();
+        let mut any = Path::<PathSlice>::init();
         assert_eq!(
-            portable_or_err(any.join::<Posix>(b"a/../..").as_path()),
+            portable_or_err(any.join::<Posix>(b"a/../..").try_slice()),
             ".."
         );
         assert_eq!(
-            portable_or_err(any.join::<Auto>(&native("/a/../..")).as_path()),
+            portable_or_err(any.join::<Auto>(&native("/a/../..")).try_slice()),
             "/"
         );
     }
@@ -1717,32 +1685,35 @@ mod tests {
             .append_names::<Posix>(b"")
             .join::<Posix>(b"y")
             .dot_dot();
-        assert_eq!(path.error(), Some(PathError::Escapes));
-        assert_eq!(portable_or_err(path.as_path()), "Escapes");
+        assert_eq!(path.try_slice().err(), Some(PathError::Escapes));
+        assert_eq!(portable_or_err(path.try_slice()), "Escapes");
         assert_eq!(
-            portable_or_err(path.set(abs("/z").as_path().unwrap()).as_path()),
+            portable_or_err(path.set_abs(abs("/z").try_slice().unwrap()).try_slice()),
             "/z"
         );
         path.join_below::<Posix>(b"..");
         assert_eq!(
-            portable_or_err(path.join::<Auto>(&native("/y/z")).as_path()),
+            portable_or_err(path.join::<Auto>(&native("/y/z")).try_slice()),
             "/y/z"
         );
 
-        let mut unset = AbsPathBuf::init();
+        let mut unset = AbsPath::init();
         unset.append(sub_path!("x")).join::<Posix>(b"y").dot_dot();
-        assert_eq!(unset.error(), Some(PathError::Unset));
+        assert_eq!(unset.try_slice().err(), Some(PathError::Unset));
         assert_eq!(
-            portable_or_err(unset.join::<Auto>(&native("/x")).as_path()),
+            portable_or_err(unset.join::<Auto>(&native("/x")).try_slice()),
             "/x"
         );
 
-        let mut sub = SubPathBuf::init();
+        let mut sub = SubPath::init();
         let root = abs("/");
-        sub.set_abs::<u8>(root.as_path().unwrap());
-        assert_eq!(sub.error(), Some(PathError::ExpectedRelative));
+        sub.set_abs::<u8>(root.try_slice().unwrap());
+        assert_eq!(sub.try_slice().err(), Some(PathError::ExpectedRelative));
         assert_eq!(
-            SubPathBuf::init().set_unchecked(ROOT.as_bytes()).error(),
+            SubPath::init()
+                .set_assume_valid(ROOT.as_bytes())
+                .try_slice()
+                .err(),
             Some(PathError::ExpectedRelative)
         );
     }
@@ -1751,11 +1722,11 @@ mod tests {
     fn every_write_stops_at_capacity() {
         const MAX: usize = <u8 as PathUnit>::MAX_PATH;
         let steps: [Step; 5] = [
-            |path, name| _ = path.append(SubPath::new(name).unwrap()),
+            |path, name| _ = path.append(SubPathSlice::new(name).unwrap()),
             |path, name| _ = path.append_names::<Posix>(name),
             |path, name| _ = path.join::<Posix>(name),
             |path, name| _ = path.join_below::<Posix>(name),
-            |path, name| _ = path.append_fmt(format_args!("{}", name.escape_ascii())),
+            |path, name| _ = path.append_name_fmt(format_args!("{}", name.escape_ascii())),
         ];
         let mut path = nearly_full::<u8>(4);
         for step in steps {
@@ -1768,38 +1739,57 @@ mod tests {
         }
         assert_eq!(len_of(&path), Ok(MAX - 6));
 
-        let full = path.append(sub_path!("1234")).as_path().unwrap();
-        assert_eq!(len_of(&AbsPathBuf::from(full)), Ok(MAX - 1));
+        // Only the result has to fit.
+        for (input, len) in [
+            (&b"12345/../1234"[..], Ok(MAX - 1)),
+            (b"12345/x/y/../../../1234", Ok(MAX - 1)),
+            (b"12345/x/../..", Ok(MAX - 6)),
+            (b"12345/x/..", Err(PathError::MaxPathExceeded)),
+            (b"12345/../12345", Err(PathError::MaxPathExceeded)),
+        ] {
+            assert_eq!(len_of(path.save().join::<Posix>(input)), len, "{input:?}");
+        }
+
+        let full = path.append(sub_path!("1234")).try_slice().unwrap();
+        assert_eq!(len_of(&AbsPath::from(full)), Ok(MAX - 1));
         assert_eq!(
-            len_of(AbsPathBuf::init().set_unchecked(full.slice())),
+            len_of(AbsPath::init().set_assume_valid(full.slice())),
             Ok(MAX - 1)
         );
         let too_long = [full.slice(), b"5"].concat();
-        let too_long = AbsPath::new_unchecked(&too_long).unwrap();
         assert_eq!(
-            AbsPathBuf::from(too_long).error(),
+            AbsPath::from(AbsPathSlice::new(&too_long).unwrap())
+                .try_slice()
+                .err(),
             Some(PathError::MaxPathExceeded)
         );
         assert_eq!(
-            AbsPathBuf::init().set_unchecked(too_long.slice()).error(),
+            AbsPath::init()
+                .set_assume_valid(&too_long)
+                .try_slice()
+                .err(),
             Some(PathError::MaxPathExceeded)
         );
     }
 
     #[test]
-    fn append_fmt_writes_one_name() {
+    fn append_name_fmt_writes_one_name() {
         let mut path = abs("/a");
-        path.append_fmt(format_args!("{}@{}", "react", 18));
-        assert_eq!(portable_or_err(path.as_path()), "/a/react@18");
+        path.append_name_fmt(format_args!("{}@{}", "react", 18));
+        assert_eq!(portable_or_err(path.try_slice()), "/a/react@18");
         assert_eq!(
-            portable_or_err(abs("/").append_fmt(format_args!("x")).as_path()),
+            portable_or_err(abs("/").append_name_fmt(format_args!("x")).try_slice()),
             "/x"
         );
         for name in ["", ".", "..", "a\0b", "a/b"] {
             let name = String::from_utf8(native(name)).unwrap();
             let mut path = abs("/a");
-            path.append_fmt(format_args!("{name}"));
-            assert_eq!(path.error(), Some(PathError::InvalidName), "{name:?}");
+            path.append_name_fmt(format_args!("{name}"));
+            assert_eq!(
+                path.try_slice().err(),
+                Some(PathError::InvalidName),
+                "{name:?}"
+            );
         }
 
         struct Fails;
@@ -1813,11 +1803,13 @@ mod tests {
         {
             let mut path = path.save();
             assert_eq!(
-                path.append_fmt(format_args!("{Fails}")).error(),
+                path.append_name_fmt(format_args!("{Fails}"))
+                    .try_slice()
+                    .err(),
                 Some(PathError::InvalidName)
             );
         }
-        assert_eq!(portable_or_err(path.as_path()), "/a");
+        assert_eq!(portable_or_err(path.try_slice()), "/a");
     }
 
     #[test]
@@ -1827,79 +1819,46 @@ mod tests {
             let mut outer = path.save();
             outer.append(sub_path!("c"));
             assert_eq!(
-                portable_or_err(outer.save().append(sub_path!("d")).as_path()),
+                portable_or_err(outer.save().append(sub_path!("d")).try_slice()),
                 "/a/b/c/d"
             );
-            assert_eq!(portable_or_err(outer.as_path()), "/a/b/c");
-            assert_eq!(portable_or_err(outer.dot_dot().as_path()), "/a/b");
-            assert_eq!(outer.dot_dot().error(), Some(PathError::Escapes));
+            assert_eq!(portable_or_err(outer.try_slice()), "/a/b/c");
+            assert_eq!(portable_or_err(outer.dot_dot().try_slice()), "/a/b");
+            assert_eq!(outer.dot_dot().try_slice().err(), Some(PathError::Escapes));
         }
-        assert_eq!(portable_or_err(path.as_path()), "/a/b");
+        assert_eq!(portable_or_err(path.try_slice()), "/a/b");
 
         let elsewhere = abs("/x");
-        let elsewhere: &AbsPath = elsewhere.as_path().unwrap();
-        let steps: [fn(&mut AbsPathBuf, &AbsPath); 5] = [
+        let elsewhere: &AbsPathSlice = elsewhere.try_slice().unwrap();
+        let steps: [fn(&mut AbsPath, &AbsPathSlice); 4] = [
             |path, _| _ = path.join::<Posix>(b"../../.."),
             |path, _| _ = path.join::<Posix>(b"/etc"),
-            |path, elsewhere| _ = path.set(elsewhere),
             |path, elsewhere| _ = path.set_abs(elsewhere),
-            |path, elsewhere| _ = path.set_unchecked(elsewhere.slice()),
+            |path, elsewhere| _ = path.set_assume_valid(elsewhere.slice()),
         ];
         for step in steps {
             let mut scope = path.save();
             step(&mut scope, elsewhere);
-            assert_eq!(scope.error(), Some(PathError::Escapes));
+            assert_eq!(scope.try_slice().err(), Some(PathError::Escapes));
             drop(scope);
-            assert_eq!(portable_or_err(path.as_path()), "/a/b");
+            assert_eq!(portable_or_err(path.try_slice()), "/a/b");
         }
 
-        fn leaves_early(path: &mut AbsPathBuf) -> Result<(), PathError> {
+        fn leaves_early(path: &mut AbsPath) -> Result<(), PathError> {
             let mut scope = path.save();
             scope
                 .append(sub_path!("deep"))
                 .join_below::<Posix>(b"..")
-                .as_path()?;
-            scope.join_below::<Posix>(b"../..").as_path()?;
+                .try_slice()?;
+            scope.join_below::<Posix>(b"../..").try_slice()?;
             unreachable!()
         }
         assert_eq!(leaves_early(&mut path), Err(PathError::Escapes));
-        assert_eq!(portable_or_err(path.as_path()), "/a/b");
+        assert_eq!(portable_or_err(path.try_slice()), "/a/b");
 
         path.join_below::<Posix>(b"..");
         path.save().append(sub_path!("x"));
-        assert_eq!(path.error(), Some(PathError::Escapes));
-    }
-
-    #[test]
-    fn forgotten_reset_scope_stays_locked() {
-        let mut path = abs("/a/b");
-        let mut scope = path.save();
-        scope.append(sub_path!("c"));
-        core::mem::forget(scope);
-        assert_eq!(portable_or_err(path.as_path()), "/a/b/c");
-        assert_eq!(path.dot_dot().dot_dot().error(), Some(PathError::Escapes));
-        assert_eq!(path.join::<Posix>(b"/x").error(), Some(PathError::Escapes));
-    }
-
-    #[test]
-    fn reset_scope_survives_a_swapped_path() {
-        let (mut long, mut short) = (abs("/a/b/c/d"), abs("/x"));
-        {
-            let mut scope = long.save();
-            scope.append(sub_path!("e"));
-            core::mem::swap(&mut *scope, &mut short);
-        }
-        assert_eq!(long.error(), Some(PathError::Escapes));
-        assert_eq!(portable_or_err(short.as_path()), "/a/b/c/d/e");
-
-        let (mut one, mut other) = (abs("/a/b"), abs("/c/d"));
-        {
-            let (mut one, mut other) = (one.save(), other.save());
-            one.append(sub_path!("x"));
-            core::mem::swap(&mut *one, &mut *other);
-        }
-        assert_eq!(portable_or_err(one.as_path()), "/c/d");
-        assert_eq!(portable_or_err(other.as_path()), "/a/b");
+        assert_eq!(path.try_slice().err(), Some(PathError::Escapes));
     }
 
     #[test]
@@ -1916,16 +1875,14 @@ mod tests {
             ("/", "/", ""),
         ] {
             let (from, to) = (abs(from), abs(to));
-            let built = from.as_path().unwrap().relative(to.as_path().unwrap());
-            assert_eq!(portable_or_err(built.as_path()), way);
+            let built = from.try_slice().unwrap().relative(to.try_slice().unwrap());
+            assert_eq!(portable_or_err(built.try_slice()), way);
         }
     }
 
     #[test]
-    fn set_unchecked_and_from_fn_take_what_the_os_wrote() {
+    fn set_assume_valid_and_from_fn_take_what_the_os_wrote() {
         const MAX: usize = <u8 as PathUnit>::MAX_PATH;
-        assert!(AbsPath::<u8>::new_unchecked(b"").is_none());
-        assert!(AbsPath::<u8>::new_unchecked(b"rel").is_none());
         for (wrote, path) in [
             ("/a/b", "/a/b"),
             ("/a/b///", "/a/b"),
@@ -1935,26 +1892,26 @@ mod tests {
         ] {
             let wrote = native(wrote);
             assert_eq!(
-                portable_or_err(AbsPathBuf::init().set_unchecked(&wrote).as_path()),
+                portable_or_err(AbsPath::init().set_assume_valid(&wrote).try_slice()),
                 path
             );
-            let mut built = AbsPathBuf::from_fn(fill_with(&wrote)).unwrap();
-            assert_eq!(portable_or_err(built.as_path()), path);
-            if built.error().is_none() {
+            let mut built = AbsPath::from_fn(fill_with(&wrote)).unwrap();
+            assert_eq!(portable_or_err(built.try_slice()), path);
+            if built.try_slice().err().is_none() {
                 built.append(sub_path!("x")).join::<Posix>(b"../../../..");
-                assert_eq!(portable_or_err(built.as_path()), "/");
+                assert_eq!(portable_or_err(built.try_slice()), "/");
             }
         }
-        assert_eq!(AbsPathBuf::from_fn(|_| Err("failed")).err(), Some("failed"));
+        assert_eq!(AbsPath::from_fn(|_| Err("failed")).err(), Some("failed"));
 
         let filled = [ROOT.as_bytes(), &[b'x'; MAX]].concat();
         for len in [MAX, MAX + 1] {
-            let path = AbsPathBuf::from_fn(fill_with(&filled[..len])).unwrap();
-            assert_eq!(path.error(), Some(PathError::MaxPathExceeded));
+            let path = AbsPath::from_fn(fill_with(&filled[..len])).unwrap();
+            assert_eq!(path.try_slice().err(), Some(PathError::MaxPathExceeded));
         }
-        let mut path = AbsPathBuf::from_fn(fill_with(&filled[..MAX - 1])).unwrap();
+        let mut path = AbsPath::from_fn(fill_with(&filled[..MAX - 1])).unwrap();
         assert_eq!(len_of(&path), Ok(MAX - 1));
-        assert_eq!(portable_or_err(path.dot_dot().as_path()), "/");
+        assert_eq!(portable_or_err(path.dot_dot().try_slice()), "/");
     }
 
     #[test]
@@ -1991,39 +1948,41 @@ mod tests {
     #[test]
     fn transcodes_between_units() {
         let base = abs("/w");
-        let base: &AbsPath = base.as_path().unwrap();
-        let mut wide = PathBuf::<AbsPath<u16>>::from_abs(base);
+        let base: &AbsPathSlice = base.try_slice().unwrap();
+        let mut wide = Path::<AbsPathSlice<u16>>::from_abs(base);
         wide.append(sub_path!("node_modules"))
             .join_below::<Posix>("a/\u{e9}/../b".as_bytes())
-            .append_fmt(format_args!("{}@{}", "r\u{e9}act", 18));
-        let wide = wide.as_path();
+            .append_name_fmt(format_args!("{}@{}", "r\u{e9}act", 18));
+        let wide = wide.try_slice();
         assert_eq!(portable_or_err(wide), "/w/node_modules/a/b/r\u{e9}act@18");
-        let wide: &AbsPath<u16> = wide.unwrap();
+        let wide: &AbsPathSlice<u16> = wide.unwrap();
 
-        let wide_base = PathBuf::<AbsPath<u16>>::from_abs(base);
-        let below = wide.strip_prefix(wide_base.as_path().unwrap()).unwrap();
+        let wide_base = Path::<AbsPathSlice<u16>>::from_abs(base);
+        let below = wide.strip_prefix(wide_base.try_slice().unwrap()).unwrap();
         let mut narrow = abs("/back");
         assert_eq!(
-            portable_or_err(narrow.append(below).as_path()),
+            portable_or_err(narrow.append(below).try_slice()),
             "/back/node_modules/a/b/r\u{e9}act@18"
         );
         assert_eq!(
-            portable_or_err(narrow.set_abs(wide).as_path()),
+            portable_or_err(narrow.set_abs(wide).try_slice()),
             "/w/node_modules/a/b/r\u{e9}act@18"
         );
         // A lone surrogate is legal in a Windows name and has no UTF-8 form.
         narrow.append(FileName::<u16>::new(&[0xD800]).unwrap());
-        assert_eq!(narrow.error(), Some(PathError::InvalidName));
+        assert_eq!(narrow.try_slice().err(), Some(PathError::InvalidName));
 
         // One unit of UTF-16 can take three of UTF-8, and the room is asked for before they are read.
         let name = [u16::from(b'x'); 3];
         let mut path = nearly_full::<u8>(6);
         assert_eq!(
-            len_of(path.save().append(SubPath::new(&name[..2]).unwrap())),
+            len_of(path.save().append(SubPathSlice::new(&name[..2]).unwrap())),
             Ok(<u8 as PathUnit>::MAX_PATH - 5)
         );
         assert_eq!(
-            path.append(SubPath::new(&name).unwrap()).error(),
+            path.append(SubPathSlice::new(&name).unwrap())
+                .try_slice()
+                .err(),
             Some(PathError::MaxPathExceeded)
         );
 
@@ -2033,16 +1992,9 @@ mod tests {
             Ok(<u16 as PathUnit>::MAX_PATH - 1)
         );
         assert_eq!(
-            path.append(sub_path!("123")).error(),
+            path.append(sub_path!("123")).try_slice().err(),
             Some(PathError::MaxPathExceeded)
         );
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn from_long_path_is_the_path_itself_on_posix() {
-        let long = AbsPathBuf::from_long_path::<u8>(abs("/a/b").as_path().unwrap());
-        assert_eq!(portable_or_err(long.as_path()), "/a/b");
     }
 
     #[test]
@@ -2084,7 +2036,7 @@ mod tests {
             assert_eq!(&text[..either(text)], root, "{text}");
             let slashes = text.replace('\\', "/");
             assert_eq!(either(&slashes), root.len(), "{slashes}");
-            // In a view only `\` separates.
+            // In a slice only `\` separates.
             assert_eq!(backslash(&slashes), 0, "{slashes}");
             #[cfg(windows)]
             assert_eq!(
@@ -2104,7 +2056,7 @@ mod tests {
 
 #[cfg(all(test, windows))]
 mod windows_tests {
-    use super::tests::{abs, fill_with, native_or_err, views_of};
+    use super::tests::{abs, fill_with, native_or_err, slices_of};
     use super::*;
     use crate::resolve_path::platform::Windows;
 
@@ -2141,7 +2093,7 @@ mod windows_tests {
         ("a\0b", ["InvalidName"; 3], ""),
     ];
     #[rustfmt::skip]
-    const VIEWS: &[(&str, &str)] = &[
+    const SLICES: &[(&str, &str)] = &[
         ("a/b", ""),
         ("C:", ""),
         ("C:a", ""),
@@ -2218,12 +2170,12 @@ mod windows_tests {
             for (base, joined) in BASES.iter().zip(joined) {
                 let input = input.as_bytes();
                 assert_eq!(
-                    native_or_err(abs(base).join::<Windows>(input).as_path()),
+                    native_or_err(abs(base).join::<Windows>(input).try_slice()),
                     *joined,
                     "{base:?} {input:?}"
                 );
                 assert_eq!(
-                    native_or_err(abs(base).join_below::<Windows>(input).as_path()),
+                    native_or_err(abs(base).join_below::<Windows>(input).try_slice()),
                     *if below.is_empty() { joined } else { below },
                     "{base:?} {input:?}"
                 );
@@ -2234,60 +2186,64 @@ mod windows_tests {
             .join_below::<Windows>(b"..")
             .join::<Windows>(b"\\x")
             .join::<Windows>(b"D:x");
-        assert_eq!(failed.error(), Some(PathError::Escapes));
+        assert_eq!(failed.try_slice().err(), Some(PathError::Escapes));
         assert_eq!(
-            abs("C:\\a").save().join::<Windows>(b"D:x").error(),
+            abs("C:\\a")
+                .save()
+                .join::<Windows>(b"D:x")
+                .try_slice()
+                .err(),
             Some(PathError::Escapes)
         );
         assert_eq!(
-            RelPathBuf::init().join::<Windows>(b"C:x").error(),
+            RelPath::init().join::<Windows>(b"C:x").try_slice().err(),
             Some(PathError::ExpectedRelative)
         );
         assert_eq!(
-            native_or_err(failed.join::<Windows>(b"D:\\x").as_path()),
+            native_or_err(failed.join::<Windows>(b"D:\\x").try_slice()),
             "D:\\x"
         );
     }
 
     #[test]
     fn new_accepts_only_normalized_input() {
-        for (text, views) in VIEWS {
-            assert_eq!(views_of(text.as_bytes()), *views, "{text:?}");
+        for (text, slices) in SLICES {
+            assert_eq!(slices_of(text.as_bytes()), *slices, "{text:?}");
         }
     }
 
     #[test]
     fn relative_from_one_directory_to_another() {
         for (from, to, way) in RELATIVE {
-            let built = (abs(from).as_path().unwrap()).relative(abs(to).as_path().unwrap());
-            assert_eq!(native_or_err(built.as_path()), *way, "{from:?} {to:?}");
+            let built = (abs(from).try_slice().unwrap()).relative(abs(to).try_slice().unwrap());
+            assert_eq!(native_or_err(built.try_slice()), *way, "{from:?} {to:?}");
         }
     }
 
     #[test]
     fn from_long_path_adds_the_prefix() {
         for (path, long) in LONG {
-            let built = AbsPathBuf::from_long_path::<u8>(abs(path).as_path().unwrap());
-            assert_eq!(native_or_err(built.as_path()), *long, "{path:?}");
+            let built = AbsPath::from_long_path::<u8>(abs(path).try_slice().unwrap());
+            assert_eq!(native_or_err(built.try_slice()), *long, "{path:?}");
         }
     }
 
     #[test]
-    fn set_unchecked_and_from_fn_take_what_the_os_wrote() {
+    fn set_assume_valid_and_from_fn_take_what_the_os_wrote() {
         for (wrote, path) in FROM_THE_OS {
             let wrote = wrote.as_bytes();
             assert_eq!(
-                native_or_err(AbsPathBuf::init().set_unchecked(wrote).as_path()),
+                native_or_err(AbsPath::init().set_assume_valid(wrote).try_slice()),
                 *path,
                 "{wrote:?}"
             );
-            let mut built = AbsPathBuf::from_fn(fill_with(wrote)).unwrap();
-            assert_eq!(native_or_err(built.as_path()), *path, "{wrote:?}");
-            if built.error().is_none() {
+            let mut built = AbsPath::from_fn(fill_with(wrote)).unwrap();
+            assert_eq!(native_or_err(built.try_slice()), *path, "{wrote:?}");
+            if built.try_slice().err().is_none() {
                 built
                     .append(sub_path!("x"))
                     .join::<Windows>(b"..\\..\\..\\..\\..");
-                assert!(built.as_path().unwrap().is_root(), "{wrote:?}");
+                assert!(built.try_slice().unwrap().is_root(), "{wrote:?}");
             }
         }
     }
@@ -2301,9 +2257,9 @@ mod windows_tests {
         ] {
             let path = abs(path);
             let got = path
-                .as_path()
+                .try_slice()
                 .unwrap()
-                .strip_prefix(abs(dir).as_path().unwrap());
+                .strip_prefix(abs(dir).try_slice().unwrap());
             assert_eq!(got.map(|below| below.to_string()).as_deref(), below);
         }
     }

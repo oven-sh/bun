@@ -2,7 +2,7 @@ use bstr::BStr;
 
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::AbsPathBuf;
+use bun_paths::AbsPath;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{Dir, Fd, FdDirExt};
 
@@ -181,7 +181,7 @@ pub(crate) fn link_global_bins(
     let mut link_dest_buf = bun_paths::path_buffer_pool::get();
     let mut link_rel_buf = bun_paths::path_buffer_pool::get();
 
-    let node_modules_path = match AbsPathBuf::init_fd_path(Fd::from_std_dir(node_modules)) {
+    let node_modules_path = match AbsPath::init_fd_path(Fd::from_std_dir(node_modules)) {
         Ok(p) => p,
         Err(e) => {
             if manager.options.log_level != LogLevel::Silent {
@@ -190,7 +190,7 @@ pub(crate) fn link_global_bins(
             Global::crash();
         }
     };
-    let node_modules_path = match node_modules_path.as_path() {
+    let node_modules_path = match node_modules_path.try_slice() {
         Ok(path) => path,
         Err(e) => return Some(e.into()),
     };

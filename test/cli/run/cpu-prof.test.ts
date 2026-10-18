@@ -189,7 +189,7 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
-  // On Windows `\\` separates, so no name holds one.
+  // On Windows `\` separates, so no name holds one.
   test.skipIf(isWindows)("a backslash in the cwd, --cpu-prof-dir and --cpu-prof-name is part of a name", async () => {
     using dir = tempDir("cpu-prof-backslash", {
       "pro\\j": {},

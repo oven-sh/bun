@@ -11,7 +11,7 @@ use bun_paths::MAX_PATH_BYTES;
 use bun_paths::platform::Auto as PlatformAuto;
 use bun_paths::resolve_path::{self, join_abs_string_buf_z_checked as join_z_checked};
 use bun_paths::strings;
-use bun_paths::{self as path, AbsPath, AbsPathBuf, PathZ, SEP, sub_path};
+use bun_paths::{self as path, AbsPath, AbsPathSlice, AbsPathSliceZ, SEP, sub_path};
 use bun_semver::{ExternalString, String};
 #[cfg(not(windows))]
 use bun_sys::Mode;
@@ -818,7 +818,7 @@ pub struct Linker<'a> {
 
     /// Usually will be the same as `node_modules_path`.
     /// Used to support native bin linking.
-    pub target_node_modules_path: &'a AbsPath,
+    pub target_node_modules_path: &'a AbsPathSlice,
 
     /// Usually will be the same as `package_name`.
     /// Used to support native bin linking.
@@ -828,7 +828,7 @@ pub struct Linker<'a> {
     // linking each tree.
     pub seen: Option<&'a mut StringHashMap<()>>,
 
-    pub node_modules_path: &'a PathZ<AbsPath>,
+    pub node_modules_path: &'a AbsPathSliceZ,
 
     /// Used for generating relative paths
     pub package_name: strings::StringOrTinyString,
@@ -870,14 +870,14 @@ impl<'a> Linker<'a> {
         exec_mode();
     }
 
-    fn make_bin_dir(node_modules_path: &AbsPath) {
-        let mut dir = AbsPathBuf::from(node_modules_path);
-        if let Ok(dir) = dir.append(sub_path!(".bin")).as_path() {
+    fn make_bin_dir(node_modules_path: &AbsPathSlice) {
+        let mut dir = AbsPath::from(node_modules_path);
+        if let Ok(dir) = dir.append(sub_path!(".bin")).try_slice() {
             let _ = sys::Dir::cwd().make_path(dir.slice());
         }
     }
 
-    fn is_behind_link(known: &mut Option<bool>, node_modules_path: &PathZ<AbsPath>) -> bool {
+    fn is_behind_link(known: &mut Option<bool>, node_modules_path: &AbsPathSliceZ) -> bool {
         *known.get_or_insert_with(|| {
             crate::prune::LinkedNodeModules::is_at(node_modules_path.slice_z()) == Some(true)
         })
@@ -1896,10 +1896,10 @@ pub(crate) fn link_free_bins(
     global_bin_path: Option<&ZStr>,
     placed: &[(&[u8], crate::PackageID)],
 ) {
-    let mut node_modules_path = AbsPathBuf::init_top_level_dir();
+    let mut node_modules_path = AbsPath::init_top_level_dir();
     let Ok(node_modules_path) = node_modules_path
         .join::<PlatformAuto>(node_modules)
-        .as_path()
+        .try_slice()
     else {
         return;
     };

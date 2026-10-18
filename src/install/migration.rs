@@ -276,7 +276,7 @@ fn finish_migration(
         return Err(migrating_error(err, lockfile_name));
     }
     // Nor the root's `patchedDependencies`. Its package.json was read just above.
-    if let Ok(path) = crate::lockfile_real::join_top_level_dir(&[b"package.json"]).as_path()
+    if let Ok(path) = crate::lockfile_real::join_top_level_dir(&[b"package.json"]).try_slice()
         && let crate::GetJsonResult::Entry(root) = manager
             .workspace_package_json_cache
             .get_with_path(log, path.slice(), Default::default())

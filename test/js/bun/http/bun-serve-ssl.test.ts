@@ -609,7 +609,7 @@ test.skipIf(isWindows).each(["relative", "absolute"])(
   },
 );
 
-// On Windows `\\` separates, so no name holds one.
+// On Windows `\` separates, so no name holds one.
 test.skipIf(isWindows)("a relative keyFile is found from a working directory named with a backslash", async () => {
   using dir = tempDir("bun-serve-ssl-backslash", {
     "pro\\j": { "cert.pem": tlsCert.cert, "key.pem": tlsCert.key },

@@ -8,7 +8,7 @@ use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
-use bun_paths::{AbsPath, AbsPathBuf, PathZ, SEP, SubPathBuf};
+use bun_paths::{AbsPath, AbsPathSlice, AbsPathSliceZ, SEP, SubPath};
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use bun_threading::{WaitGroup, WorkPool};
 
@@ -2062,7 +2062,7 @@ fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> 
 /// A workspace's `node_modules` is only checked right before something is written to or removed
 /// from it.
 pub(crate) struct LinkedNodeModules {
-    abs_path: Box<AbsPath>,
+    abs_path: Box<AbsPathSlice>,
     /// Empty if the symlink is dangling, and always empty on Windows.
     real_path: Box<[u8]>,
 }
@@ -2074,7 +2074,7 @@ impl LinkedNodeModules {
         Some(sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink)
     }
 
-    pub(crate) fn at(node_modules: &PathZ<AbsPath>) -> Option<LinkedNodeModules> {
+    pub(crate) fn at(node_modules: &AbsPathSliceZ) -> Option<LinkedNodeModules> {
         if Self::is_at(node_modules.slice_z()) != Some(true) {
             return None;
         }
@@ -2093,15 +2093,16 @@ impl LinkedNodeModules {
     ///
     /// On Windows `path` is not rewritten, because a relative link resolves differently behind a
     /// junction than behind a symlink. A link out of this `node_modules` gets an absolute target.
-    pub(crate) fn resolve(&self, path: &mut AbsPathBuf) -> bool {
-        let below = path.as_path().ok();
-        let Some(below) = below.and_then(|path| path.strip_prefix(&self.abs_path)) else {
+    pub(crate) fn resolve(&self, path: &mut AbsPath) -> bool {
+        let Some(below) =
+            (path.try_slice().ok()).and_then(|path| path.strip_prefix(&self.abs_path))
+        else {
             return false;
         };
-        if let Some(real_path) = AbsPath::new_unchecked(&self.real_path) {
-            let below = SubPathBuf::from(below);
-            path.set(real_path);
-            if let Ok(below) = below.as_path() {
+        if !self.real_path.is_empty() {
+            let below = SubPath::from(below);
+            path.set_assume_valid(&self.real_path);
+            if let Ok(below) = below.try_slice() {
                 path.append(below);
             }
         }

@@ -5,11 +5,9 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
-#[cfg(windows)]
-use bun_paths::OSAbsPathBuf;
 use bun_paths::platform;
 use bun_paths::resolve_path;
-use bun_paths::{AbsPathBuf, OSPathBuf, Platform, SEP};
+use bun_paths::{AbsPath, OSPath, Platform, SEP};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
 use crate::bin;
@@ -1088,7 +1086,7 @@ fn has_trusted_scripts(
     {
         return false;
     }
-    let mut folder_path = AbsPathBuf::init();
+    let mut folder_path = AbsPath::init();
     folder_path.join::<platform::Auto>(folder);
     // bun.lock does not record a dependency's scripts, so they are read from its package.json.
     let mut scripts = pkg.scripts;
@@ -1149,13 +1147,13 @@ fn make_bins_executable(
     // `bin::Linker` sets the mode of the files it links to. The links themselves are not needed, so
     // they go in a temporary folder.
     let links = TempTree(temp_sibling(folder));
-    let mut links_path = AbsPathBuf::init();
-    let Ok(cache_path) = AbsPathBuf::init_fd_path(cache_dir) else {
+    let mut links_path = AbsPath::init();
+    let Ok(cache_path) = AbsPath::init_fd_path(cache_dir) else {
         return;
     };
     let (Ok(cache_path), Ok(links_path)) = (
-        cache_path.as_path(),
-        (links_path.join::<platform::Auto>(links.0.as_slice())).as_path(),
+        cache_path.try_slice(),
+        (links_path.join::<platform::Auto>(links.0.as_slice())).try_slice(),
     ) else {
         return;
     };
@@ -1513,24 +1511,19 @@ fn copy_cache_entry(
     // Open the cache entry before changing anything, because it may no longer exist.
     let cached_package_folder = Dir::borrow(&cache_dir).open_dir(cache_dir_subpath, ITERATE)?;
 
-    let mut dest_subpath = OSPathBuf::init();
-    dest_subpath.join::<platform::Auto>(to);
+    let mut dest = OSPath::init();
+    dest.join::<platform::Auto>(to);
 
+    let mut file_copier = FileCopier::init(cached_package_folder.fd, dest, &[])?;
     #[cfg(windows)]
-    let src_path = {
+    {
         let mut path_buf = bun_paths::w_path_buffer_pool::get();
         let cache_dir_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
-        let mut src_path = OSAbsPathBuf::init();
-        src_path
-            .set_unchecked(&*cache_dir_path)
+        (file_copier.src_path)
+            .set_assume_valid(&*cache_dir_path)
             .append_names::<platform::Auto>(cache_dir_subpath);
-        src_path
-    };
-
-    #[cfg(windows)]
-    FileCopier::init(cached_package_folder.fd, src_path, dest_subpath, &[])?.copy()?;
-    #[cfg(not(windows))]
-    FileCopier::init(cached_package_folder.fd, dest_subpath, &[])?.copy()?;
+    }
+    file_copier.copy()?;
     Ok(())
 }
 

@@ -1,15 +1,15 @@
 use bun_alloc::AllocError;
-use bun_paths::{OSAbsPathBuf, OSPathBuf, OSPathSlice, SubPath};
+use bun_paths::{OSAbsPath, OSPath, OSPathSlice, SubPathSlice};
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
 use bun_sys::walker_skippable::Walker;
 use bun_sys::{self as sys, EntryKind, Fd, FdExt};
 
-use super::path_error;
+use super::path_error_for;
 
 pub(crate) struct Hardlinker {
-    pub(crate) src: OSAbsPathBuf,
-    pub(crate) dest: OSPathBuf,
+    pub(crate) src: OSAbsPath,
+    pub(crate) dest: OSPath,
     pub(crate) walker: Walker,
 }
 
@@ -21,8 +21,8 @@ fn name_too_long() -> sys::Error {
 impl Hardlinker {
     pub(crate) fn init(
         folder_dir: Fd,
-        src: OSAbsPathBuf,
-        dest: OSPathBuf,
+        src: OSAbsPath,
+        dest: OSPath,
         skip_dirnames: &[&OSPathSlice],
     ) -> Result<Hardlinker, AllocError> {
         Ok(Hardlinker {
@@ -42,10 +42,10 @@ impl Hardlinker {
     }
 
     pub(crate) fn link(&mut self) -> sys::Result<()> {
-        let path_error = path_error(sys::Tag::link);
-        let dest = self.dest.as_path().map_err(path_error)?;
+        let path_error = path_error_for(sys::Tag::link);
+        let dest = self.dest.try_slice().map_err(path_error)?;
         if crate::PackageManager::verbose_install()
-            && let Ok(src) = self.src.as_path()
+            && let Ok(src) = self.src.try_slice()
         {
             bun_core::pretty_errorln!(
                 "Hardlinking {} to {}",
@@ -58,19 +58,19 @@ impl Hardlinker {
         #[cfg(windows)]
         {
             let mut cwd_buf = bun_paths::w_path_buffer_pool::get();
-            let mut cwd = OSAbsPathBuf::init();
+            let mut cwd = OSAbsPath::init();
             if let Ok(path) = sys::get_fd_path_w(Fd::cwd(), &mut cwd_buf[..]) {
-                cwd.set_unchecked(&*path);
+                cwd.set_assume_valid(&*path);
             }
-            let Ok(cwd) = cwd.as_path() else {
+            let Ok(cwd) = cwd.try_slice() else {
                 return Err(sys::Error::from_code(sys::E::ACCES, sys::Tag::link));
             };
 
             while let Some(entry) = self.walker.next()? {
                 let (mut src, mut dest) = (self.src.save(), self.dest.save());
-                let below = SubPath::new_unchecked(entry.path.as_slice());
-                let src = src.append(below).as_path().map_err(path_error)?;
-                let dest = dest.append(below).as_path().map_err(path_error)?;
+                let below = SubPathSlice::new_assume_valid(entry.path.as_slice());
+                let src = src.append(below).try_slice().map_err(path_error)?;
+                let dest = dest.append(below).try_slice().map_err(path_error)?;
 
                 match entry.kind {
                     EntryKind::Directory => {
@@ -85,7 +85,7 @@ impl Hardlinker {
                         } else {
                             &[cwd.slice(), dest.slice()]
                         };
-                        // No view holds the NT prefix. The join and the prefix below write into the buffers unchecked.
+                        // No slice holds the NT prefix. The join and the prefix below write into the buffers unchecked.
                         let needed_len =
                             dest_parts.iter().map(|part| part.len() + 1).sum::<usize>()
                                 + bun_paths::windows::NT_OBJECT_PREFIX.len();
@@ -164,8 +164,8 @@ impl Hardlinker {
             while let Some(entry) = self.walker.next()? {
                 let mut dest = self.dest.save();
                 let dest = (dest
-                    .append(SubPath::new_unchecked(entry.path.as_bytes()))
-                    .as_path())
+                    .append(SubPathSlice::new_assume_valid(entry.path.as_bytes()))
+                    .try_slice())
                 .map_err(path_error)?;
 
                 match entry.kind {

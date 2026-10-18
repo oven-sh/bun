@@ -64,7 +64,7 @@ pub(crate) fn exec(
     bun_core::pretty!("<r>\n");
 
     let (_, cache_dir) = get_cache_directory_and_abs_path(pm);
-    if let Ok(cache_dir) = cache_dir.as_path() {
+    if let Ok(cache_dir) = cache_dir.try_slice() {
         bun_core::prettyln!("<d>Cache: {}<r>", cache_dir);
     }
     Output::flush();

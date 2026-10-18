@@ -13,7 +13,7 @@ use bun_install::{PackageID, PackageManager, Resolution, ResolutionTag};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_parsers::json as JSON;
 use bun_paths::platform::{Loose, Posix};
-use bun_paths::{AbsPathBuf, FileName, resolve_path, sub_path};
+use bun_paths::{AbsPath, FileName, resolve_path, sub_path};
 use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::package_manager_command::PackageManagerCommand;
@@ -111,10 +111,8 @@ impl PmLicensesCommand {
             Global::exit(1);
         }
 
-        let mut path = AbsPathBuf::init_top_level_dir();
-        if !(path.save().append(sub_path!("node_modules")).as_path())
-            .is_ok_and(|node_modules| bun_sys::exists_z(node_modules.slice_z()))
-        {
+        let mut path = AbsPath::init_top_level_dir();
+        if !bun_sys::exists_path(path.save().append(sub_path!("node_modules"))) {
             if not_silent {
                 Output::err_generic("node_modules not found, nothing to list", ());
                 bun_core::note!("run 'bun install' first");
@@ -374,12 +372,12 @@ fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
     out
 }
 
-fn read_package_info_at(dir: &mut AbsPathBuf, log: &mut Log) -> Option<PackageInfo> {
-    let dir_len = dir.as_path().ok()?.len();
+fn read_package_info_at(dir: &mut AbsPath, log: &mut Log) -> Option<PackageInfo> {
+    let dir_len = dir.try_slice().ok()?.len();
     let mut path = dir.save();
     let full = path
         .append(sub_path!("package.json"))
-        .as_path()
+        .try_slice()
         .ok()?
         .slice();
     read_package_info(full, &full[..dir_len], log)
@@ -512,7 +510,7 @@ impl BunStore {
 
     fn read_info(
         &mut self,
-        path: &mut AbsPathBuf,
+        path: &mut AbsPath,
         pkg_name: bun_semver::String,
         resolution: &Resolution,
         buf: &[u8],
@@ -521,7 +519,7 @@ impl BunStore {
         let entry = self.lookup(path, pkg_name, resolution, buf)?;
         let mut path = path.save();
         path.append(sub_path!("node_modules/.bun"))
-            .append(FileName::new_unchecked(entry))
+            .append(FileName::new_assume_valid(entry))
             .append(sub_path!("node_modules"))
             .append_names::<Posix>(pkg_name.slice(buf));
         read_package_info_at(&mut path, log)
@@ -529,7 +527,7 @@ impl BunStore {
 
     pub(crate) fn lookup(
         &mut self,
-        path: &mut AbsPathBuf,
+        path: &mut AbsPath,
         pkg_name: bun_semver::String,
         resolution: &Resolution,
         buf: &[u8],
@@ -550,9 +548,9 @@ impl BunStore {
         (exact || peer_suffixed).then_some(&entry[..])
     }
 
-    fn scan(path: &mut AbsPathBuf) -> Vec<Box<[u8]>> {
+    fn scan(path: &mut AbsPath) -> Vec<Box<[u8]>> {
         let mut path = path.save();
-        let Ok(store) = path.append(sub_path!("node_modules/.bun")).as_path() else {
+        let Ok(store) = path.append(sub_path!("node_modules/.bun")).try_slice() else {
             return Vec::new();
         };
         list_dir(store.slice())
@@ -583,7 +581,7 @@ fn disk_key(name: &[u8], version: &[u8]) -> Vec<u8> {
 impl DiskIndex {
     fn take(
         &mut self,
-        path: &mut AbsPathBuf,
+        path: &mut AbsPath,
         log: &mut Log,
         name: &[u8],
         version: &[u8],
@@ -599,13 +597,13 @@ impl DiskIndex {
     }
 
     fn scan_node_modules(
-        node_modules: &mut AbsPathBuf,
+        node_modules: &mut AbsPath,
         depth: usize,
         log: &mut Log,
         out: &mut StringHashMap<PackageInfo>,
     ) {
-        let list = |dir: &AbsPathBuf| {
-            dir.as_path()
+        let list = |dir: &AbsPath| {
+            dir.try_slice()
                 .map_or(Vec::new(), |dir| list_dir(dir.slice()))
         };
         for (name, kind) in list(node_modules) {
@@ -613,7 +611,7 @@ impl DiskIndex {
                 continue;
             }
             let mut path = node_modules.save();
-            path.append(FileName::new_unchecked(&name));
+            path.append(FileName::new_assume_valid(&name));
             if !name.starts_with(b"@") {
                 Self::scan_package(&mut path, depth, log, out);
                 continue;
@@ -624,14 +622,14 @@ impl DiskIndex {
                     continue;
                 }
                 let mut path = path.save();
-                path.append(FileName::new_unchecked(&scoped_name));
+                path.append(FileName::new_assume_valid(&scoped_name));
                 Self::scan_package(&mut path, depth, log, out);
             }
         }
     }
 
     fn scan_package(
-        path: &mut AbsPathBuf,
+        path: &mut AbsPath,
         depth: usize,
         log: &mut Log,
         out: &mut StringHashMap<PackageInfo>,

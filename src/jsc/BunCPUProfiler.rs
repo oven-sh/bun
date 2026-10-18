@@ -4,7 +4,7 @@ use std::io::Write as _;
 use crate::VM;
 use bun_core::String as BunString;
 use bun_paths::platform::Auto;
-use bun_paths::{AbsPath, AbsPathBuf, PathBuffer, PathZ};
+use bun_paths::{AbsPath, AbsPathSliceZ, PathBuffer};
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -86,8 +86,8 @@ fn write_profile_to_file(
 ) -> Result<(), ProfilerError> {
     let profile_slice = profile_string.to_utf8();
 
-    let mut path_buf = AbsPathBuf::init_top_level_dir();
-    let output_path = build_output_path(&mut path_buf, config, is_md_format)?;
+    let mut output_path = AbsPath::init_top_level_dir();
+    let output_path = build_output_path(&mut output_path, config, is_md_format)?;
 
     // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
     #[cfg(windows)]
@@ -128,10 +128,10 @@ fn write_profile_to_file(
 }
 
 fn build_output_path<'a>(
-    path: &'a mut AbsPathBuf,
+    path: &'a mut AbsPath,
     config: &CPUProfilerConfig,
     is_md_format: bool,
-) -> Result<&'a PathZ<AbsPath>, ProfilerError> {
+) -> Result<&'a AbsPathSliceZ, ProfilerError> {
     // Generate filename
     let mut filename_buf = bun_paths::path_buffer_pool::get();
 
@@ -160,7 +160,7 @@ fn build_output_path<'a>(
 
     path.join::<Auto>(config.dir)
         .join::<Auto>(filename)
-        .as_path()
+        .try_slice()
         .map_err(|_| ProfilerError::FilenameTooLong)
 }
 

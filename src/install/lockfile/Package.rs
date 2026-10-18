@@ -1201,7 +1201,7 @@ impl Diff {
                         workspace_path.slice(to_buf!()),
                         b"package.json",
                     ]);
-                    let Ok(package_json_path) = package_json_path.as_path() else {
+                    let Ok(package_json_path) = package_json_path.try_slice() else {
                         break 'update_mapping false;
                     };
 
@@ -1476,7 +1476,7 @@ impl Diff {
                 .slice(from_lockfile.buffers.string_bytes.as_slice()),
             b"package.json",
         ]);
-        let Ok(package_json_path) = package_json_path.as_path() else {
+        let Ok(package_json_path) = package_json_path.try_slice() else {
             return Ok(None);
         };
         let Ok(contents) = bun_sys::File::read_from(bun_sys::Fd::cwd(), package_json_path.slice())

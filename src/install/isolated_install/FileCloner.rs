@@ -1,17 +1,17 @@
-use bun_paths::{Path, PathZ, SubPath};
+use bun_paths::{PathSliceZ, SubPathSliceZ};
 use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
 
 // macOS clonefileat only
 
 pub(crate) struct FileCloner<'a> {
     pub cache_dir: Fd,
-    pub cache_dir_subpath: &'a PathZ<SubPath>,
-    pub dest_subpath: &'a PathZ<Path>,
+    pub cache_dir_subpath: &'a SubPathSliceZ,
+    pub dest: &'a PathSliceZ,
 }
 
 impl FileCloner<'_> {
     pub(crate) fn clone(&self) -> sys::Result<()> {
-        let dest = self.dest_subpath;
+        let dest = self.dest;
         let clonefileat = || {
             sys::clonefileat(
                 self.cache_dir,

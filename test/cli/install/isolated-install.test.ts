@@ -1540,7 +1540,7 @@ describe.concurrent("transitive file dependencies of a tarball, written with a b
   // Installs a tarball `p` that declares `"q": "file:<folder>"`, and returns what is beside `p` in its store entry.
   async function install(folder: string, options?: Parameters<typeof runBunInstall>[2]) {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
-    const q = JSON.stringify({ name: "q", version: "1.0.0" });
+    const qPackageJson = JSON.stringify({ name: "q", version: "1.0.0" });
     await Promise.all([
       write(packageJson, JSON.stringify({ name: "tarball-file-deps", dependencies: { p: "file:./p.tgz" } })),
       write(
@@ -1551,41 +1551,42 @@ describe.concurrent("transitive file dependencies of a tarball, written with a b
             version: "1.0.0",
             dependencies: { q: `file:${folder}` },
           }),
-          "package/sub/inner/package.json": q,
+          "package/sub/inner/package.json": qPackageJson,
         }).bytes("gzip"),
       ),
       // Outside of `p`, and inside the directory of this test.
-      write(join(packageDir, "outside", "package.json"), q),
+      write(join(packageDir, "outside", "package.json"), qPackageJson),
     ]);
 
     const { err } = await runBunInstall(installEnv(packageDir), packageDir, options);
     const bunDir = join(packageDir, "node_modules", ".bun");
     const entry = (await readdirSorted(bunDir)).find(name => name.startsWith("p@"))!;
-    return { err, beside: join(bunDir, entry, "node_modules") };
+    return { err, entryNodeModules: join(bunDir, entry, "node_modules") };
   }
 
   test("are linked from inside the package that declares them", async () => {
-    const { beside } = await install("sub\\inner");
-    expect(await readdirSorted(beside)).toEqual(["p", "q"]);
-    expect(realpathSync(join(beside, "q"))).toBe(realpathSync(join(beside, "p", "sub", "inner")));
+    const { entryNodeModules } = await install("sub\\inner");
+    expect(await readdirSorted(entryNodeModules)).toEqual(["p", "q"]);
+    expect(realpathSync(join(entryNodeModules, "q"))).toBe(realpathSync(join(entryNodeModules, "p", "sub", "inner")));
   });
 
   test("are not linked when `..` leads out of the package", async () => {
     // Six folders down where `\` separates, and one where it does not. `<project>/outside` is six up from there.
-    const { err, beside } = await install("a\\a\\a\\a\\a\\a/../../../../../../outside", {
+    const { err, entryNodeModules } = await install("a\\a\\a\\a\\a\\a/../../../../../../outside", {
       allowErrors: true,
       savesLockfile: false,
       expectedExitCode: 1,
     });
     expect(err).toContain("failed to read package.json");
-    expect(await readdirSorted(beside)).toEqual(["p"]);
+    expect(await readdirSorted(entryNodeModules)).toEqual(["p"]);
   });
 
-  test("are measured once `.` is resolved", async () => {
-    // Longer as written than any path may be.
-    const { beside } = await install("sub\\inner\\" + Buffer.alloc(isWindows ? 100_000 : 5000, ".\\").toString());
-    expect(await readdirSorted(beside)).toEqual(["p", "q"]);
-    expect(realpathSync(join(beside, "q"))).toBe(realpathSync(join(beside, "p", "sub", "inner")));
+  test("are linked when only the text as written is longer than a path may be", async () => {
+    const { entryNodeModules } = await install(
+      "sub\\inner\\" + Buffer.alloc(isWindows ? 100_000 : 5000, ".\\").toString(),
+    );
+    expect(await readdirSorted(entryNodeModules)).toEqual(["p", "q"]);
+    expect(realpathSync(join(entryNodeModules, "q"))).toBe(realpathSync(join(entryNodeModules, "p", "sub", "inner")));
   });
 });
 

@@ -203,7 +203,8 @@ strings::to_utf16_alloc(...)             // encoding conversions
 
 Path helpers operate on `&[u8]` and are platform-parameterized via the
 `Platform` const-generic (`Posix`, `Windows`, `Loose`, `Nt`; `platform::Auto`
-picks the host). Never use `std::path` for runtime path logic.
+picks the host). Never use `std::path` for runtime path logic. To build a path, see
+[Paths as types](#paths-as-types-srcpathspathrs).
 
 ```rust
 use bun_paths::{dirname, basename};
@@ -231,58 +232,66 @@ and the narrow (`u8`) variant on POSIX.
 
 ### Paths as types (`src/paths/Path.rs`)
 
-To build a path, use `PathBuf<V>` rather than offsets into a buffer. It holds one
-buffer from the path buffer pool and builds a view `V`. A view is a borrowed slice
-that is normalized: only `SEP` separates, and there is no `.`, no empty name and no
+To build or change a path, use a `Path` rather than offsets into a buffer. It owns one
+buffer from the path buffer pool. `AbsPath`, `RelPath` and `SubPath` say what kind of
+path it holds; plain `Path` holds any. `OSAbsPath` and `OSPath` are those in the unit the
+host's syscalls take.
+
+`try_slice()` lends what it holds as a slice, which is what functions take and return. A
+slice is normalized: only `SEP` separates, and there is no `.`, no empty name and no
 trailing separator.
 
-| View       | Holds                                   | Derefs to |
-| ---------- | --------------------------------------- | --------- |
-| `Path`     | any normalized path                     |           |
-| `AbsPath`  | an absolute path, no `..`               | `Path`    |
-| `RelPath`  | a relative path, `..` only at the front | `Path`    |
-| `SubPath`  | a relative path with no `..`            | `RelPath` |
-| `FileName` | one name                                | `SubPath` |
+| Owner     | Slice          | Holds                                   | Slice derefs to |
+| --------- | -------------- | --------------------------------------- | --------------- |
+| `Path`    | `PathSlice`    | any normalized path                     |                 |
+| `AbsPath` | `AbsPathSlice` | an absolute path, no `..`               | `PathSlice`     |
+| `RelPath` | `RelPathSlice` | a relative path, `..` only at the front | `PathSlice`     |
+| `SubPath` | `SubPathSlice` | a relative path with no `..`            | `RelPathSlice`  |
+|           | `FileName`     | one name                                | `SubPathSlice`  |
 
-Each takes a unit, `u8` by default: `AbsPath<u16>` is a wide path. `PathZ<V>` is
-a `V` followed by a NUL; `slice_z()` is what a syscall takes, `slice()` the units.
-`AbsPathBuf`, `RelPathBuf` and `SubPathBuf` name the `u8` builders, `OSAbsPathBuf`
-and `OSPathBuf` those of the unit the host's syscalls take. A `PathBuf` builds every
-view but `FileName`: those four implement `PathKind`.
+A slice takes a unit, `u8` by default: `AbsPathSlice<u16>` is a wide path. `AbsPathSliceZ`
+(and so on for each) is that slice with a NUL after it, and derefs to it. `slice_z()` is
+what a syscall takes, `slice()` the units. Code for a path of any kind takes
+`&mut Path<impl PathKind + ?Sized>`.
 
 Pick the entry by where the input came from:
 
-| Input                                         | Entry                                                                        |
-| --------------------------------------------- | ---------------------------------------------------------------------------- |
-| a literal                                     | `append(sub_path!("node_modules/.bin"))`                                     |
-| another view                                  | `append(sub)`, `from(view)`, `set(view)`, `from_abs`/`set_abs` (either unit) |
-| a name the OS listed                          | `append(FileName::new_unchecked(name))`                                      |
-| a path the OS returned                        | `set_unchecked(units)`, `from_fn(\|buf\| ..)`, `init_fd_path(fd)`            |
-| a package name or alias                       | `append_names::<Posix>(name)`: names only, no `.` or `..`                    |
-| a formatted name                              | `append_fmt(format_args!("{name}@{version}"))`                               |
-| text that must stay inside the directory      | `join_below::<P>(text)`: fails with `Escapes` or `ExpectedRelative`          |
-| any other text (a flag, a config, a lockfile) | `join::<P>(text)`, which does what `path.resolve` does                       |
+| Input                                         | Entry                                                                |
+| --------------------------------------------- | -------------------------------------------------------------------- |
+| the project directory                         | `AbsPath::init_top_level_dir()`                                      |
+| a literal                                     | `append(sub_path!("node_modules/.bin"))`                             |
+| another slice                                 | `append(sub)`, `from(slice)`, `from_abs`/`set_abs` (either unit)     |
+| a name the OS listed                          | `append(FileName::new_assume_valid(name))`                           |
+| names the OS listed, joined with `SEP`        | `append(SubPathSlice::new_assume_valid(entry.path))`                 |
+| a path the OS returned                        | `set_assume_valid(units)`, `from_fn(\|buf\| ..)`, `init_fd_path(fd)` |
+| a package name or alias                       | `append_names::<Posix>(name)`: names only, no `.` or `..`            |
+| one formatted name                            | `append_name_fmt(format_args!("{name}@{version}"))`                  |
+| text that must stay inside the directory      | `join_below::<P>(text)`: fails with `Escapes` or `ExpectedRelative`  |
+| any other text (a flag, a config, a lockfile) | `join::<P>(text)`, which does what `path.resolve` does               |
 
 `P` says how the text is read: `Posix` (only `/` separates), `Windows`, `Auto`
 (the host's rules) or `Loose` (`/` and `\` both separate on every host).
 
 ```rust
 use bun_paths::platform::Posix;
-use bun_paths::{AbsPathBuf, sub_path};
+use bun_paths::{AbsPath, sub_path};
 
-let mut path = AbsPathBuf::init_top_level_dir();
+let mut path = AbsPath::init_top_level_dir();
 path.append(sub_path!("node_modules")).append_names::<Posix>(alias);
 {
     let mut package_json = path.save();             // ResetScope: puts the path back on drop
     package_json.append(sub_path!("package.json"));
-    bun_sys::exists_z(package_json.as_path()?.slice_z());
+    bun_sys::exists_z(package_json.try_slice()?.slice_z());
 }
 ```
 
-No step returns a `Result`. The first failure (`PathError`) is kept, and
-`as_path()`, the only way to the path, returns it. `PathError`
-converts to `bun_errno::SystemErrno` and nests in a crate's `Error` with `#[from]`.
-Inside a `ResetScope` nothing can remove or replace what was there before it.
+No `append*`, `join*` or `set*` returns a `Result`. The first failure (`PathError`) is
+kept, and `try_slice()` returns the path or that failure. `PathError` converts to
+`bun_errno::SystemErrno` and nests in a crate's `Error` with `#[from]`. Inside a
+`ResetScope` nothing can remove or replace what was there before it.
+
+Between two slices: `dirname()`, `basename()`, `abs.strip_prefix(dir)` (a `SubPathSlice`)
+and `dir.relative(to)` (a `RelPath`).
 
 ## URL Parsing (`bun_url::whatwg`)
 

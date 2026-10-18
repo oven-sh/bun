@@ -1,5 +1,5 @@
 use bun_paths::platform::{Loose, Posix};
-use bun_paths::{AbsPathBuf, sub_path};
+use bun_paths::{AbsPath, sub_path};
 
 use crate::isolated_install::installer::{is_link, remove_link};
 use crate::lockfile::Lockfile;
@@ -34,14 +34,14 @@ pub(crate) fn remove_stale_workspace_links(previous: &Lockfile, current: &Lockfi
 
 /// `readlink` is the symlink (or junction) check; a real directory or file there is left alone.
 fn remove_link_in(package_dir: &[u8], name: &[u8]) {
-    let mut path = AbsPathBuf::init_top_level_dir();
+    let mut path = AbsPath::init_top_level_dir();
     path.join::<Loose>(package_dir)
         .append(sub_path!("node_modules"));
     // Nothing is removed from a `node_modules` that is a symlink. See `LinkedNodeModules`.
-    if (path.as_path()).is_ok_and(|node_modules| is_link(node_modules.slice_z()) == Some(true)) {
+    if (path.try_slice()).is_ok_and(|node_modules| is_link(node_modules.slice_z()) == Some(true)) {
         return;
     }
-    let Ok(path) = path.append_names::<Posix>(name).as_path() else {
+    let Ok(path) = path.append_names::<Posix>(name).try_slice() else {
         return;
     };
 

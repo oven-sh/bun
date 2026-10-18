@@ -755,7 +755,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
 
     // -- 2. root + workspaces from disk ---------------------------------------
     let root_json_path = lockfile::join_top_level_dir(&[b"package.json"]);
-    let root_json_path = root_json_path.as_path()?;
+    let root_json_path = root_json_path.try_slice()?;
     let root_json = package_json(manager, log, root_json_path.slice(), Default::default())?;
     // `process_names_array` resolves globs relative to the source's directory.
     let (root_manifest, root_source) = (root_json.root, root_json.source.clone());
@@ -856,7 +856,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
 
     for ws in workspaces.iter_mut() {
         let json_path = lockfile::join_top_level_dir(&[&ws.path, b"package.json"]);
-        let json_path = json_path.as_path()?;
+        let json_path = json_path.try_slice()?;
         let manifest = package_json(manager, log, json_path.slice(), Default::default())?.root;
         let name_hash = string_hash(&ws.name);
         let mut pkg = lockfile::Package {
@@ -1426,7 +1426,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     }
     for ws in &workspaces {
         let json_path = lockfile::join_top_level_dir(&[&ws.path, b"package.json"]);
-        let json_path = json_path.as_path()?;
+        let json_path = json_path.try_slice()?;
         if let Some(changed) =
             edit_package_json(manager, log, json_path.slice(), &ws.rewrites, &[], None)?
         {

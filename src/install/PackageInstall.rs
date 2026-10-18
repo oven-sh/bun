@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use bun_collections::{ArrayHashMap, DynamicBitSet};
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
-use bun_paths::{self as path, OSPathChar, OSPathSlice, PathZ, SubPath};
+use bun_paths::{self as path, OSPathChar, OSPathSlice, SubPathSliceZ};
 use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
@@ -1162,7 +1162,7 @@ impl LinkBatch {
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
 /// Holds the commit of a git package or the integrity of a tarball. Both linkers look for it.
-pub(crate) const BUN_TAG: &PathZ<SubPath> = path::sub_path!(".bun-tag");
+pub(crate) const BUN_TAG: &SubPathSliceZ = path::sub_path!(".bun-tag");
 
 /// Whether an installed tarball's `.bun-tag` says it holds the bytes bun.lock pins.
 pub(crate) fn tarball_tag_matches(tag: &[u8], integrity: &Integrity, skips_verify: bool) -> bool {

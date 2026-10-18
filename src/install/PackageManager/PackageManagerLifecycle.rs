@@ -9,7 +9,7 @@ use bun_core::fmt::PathSep;
 use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{join_abs_string_z, platform};
-use bun_paths::{AbsPathBuf, EnvPath, sub_path};
+use bun_paths::{AbsPath, EnvPath, sub_path};
 use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
 
@@ -300,8 +300,8 @@ impl PackageManager {
         // need to clone because this is a copy before Lockfile.cleanWithLogger
         let name = root_package.name.slice(buf);
 
-        let top_level_dir = AbsPathBuf::init_top_level_dir();
-        let Ok(top_level_dir) = top_level_dir.as_path() else {
+        let top_level_dir = AbsPath::init_top_level_dir();
+        let Ok(top_level_dir) = top_level_dir.try_slice() else {
             return;
         };
 
@@ -362,7 +362,7 @@ impl PackageManager {
         let mut inherited_path = list.is_dependency.then_some(original_path.as_slice());
         let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();
 
-        let mut bin_dir = AbsPathBuf::init();
+        let mut bin_dir = AbsPath::init();
         while let Some(dir) = parent {
             if dir.len() != cwd.len() && !strings::contains(dir, store_entry) {
                 if let Some(inherited) = inherited_path.take() {
@@ -373,7 +373,7 @@ impl PackageManager {
             bin_dir
                 .join::<platform::Auto>(dir)
                 .append(sub_path!("node_modules/.bin"));
-            if let Ok(bin_dir) = bin_dir.as_path() {
+            if let Ok(bin_dir) = bin_dir.try_slice() {
                 path.append(bin_dir.slice())?;
             }
 

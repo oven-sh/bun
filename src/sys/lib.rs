@@ -9014,6 +9014,11 @@ pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'
 pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
     dir_iterator::iterate(dir)
 }
+/// False also for a path that failed to build.
+pub fn exists_path(path: &bun_paths::Path<impl bun_paths::PathKind<Unit = u8> + ?Sized>) -> bool {
+    path.try_slice().is_ok_and(|path| exists_z(path.slice_z()))
+}
+
 /// `bun.sys.exists`. Non-NUL-terminated convenience over
 /// [`exists_z`]: copies into a stack `PathBuffer`, NUL-terminates, then
 /// `access(path, F_OK)` (POSIX) / `GetFileAttributesW` (Windows).

@@ -5,7 +5,7 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{dirname, join_abs_string_buf_z_checked, join_z_buf};
-use bun_paths::{AbsPathBuf, MAX_PATH_BYTES, PathBuffer, SEP, platform};
+use bun_paths::{AbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
 use bun_semver::String;
 use bun_sys::{Dir, Fd};
 
@@ -491,7 +491,7 @@ fn abs_node_modules_path(
     lockfile: &Lockfile,
     string_buf: &[u8],
     tree_id: lockfile::tree::Id,
-) -> AbsPathBuf {
+) -> AbsPath {
     let mut rel_buf = bun_paths::path_buffer_pool::get();
     rel_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
     let mut depth_buf = lockfile::tree::depth_buf_uninit();
@@ -506,7 +506,7 @@ fn abs_node_modules_path(
         &mut rel_buf,
         &mut depth_buf,
     );
-    let mut abs = AbsPathBuf::init_top_level_dir();
+    let mut abs = AbsPath::init_top_level_dir();
     abs.join::<platform::Auto>(rel.as_bytes());
     abs
 }
@@ -518,7 +518,7 @@ pub(crate) fn remove_placed_package(
     alias: &[u8],
 ) {
     let path = abs_node_modules_path(lockfile, lockfile.buffers.string_bytes.as_slice(), tree_id);
-    let Some(node_modules) = (path.as_path().ok()).and_then(|path| Dir::open(path.slice()).ok())
+    let Some(node_modules) = (path.try_slice().ok()).and_then(|path| Dir::open(path.slice()).ok())
     else {
         return;
     };
@@ -586,8 +586,8 @@ fn print_package_version<'a>(
 }
 
 impl<'a> PackageInstaller<'a> {
-    fn node_modules_path(&self) -> AbsPathBuf {
-        let mut path = AbsPathBuf::init();
+    fn node_modules_path(&self) -> AbsPath {
+        let mut path = AbsPath::init();
         path.join::<platform::Auto>(self.node_modules.path.as_slice());
         path
     }
@@ -707,8 +707,22 @@ impl<'a> PackageInstaller<'a> {
         let manager = self.manager_mut();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let node_modules_path = self.node_modules_path();
-        let Ok(node_modules_path) = node_modules_path.as_path() else {
-            return;
+        let node_modules_path = match node_modules_path.try_slice() {
+            Ok(node_modules_path) => node_modules_path,
+            Err(err) => {
+                bun_ast::add_error_pretty!(
+                    manager.log_mut(),
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    "failed to link into <b>{}<r>: {}",
+                    bun_core::fmt::EscapeControlChars(bstr::BStr::new(
+                        self.node_modules.path.as_slice()
+                    )),
+                    <&'static str>::from(bun_sys::SystemErrno::from(err)),
+                );
+                while (self.trees[tree_id as usize].binaries.remove_or_null()).is_some() {}
+                return;
+            }
         };
         let mut is_behind_link = (!lockfile.is_importer_tree_id(tree_id)).then_some(false);
 
@@ -759,7 +773,7 @@ impl<'a> PackageInstaller<'a> {
             let package_name_ = strings::StringOrTinyString::init(alias);
             let mut target_package_name = package_name_;
             let mut can_retry_without_native_binlink_optimization = false;
-            let mut target_node_modules_path_opt: Option<AbsPathBuf> = None;
+            let mut target_node_modules_path_opt: Option<AbsPath> = None;
             let mut defer_this_bin = false;
 
             'native_binlink_optimization: {
@@ -864,7 +878,7 @@ impl<'a> PackageInstaller<'a> {
                     seen: Some(&mut self.seen_bin_links),
                     target_node_modules_path: target_node_modules_path_opt
                         .as_ref()
-                        .and_then(|path| path.as_path().ok())
+                        .and_then(|path| path.try_slice().ok())
                         .unwrap_or(node_modules_path),
                     node_modules_path,
                     abs_target_buf: link_target_buf,
@@ -1618,7 +1632,7 @@ impl<'a> PackageInstaller<'a> {
         alias: &[u8],
         package_id: PackageID,
         resolution_tag: resolution::Tag,
-        folder_path: &mut AbsPathBuf,
+        folder_path: &mut AbsPath,
         log_level: Options::LogLevel,
     ) -> usize {
         debug_assert!(resolution_tag != resolution::Tag::Root);
@@ -1671,7 +1685,7 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        count += (folder_path.as_path())
+        count += (folder_path.try_slice())
             .is_ok_and(|path| scripts.wants_default_node_gyp(path.slice(), gypfile))
             as usize;
 
@@ -2664,7 +2678,7 @@ impl<'a> PackageInstaller<'a> {
         &mut self,
         folder_name: &[u8],
         log_level: Options::LogLevel,
-        package_path: &mut AbsPathBuf,
+        package_path: &mut AbsPath,
         dependency_id: DependencyID,
         package_id: PackageID,
         resolution: &Resolution,

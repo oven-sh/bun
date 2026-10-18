@@ -792,7 +792,7 @@ describe.concurrent("a package-lock.json entry of another host without an integr
   });
 });
 
-// On Windows `\\` separates, so no name holds one.
+// On Windows `\` separates, so no name holds one.
 describe.concurrent.skipIf(isWindows)("in a project folder named with a backslash", () => {
   const rows: [
     lock: string,
@@ -804,7 +804,18 @@ describe.concurrent.skipIf(isWindows)("in a project folder named with a backslas
     ["yarn.lock", "# yarn lockfile v1\n\n", {}, {}, [""]],
     [
       "pnpm-lock.yaml",
-      `lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      a:\n        specifier: workspace:*\n        version: link:packages/a\n\n  packages/a: {}\n`,
+      `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      a:
+        specifier: workspace:*
+        version: link:packages/a
+
+  packages/a: {}
+`,
       { workspaces: ["packages/*"], dependencies: { a: "workspace:*" } },
       { "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }) },
       ["", "packages/a"],

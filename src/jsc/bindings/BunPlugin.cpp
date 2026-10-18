@@ -4226,41 +4226,6 @@ String keyOfImportByPackage(Zig::GlobalObject* globalObject, const String& key, 
     return hasOriginal ? Zig::originalModuleKey(key) : key;
 }
 
-// Whether some unfinished module imports both, directly or through other modules. Vitest loads a module's imports one at a time, so the
-// later import's factory starts after the earlier one's has returned. Here both run at the same time, so the later one has to wait for the
-// earlier one to see the same thing. Their importer waits for both anyway.
-__attribute__((minsize)) static bool haveUnfinishedImporterInCommon(Zig::GlobalObject* globalObject, const String& earlier, const String& later)
-{
-    Zig::ModuleImporters importersOf;
-    for (auto& [mapKey, entry] : Bun::testFileModuleLoader(globalObject)->moduleMap()) {
-        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
-        if (!cyclic || cyclic->isSCCEvaluated())
-            continue;
-        for (auto& resolved : cyclic->resolvedRequests().values())
-            Zig::addImporter(importersOf, String(mapKey.first), String { resolved.get() });
-    }
-    auto importersAbove = [&](const String& key) {
-        UncheckedKeyHashSet<String> above;
-        Vector<String> queue { key };
-        for (size_t i = 0; i < queue.size(); ++i) {
-            auto importers = importersOf.find(queue[i]);
-            if (importers == importersOf.end())
-                continue;
-            for (auto& importer : importers->value) {
-                if (above.add(importer).isNewEntry)
-                    queue.append(importer);
-            }
-        }
-        return above;
-    };
-    auto aboveEarlier = importersAbove(earlier);
-    for (auto& importer : importersAbove(later)) {
-        if (aboveEarlier.contains(importer))
-            return true;
-    }
-    return false;
-}
-
 __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
 {
     // It imports nothing, so it waits for no mock, and only its own key is served.
@@ -4326,9 +4291,7 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
             // Once another mock has replaced it, imports from its file are no longer attributed to the factory.
             bool isFactory = importer == running.file && (!Zig::registeredModuleMock(globalObject, mocked) || Zig::isStillRegisteredModuleMock(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())));
             // The file alone can't tell which of its factories called import(). The async context can.
-            if (!callers.isEmpty() && !callers.contains(running.mock.get()))
-                isFactory = isFactory && !haveUnfinishedImporterInCommon(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(callers[0])->specifier->tryGetValue().data);
-            else if (!callers.isEmpty())
+            if (callers.contains(running.mock.get()))
                 isFactory = true;
             if (!isInChain && !isFactory && (isImporterBeingLoaded || !running.importChainWithoutQuery.contains(importer)))
                 continue;

@@ -153,15 +153,14 @@ impl<M: MapString> Mapper<'_, M> {
                         .into_iter()
                         .map(|variant| self.capture(variant, f))
                         .collect();
-                    let mapped = f.best_fitting_of(&variants);
+                    let mapped = f.best_fitting_with(&variants, best_fitting.fallback);
                     f.write_element(mapped);
                 }
                 // What is in it is measured anew.
                 FormatElement::Tag(Tag::StartGroup(group)) => {
-                    let mode = if group.mode() == GroupMode::Expand {
-                        GroupMode::Expand
-                    } else {
-                        GroupMode::Flat
+                    let mode = match group.mode() {
+                        GroupMode::Propagated => GroupMode::Flat,
+                        mode => mode,
                     };
                     f.write_element(FormatElement::Tag(Tag::StartGroup(
                         Group::new().with_id(group.id()).with_mode(mode),

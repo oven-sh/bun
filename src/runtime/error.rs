@@ -96,8 +96,6 @@ pub enum Error {
     UpgradeFailedBecauseOfMissingExecutableDir,
     #[error("NoBinFound")]
     NoBinFound,
-    #[error("NeedToInstall")]
-    NeedToInstall,
     #[error("PathTooLong")]
     PathTooLong,
     #[error("AssertionError")]
@@ -388,7 +386,6 @@ impl Error {
                 "UpgradeFailedBecauseOfMissingExecutableDir"
             }
             Self::NoBinFound => "NoBinFound",
-            Self::NeedToInstall => "NeedToInstall",
             Self::PathTooLong => "PathTooLong",
             Self::AssertionError => "AssertionError",
             Self::ModuleNotFound => "ModuleNotFound",

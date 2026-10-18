@@ -113,33 +113,6 @@ fn run(args: &[String]) {
                     return;
                 };
                 let path = &files[i];
-                // --shared: the files that another program would not get as it parses and binds
-                // them itself (`SharedFile`), with and without their text.
-                if args.iter().any(|a| a == "--shared") {
-                    let options = bun_sema::resolve::ParseOptions::default();
-                    let text = disk.read_source(path.as_bytes());
-                    for keeps_text in [true, false] {
-                        let arena = session.arena();
-                        let mut file = disk.parse(arena, path.as_bytes(), &text, &atoms, options);
-                        if keeps_text {
-                            file.text.clone_from(&text);
-                        }
-                        let bound = bun_sema::bind::bind(&file, options.bind, &atoms, arena);
-                        let shared = bun_sema::portable::SharedFile::new(&file, &bound, &atoms);
-                        let difference = bun_sema::program::difference_for_another_program(
-                            &shared,
-                            &disk,
-                            options,
-                            path.as_bytes(),
-                            &file,
-                        );
-                        if let Some(field) = difference {
-                            let line = format!("{path}: {field} (text kept: {keeps_text})\n");
-                            dumped.lock().push(line);
-                        }
-                    }
-                    return;
-                }
                 let file = bun_sema_standalone::parse(session.arena(), path, &text, &atoms, false);
                 // Only parses and lowers: the cost is measured with `/usr/bin/time -l`.
                 if args.iter().any(|a| a == "--quiet") {
@@ -321,14 +294,11 @@ fn run(args: &[String]) {
                 checkers: number("--checkers=", defaults.checkers),
                 reproduces_symbol_ids: defaults.reproduces_symbol_ids,
                 projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
-                files_of_a_small_project: number(
-                    "--files-of-a-small-project=",
-                    defaults.files_of_a_small_project,
-                ),
                 after_file_is_for_checked_files: defaults.after_file_is_for_checked_files,
                 checks_only_named: defaults.checks_only_named,
                 reads_sources_of_references: defaults.reads_sources_of_references,
                 current_directory_is_of_the_project: defaults.current_directory_is_of_the_project,
+                project_is_for_the_rest: defaults.project_is_for_the_rest,
                 reports_nothing_about_files: defaults.reports_nothing_about_files,
                 only_in_a_project_that_includes: defaults.only_in_a_project_that_includes,
                 refuses_broken_configurations: defaults.refuses_broken_configurations,

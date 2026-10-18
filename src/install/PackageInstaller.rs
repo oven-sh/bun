@@ -61,6 +61,8 @@ pub struct PackageInstaller<'a> {
 
     pub(crate) skip_verify_installed_version_number: bool,
     pub(crate) skip_delete: bool,
+    /// For `set_outlived_root`: the workspaces whose first tree the install has reached.
+    pub(crate) workspaces_seen: Vec<PackageID>,
     pub(crate) root_node_modules_folder: Dir,
     /// Taken for the first package that is linked: an install with nothing to link takes none.
     pub(crate) staging_lock: Option<package_install::StagingLock>,
@@ -90,6 +92,9 @@ pub struct PackageInstaller<'a> {
     //
     /// set of completed tree ids
     pub(crate) completed_trees: Bitset,
+    /// Number of entries across every tree's `pending_installs`. When it's zero, which is always
+    /// the case if nothing had to be downloaded, `install_available_packages` returns early.
+    pub(crate) pending_install_count: usize,
     /// the tree ids a tree depends on before it can run the lifecycle scripts of it's immediate dependencies
     pub(crate) tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub(crate) pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
@@ -197,7 +202,41 @@ impl DeferredLinks {
     }
 }
 
+/// A cheaper `join_z_buf` for two paths that are already normalized. A warm install calls this for
+/// every package.
+fn join_normalized_z<'b>(buf: &'b mut [u8], folder: &[u8], file_path: &[u8]) -> &'b ZStr {
+    // A scoped alias contains a `/`, which Windows needs converted to `\`.
+    if cfg!(windows) {
+        return join_z_buf::<platform::Auto>(buf, &[folder, file_path]);
+    }
+    let mut len = 0;
+    if !folder.is_empty() {
+        buf[..folder.len()].copy_from_slice(folder);
+        buf[folder.len()] = SEP;
+        len = folder.len() + 1;
+    }
+    buf[len..len + file_path.len()].copy_from_slice(file_path);
+    len += file_path.len();
+    buf[len] = 0;
+    ZStr::from_buf(buf, len)
+}
+
 impl NodeModulesFolder {
+    /// Returns the path of `file_path` in this folder, relative to the root `node_modules`, so a
+    /// syscall on that directory's fd does not walk the directories above it.
+    fn path_from_root<'b>(&self, buf: &'b mut [u8], file_path: &ZStr) -> &'b ZStr {
+        let top_level_dir = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+        let folder = (self.path.strip_prefix(top_level_dir))
+            .and_then(|rest| rest.strip_prefix(&[SEP]))
+            .and_then(|rest| rest.strip_prefix(b"node_modules"))
+            .and_then(|rest| {
+                rest.strip_prefix(&[SEP])
+                    .or_else(|| rest.is_empty().then_some(rest))
+            })
+            .unwrap_or(self.path.as_slice());
+        join_normalized_z(buf, folder, file_path.as_bytes())
+    }
+
     /// Since the stack size of these functions are rather large, let's not let them be inlined.
     #[inline(never)]
     fn directory_exists_at_without_opening_directories(
@@ -206,10 +245,9 @@ impl NodeModulesFolder {
         file_path: &ZStr,
     ) -> bool {
         let mut path_buf = bun_paths::path_buffer_pool::get();
-        let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
         bun_sys::directory_exists_at(
             root_node_modules_dir.fd(),
-            join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
+            self.path_from_root(path_buf.as_mut_slice(), file_path),
         )
         .unwrap_or(false)
     }
@@ -239,10 +277,9 @@ impl NodeModulesFolder {
     ) -> Option<bun_sys::Stat> {
         if file_path.len() + self.path.len() * 2 < MAX_PATH_BYTES {
             let mut path_buf = bun_paths::path_buffer_pool::get();
-            let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
             return bun_sys::fstatat(
                 root_node_modules_dir.fd(),
-                join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
+                self.path_from_root(path_buf.as_mut_slice(), file_path),
             )
             .ok();
         }
@@ -259,9 +296,8 @@ impl NodeModulesFolder {
         file_path: &ZStr,
     ) -> bun_sys::Result<bun_sys::File> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
-        let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
         root_node_modules_dir.open_file(
-            join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
+            self.path_from_root(path_buf.as_mut_slice(), file_path),
             bun_sys::O::RDONLY,
             0,
         )
@@ -338,11 +374,10 @@ impl NodeModulesFolder {
         }
     }
 
-    fn make_and_open_dir(&self, root: &Dir) -> crate::Result<Dir> {
+    fn make_and_open_dir(&self, root: &Dir, lockfile: &Lockfile) -> crate::Result<Dir> {
         #[cfg(unix)]
         {
-            // The project's own `node_modules` can be a link to a volume or a store.
-            if self.tree_id == 0 {
+            if lockfile.is_importer_tree_id(self.tree_id) {
                 return Ok(root.make_open_path(self.path.as_slice(), Default::default())?);
             }
             let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -352,6 +387,7 @@ impl NodeModulesFolder {
 
         #[cfg(not(unix))]
         {
+            let _ = lockfile;
             Ok(Dir::from_fd(
                 bun_sys::open_dir_at_windows_a(
                     root.fd(),
@@ -368,6 +404,17 @@ impl NodeModulesFolder {
     }
 }
 
+/// The point in the install at which a tree's bins are linked.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BinPass {
+    /// The tree just finished installing. A bin that points into a tree that has not finished yet
+    /// is queued again for `Remaining`.
+    TreeDone,
+    Remaining,
+    /// Lifecycle scripts have run. Names that already exist in `.bin` are not replaced.
+    AfterScripts,
+}
+
 pub struct TreeContext {
     /// Each tree (other than the root tree) can accumulate packages it cannot install until
     /// each parent tree has installed their packages. We keep arrays of these pending
@@ -380,6 +427,9 @@ pub struct TreeContext {
     pub(crate) pending_installs: Vec<DependencyInstallContext>,
 
     pub(crate) binaries: bin::PriorityQueue,
+    /// Dependencies that have a bin and run lifecycle scripts, which may create the bin's file.
+    /// A dependency is removed from the list once its bins are linked with no file missing.
+    pub(crate) bins_after_scripts: Vec<DependencyID>,
 
     /// Number of installed dependencies. Could be successful or failure.
     pub(crate) install_count: usize,
@@ -388,6 +438,8 @@ pub struct TreeContext {
     pub(crate) replaced: Vec<DependencyID>,
     /// Inside an ancestor's `replaced` folder: what is on disk here goes away, so never skip.
     pub(crate) inside_replaced_folder: bool,
+    /// See `PackageInstaller::set_outlived_root`.
+    pub(crate) outlived_root: bool,
 }
 
 type TreeContextId = lockfile::tree::Id;
@@ -414,7 +466,10 @@ fn find_native_binlink_target_tree(
     };
 
     for t in trees {
-        if t.parent == start_tree && t.folder_name(deps, string_buf) == alias {
+        if t.parent == start_tree
+            && t.folder_name(deps, string_buf) == alias
+            && !t.is_unlinked_member(trees, hoisted_deps, deps)
+        {
             if tree_contains(t.id) {
                 return Some(t.id);
             }
@@ -447,6 +502,7 @@ fn abs_node_modules_path(
         { lockfile::tree::IteratorPathStyle::NodeModules },
     >(
         lockfile.buffers.trees.as_slice(),
+        lockfile.buffers.hoisted_dependencies.as_slice(),
         lockfile.buffers.dependencies.as_slice(),
         string_buf,
         tree_id,
@@ -616,7 +672,7 @@ impl<'a> PackageInstaller<'a> {
             let mut link_rel_buf = bun_paths::path_buffer_pool::get();
             self.link_tree_bins(
                 tree_id,
-                true,
+                BinPass::TreeDone,
                 link_target_buf.as_mut_slice(),
                 link_dest_buf.as_mut_slice(),
                 link_rel_buf.as_mut_slice(),
@@ -638,7 +694,7 @@ impl<'a> PackageInstaller<'a> {
     fn link_tree_bins(
         &mut self,
         tree_id: TreeContextId,
-        can_defer: bool,
+        pass: BinPass,
         link_target_buf: &mut [u8],
         link_dest_buf: &mut [u8],
         link_rel_buf: &mut [u8],
@@ -648,6 +704,7 @@ impl<'a> PackageInstaller<'a> {
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let mut node_modules_path: AbsPath =
             AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
+        let mut is_behind_link = (!lockfile.is_importer_tree_id(tree_id)).then_some(false);
 
         let pkgs = lockfile.packages.slice();
         let pkg_name_hashes = pkgs.items_name_hash();
@@ -672,12 +729,15 @@ impl<'a> PackageInstaller<'a> {
                 manager.log_mut(),
                 None,
                 bun_ast::Loc::EMPTY,
-                "Failed to link into <b>{}<r>: {}",
-                bstr::BStr::new(err.path.as_ref()),
+                "failed to link into <b>{}<r>: {}",
+                bun_core::fmt::EscapeControlChars(bstr::BStr::new(err.path.as_ref())),
                 bstr::BStr::new(err.name()),
             );
             while tree.binaries.remove_or_null().is_some() {}
             return;
+        }
+        if pass == BinPass::AfterScripts {
+            bin::see_linked_names(node_modules_path.slice(), &mut self.seen_bin_links);
         }
 
         while let Some(dep_id) = tree.binaries.remove_or_null() {
@@ -739,7 +799,8 @@ impl<'a> PackageInstaller<'a> {
                                 };
 
                                 if target_tree_id != tree_id {
-                                    if can_defer && !completed_trees.is_set(target_tree_id as usize)
+                                    if pass == BinPass::TreeDone
+                                        && !completed_trees.is_set(target_tree_id as usize)
                                     {
                                         // Platform package's tree isn't installed
                                         // yet: link the package's own bin now and
@@ -815,11 +876,13 @@ impl<'a> PackageInstaller<'a> {
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
                     rel_buf: link_rel_buf,
+                    is_behind_link,
                     err: None,
                     skipped_due_to_missing_bin: false,
                 };
 
                 bin_linker.link(global);
+                is_behind_link = bin_linker.is_behind_link;
 
                 if can_retry_without_native_binlink_optimization
                     && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
@@ -837,15 +900,31 @@ impl<'a> PackageInstaller<'a> {
                     continue;
                 }
 
+                if !bin_linker.skipped_due_to_missing_bin {
+                    tree.bins_after_scripts.retain(|&id| id != dep_id);
+                }
                 if let Some(err) = bin_linker.err {
-                    bun_ast::add_error_pretty!(
-                        manager.log_mut(),
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        "Failed to link <b>{}<r>: {}",
-                        bstr::BStr::new(alias),
-                        err.name(),
-                    );
+                    if global {
+                        // Print the error instead of logging it. A logged error stops the lockfile
+                        // from being saved, and `bun remove -g` can only remove saved packages.
+                        self.summary.fail += 1;
+                        if manager.options.log_level != Options::LogLevel::Silent {
+                            bun_core::pretty_errorln!(
+                                "<r><red>error<r>: failed to link <b>{}<r>: {}",
+                                bstr::BStr::new(alias),
+                                err.name(),
+                            );
+                        }
+                    } else {
+                        bun_ast::add_error_pretty!(
+                            manager.log_mut(),
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            "failed to link <b>{}<r>: {}",
+                            bstr::BStr::new(alias),
+                            err.name(),
+                        );
+                    }
 
                     if manager.options.enable.fail_early() {
                         manager.crash();
@@ -862,6 +941,10 @@ impl<'a> PackageInstaller<'a> {
     }
 
     pub(crate) fn link_remaining_bins(&mut self) {
+        self.link_queued_bins(BinPass::Remaining);
+    }
+
+    fn link_queued_bins(&mut self, pass: BinPass) {
         let mut depth_buf = lockfile::tree::depth_buf_uninit();
         let mut node_modules_rel_path_buf = bun_paths::path_buffer_pool::get();
         node_modules_rel_path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
@@ -882,6 +965,7 @@ impl<'a> PackageInstaller<'a> {
                     { lockfile::tree::IteratorPathStyle::NodeModules },
                 >(
                     self.lockfile().buffers.trees.as_slice(),
+                    self.lockfile().buffers.hoisted_dependencies.as_slice(),
                     self.lockfile().buffers.dependencies.as_slice(),
                     self.lockfile().buffers.string_bytes.as_slice(),
                     tree_id as u32,
@@ -895,12 +979,27 @@ impl<'a> PackageInstaller<'a> {
 
                 self.link_tree_bins(
                     tree_id as u32,
-                    false,
+                    pass,
                     link_target_buf.as_mut_slice(),
                     link_dest_buf.as_mut_slice(),
                     link_rel_buf.as_mut_slice(),
                 );
             }
+        }
+    }
+
+    /// Links the bins in `bins_after_scripts`, skipping any name that another package or a script
+    /// already created.
+    pub(crate) fn link_bins_after_scripts(&mut self) {
+        let mut queued = false;
+        for tree in self.trees.iter_mut() {
+            for dep_id in core::mem::take(&mut tree.bins_after_scripts) {
+                tree.binaries.add(dep_id).unwrap_or_oom();
+                queued = true;
+            }
+        }
+        if queued {
+            self.link_queued_bins(BinPass::AfterScripts);
         }
     }
 
@@ -985,11 +1084,17 @@ impl<'a> PackageInstaller<'a> {
         &mut self,
         log_level: Options::LogLevel,
     ) {
+        if self.pending_install_count == 0 {
+            return;
+        }
         let prev_node_modules = core::mem::take(&mut self.node_modules);
         let prev_tree_id = self.current_tree_id;
 
         let trees_len = self.trees.len();
         for i in 0..trees_len {
+            if self.trees[i].pending_installs.is_empty() {
+                continue;
+            }
             if FORCE
                 || Self::can_install_package_for_tree(
                     &self.completed_trees,
@@ -1002,7 +1107,9 @@ impl<'a> PackageInstaller<'a> {
                 // going up ensures we will reach any trees that will be able to install
                 // packages upon completing the current tree
                 let resolutions = self.resolutions;
-                for context in core::mem::take(&mut self.trees[i].pending_installs) {
+                let pending = core::mem::take(&mut self.trees[i].pending_installs);
+                self.pending_install_count -= pending.len();
+                for context in pending {
                     let package_id = self.lockfile().buffers.resolutions.as_slice()
                         [context.dependency_id as usize];
                     let name = self.names[package_id as usize];
@@ -1099,6 +1206,7 @@ impl<'a> PackageInstaller<'a> {
 
     /// Made if need be and kept open for the next package. `alias` is about to be replaced in it.
     fn open_tree_dir(
+        lockfile: &Lockfile,
         deferred: &mut Option<DeferredLinks>,
         tree_dir: &mut Option<TreeDir>,
         node_modules: &NodeModulesFolder,
@@ -1117,7 +1225,7 @@ impl<'a> PackageInstaller<'a> {
                     *tree_dir = None;
                     *tree_dir = Some(TreeDir {
                         tree_id,
-                        dir: node_modules.make_and_open_dir(root_node_modules_folder)?,
+                        dir: node_modules.make_and_open_dir(root_node_modules_folder, lockfile)?,
                         scope: Vec::new(),
                     });
                 }
@@ -1225,6 +1333,7 @@ impl<'a> PackageInstaller<'a> {
             { lockfile::tree::IteratorPathStyle::NodeModules },
         >(
             self.lockfile().buffers.trees.as_slice(),
+            self.lockfile().buffers.hoisted_dependencies.as_slice(),
             self.lockfile().buffers.dependencies.as_slice(),
             self.lockfile().buffers.string_bytes.as_slice(),
             tree_id,
@@ -1353,6 +1462,33 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
+    /// When this install creates the project's `node_modules`, `skip_delete` is on: there is nothing
+    /// to delete before a package is linked. The `node_modules` of a workspace can still be there
+    /// from an earlier install, with older packages in it, and there the delete is not skipped.
+    ///
+    /// That is decided here, before any package of the workspace is linked, because afterwards the
+    /// folder always exists. `path` is the tree's `node_modules`, relative to the working directory.
+    pub(crate) fn set_outlived_root(&mut self, tree_id: lockfile::tree::Id, path: &ZStr) {
+        let lockfile = self.lockfile();
+        let tree = lockfile.buffers.trees.as_slice()[tree_id as usize];
+        if !self.skip_delete || tree.parent == lockfile::tree::INVALID_ID {
+            return;
+        }
+        let outlived = if lockfile.is_importer_tree_id(tree_id) {
+            // A workspace that is depended on under two names has two trees for one folder. What the
+            // second tree finds there is what this install linked for the first.
+            let workspace = lockfile.buffers.resolutions[tree.dependency_id as usize];
+            let is_first_tree = !self.workspaces_seen.contains(&workspace);
+            if is_first_tree {
+                self.workspaces_seen.push(workspace);
+            }
+            is_first_tree && bun_sys::directory_exists_at(Fd::cwd(), path).unwrap_or(true)
+        } else {
+            self.trees[tree.parent as usize].outlived_root
+        };
+        self.trees[tree_id as usize].outlived_root = outlived;
+    }
+
     /// Trees are visited in id order, so the parent's `replaced` is complete.
     pub(crate) fn set_inside_replaced_folder(&mut self, tree_id: lockfile::tree::Id) {
         let lockfile = self.lockfile();
@@ -1367,10 +1503,12 @@ impl<'a> PackageInstaller<'a> {
             let deps = lockfile.buffers.dependencies.as_slice();
             let string_buf = lockfile.buffers.string_bytes.as_slice();
             let folder = tree.folder_name(deps, string_buf);
-            parent
-                .replaced
-                .iter()
-                .any(|&dep_id| deps[dep_id as usize].name.slice(string_buf) == folder)
+            let buffers = &lockfile.buffers;
+            !tree.is_unlinked_member(&buffers.trees, &buffers.hoisted_dependencies, deps)
+                && parent
+                    .replaced
+                    .iter()
+                    .any(|&dep_id| deps[dep_id as usize].name.slice(string_buf) == folder)
         };
         self.trees[tree_id as usize].inside_replaced_folder = inside;
     }
@@ -1737,7 +1875,7 @@ impl<'a> PackageInstaller<'a> {
                         bun_core::pretty_errorln!(
                             "<r><red>error<r>: refusing to install dependency <b>{}<r> with unsafe folder path \"{}\"",
                             bstr::BStr::new(pkg_name.slice(string_buf!())),
-                            bstr::BStr::new(folder),
+                            bun_core::fmt::escape_control_chars(folder),
                         );
                     }
                     return self.fail(is_pending_package_install, log_level);
@@ -1823,9 +1961,10 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
+        let tree = &self.trees[self.current_tree_id as usize];
+        let (inside_replaced_folder, outlived_root) =
+            (tree.inside_replaced_folder, tree.outlived_root);
         let verifying = needs_verify && !self.skip_verify_installed_version_number;
-        let inside_replaced_folder =
-            self.trees[self.current_tree_id as usize].inside_replaced_folder;
         let needs_install = !verifying
             || remove_patch
             || inside_replaced_folder
@@ -1836,6 +1975,9 @@ impl<'a> PackageInstaller<'a> {
                 &self.root_node_modules_folder,
             );
         self.summary.skipped += (!needs_install) as u32;
+        if !needs_install && log_level.show_progress() {
+            self.node.complete_one();
+        }
 
         // `install_from_link` re-points one symlink; everything else replaces the folder.
         if verifying
@@ -1993,11 +2135,13 @@ impl<'a> PackageInstaller<'a> {
                         tree_id: self.current_tree_id,
                         path: self.node_modules.path.clone(),
                     });
+                self.pending_install_count += 1;
                 return;
             }
 
             // creating this directory now, right before installing package
             let destination_fd = match Self::open_tree_dir(
+                self.lockfile(),
                 &mut self.deferred,
                 &mut self.tree_dir,
                 &self.node_modules,
@@ -2023,10 +2167,11 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
             let destination_dir = Dir::borrow(&destination_fd);
+            let skip_delete = self.skip_delete && !outlived_root;
 
             let install_result: package_install::InstallResult = match resolution.tag {
                 resolution::Tag::Symlink | resolution::Tag::Workspace => {
-                    installer.install_from_link(self.skip_delete, destination_dir)
+                    installer.install_from_link(skip_delete, destination_dir)
                 }
                 _ => 'result: {
                     let staging = self
@@ -2050,7 +2195,7 @@ impl<'a> PackageInstaller<'a> {
                         {
                             break 'result installer.install(
                                 staging,
-                                self.skip_delete,
+                                skip_delete,
                                 destination_dir,
                                 installer.get_install_method(),
                                 resolution.tag,
@@ -2087,7 +2232,7 @@ impl<'a> PackageInstaller<'a> {
                         installer.cache_dir = owned_cache_dir.fd();
 
                         let result = if resolution.tag == resolution::Tag::Root {
-                            installer.install_from_link(self.skip_delete, destination_dir)
+                            installer.install_from_link(skip_delete, destination_dir)
                         } else if installer.cache_dir_subpath.as_bytes() != b"." {
                             // What a package ships inside itself is linked where it is.
                             let mut shipped_buf = bun_paths::path_buffer_pool::get();
@@ -2110,7 +2255,7 @@ impl<'a> PackageInstaller<'a> {
                         } else {
                             installer.install(
                                 staging,
-                                self.skip_delete,
+                                skip_delete,
                                 destination_dir,
                                 installer.get_install_method(),
                                 resolution.tag,
@@ -2153,7 +2298,7 @@ impl<'a> PackageInstaller<'a> {
                                 alias.slice(string_buf!()),
                             ),
                             copy,
-                            skip_delete: self.skip_delete,
+                            skip_delete,
                             random: bun_core::fast_random(),
                             resolution_tag: resolution.tag,
                             result: Default::default(),
@@ -2166,13 +2311,30 @@ impl<'a> PackageInstaller<'a> {
                     };
                     break 'result installer.install(
                         staging,
-                        self.skip_delete,
+                        skip_delete,
                         destination_dir,
                         method,
                         resolution.tag,
                     );
                 }
             };
+
+            // A folder that a published package ships inside itself is copied from that package's
+            // directory, not from the cwd, so its symlinks are not recreated.
+            if resolution.tag == resolution::Tag::Folder
+                && matches!(install_result, package_install::InstallResult::Success)
+                && installer.cache_dir == Fd::cwd()
+                && self.lockfile().is_trusted_folder_dependency(dependency_id)
+                && let Ok(dest) = destination_dir.open_at(installer.destination_dir_subpath)
+            {
+                for text in package_install::lay_folder_links(installer.cache_dir_subpath, &dest) {
+                    self.manager().log_mut().add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!("{}", bun_core::fmt::escape_control_chars(&text)),
+                    );
+                }
+            }
 
             self.finish_install(
                 dependency_id,
@@ -2363,7 +2525,9 @@ impl<'a> PackageInstaller<'a> {
                 {
                     bun_core::pretty_errorln!(
                         "<r><red>error<r>: Could not find folder \"file:{}\" for dependency \"{}\"",
-                        bstr::BStr::new(resolution.folder().slice(string_buf!())),
+                        bun_core::fmt::escape_control_chars(
+                            resolution.folder().slice(string_buf!())
+                        ),
                         bstr::BStr::new(alias.slice(string_buf!())),
                     );
                 } else if matches!(
@@ -2440,6 +2604,12 @@ impl<'a> PackageInstaller<'a> {
         resolution: &Resolution,
         record_trust: bool,
     ) {
+        if self.lockfile().is_folder_inside_declarer(dependency_id)
+            || self.lockfile().is_member_outside(package_id)
+        {
+            return;
+        }
+
         // SAFETY: `buffers.string_bytes` is append-only and never freed
         // for the lifetime of this `PackageInstaller`.
         let string_buf_ptr =
@@ -2567,6 +2737,11 @@ impl<'a> PackageInstaller<'a> {
         let optional = !self
             .manager()
             .is_package_required(dependency_id, package_id);
+        if self.bins[package_id as usize].tag != bin::Tag::None {
+            self.trees[self.current_tree_id as usize]
+                .bins_after_scripts
+                .push(dependency_id);
+        }
         self.unfinished_scripts
             .borrow_mut()
             .push((self.current_tree_id, scripts_list.package_name.clone()));

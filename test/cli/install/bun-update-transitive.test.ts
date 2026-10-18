@@ -1208,6 +1208,41 @@ test.concurrent("every install warns about a patchedDependencies key that matche
   expect(removed.exitCode).toBe(0);
 });
 
+test.concurrent.each<[string, (version: string) => string]>([
+  ["a tarball file", version => `file:./no-deps-${version}.tgz`],
+  ["a tarball URL", version => `${registry.registryUrl()}no-deps/-/no-deps-${version}.tgz`],
+])("every install warns about the patch of %s that the dependency no longer names", async (_, spec) => {
+  const dir = await setup({ "package.json": pkgJson({}), "patches/no-deps.patch": NO_DEPS_PATCH });
+  for (const tarball of ["no-deps-1.0.0.tgz", "no-deps-1.0.1.tgz"]) {
+    await write(join(dir, tarball), file(join(registry.packagesPath, "no-deps", tarball)));
+  }
+  await reinstall(dir, pkgJson({ "no-deps": spec("1.0.0") }));
+  const locked = async (): Promise<string> => (await lock(dir)).packages["no-deps"][0];
+  const patched = { patchedDependencies: { [await locked()]: "patches/no-deps.patch" } };
+  await write(join(dir, "package.json"), stringify(pkgJson({ "no-deps": spec("1.0.0") }, patched)));
+  expect(warningLines(await install(dir))).toEqual([]);
+  expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeTrue();
+
+  await write(join(dir, "package.json"), stringify(pkgJson({ "no-deps": spec("1.0.1") }, patched)));
+  const stderr = await install(dir);
+  const now = (await locked()).slice("no-deps@".length);
+  const moved = [`warn: patches/no-deps.patch no longer applies (no-deps is now ${now})`];
+  expect(warningLines(stderr)).toEqual(moved);
+  expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
+  expect(warningLines(await frozen(dir))).toEqual(moved);
+});
+
+test.concurrent("a patchedDependencies key without a version is pointed out where it is in package.json", async () => {
+  const dir = await setup({
+    "package.json": pkgJson({ "no-deps": "1.0.0" }, { patchedDependencies: { "no-deps": "patches/no-deps.patch" } }),
+    "patches/no-deps.patch": NO_DEPS_PATCH,
+  });
+  const stderr = await install(dir);
+  expect(warningLines(stderr)).toEqual(["warn: patchedDependencies keys need a version: no-deps@1.0.0"]);
+  expect(stderr).toMatch(/package\.json:\d+:\d+/);
+  expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
+});
+
 // bun.lock still records the `no-deps: 1.0.0` override; package.json is edited without an install in between, so the update sees the new overrides first.
 async function overriddenThenEdited(overrides?: Json) {
   const dependencies = { "one-range-dep": "1.0.0" };
@@ -1524,6 +1559,38 @@ test.concurrent.each([
   await frozen(dir);
   expect(exitCode).toBe(0);
 });
+
+// The `pre-3` tag points to 3.0.1. A dist-tag is rewritten to a range, same as in `dependencies`.
+test.concurrent.each([
+  ["a pin", "3.0.1", "3.0.1"],
+  ["a range", "^3.0.1", "^3.0.1"],
+  ["a dist-tag", "pre-3", "^3.0.1"],
+])(
+  "`bun update --latest` does not downgrade a catalog entry that is ahead of `latest`: %s",
+  async (_, entry, written) => {
+    const dir = await setup({
+      "package.json": {
+        ...ROOT,
+        catalog: { "dep-with-tags": entry },
+        catalogs: { tools: { "dep-with-tags": entry } },
+        dependencies: { "dep-with-tags": "catalog:" },
+      },
+      "packages/pkg1/package.json": member("pkg1", { "dep-with-tags": "catalog:tools" }),
+    });
+    expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["3.0.1"]);
+
+    const { stderr, exitCode } = await run(dir, "update", "--latest");
+    expect(stderr).not.toContain("error:");
+    expect(await packageJsonOf(dir)).toMatchObject({
+      catalog: { "dep-with-tags": written },
+      catalogs: { tools: { "dep-with-tags": written } },
+    });
+    expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["3.0.1"]);
+    expect(await installedVersion(dir, "dep-with-tags")).toBe("3.0.1");
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent(
   "`bun update --latest` holds back only the entry it rewrote; a member's own dist-tag entry still follows its tag",
@@ -3796,7 +3863,7 @@ test.concurrent("a peerDependencies entry another group provides keeps following
   const dir = await setup({ "package.json": provided("^1.0.0") });
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
   await write(join(dir, "package.json"), stringify(provided("^2.0.0")));
-  const stderr = await install(dir);
+  const stderr = await install(dir, "--verbose");
   expect(stderr).toContain('warn: incorrect peer dependency "no-deps@1.1.0"');
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
   expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
@@ -3812,7 +3879,7 @@ test.concurrent(
   async () => {
     const dir = await setup({ "package.json": peerOnly("^1.0.0") });
     expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
-    const { stderr, exitCode } = await run(dir, "add", "no-deps@1.5.0");
+    const { stderr, exitCode } = await run(dir, "add", "no-deps@1.5.0", "--verbose");
     expect(stderr).toContain('warn: incorrect peer dependency "no-deps@1.1.0"');
     expect(stderr).not.toContain("error:");
     expect(await packageJsonOf(dir)).toStrictEqual(peerOnly("1.5.0"));
@@ -3836,7 +3903,7 @@ test.concurrent(
     const dir = await installServed(server, "peer-entry-min-age-", entry("^1.0.0"));
     expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
     await write(join(dir, "package.json"), stringify(entry("^2.0.0")));
-    const { stderr, exitCode } = await run(dir, "install", "--minimum-release-age", THREE_DAYS_SECONDS);
+    const { stderr, exitCode } = await run(dir, "install", "--verbose", "--minimum-release-age", THREE_DAYS_SECONDS);
     expect(stderr).toContain('warn: incorrect peer dependency "leaf@1.0.0"');
     expect(stderr).not.toContain("error:");
     expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
@@ -3884,7 +3951,7 @@ test.concurrent("a package's own peer entry still binds to the highest copy in b
     join(dir, "package.json"),
     stringify(rootPeer("^1.0.0", { "one-fixed-dep": "1.0.0", "strict-peer-dep": "1.0.0" })),
   );
-  const stderr = await install(dir);
+  const stderr = await install(dir, "--verbose");
   expect(stderr).toContain('warn: incorrect peer dependency "no-deps@1.1.0"');
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.1.0"]);
   expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
@@ -3912,7 +3979,7 @@ async function sharedPeer(root: Json, ...members: [string, string][]) {
 test.concurrent("a member's rewritten entry keeps binding to the copy the root's own entry holds", async () => {
   const dir = await sharedPeer(peerRoot("^1.0.0"), ["pkg1", "^1.0.0"]);
   await write(join(dir, "packages/pkg1/package.json"), stringify(peerMember("pkg1", "^2.0.0")));
-  const stderr = await install(dir);
+  const stderr = await install(dir, "--verbose");
   expect(stderr).toContain('warn: incorrect peer dependency "no-deps@1.1.0"');
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
   expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
@@ -3966,7 +4033,7 @@ test.concurrent("on a fresh install two peer entries nothing provides still shar
     bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
     files: { "package.json": stringify(pkgJson({ "peer-deps-fixed": "1.0.0", "strict-peer-dep": "1.0.0" })) },
   });
-  const stderr = await install(dir, ...linkerArgs({}));
+  const stderr = await install(dir, "--verbose", ...linkerArgs({}));
   const [version] = await lockedVersions(dir, "no-deps");
   expect(["1.1.0", "2.0.0"]).toContain(version);
   expect(stderr).toContain(`warn: incorrect peer dependency "no-deps@${version}"`);

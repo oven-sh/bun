@@ -483,6 +483,85 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(text.exitCode).toBe(0);
   });
 
+  test("an optional peer dependency of a shared config can be removed", async () => {
+    const { stdout, exitCode } = await doctor({
+      "package.json": dependencies("shared-config", "oxlint", "oxlint-tsgolint", "oxfmt"),
+      "node_modules/shared-config/package.json": JSON.stringify({
+        name: "shared-config",
+        version: "1.0.0",
+        type: "module",
+        exports: { "./oxlint": "./oxlint.js" },
+        peerDependencies: { oxlint: ">=1.79.0", "oxlint-tsgolint": ">=7.0.2003", oxfmt: ">=0.59.0" },
+        peerDependenciesMeta: {
+          oxlint: { optional: true },
+          "oxlint-tsgolint": { optional: true },
+          oxfmt: { optional: true },
+        },
+      }),
+      "node_modules/shared-config/oxlint.js": `import { defineConfig } from "oxlint";
+        export const base = defineConfig({ options: { typeAware: true }, rules: { eqeqeq: "error" } });`,
+      "oxlint.config.mts": `import { base } from "shared-config/oxlint";
+        import { defineConfig } from "oxlint";
+        export default defineConfig({ extends: [base] });`,
+      "src/a.ts": "export const f = (a: unknown) => a == 1;\n",
+    });
+    expect(stdout).toEndWith(`
+You can remove: oxlint, oxlint-tsgolint
+Still needed:   shared-config (oxlint.config.mts loads it)
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("an optional peer dependency is still needed if something else needs it", async () => {
+    const installed = (name: string, fields: object) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", ...fields }),
+    });
+    const { stdout, exitCode } = await doctor({
+      "package.json": dependencies(
+        "shared-config",
+        "other-config",
+        "eslint-plugin-optional",
+        "eslint-plugin-optional-dependency",
+        "eslint-plugin-only-in-meta",
+        "eslint-plugin-required-by-another",
+        "eslint-plugin-loaded",
+        "eslint-plugin-dependency-too",
+        "eslint-plugin-not-optional",
+      ),
+      ...installed("shared-config", {
+        dependencies: { "eslint-plugin-dependency-too": "*" },
+        optionalDependencies: { "eslint-plugin-optional-dependency": "*" },
+        peerDependencies: {
+          "eslint-plugin-optional": "*",
+          "eslint-plugin-required-by-another": "*",
+          "eslint-plugin-loaded": "*",
+          "eslint-plugin-dependency-too": "*",
+          "eslint-plugin-not-optional": "*",
+        },
+        peerDependenciesMeta: {
+          "eslint-plugin-optional": { optional: true },
+          "eslint-plugin-only-in-meta": { optional: true },
+          "eslint-plugin-required-by-another": { optional: true },
+          "eslint-plugin-loaded": { optional: true },
+          "eslint-plugin-dependency-too": { optional: true },
+          "eslint-plugin-not-optional": { optional: false },
+        },
+      }),
+      ...installed("other-config", { peerDependencies: { "eslint-plugin-required-by-another": "*" } }),
+      ...plugin("eslint-plugin-loaded", ["a"], { isModule: true }),
+      "eslint.config.js": `import "eslint-plugin-loaded";\nexport default [{ rules: { "no-var": "error" } }];`,
+    });
+    expect(stdout).toEndWith(`
+You can remove: eslint-plugin-only-in-meta, eslint-plugin-optional, eslint-plugin-optional-dependency
+Still needed:   eslint-plugin-dependency-too, eslint-plugin-not-optional (shared-config needs them)
+                eslint-plugin-loaded (eslint.config.js loads it)
+                eslint-plugin-required-by-another (other-config needs it)
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+    expect(exitCode).toBe(0);
+  });
+
   test("eslint is still needed if a plugin that runs in JavaScript depends on it", async () => {
     const files = {
       ...plugin("eslint-plugin-first", ["a"]),

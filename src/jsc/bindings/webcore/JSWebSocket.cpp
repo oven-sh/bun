@@ -1097,24 +1097,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketFeedForWs, (JSGlobalObject * lexicalGlobalOb
     if (!view || view->isShared() || view->isResizableOrGrowableShared()) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Expected a Uint8Array"_s);
 
-    // Handlers run while the parser is still reading the chunk, so they must not be able to free it.
+    // Pin the buffer. Handlers run while the parser is still reading the chunk, so they must not be able to detach it.
     RefPtr buffer = view->unsharedBuffer();
     if (!buffer) [[unlikely]]
         return JSValue::encode(jsUndefined());
-    std::span<const uint8_t> bytes = view->span();
-
-    // A pin stops transfer(), not a WebAssembly.Memory grow().
-    WTF::Vector<uint8_t> owned;
-    if (buffer->isWasmMemory()) [[unlikely]] {
-        if (!owned.tryAppend(bytes)) [[unlikely]] {
-            throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-            return {};
-        }
-        bytes = owned.span();
-    }
-
     buffer->pin();
-    socket->wrapped().feed(bytes);
+    socket->wrapped().feed(view->span());
     buffer->unpin();
     RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsUndefined());

@@ -216,7 +216,7 @@ yourself with Bun.serve().
             }
           : false,
 
-      hostname: flags.hostname,
+      hostname: flags.hostname ?? "localhost",
       // `undefined` uses the default port via existing port detection code.
       port,
 

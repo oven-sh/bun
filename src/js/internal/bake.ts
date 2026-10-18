@@ -15,6 +15,7 @@ const {
 
 // `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
 const ObjectKeys = Object.keys;
+const ObjectCreate = Object.create;
 
 const help = `
 Bun v${Bun.version} (bake)
@@ -25,9 +26,9 @@ Usage:
 Serves the app in the working directory, with hot reloading:
 
   app/pages/**/*.html   Pages. The path is the URL: app/pages/docs/index.html is /docs.
-  app/server.ts         Optional. Its default export may have "routes", "fetch" and
-                        "websocket", as in Bun.serve(). "fetch" gets the requests that
-                        no page and no route matched.
+  app/server.ts         Optional. Its default export holds options of Bun.serve(), as
+                        for \`export default\` in \`bun app.ts\` (a Hono app works). "fetch"
+                        gets the requests that no page and no route matched.
 
 Options:
 
@@ -50,11 +51,8 @@ type Page = {
   bundle: HTMLBundle;
 };
 
-type AppServer = {
-  routes?: Record<string, unknown>;
-  fetch?: (req: Request, server: unknown) => unknown;
-  websocket?: unknown;
-};
+/** The default export of `app/server.ts`: options of `Bun.serve()`, as for `export default` in `bun app.ts`. */
+type AppServer = Record<string, any>;
 
 /** `file` relative to the working directory, with `/` on every platform, for messages. */
 function display(file: string): string {
@@ -103,7 +101,11 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
   return pages;
 }
 
-async function loadAppServer(cwd: string): Promise<{ file: string; server: AppServer } | undefined> {
+async function loadAppServer(
+  cwd: string,
+): Promise<
+  { file: string; server: AppServer; routes: Record<string, unknown> | undefined; fetch: unknown } | undefined
+> {
   let file: string;
   try {
     file = Bun.resolveSync("./app/server", cwd);
@@ -117,27 +119,21 @@ async function loadAppServer(cwd: string): Promise<{ file: string; server: AppSe
   if (server === null || typeof server !== "object") {
     throw new TypeError(`"${name}" must have a default export with "routes", "fetch" or "websocket".`);
   }
-  const keys = ObjectKeys(server);
-  for (let i = 0; i < keys.length; i++) {
-    const key = keys[i];
-    if (key !== "routes" && key !== "fetch" && key !== "websocket") {
-      throw new TypeError(
-        `"${name}": the default export has "${key}", but "bun bake" only uses "routes", "fetch", "websocket".`,
-      );
-    }
-  }
-  const fetch = server.fetch;
+  // Read once each: a getter may return a new value on each read.
+  const { fetch, websocket } = server;
   if (fetch !== undefined && !$isCallable(fetch)) {
     throw $ERR_INVALID_ARG_TYPE("fetch", "function", fetch);
   }
-  const { routes, websocket } = server;
+  // As in `Bun.serve()`, a `routes` array is not a route table: a Hono app has one.
+  let routes = server.routes !== undefined ? server.routes : server.static;
+  if ($isArray(routes)) routes = undefined;
   if (routes !== undefined && (routes === null || typeof routes !== "object")) {
     throw $ERR_INVALID_ARG_TYPE("routes", "object", routes);
   }
   if (websocket !== undefined && (websocket === null || typeof websocket !== "object")) {
     throw $ERR_INVALID_ARG_TYPE("websocket", "object", websocket);
   }
-  return { file, server: { routes, fetch, websocket } };
+  return { file, server, routes, fetch };
 }
 
 async function start() {
@@ -170,7 +166,7 @@ async function start() {
     routes[page.url] = page.bundle;
     pageOfRoute[page.url] = page;
   }
-  const appRoutes = app?.server.routes;
+  const appRoutes = app?.routes;
   if (appRoutes !== undefined) {
     const names = ObjectKeys(appRoutes);
     for (let i = 0; i < names.length; i++) {
@@ -183,20 +179,23 @@ async function start() {
     }
   }
 
-  const fetch = app?.server.fetch ?? (() => new Response("Not found", { status: 404 }));
+  const fetch = app?.fetch ?? (() => new Response("Not found", { status: 404 }));
+  // Like `export default` in `bun app.ts`, every option of `Bun.serve()` in the export counts. These
+  // are Bake's, and the flags come before the export's own `port` and `hostname`.
+  const exported = app?.server;
   const server = serveOnFreePort(
     "bun bake",
-    port =>
-      ({
-        routes,
-        fetch,
-        websocket: app?.server.websocket,
-        development: { console: flags.console, hmr: undefined },
-        hostname: flags.hostname,
-        // `undefined` uses the default port via existing port detection code.
-        port,
-      }) as Serve.Options<undefined>,
-    flags.port,
+    port => {
+      const options = ObjectCreate(exported ?? null);
+      options.routes = routes;
+      options.fetch = fetch;
+      options.development = { console: flags.console, hmr: undefined };
+      options.hostname = flags.hostname ?? exported?.hostname ?? "localhost";
+      // `undefined` uses the default port via existing port detection code.
+      options.port = port;
+      return options as Serve.Options<undefined>;
+    },
+    flags.port ?? exported?.port,
   );
   const elapsed = (performance.now() - initial).toFixed(2);
 

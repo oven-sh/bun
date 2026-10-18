@@ -143,11 +143,6 @@ test.concurrent.each([
     error: `"app/pages/docs.html" and "app/pages/docs/index.html" are both the page "/docs".`,
   },
   {
-    name: "an option bun bake does not use",
-    files: { "app/server.ts": `export default { fetch: () => new Response("x"), port: 1234 };` },
-    error: `"app/server.ts": the default export has "port", but "bun bake" only uses "routes", "fetch", "websocket".`,
-  },
-  {
     name: "routes that are not an object",
     files: { "app/server.ts": `export default { routes: null };` },
     error: `The "routes" argument must be of type object`,
@@ -419,4 +414,52 @@ test.concurrent("bun bake --hot keeps one server when it started on a later port
   // The reload updated the server it started, instead of starting another one.
   expect(next).toBe(url);
   expect(await get(url, "/")).toBe("200 v2");
+});
+
+test.concurrent("bun bake serves a Hono app exported from app/server.ts, with its Bun WebSockets", async () => {
+  using dir = tempDir("bake-command-hono", {
+    "app/pages/index.html": `<!doctype html><html><body><h1>Home</h1></body></html>`,
+    "app/server.ts": `
+      import { Hono } from ${JSON.stringify(require.resolve("hono"))};
+      import { createBunWebSocket } from ${JSON.stringify(require.resolve("hono/bun"))};
+      const { upgradeWebSocket, websocket } = createBunWebSocket();
+      const app = new Hono();
+      app.get("/api/hello", c => c.json({ hi: 1 }));
+      app.get("/ws", upgradeWebSocket(() => ({ onMessage(event, ws) { ws.send("echo " + event.data); } })));
+      // As in \`bun app.ts\`: the Hono app's own keys and its \`routes\` array are not Bun.serve options.
+      export default Object.assign(app, { websocket });
+    `,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  expect(await get(url, "/api/hello")).toBe(`200 {"hi":1}`);
+  expect((await get(url, "/")).startsWith("200 ")).toBe(true);
+
+  const ws = new WebSocket(new URL("/ws", url).href.replace("http", "ws"));
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  ws.onopen = () => ws.send("hi");
+  ws.onmessage = event => resolve(String(event.data));
+  ws.onerror = reject;
+  expect(await promise).toBe("echo hi");
+  ws.close();
+});
+
+test.concurrent("bun bake uses Bun.serve options from the export, and its flags come first", async () => {
+  using dir = tempDir("bake-command-options", {
+    "app/server.ts": `
+      export default {
+        hostname: "127.0.0.1",
+        fetch: () => { throw new Error("boom"); },
+        error: () => new Response("from the error option", { status: 500 }),
+      };
+    `,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  expect(new URL(url).hostname).toBe("127.0.0.1");
+  expect(await get(url, "/")).toBe("500 from the error option");
 });

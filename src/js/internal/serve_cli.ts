@@ -7,13 +7,14 @@ const path = require("node:path");
 const env = Bun.env;
 
 type ServeFlags = {
-  hostname: string;
+  /** `undefined` until `--host` or `--hostname` sets it. */
+  hostname: string | undefined;
   port: number | undefined;
   console: boolean;
 };
 
 function defaultServeFlags(): ServeFlags {
-  return { hostname: "localhost", port: undefined, console: false };
+  return { hostname: undefined, port: undefined, console: false };
 }
 
 /** Sets the hostname, and the port if there is one: `host`, `host:3000`, `::1`, `[::1]` or `[::1]:3000`. */
@@ -86,7 +87,13 @@ function serveOnFreePort(
   // Under `--hot`, a reload calls this again and `Bun.serve` finds the running server by `id`.
   // Without a fixed `id`, it looks for one on the first port, and starts a second server when the
   // first one is on a port that the retries picked.
-  const withId = (port: number | undefined) => ({ ...options(port), id }) as Serve.Options<undefined>;
+  // Sets `id` on the options object itself: a copy would drop what it inherits, as `bun bake` does
+  // from the export of `app/server.ts`.
+  const withId = (port: number | undefined) => {
+    const opts = options(port) as Serve.Options<undefined> & { id?: string };
+    opts.id = id;
+    return opts;
+  };
   try {
     return Bun.serve(withId(port));
   } catch (error: any) {

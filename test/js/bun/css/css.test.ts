@@ -4649,7 +4649,6 @@ describe("css tests", () => {
       ["-webkit-max-logical-height", "max-block-size", "1px", "2px"],
       ["-webkit-background-size", "background-size", "1px", "2px"],
       ["-webkit-background-origin", "background-origin", "border-box", "content-box"],
-      ["font-width", "font-stretch", "75%", "expanded"],
     ];
     // [alias, a declaration that sets the same longhand in some writing mode, its value, value of the alias]
     const overridden: [string, string, string, string][] = [
@@ -4665,8 +4664,11 @@ describe("css tests", () => {
       ["scroll-snap-margin-bottom", "scroll-margin-block-end", "1px", "2px"],
       ["scroll-snap-margin-left", "scroll-margin-inline-start", "1px", "2px"],
       ["scroll-snap-margin-right", "scroll-margin-inline-end", "1px", "2px"],
+      ["scroll-snap-margin-top", "scroll-margin-inline-start", "1px", "2px"],
+      ["scroll-snap-margin-bottom", "scroll-margin-inline-end", "1px", "2px"],
+      ["scroll-snap-margin-left", "scroll-margin-block-start", "1px", "2px"],
+      ["scroll-snap-margin-right", "scroll-margin-block-end", "1px", "2px"],
       ["-webkit-border-start-color", "border", "1px solid red", "#00f"],
-      ["font-width", "font", "12px serif", "expanded"],
     ];
     for (const kind of ["", "min-", "max-"]) {
       for (const axis of ["width", "height"]) {
@@ -4718,6 +4720,18 @@ describe("css tests", () => {
     minify_test("a{gap:9px;grid-gap:1px} .b{grid-gap:1px;gap:9px}", "a{gap:9px;grid-gap:1px}.b{grid-gap:1px;gap:9px}");
     // A later rule that overrides every declaration still replaces the earlier rule.
     minify_test("a{gap:9px;grid-gap:1px} b{color:red} a{gap:3px;grid-gap:4px}", "b{color:red}a{gap:3px;grid-gap:4px}");
+    // A later rule with another name or another importance in one place does not.
+    for (const rules of [
+      "a{row-gap:1px;grid-gap:2px}b{color:red}a{row-gap:inherit;zoom:1}",
+      "a{gap:var(--x);cursor:pointer}b{color:red}a{gap:3px;grid-gap:1px}",
+      "a{margin:0;-webkit-margin-start:1px}b{color:red}a{margin:0;-moz-margin-start:2px}",
+      "a{grid-gap:1px}b{color:red}a{zoom:2}",
+      "a{gap:1px;grid-gap:2px;zoom:1}b{color:red}a{gap:inherit;grid-gap:3px;cursor:pointer}",
+      "a{gap:1px;grid-gap:2px;--a:1}b{color:red}a{gap:inherit;grid-gap:3px;--b:2}",
+      "a{gap:1px;grid-gap:2px!important}b{color:red}a{gap:3px;grid-gap:4px}",
+    ]) {
+      minify_test(rules, rules);
+    }
 
     // An alias between a declaration and the standard name, as Bootstrap 5 and fundamental-styles write it.
     for (const rule of [
@@ -4741,7 +4755,22 @@ describe("css tests", () => {
       "a{margin-top:1px;-webkit-margin-start:2px;margin-bottom:1px;margin-left:1px;margin-right:1px}",
     );
 
-    // An alias only moves the declarations it can override. The rest still merge.
+    // A handler that holds what the alias can override writes all it holds, also what the alias cannot override.
+    minify_test(
+      "a{background-color:red;background-size:1px;-webkit-background-size:2px;background-repeat:no-repeat}",
+      "a{background-color:red;background-size:1px;-webkit-background-size:2px;background-repeat:no-repeat}",
+    );
+    // The size handler writes only the sizes that the alias can override.
+    minify_test(
+      "a{min-width:1px;width:2px;-webkit-logical-width:3px;max-width:4px}",
+      "a{width:2px;-webkit-logical-width:3px;min-width:1px;max-width:4px}",
+    );
+
+    // A handler that holds nothing the alias can override is not touched. The rest still merge.
+    minify_test(
+      "a{scroll-margin-bottom:1px;scroll-snap-margin-top:2px}",
+      "a{scroll-snap-margin-top:2px;scroll-margin-bottom:1px}",
+    );
     minify_test("a{row-gap:9px;grid-column-gap:1px}", "a{grid-column-gap:1px;row-gap:9px}");
     minify_test("a{column-gap:9px;grid-row-gap:1px}", "a{grid-row-gap:1px;column-gap:9px}");
     minify_test(
@@ -4781,9 +4810,8 @@ describe("css tests", () => {
       "a{background-color:red;-webkit-background-origin:content-box}",
       "a{-webkit-background-origin:content-box;background-color:red}",
     );
-    minify_test("a{font-size:12px;font-width:expanded}", "a{font-width:expanded;font-size:12px}");
 
-    // Names that no browser aliases print where they did before.
+    // Names that no current Blink, WebKit or Gecko table lists as an alias print where they did before.
     minify_test("a{row-gap:1px;--x:1;column-gap:2px}", "a{--x:1;gap:1px 2px}");
     minify_test("a{gap:9px;unknown-prop:1px}", "a{unknown-prop:1px;gap:9px}");
     minify_test("a{gap:9px;-webkit-grid-gap:1px}", "a{-webkit-grid-gap:1px;gap:9px}");
@@ -4830,21 +4858,80 @@ describe("css tests", () => {
       "a{-webkit-border-before-color:blue;border-left-color:red;border-right-color:red;}",
       browserDefault,
     );
-    // A value after the alias gets no generated fallback, as after a value that does not parse.
+    // A value after the alias still gets its generated fallbacks.
     prefix_test(
       "a{background-size:1px;-webkit-background-size:2px;background:lab(50% 10 10)}",
-      "a{background-size:1px;-webkit-background-size:2px;background:lab(50% 10 10);}",
+      "a{background-size:1px;-webkit-background-size:2px;background:#8c7166;background:color(display-p3 .532519 .445804 .40786);background:lab(50% 10 10);}",
       browserDefault,
     );
     prefix_test(
-      "a{background-size:var(--s);background:lab(50% 10 10)}",
-      "a{background-size:var(--s);background:lab(50% 10 10);}",
+      "a{background:red;-webkit-background-size:2px;background:lab(50% 10 10)}",
+      "a{background:red;-webkit-background-size:2px;background:#8c7166;background:color(display-p3 .532519 .445804 .40786);background:lab(50% 10 10);}",
+      browserDefault,
+    );
+    prefix_test(
+      "a{border-top:1px solid red;-webkit-border-before-color:blue;border-top:2px solid lab(50% 10 10)}",
+      "a{border-top:1px solid red;-webkit-border-before-color:blue;border-top:2px solid #8c7166;border-top:2px solid color(display-p3 .532519 .445804 .40786);border-top:2px solid lab(50% 10 10);}",
       browserDefault,
     );
     prefix_test(
       "a{inline-size:1px;-webkit-logical-width:2px;inline-size:fit-content}",
-      "a{inline-size:1px;-webkit-logical-width:2px;inline-size:fit-content;}",
+      "a{inline-size:1px;-webkit-logical-width:2px;inline-size:-moz-fit-content;inline-size:fit-content;}",
       browserDefault,
+    );
+    prefix_test(
+      "a{width:100px;-webkit-logical-width:5px;width:stretch}",
+      "a{width:100px;-webkit-logical-width:5px;width:-webkit-fill-available;width:-moz-available;width:stretch;}",
+      browserDefault,
+    );
+    // Also when the rule merges with another rule and is minified again.
+    prefix_test(
+      "a{width:stretch;-webkit-logical-width:5px;width:fit-content} a{color:red}",
+      "a{width:-webkit-fill-available;width:-moz-available;width:stretch;-webkit-logical-width:5px;color:red;width:-moz-fit-content;width:fit-content;}",
+      browserDefault,
+    );
+    prefix_test(
+      "@media (min-width:1px){a{width:stretch;-webkit-logical-width:5px;width:fit-content}} @media (min-width:1px){b{color:red}}",
+      "@media (min-width:1px){a{width:-webkit-fill-available;width:-moz-available;width:stretch;-webkit-logical-width:5px;width:-moz-fit-content;width:fit-content;}b{color:red;}}",
+      browserDefault,
+    );
+    // A size that the alias cannot override keeps its place and its fallbacks.
+    prefix_test(
+      "a{min-width:stretch;width:1px;-webkit-logical-width:2px;min-width:fit-content}",
+      "a{width:1px;-webkit-logical-width:2px;min-width:-moz-fit-content;min-width:fit-content;}",
+      browserDefault,
+    );
+    // An earlier value that the alias can override is no fallback for a later one.
+    prefix_test(
+      "a{width:var(--w);inline-size:1px;-webkit-logical-width:2px;width:stretch}",
+      "a{width:var(--w);inline-size:1px;-webkit-logical-width:2px;width:-webkit-fill-available;width:-moz-available;width:stretch;}",
+      browserDefault,
+    );
+    prefix_test(
+      "a{width:var(--w);-webkit-logical-width:2px;width:stretch}",
+      "a{width:var(--w);-webkit-logical-width:2px;width:-webkit-fill-available;width:-moz-available;width:stretch;}",
+      browserDefault,
+    );
+    // A value that was written before the flush for the alias is still a fallback.
+    prefix_test(
+      "a{background:red;background:var(--x);background-size:1px;-webkit-background-size:2px;background:lab(50% 10 10)}",
+      "a{background:red;background:var(--x);background-size:1px;-webkit-background-size:2px;background:lab(50% 10 10);}",
+      browserDefault,
+    );
+    prefix_test(
+      "a{border-top-color:var(--c);border-top-width:1px;-webkit-border-before-width:2px;border-top-color:lab(50% 10 10)}",
+      "a{border-top-color:var(--c);border-top-width:1px;-webkit-border-before-width:2px;border-top-color:lab(50% 10 10);}",
+      browserDefault,
+    );
+    // A prefixed `background` that waits for the end of the rule goes out before the alias.
+    prefix_test(
+      "a{background:-webkit-linear-gradient(red,#00f);background:-moz-linear-gradient(red,#00f);background-color:lab(50% 10 10);-webkit-background-size:2px}",
+      "a{background:-moz-linear-gradient(red,#00f);background:-webkit-linear-gradient(red,#00f);background-color:lab(50% 10 10);-webkit-background-size:2px;}",
+      browserDefault,
+    );
+    minify_test(
+      "a{background:-webkit-linear-gradient(red,#00f);background:-moz-linear-gradient(red,#00f);-webkit-background-clip:text;-webkit-background-size:2px}",
+      "a{background:-moz-linear-gradient(red,#00f);background:-webkit-linear-gradient(red,#00f);-webkit-background-clip:text;-webkit-background-size:2px}",
     );
   });
 

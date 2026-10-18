@@ -945,18 +945,6 @@ impl FontHandler {
         true
     }
 
-    /// Emits what a legacy alias of `target` can override, so that the alias prints after it.
-    pub(crate) fn flush_before_alias(
-        &mut self,
-        target: crate::properties::PropertyIdTag,
-        dest: &mut crate::DeclarationList<'_>,
-        context: &mut crate::PropertyHandlerContext<'_>,
-    ) {
-        if target == crate::properties::PropertyIdTag::FontStretch && self.stretch.is_some() {
-            self.flush(dest, context);
-        }
-    }
-
     pub(crate) fn finalize(
         &mut self,
         decls: &mut crate::DeclarationList<'_>,

@@ -395,16 +395,16 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         self.inner.flush(S::SPEC, dest, context);
     }
 
-    /// Emits what a legacy alias of `target` can override, so that the alias prints after it.
+    /// Flushes if an alias of `target` can override what is held. False: `target` is not ours.
     #[inline]
     pub(crate) fn flush_before_alias(
         &mut self,
         target: PropertyIdTag,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
-    ) {
+    ) -> bool {
         self.inner
-            .flush_before_alias(S::SPEC, target, dest, context);
+            .flush_before_alias(S::SPEC, target, dest, context)
     }
 }
 
@@ -751,7 +751,7 @@ impl SizeHandlerImpl {
         target: PropertyIdTag,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
-    ) {
+    ) -> bool {
         let physical = self.top.is_some()
             || self.bottom.is_some()
             || self.left.is_some()
@@ -780,11 +780,12 @@ impl SizeHandlerImpl {
         } else if target == spec.inline_end {
             self.inline_end.is_some() || physical
         } else {
-            false
+            return false;
         };
         if overridable {
             self.flush(spec, dest, context);
         }
+        true
     }
 
     // The flush helper is split into `flush_helper_physical` + `flush_helper_logical`

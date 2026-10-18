@@ -57,7 +57,7 @@ pub(crate) enum Owner {
     BoxShadow,
     ColorScheme,
     Fallback,
-    /// A custom property, or a name with no row below. No handler sees it.
+    /// A custom property, or a name with no row below. No handler owns it.
     Custom,
     /// A property that no handler reads.
     Passthrough,
@@ -1099,7 +1099,7 @@ impl PropertyId {
     /// `PropertyId` or to the one it aliases. `None` if the name is unknown *or* the prefix
     /// isn't allowed for that property.
     pub(crate) fn from_name_and_prefix(name: &[u8], pre: VendorPrefix) -> Option<KnownName> {
-        // `alias:` prefixes make the name another name of the property in Blink, WebKit or Gecko.
+        // An `alias:` prefix is in the alias lists of the current Blink, WebKit or Gecko tables.
         macro_rules! known_names {
             (static $map:ident = {
                 $($name:tt => ($typed:expr, $make:expr $(, alias: $alias:expr)?),)*
@@ -1344,7 +1344,6 @@ impl PropertyId {
                 b"font-weight" => (VendorPrefix::NONE, |_| PropertyId::FontWeight),
                 b"font-size" => (VendorPrefix::NONE, |_| PropertyId::FontSize),
                 b"font-stretch" => (VendorPrefix::NONE, |_| PropertyId::FontStretch),
-                b"font-width" => (VendorPrefix::empty(), |_| PropertyId::FontStretch, alias: VendorPrefix::NONE),
                 b"font-family" => (VendorPrefix::NONE, |_| PropertyId::FontFamily),
                 b"font-style" => (VendorPrefix::NONE, |_| PropertyId::FontStyle),
                 b"font-variant-caps" => (VendorPrefix::NONE, |_| PropertyId::FontVariantCaps),

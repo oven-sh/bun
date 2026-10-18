@@ -555,14 +555,17 @@ impl<'bump> DeclarationHandler<'bump> {
         context: &mut css::PropertyHandlerContext,
     ) {
         let dest = &mut self.decls;
-        self.background.flush_before_alias(target, dest, context);
-        self.border.flush_before_alias(target, dest, context);
-        self.align.flush_before_alias(target, dest, context);
-        self.size.flush_before_alias(target, dest, context);
-        self.margin.flush_before_alias(target, dest, context);
-        self.padding.flush_before_alias(target, dest, context);
-        self.scroll_margin.flush_before_alias(target, dest, context);
-        self.font.flush_before_alias(target, dest, context);
+        let known = self.background.flush_before_alias(target, dest, context)
+            || self.border.flush_before_alias(target, dest, context)
+            || self.align.flush_before_alias(target, dest, context)
+            || self.size.flush_before_alias(target, dest, context)
+            || self.margin.flush_before_alias(target, dest, context)
+            || self.padding.flush_before_alias(target, dest, context)
+            || self.scroll_margin.flush_before_alias(target, dest, context);
+        debug_assert!(
+            known,
+            "an alias row names a property that no handler here holds"
+        );
     }
 
     pub(crate) fn new(bump: &'bump Bump) -> Self {

@@ -765,46 +765,76 @@ impl SizeHandler {
         true
     }
 
-    /// Emits what a legacy alias of `target` can override, so that the alias prints after it.
+    /// Writes the sizes that an alias of `target` can override. False: `target` is not ours.
     pub(crate) fn flush_before_alias(
         &mut self,
         target: PropertyIdTag,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
-    ) {
-        // The writing mode decides whether a logical size is the width or the height.
-        let overridable = match target {
-            PropertyIdTag::BlockSize => {
-                self.block_size.is_some() || self.width.is_some() || self.height.is_some()
-            }
-            PropertyIdTag::InlineSize => {
-                self.inline_size.is_some() || self.width.is_some() || self.height.is_some()
-            }
-            PropertyIdTag::MinBlockSize => {
-                self.min_block_size.is_some()
-                    || self.min_width.is_some()
-                    || self.min_height.is_some()
-            }
-            PropertyIdTag::MinInlineSize => {
-                self.min_inline_size.is_some()
-                    || self.min_width.is_some()
-                    || self.min_height.is_some()
-            }
-            PropertyIdTag::MaxBlockSize => {
-                self.max_block_size.is_some()
-                    || self.max_width.is_some()
-                    || self.max_height.is_some()
-            }
-            PropertyIdTag::MaxInlineSize => {
-                self.max_inline_size.is_some()
-                    || self.max_width.is_some()
-                    || self.max_height.is_some()
-            }
-            _ => false,
-        };
-        if overridable {
-            self.flush(dest, context);
+    ) -> bool {
+        let logical_supported = !context.should_compile_logical(Feature::LogicalSize);
+        let flushed = &mut self.flushed_properties;
+        macro_rules! physical {
+            ($flag:ident, $variant:ident, $field:ident) => {
+                flush_size_property(
+                    flushed,
+                    self.$field.take(),
+                    SizeProperty::$flag,
+                    Property::$variant,
+                    dest,
+                    context,
+                )
+            };
         }
+        // The writing mode decides whether a logical size is the width or the height.
+        macro_rules! overridable {
+            (($w_flag:ident, $w:ident, $w_field:ident), ($h_flag:ident, $h:ident, $h_field:ident),
+             ($flag:ident, $variant:ident, $field:ident) => ($phys_flag:ident, $phys:ident)) => {{
+                physical!($w_flag, $w, $w_field);
+                physical!($h_flag, $h, $h_field);
+                if logical_supported {
+                    physical!($flag, $variant, $field);
+                } else {
+                    physical!($phys_flag, $phys, $field);
+                }
+                // A later value prints after the alias, so these are no fallback for it.
+                flushed.remove(SizeProperty::$w_flag | SizeProperty::$h_flag | SizeProperty::$flag);
+            }};
+        }
+        match target {
+            PropertyIdTag::InlineSize => overridable!(
+                (WIDTH, Width, width),
+                (HEIGHT, Height, height),
+                (INLINE_SIZE, InlineSize, inline_size) => (WIDTH, Width)
+            ),
+            PropertyIdTag::BlockSize => overridable!(
+                (WIDTH, Width, width),
+                (HEIGHT, Height, height),
+                (BLOCK_SIZE, BlockSize, block_size) => (HEIGHT, Height)
+            ),
+            PropertyIdTag::MinInlineSize => overridable!(
+                (MIN_WIDTH, MinWidth, min_width),
+                (MIN_HEIGHT, MinHeight, min_height),
+                (MIN_INLINE_SIZE, MinInlineSize, min_inline_size) => (MIN_WIDTH, MinWidth)
+            ),
+            PropertyIdTag::MinBlockSize => overridable!(
+                (MIN_WIDTH, MinWidth, min_width),
+                (MIN_HEIGHT, MinHeight, min_height),
+                (MIN_BLOCK_SIZE, MinBlockSize, min_block_size) => (MIN_HEIGHT, MinHeight)
+            ),
+            PropertyIdTag::MaxInlineSize => overridable!(
+                (MAX_WIDTH, MaxWidth, max_width),
+                (MAX_HEIGHT, MaxHeight, max_height),
+                (MAX_INLINE_SIZE, MaxInlineSize, max_inline_size) => (MAX_WIDTH, MaxWidth)
+            ),
+            PropertyIdTag::MaxBlockSize => overridable!(
+                (MAX_WIDTH, MaxWidth, max_width),
+                (MAX_HEIGHT, MaxHeight, max_height),
+                (MAX_BLOCK_SIZE, MaxBlockSize, max_block_size) => (MAX_HEIGHT, MaxHeight)
+            ),
+            _ => return false,
+        }
+        true
     }
 
     fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {

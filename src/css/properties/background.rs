@@ -1136,21 +1136,33 @@ impl BackgroundHandler {
         self.flushed_properties = BackgroundProperty::empty();
     }
 
-    /// Emits what a legacy alias of `target` can override, so that the alias prints after it.
+    /// Flushes if an alias of `target` can override what is held. False: `target` is not ours.
     pub(crate) fn flush_before_alias(
         &mut self,
         target: PropertyIdTag,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
-    ) {
-        let overridable = match target {
+    ) -> bool {
+        let held = match target {
             PropertyIdTag::BackgroundSize => self.sizes.is_some(),
             PropertyIdTag::BackgroundOrigin => self.origins.is_some(),
-            _ => false,
+            _ => return false,
         };
-        if overridable {
+        if held || self.keeps_prefixed_shorthand() {
+            // A later value prints after the alias, so this flush is no fallback for it.
+            let flushed = self.flushed_properties;
             self.flush_with_prefixed(dest, context);
+            self.flushed_properties = flushed;
         }
+        true
+    }
+
+    /// Whether `finalize` still has a prefixed `background` to write. It resets size and origin.
+    fn keeps_prefixed_shorthand(&self) -> bool {
+        let written = usize::from(self.has_prefix && !self.decls.is_empty());
+        self.decls[..self.decls.len() - written]
+            .iter()
+            .any(|decl| matches!(decl, Property::Background(..)))
     }
 
     /// Emits the prefixed declarations kept in `decls`, then the buffered ones.

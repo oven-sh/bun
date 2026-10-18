@@ -1314,13 +1314,13 @@ impl AlignHandler {
         self.flush(dest, context);
     }
 
-    /// Emits what a legacy alias of `target` can override, so that the alias prints after it.
+    /// Flushes if an alias of `target` can override what is held. False: `target` is not ours.
     pub(crate) fn flush_before_alias(
         &mut self,
         target: PropertyIdTag,
         dest: &mut DeclarationList<'_>,
         context: &mut PropertyHandlerContext<'_>,
-    ) {
+    ) -> bool {
         match target {
             PropertyIdTag::RowGap if self.row_gap.is_some() => self.flush_gaps(dest),
             PropertyIdTag::ColumnGap if self.column_gap.is_some() => self.flush_gaps(dest),
@@ -1330,8 +1330,13 @@ impl AlignHandler {
             PropertyIdTag::JustifyItems if self.justify_items.is_some() => {
                 self.flush(dest, context)
             }
-            _ => {}
+            PropertyIdTag::RowGap
+            | PropertyIdTag::ColumnGap
+            | PropertyIdTag::Gap
+            | PropertyIdTag::JustifyItems => {}
+            _ => return false,
         }
+        true
     }
 
     fn flush_gaps(&mut self, dest: &mut DeclarationList<'_>) {

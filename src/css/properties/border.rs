@@ -1472,13 +1472,13 @@ mod border_handler_body {
             self.border_radius_handler.finalize(dest, context);
         }
 
-        /// Emits what a legacy alias of `target` can override, so that the alias prints after it.
+        /// Flushes if an alias of `target` can override what is held. False: `target` is not ours.
         pub(crate) fn flush_before_alias(
             &mut self,
             target: PropertyIdTag,
             dest: &mut DeclarationList,
             context: &mut PropertyHandlerContext,
-        ) {
+        ) -> bool {
             use PropertyIdTag as P;
             let side = match target {
                 P::BorderBlockStart
@@ -1497,7 +1497,7 @@ mod border_handler_body {
                 | P::BorderInlineEndColor
                 | P::BorderInlineEndStyle
                 | P::BorderInlineEndWidth => &self.border_inline_end,
-                _ => return,
+                _ => return false,
             };
             // The writing mode decides which physical side a logical side is.
             if !(side.is_empty()
@@ -1506,8 +1506,12 @@ mod border_handler_body {
                 && self.border_left.is_empty()
                 && self.border_right.is_empty())
             {
+                // A later value prints after the alias, so this flush is no fallback for it.
+                let flushed = self.flushed_properties;
                 self.flush(dest, context);
+                self.flushed_properties = flushed;
             }
+            true
         }
 
         fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {

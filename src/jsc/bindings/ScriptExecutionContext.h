@@ -41,7 +41,7 @@ class ActiveDOMObject;
 class ContextDestructionObserver;
 
 // The key of a context in the process-wide registry. Zero is no context's.
-enum class ScriptExecutionContextIdentifier : uint32_t {};
+enum class ScriptExecutionContextIdentifier : uint64_t {};
 
 #if ENABLE(MALLOC_BREAKDOWN)
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);

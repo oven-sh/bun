@@ -32,7 +32,7 @@ namespace WebCore {
 
 class MessagePort;
 class ScriptExecutionContext;
-enum class ScriptExecutionContextIdentifier : uint32_t;
+enum class ScriptExecutionContextIdentifier : uint64_t;
 
 class MessagePortPipe final : public ThreadSafeRefCounted<MessagePortPipe> {
 public:
@@ -95,6 +95,8 @@ private:
 
     struct Side {
         WTF::Lock lock;
+        // The loop `ctxId` was running when this side attached: drains and the peer-close notification go to it.
+        BunLoopKind ctxLoopKind WTF_GUARDED_BY_LOCK(lock) { BunLoopKind::Regular };
         WTF::Deque<MessageWithMessagePorts> inbox WTF_GUARDED_BY_LOCK(lock);
         // Messages the owner's drain has taken out of `inbox` (a small batch per lock
         // acquisition) but not dispatched yet. Still counted as queued in `state`. If the
@@ -102,14 +104,15 @@ private:
         // so the next owner sees everything, in order; close() drops them with the rest.
         WTF::Deque<MessageWithMessagePorts> draining WTF_GUARDED_BY_LOCK(lock);
         ScriptExecutionContextIdentifier ctxId WTF_GUARDED_BY_LOCK(lock) {};
-        // The loop `ctxId` was running when this side attached there; drains and the peer-close
-        // notification are posted to it.
-        BunLoopKind ctxLoopKind WTF_GUARDED_BY_LOCK(lock) { BunLoopKind::Regular };
         ThreadSafeWeakPtr<MessagePort> port WTF_GUARDED_BY_LOCK(lock);
         // Packed flags + count. Written only while holding `lock`; read locklessly.
         std::atomic<uint64_t> state { 0 };
     };
     Side m_sides[2];
 };
+
+#if !ASSERT_ENABLED
+static_assert(sizeof(MessagePortPipe) <= 256, "ctxLoopKind sits in the padding beside lock: after ctxId each side is a word larger and the pipe leaves the 256-byte size class");
+#endif
 
 } // namespace WebCore

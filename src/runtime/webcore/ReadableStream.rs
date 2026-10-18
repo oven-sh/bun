@@ -887,7 +887,7 @@ pub struct NewSource<C: SourceContext> {
     /// The context of the script that started reading ([`Self::start_from_js`]). The stream's
     /// end is not reported to a `Bun.ModuleGraph` that was disposed meanwhile: closing the JS
     /// stream settles every read its script is waiting on.
-    pub reader_context: Cell<Option<jsc::ContextId>>,
+    pub reader_context: Cell<jsc::ContextId>,
     /// Armed while this is the source of a stream script of a `Bun.ModuleGraph` was given: what it
     /// reads from (a file, a child's pipe nobody is reading) is closed with that graph.
     pub abort_handle: jsc::AbortHandle,
@@ -925,7 +925,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             this_jsvalue: jsc::JsRef::empty(),
             wrapper_unrooted: Cell::new(false),
             is_closed: Cell::new(false),
-            reader_context: Cell::new(None),
+            reader_context: Cell::new(jsc::ContextId::NONE),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),
         }
     }
@@ -1128,9 +1128,8 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     fn is_reader_live(&self) -> bool {
-        self.reader_context
-            .get()
-            .is_none_or(|context| self.global_this().bun_vm().is_context_live(context))
+        let context = self.reader_context.get();
+        context == jsc::ContextId::NONE || self.global_this().bun_vm().is_context_live(context)
     }
 
     /// Tell the C++ `JSNativeStreamSourceAdapter` (if a stream consumer attached one) that the native side closed.
@@ -1379,9 +1378,8 @@ impl<C: SourceContext> NewSource<C> {
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         self.global_this = Some(bun_ptr::BackRef::new(global_this));
-        self.reader_context.set(Some(
-            global_this.bun_vm().context_of_caller(call_frame).id(),
-        ));
+        self.reader_context
+            .set(global_this.bun_vm().context_of_caller(call_frame).id());
         match self.on_start_from_js() {
             streams::Start::Empty => Ok(JSValue::js_number(0.0)),
             streams::Start::Ready => Ok(JSValue::js_number(16384.0)),

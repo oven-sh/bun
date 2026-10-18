@@ -2,7 +2,7 @@
 
 namespace WebCore {
 class JSVMClientData;
-enum class ScriptExecutionContextIdentifier : uint32_t;
+enum class ScriptExecutionContextIdentifier : uint64_t;
 }
 
 #include <JavaScriptCore/DeferredWorkTimer.h>

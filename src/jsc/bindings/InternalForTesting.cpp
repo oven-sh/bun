@@ -40,15 +40,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_lowercaseHeaderNameSIMD, (JSC::JSGlobalObjec
     return JSC::JSValue::encode(JSC::jsString(vm, WebCore::lowercaseHeaderName(string)));
 }
 
-// Lets a test hand out context identifiers past 2^31 without that many draws.
+// Lets a test hand out context identifiers past 2^31 and 2^32 without that many draws.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_setNextScriptExecutionContextIdentifierForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue identifier = callFrame->argument(0);
-    if (!identifier.isAnyInt() || identifier.asAnyInt() < 2 || identifier.asAnyInt() >= std::numeric_limits<uint32_t>::max())
-        return throwVMRangeError(globalObject, scope, "Expected an integer from 2 to 4294967294"_s);
-    auto previous = WebCore::ScriptExecutionContext::setNextIdentifierForTesting(WebCore::ScriptExecutionContextIdentifier { static_cast<uint32_t>(identifier.asAnyInt()) });
+    if (!identifier.isAnyInt() || identifier.asAnyInt() < 2)
+        return throwVMRangeError(globalObject, scope, "Expected an integer of at least 2"_s);
+    auto previous = WebCore::ScriptExecutionContext::setNextIdentifierForTesting(WebCore::ScriptExecutionContextIdentifier { static_cast<uint64_t>(identifier.asAnyInt()) });
     return JSValue::encode(jsNumber(std::to_underlying(previous)));
 }
 

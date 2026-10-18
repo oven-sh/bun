@@ -408,11 +408,7 @@ void ScriptExecutionContext::checkConsistency() const
 
 ScriptExecutionContextIdentifier ScriptExecutionContext::generateIdentifier()
 {
-    auto identifier = ++lastUniqueIdentifier;
-    // The registry's deleted key. After it come zero and the identifiers of live contexts.
-    if (identifier == std::numeric_limits<decltype(identifier)>::max()) [[unlikely]]
-        BUN_PANIC("Ran out of script execution context identifiers");
-    return ScriptExecutionContextIdentifier { identifier };
+    return ScriptExecutionContextIdentifier { ++lastUniqueIdentifier };
 }
 
 ScriptExecutionContextIdentifier ScriptExecutionContext::setNextIdentifierForTesting(ScriptExecutionContextIdentifier next)

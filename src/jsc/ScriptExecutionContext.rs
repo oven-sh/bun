@@ -101,6 +101,8 @@ impl ScriptExecutionContext {
 
     /// Once, when the VM's first global has been made.
     pub(crate) fn bind(&self, id: ContextId) {
+        // A `Task` carries the low 56 bits of its context's identifier.
+        assert!(id.raw() < ContextId::DEAD.raw());
         self.id.set(id);
     }
 
@@ -113,6 +115,7 @@ impl ScriptExecutionContext {
     }
 
     pub(crate) fn for_graph(id: ContextId, dom_context: *mut core::ffi::c_void) -> Self {
+        assert!(id.raw() < ContextId::DEAD.raw());
         let context = Self::default();
         context.id.set(id);
         context.dom_context.set(dom_context);

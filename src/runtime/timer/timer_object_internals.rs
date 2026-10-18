@@ -33,11 +33,18 @@ pub(crate) struct TimerObjectInternals {
     pub(crate) interval: Cell<u32>,
     pub this_value: JsCell<JsRef>,
     pub(crate) flags: Cell<Flags>,
+    /// `VirtualMachine::test_isolation_generation` when the timer was created.
+    pub(crate) generation: u32,
     /// The context whose script created the timer.
     pub(crate) context: bun_jsc::ContextId,
-    /// `VirtualMachine::test_isolation_generation` when it did.
-    pub(crate) generation: u32,
 }
+
+// Field order: `generation` after `context` pads this to 48 bytes and a timer past 96.
+const _: () = assert!(core::mem::size_of::<TimerObjectInternals>() == 40);
+#[cfg(not(debug_assertions))] // `RefCount` has debug-only fields
+const _: () = assert!(
+    core::mem::size_of::<TimeoutObject>() <= 96 && core::mem::size_of::<ImmediateObject>() <= 96
+);
 
 impl TimerObjectInternals {
     /// Read-modify-write `self.flags` through the `Cell` (R-2: `flags` is

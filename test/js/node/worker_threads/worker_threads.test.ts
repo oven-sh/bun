@@ -209,26 +209,24 @@ test("threadId module and worker property is consistent", async () => {
 });
 
 // A Worker's threadId is the identifier of its context, less one. Every context of the process (a
-// Worker's, a Bun.ModuleGraph's, a ShadowRealm's) draws its identifier from one counter, which
-// 2^31 `new Bun.ModuleGraph()` calls move past 2^31 in about an hour. No test can count that far,
-// so each case runs in a process of its own that sets the identifier the next context draws.
-// 2^31 - 1 used to double as a request for another identifier. From 2^31 on an identifier is
-// negative as an int32, which used to make the Worker's global the main thread's kind.
+// Worker's, a Bun.ModuleGraph's, a ShadowRealm's, the first global's of each VM) draws its
+// identifier from one counter, which 2^31 `new Bun.ModuleGraph()` calls move past 2^31 in about
+// an hour. No test can count that far, so each case runs in a process of its own that sets the
+// identifier the next context draws. The values are the ones 32 bits got wrong: 2^31 - 1
+// doubled as a request for another identifier, 2^31 is negative as an int32 (and made a Worker's
+// global the main thread's kind), 2^32 - 1 and 2^32 were the deleted and the empty key of a
+// registry of 32-bit keys, 2^32 + 1 is the main thread's identifier again, and what follows
+// belongs to contexts that may be alive.
 describe("script execution context identifiers from 2^31 - 1 on", () => {
-  async function fixture(role: string, identifier: number) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "context-identifier-fixture.js", role, String(identifier)],
-      env: bunEnv,
-      cwd: import.meta.dir,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  async function run(cmd: string[], cwd: string = import.meta.dir) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode };
   }
+  const fixture = (...args: (string | number)[]) => run(["context-identifier-fixture.js", ...args.map(String)]);
   const printed = (value: unknown) => ({ stdout: JSON.stringify(value) + "\n", stderr: "", exitCode: 0 });
 
-  const identifiers = [2 ** 31 - 1, 2 ** 31, 2 ** 32 - 2];
+  const identifiers = [2 ** 31 - 1, 2 ** 31, 2 ** 32 - 2, 2 ** 32 + 2];
 
   test.concurrent.each(identifiers)("a node:worker_threads Worker: %d", async identifier => {
     expect(await fixture("node", identifier)).toEqual(
@@ -251,6 +249,70 @@ describe("script execution context identifiers from 2^31 - 1 on", () => {
         mainThread: "received",
       }),
     );
+  });
+
+  // The second graph owns what it opened and nothing else: disposing it leaves the first one's alone.
+  test.concurrent.each([2 ** 32 - 1, 2 ** 32, 2 ** 32 + 1, 2 ** 32 + 1000])(
+    "a Bun.ModuleGraph beside one whose context is 1000: %d",
+    async identifier => {
+      expect(await fixture("graphs", 1000, identifier)).toEqual(
+        printed({
+          drawn: [1, 1],
+          ticksOfSecondAfterDispose: 0,
+          databaseOfFirstIsOpen: true,
+          databaseOfSecondIsOpen: false,
+        }),
+      );
+    },
+  );
+
+  test.concurrent("two ShadowRealms: 2^32 - 1 and 2^32", async () => {
+    expect(await fixture("realms", 2 ** 32 - 1)).toEqual(printed({ drawn: 2, evaluated: [2, 4] }));
+  });
+
+  test.concurrent("the macro VM: 2^32 - 1", async () => {
+    using dir = tempDir("context-identifier-macro", {
+      "macro.ts": `export const answer = () => 6 * 7;`,
+      "uses-macro.ts": `
+        import { answer } from "./macro.ts" with { type: "macro" };
+        export const value = answer();
+      `,
+      "main.mjs": `
+        import { setNextScriptExecutionContextIdentifier } from "bun:internal-for-testing";
+        setNextScriptExecutionContextIdentifier(2 ** 32 - 1);
+        // The first macro starts the macro VM, whose global draws an identifier.
+        const { value } = await import("./uses-macro.ts");
+        const drawn = setNextScriptExecutionContextIdentifier(2 ** 40) - (2 ** 32 - 1);
+        console.log(JSON.stringify({ value, drawn }));
+      `,
+    });
+    const { stdout, exitCode } = await run(["main.mjs"], String(dir));
+    // (A debug build logs each macro call first.)
+    expect({ lastLine: stdout.trimEnd().split("\n").at(-1), exitCode }).toEqual({
+      lastLine: JSON.stringify({ value: 42, drawn: 1 }),
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("the context that `bun test --isolate` retires: 2^32 - 1", async () => {
+    using dir = tempDir("context-identifier-isolate", {
+      "first.test.ts": `
+        import { setNextScriptExecutionContextIdentifier } from "bun:internal-for-testing";
+        import { test } from "bun:test";
+        // The swap to the next file moves this file's context to an identifier it draws.
+        test("first", () => void setNextScriptExecutionContextIdentifier(2 ** 32 - 1));
+      `,
+      "second.test.ts": `
+        import { setNextScriptExecutionContextIdentifier } from "bun:internal-for-testing";
+        import { expect, test } from "bun:test";
+        test("second", () => {
+          expect(Bun.isMainThread).toBe(true);
+          expect(setNextScriptExecutionContextIdentifier(2 ** 40) - (2 ** 32 - 1)).toBe(1);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await run(["test", "--isolate", "./first.test.ts", "./second.test.ts"], String(dir));
+    expect({ passed: /^\s*2 pass\r?$/m.test(stderr), exitCode }).toEqual({ passed: true, exitCode: 0 });
   });
 });
 

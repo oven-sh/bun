@@ -2647,6 +2647,7 @@ impl VirtualMachine {
 /// [`VirtualMachine::stop_graph_context_again`]'s task for a `Bun.ModuleGraph` context; `ptr`
 /// packs the [`ContextId`](crate::ContextId), nothing is owned.
 pub struct GraphContextStopAgain;
+const _: () = assert!(core::mem::size_of::<usize>() == core::mem::size_of::<crate::ContextId>());
 
 impl bun_event_loop::Taskable for GraphContextStopAgain {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GraphContextStopAgain;

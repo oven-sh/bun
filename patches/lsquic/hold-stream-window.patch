@@ -1,6 +1,6 @@
 --- a/include/lsquic.h
 +++ b/include/lsquic.h
-@@ -1758,6 +1758,22 @@
+@@ -1758,6 +1758,23 @@
  lsquic_stream_wantread (lsquic_stream_t *s, int is_want);
  
  /**
@@ -9,8 +9,9 @@
 + * and the connection's window is credited as before, but reads earn the peer
 + * no new MAX_STREAM_DATA.  An update that a read queued before the hold still
 + * goes out, so the peer can send up to one window past the read offset at the
-+ * hold.  A release queues the update that the hold kept back.  It goes out
-+ * when the connection is next ticked.
++ * hold.  A release queues the update that the hold kept back, unless the
++ * stream is reset or read to its end.  It goes out when the connection is
++ * next ticked.
 + *
 + * This is receive backpressure that leaves no data in the stream, unlike
 + * lsquic_stream_wantread(s, 0): data left there holds the connection's
@@ -48,7 +49,7 @@
          LSQ_DEBUG("recv_off has not changed, still at %"PRIu64,
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
-@@ -1524,6 +1524,18 @@
+@@ -1524,6 +1524,23 @@
  }
  
  
@@ -59,7 +60,12 @@
 +    if (stream->fc.sf_hold == (unsigned) !!hold)
 +        return;
 +    stream->fc.sf_hold = !!hold;
-+    if (!hold)
++    /* Not on a stream that is reset or read to its end.  A reset moves
++     * sf_read_off to the final size and credits the connection for what
++     * was not read.  stream_consumed_bytes() would set it back to
++     * read_offset and take that credit away until the stream is destroyed.
++     */
++    if (!hold && !(stream->stream_flags & (STREAM_RST_RECVD|STREAM_U_READ_DONE)))
 +        stream_consumed_bytes(stream);
 +}
 +

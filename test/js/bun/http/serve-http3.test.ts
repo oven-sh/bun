@@ -1843,8 +1843,9 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       const client = await session(server.port!, endpoint);
       const held = await post(client, "/held");
       const sent = send([held], body);
-      // The stream has sent what its held window takes.
-      while (held.stats.bytesSent <= BigInt(window - 64 * 1024)) await turn();
+      // Past 256 KiB the stream is held, and its client still sends: the reset arrives with
+      // bytes in flight.
+      while (held.stats.bytesSent <= BigInt(window / 2)) await turn();
       held.writer.fail();
       await sent;
       const outcome = await aborted.promise;

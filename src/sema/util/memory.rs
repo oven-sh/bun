@@ -1115,7 +1115,7 @@ const WRITTEN_WORDS: usize = 256;
 pub struct Cells<C, A: Allocator + Clone = Global> {
     chunks: Chunks<C, FIRST_CELLS_BITS, A>,
     /// By `Located::offset`: the first cell of every chunk is the first of a page by that count too.
-    written: [AtomicU64; WRITTEN_WORDS],
+    written: Box<[AtomicU64], A>,
 }
 
 impl<C: Zeroed, A: Allocator + Clone> Written<C> for Cells<C, A> {
@@ -1134,8 +1134,8 @@ impl<C: Zeroed + Sync, A: Allocator + Clone + Default> Default for Cells<C, A> {
 impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
     pub fn new_in(alloc: A) -> Self {
         Cells {
+            written: AtomicU64::zeroed_slice_in(WRITTEN_WORDS, alloc.clone()),
             chunks: Chunks::new_in(alloc),
-            written: [const { AtomicU64::new(0) }; WRITTEN_WORDS],
         }
     }
 

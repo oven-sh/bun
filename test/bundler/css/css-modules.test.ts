@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { itBundled } from "../expectBundled";
 import { join } from "node:path";
+import { itBundled } from "../expectBundled";
 
 describe("css", () => {
   itBundled("css-module/GlobalPseudoFunction", {

@@ -7585,10 +7585,14 @@ describe("css tests", () => {
       ["transform", "translate3d(1px, 2px, 15px)", "translate3d(1px, 2px, 1cqw)"],
       ["transform", "translateZ(15px)", "translateZ(1cqw)"],
       ["transform", "perspective(15px)", "perspective(1cqw)"],
+      ["transform", "translateZ(15px)", "translateZ(round(1em, 5px))"],
+      ["transform", "translate3d(1px, 2px, 15px)", "translate3d(1px, 2px, round(1em, 5px))"],
+      ["transform", "perspective(15px)", "perspective(round(1em, 5px))"],
       ["transform", "rotate(15deg)", "translateX(round(1em, 5px)) rotate(15deg)"],
       ["translate", "15px", "round(1em, 5px)"],
       ["translate", "1px 15px", "1px round(1em, 5px)"],
       ["translate", "1px 2px 15px", "1px 2px 1cqw"],
+      ["translate", "1px 2px 15px", "1px 2px round(1em, 5px)"],
       ["translate", "100vh", "100dvh"],
     ]) {
       const source = `.foo { ${property}: ${fallback}; ${property}: ${value} }`;
@@ -7621,12 +7625,21 @@ describe("css tests", () => {
       older,
     );
     prefix_test(".foo { translate: 15px; translate: calc(1px + 1em) }", ".foo { translate: calc(1px + 1em); }", older);
+    prefix_test(
+      ".foo { transform: translateZ(15px); transform: translateZ(calc(1px + 1em)) }",
+      ".foo { transform: translateZ(calc(1px + 1em)); }",
+      older,
+    );
     // No browser targets: nothing is known to lack the later value.
     minify_test(
       ".foo { transform: translateX(15px); transform: translateX(round(1em, 5px)) }",
       ".foo{transform:translate(round(1em,5px))}",
     );
     minify_test(".foo { translate: 15px; translate: round(1em, 5px) }", ".foo{translate:round(1em,5px)}");
+    minify_test(
+      ".foo { transform: translateZ(15px); transform: translateZ(round(1em, 5px)) }",
+      ".foo{transform:translateZ(round(1em,5px))}",
+    );
     // Three identical rules are merged into one declaration.
     prefix_test(
       `.foo { transform: translateX(round(1em, 5px)) }
@@ -7658,21 +7671,23 @@ describe("css tests", () => {
       ".foo { transform: translateX(round(1em, 5px)); }",
       older,
     );
-    const prefixed_pairs = `.foo {
-      -webkit-transform: translateX(15px);
-      transform: translateX(15px);
-      -webkit-transform: translateX(round(1em, 5px));
-      transform: translateX(round(1em, 5px));
-    }`;
-    prefix_test(
-      prefixed_pairs,
-      `.foo {
-        transform: translateX(15px);
-        transform: translateX(round(1em, 5px));
-      }`,
-      older,
-    );
-    prefix_test(prefixed_pairs, prefixed_pairs, { safari: Some(8 << 16) });
+    for (const axis of ["X", "Z"]) {
+      const prefixed_pairs = `.foo {
+        -webkit-transform: translate${axis}(15px);
+        transform: translate${axis}(15px);
+        -webkit-transform: translate${axis}(round(1em, 5px));
+        transform: translate${axis}(round(1em, 5px));
+      }`;
+      prefix_test(
+        prefixed_pairs,
+        `.foo {
+          transform: translate${axis}(15px);
+          transform: translate${axis}(round(1em, 5px));
+        }`,
+        older,
+      );
+      prefix_test(prefixed_pairs, prefixed_pairs, { safari: Some(8 << 16) });
+    }
     // Only the property with the fallback is written early. A `-webkit-transform` that
     // waits for its `transform` is not.
     prefix_test(
@@ -7706,6 +7721,116 @@ describe("css tests", () => {
       }`,
       older,
     );
+
+    // A length in translateZ(), the z of translate3d(), perspective() and the z of
+    // `translate` can be a math function. A constant result is folded.
+    minify_test(".foo { transform: translateZ(calc(1px + 2px)) }", ".foo{transform:translateZ(3px)}");
+    minify_test(
+      ".foo { transform: translate3d(1px, 2px, calc(1px + 2px)) }",
+      ".foo{transform:translate3d(1px,2px,3px)}",
+    );
+    minify_test(".foo { transform: perspective(calc(1px + 2px)) }", ".foo{transform:perspective(3px)}");
+    minify_test(".foo { translate: 1px 2px calc(1px + 2px) }", ".foo{translate:1px 2px 3px}");
+    minify_test(".foo { transform: translateZ(max(1px, 3px)) }", ".foo{transform:translateZ(3px)}");
+    minify_test(".foo { transform: translateZ(calc(1px - 6px)) }", ".foo{transform:translateZ(-5px)}");
+    minify_test(".foo { translate: 1px 2px calc(1px - 6px) }", ".foo{translate:1px 2px -5px}");
+    minify_test(".foo { -webkit-transform: translateZ(calc(1px + 2px)) }", ".foo{-webkit-transform:translateZ(3px)}");
+
+    // A z of zero is left out, as for a literal.
+    minify_test(".foo { transform: translate3d(1px, 2px, calc(1px - 1px)) }", ".foo{transform:translate(1px,2px)}");
+    minify_test(".foo { translate: 1px 2px calc(1px - 1px) }", ".foo{translate:1px 2px}");
+
+    // Math that does not resolve stays math. The rest of the value is still folded.
+    minify_test(
+      ".foo { transform: translateZ(calc(1px + 2px + 1em)) rotateZ(20deg) }",
+      ".foo{transform:translateZ(calc(3px + 1em))rotate(20deg)}",
+    );
+    minify_test(
+      ".foo { transform: translate3d(1px, 2px, calc(1px + 2px + 1em)) }",
+      ".foo{transform:translate3d(1px,2px,calc(3px + 1em))}",
+    );
+    minify_test(
+      ".foo { transform: perspective(calc(1px + 2px + 1em)) }",
+      ".foo{transform:perspective(calc(3px + 1em))}",
+    );
+    minify_test(".foo { translate: 1px 2px calc(1px + 2px + 1em) }", ".foo{translate:1px 2px calc(3px + 1em)}");
+    minify_test(
+      ".foo { transform: translateZ(round(1em, 5px)) rotateZ(20deg) }",
+      ".foo{transform:translateZ(round(1em,5px))rotate(20deg)}",
+    );
+
+    // The value is read the same way in every place a declaration can be.
+    minify_test(
+      "@keyframes x { from { transform: translateZ(calc(1px + 2px)) } to { transform: perspective(calc(1px - 6px)) } }",
+      "@keyframes x{0%{transform:translateZ(3px)}to{transform:perspective(0)}}",
+    );
+    minify_test(
+      ".a { .b { transform: translateZ(calc(1px + 2px)) !important } }",
+      ".a{& .b{transform:translateZ(3px)!important}}",
+    );
+    minify_test(
+      "@container style(transform: translateZ(calc(1px + 2px))) { .a { color: red } }",
+      "@container style(transform:translateZ(3px)){.a{color:red}}",
+    );
+
+    // The length of perspective() cannot be negative. The browser clamps a calculation after
+    // it resolves it, so a constant below zero is 0.
+    minify_test(".foo { transform: perspective(calc(1px - 6px)) }", ".foo{transform:perspective(0)}");
+    minify_test(".foo { transform: perspective(calc(NaN * 1px)) }", ".foo{transform:perspective(0)}");
+    minify_test(".foo { transform: perspective(calc(1px - 1em)) }", ".foo{transform:perspective(calc(1px - 1em))}");
+
+    // The declaration prints as written when a value is not a length for its slot: a negative
+    // perspective(), math that resolves to a number, a one-argument min() of a sum, a percentage.
+    for (const value of [
+      "translateX(calc(1px + 2px)) perspective(-5px)",
+      "translateX(calc(1px + 2px)) translateZ(calc(1 + 2))",
+      "translateX(calc(1px + 2px)) translateZ(min(1em + 2px))",
+      "translateX(calc(1px + 2px)) translate3d(1px, 2px, calc(10% + 1px))",
+    ]) {
+      cssTest(`.foo { transform: ${value} }`, `.foo { transform: ${value}; }`);
+    }
+    cssTest(".foo { translate: calc(1px + 2px) 2px 10% }", ".foo { translate: calc(1px + 2px) 2px 10%; }");
+
+    // A negative perspective() is not valid, so it does not replace the declaration before it.
+    minify_test(
+      ".foo { transform: perspective(10px); transform: perspective(-5px) }",
+      ".foo{transform:perspective(10px);transform:perspective(-5px)}",
+    );
+
+    // The `perspective` property still takes a literal only.
+    minify_test(".foo { perspective: calc(1px + 2px) }", ".foo{perspective:calc(1px + 2px)}");
+    minify_test(".foo { perspective: 10px }", ".foo{perspective:10px}");
+    minify_test(".foo { perspective: NONE }", ".foo{perspective:none}");
+
+    // The same parser reads a transform function in an `@property` initial value.
+    for (const [syntax, initial_value, expected] of [
+      ["<transform-list>", "translateZ(calc(1px + 2px))", "translateZ(3px)"],
+      ["<transform-list>", "translateX(1px) translateZ(calc(1px + 2px))", "translate(1px)translateZ(3px)"],
+      [
+        "<transform-list>",
+        "translateX(1px) translateZ(calc(1px + 1em)) rotate(10deg)",
+        "translate(1px)translateZ(calc(1px + 1em))rotate(10deg)",
+      ],
+      ["<transform-function>", "translateZ(calc(10px + 1vw))", "translateZ(calc(10px + 1vw))"],
+      ["<transform-function>", "translate3d(0, 0, calc(10px + 1vw))", "translateZ(calc(10px + 1vw))"],
+      ["<transform-function>", "perspective(calc(1px + 2px))", "perspective(3px)"],
+      ["<transform-function>", "perspective(calc(1px - 6px))", "perspective(0)"],
+    ]) {
+      minify_test(
+        `@property --a { syntax: '${syntax}'; inherits: false; initial-value: ${initial_value} }`,
+        `@property --a{syntax:"${syntax}";inherits:false;initial-value:${expected}}`,
+      );
+    }
+
+    // The math code that every typed length shares folds these wrong. They pass after
+    // https://github.com/oven-sh/bun/pull/38489 (mixed units) and
+    // https://github.com/oven-sh/bun/pull/32286 (the sign of rem()).
+    cssTestTodo(".foo { transform: translateZ(mod(18px, 1em)) }", ".foo { transform: translateZ(mod(18px, 1em)); }");
+    cssTestTodo(
+      ".foo { transform: translateZ(round(16px, 1em)) }",
+      ".foo { transform: translateZ(round(16px, 1em)); }",
+    );
+    cssTestTodo(".foo { translate: 1px 2px rem(-7px, 3px) }", ".foo { translate: 1px 2px -1px; }");
   });
 
   // https://github.com/parcel-bundler/lightningcss/pull/1340

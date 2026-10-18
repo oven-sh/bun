@@ -4,8 +4,8 @@ use bun_alloc::ArenaVecExt as _;
 
 use crate::css_properties::{Property, PropertyIdTag};
 use crate::css_values::angle::Angle;
-use crate::css_values::length::{LengthPercentage, LengthValue as Length};
-use crate::css_values::number::CSSNumberFns;
+use crate::css_values::length::{Length, LengthPercentage, LengthValue};
+use crate::css_values::number::{CSSNumberFns, NumericRange};
 use crate::css_values::percentage::NumberOrPercentage;
 use crate::generics::IsCompatible;
 use crate::prefixes;
@@ -228,7 +228,7 @@ impl Transform {
                     Ok(Transform::TranslateY(y))
                 },
                 b"translatez" => {
-                    let z = Length::parse(i)?;
+                    let z = Length::parse_with_range(i, NumericRange::All)?;
                     Ok(Transform::TranslateZ(z))
                 },
                 b"translate3d" => {
@@ -236,7 +236,7 @@ impl Transform {
                     i.expect_comma()?;
                     let y = LengthPercentage::parse(i)?;
                     i.expect_comma()?;
-                    let z = Length::parse(i)?;
+                    let z = Length::parse_with_range(i, NumericRange::All)?;
                     Ok(Transform::Translate3d { x, y, z })
                 },
                 b"scale" => {
@@ -314,7 +314,7 @@ impl Transform {
                     Ok(Transform::SkewY(angle))
                 },
                 b"perspective" => {
-                    let len = Length::parse(i)?;
+                    let len = Length::parse_with_range(i, NumericRange::NonNegative)?;
                     Ok(Transform::Perspective(len))
                 },
                 _ => Err(location.new_unexpected_token_error(Token::Ident(function))),
@@ -689,7 +689,7 @@ pub enum Perspective {
     /// No perspective transform is applied.
     None,
     /// Distance to the center of projection.
-    Length(Length),
+    Length(LengthValue),
 }
 
 impl Perspective {
@@ -726,8 +726,10 @@ impl Translate {
 
         let x = LengthPercentage::parse(input)?;
         let y = input.try_parse(LengthPercentage::parse);
-        let z = if y.is_ok() {
-            input.try_parse(Length::parse).ok()
+        let z = if y.is_ok() && !input.is_exhausted() {
+            input
+                .try_parse(|i| Length::parse_with_range(i, NumericRange::All))
+                .ok()
         } else {
             None
         };

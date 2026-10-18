@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
+import { TestRegistry } from "registry";
 import { endChildren, longLimit, spawn } from "../children";
 import { modulesInCycles } from "./differential";
 
@@ -23918,6 +23919,569 @@ describe.concurrent("--check", () => {
     expect(built.stderr).toContain("deep.ts:1:14");
     expect(built.stderr).not.toContain("unrelated.ts");
     expect(built.exitCode).toBe(1);
+  });
+
+  // `bun build --check` names the file that the bundler has resolved each script tag of a page to. Every other command
+  // asks the resolver of the bundler which file that is.
+  describe("the scripts of a page are the files that the bundler takes for them", () => {
+    const html = `declare module "*.html" {\n  const page: unknown;\n  export default page;\n}\n`;
+    const bunTest = `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n  export function expect(value: unknown): { toBe(expected: unknown): void };\n}\n`;
+    const script = (src: string) => `<script type="module" src="${src}"></script>`;
+    const page = (...tags: string[]) => `<!doctype html>${tags.join("")}\n`;
+    const server = `import it from "./index.html";\nconsole.log("ran", typeof it);\n`;
+    const wrong = `export const c: number = "1";\n`;
+    const right = `export const c: number = 1;\n`;
+    const withPaths = JSON.stringify({
+      compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, paths: { "@/*": ["./src/*"] } },
+    });
+    const printed = (it: { stdout: string; stderr: string }) => it.stdout + "\n" + it.stderr;
+    // `file:line:column code` of each error that has a place. `bun check` and a build print it differently.
+    const found = (text: string) =>
+      [
+        ...[...text.matchAll(/^(\S+)\((\d+),(\d+)\): error (TS\d+)/gm)].map(
+          it => `${it[1]}:${it[2]}:${it[3]} ${it[4]}`,
+        ),
+        ...[...text.matchAll(/^error: (TS\d+):.*\n\s+at <dir>\/(\S+):(\d+):(\d+)$/gm)].map(
+          it => `${it[2]}:${it[3]}:${it[4]} ${it[1]}`,
+        ),
+      ].sort();
+    const codes = (text: string) => [...new Set(text.match(/\bTS\d{4,5}\b/g))];
+
+    // `src`: what the page writes. `taken`: the file that the bundler takes for it. `override`: `--tsconfig-override`.
+    type Named = { name: string; src: string; files: Record<string, string>; taken: string; override?: string };
+    test.each<Named>([
+      { name: "no extension", src: "./main", files: { "main.ts": wrong }, taken: "main.ts" },
+      { name: "a folder", src: "./app", files: { "app/index.ts": wrong }, taken: "app/index.ts" },
+      { name: "`.js` for a TypeScript file", src: "./main.js", files: { "main.ts": wrong }, taken: "main.ts" },
+      {
+        // TypeScript takes `both.ts`.
+        name: "the extensions in the order of the bundler",
+        src: "./both",
+        files: { "both.ts": right, "both.tsx": wrong },
+        taken: "both.tsx",
+      },
+      {
+        name: "`paths`",
+        src: "@/aliased",
+        files: { "tsconfig.json": withPaths, "src/aliased.ts": wrong },
+        taken: "src/aliased.ts",
+      },
+      {
+        name: "`paths` of --tsconfig-override",
+        src: "@/aliased",
+        files: { "other.json": withPaths, "src/aliased.ts": wrong },
+        taken: "src/aliased.ts",
+        override: "other.json",
+      },
+    ])("$name", async ({ src, files, taken, override }) => {
+      using dir = project({
+        "html.d.ts": html,
+        "bun-test.d.ts": bunTest,
+        "index.html": page(script(src)),
+        "server.ts": server,
+        "page.test.ts": `import { test } from "bun:test";\nimport it from "./index.html";\ntest("page", () => {\n  console.log(typeof it);\n});\n`,
+        ...files,
+      });
+      const tsconfigOverride = override ? ["--tsconfig-override", override] : [];
+      const commands = [
+        ["check", ...(override ? ["--project", override] : []), "server.ts"],
+        [...tsconfigOverride, "--check", "server.ts"],
+        [...tsconfigOverride, "--check", "index.html"],
+        ["test", ...tsconfigOverride, "--check", "./page.test.ts"],
+        ["build", ...tsconfigOverride, "--check", "--target=bun", "server.ts", "--outdir", "out-server"],
+        // The page is not in the bundle.
+        [
+          "build",
+          ...tsconfigOverride,
+          "--check",
+          "--target=bun",
+          "--external",
+          "*.html",
+          "server.ts",
+          "--outdir",
+          "out-external",
+        ],
+        ["build", ...tsconfigOverride, "--check", "index.html", "--outdir", "out"],
+      ];
+      const results = await Promise.all(commands.map(cmd => run(String(dir), cmd)));
+      expect(results.map(it => [found(printed(it)), codes(printed(it)), it.exitCode])).toEqual(
+        commands.map(() => [[`${taken}:1:14 TS2322`], ["TS2322"], 1]),
+      );
+    });
+
+    // What is installed is not of the project, also where a page names it.
+    test.each(["./node_modules/installed/index.ts", "installed"])("src=%j is not checked", async src => {
+      using dir = project({
+        "html.d.ts": html,
+        "index.html": page(script(src), script("./client.ts")),
+        "client.ts": right,
+        "server.ts": server,
+        "node_modules/installed/package.json": JSON.stringify({
+          name: "installed",
+          version: "1.0.0",
+          main: "index.ts",
+        }),
+        "node_modules/installed/index.ts": wrong,
+      });
+      const commands = [
+        ["check", "server.ts"],
+        ["--check", "server.ts"],
+        ["build", "--check", "--target=bun", "server.ts", "--outdir", "out-server"],
+        ["build", "--check", "index.html", "--outdir", "out"],
+      ];
+      const results = await Promise.all(commands.map(cmd => run(String(dir), cmd)));
+      expect(results.map(it => [codes(printed(it)), it.exitCode])).toEqual(commands.map(() => [[], 0]));
+      expect(results[1].stdout).toBe("ran object");
+    });
+
+    // The type checker says that a file with the name of a script is not there.
+    test.each(["./missing.ts", "missing.ts"])("src=%j, which is not there, is not found", async src => {
+      using dir = project({ "html.d.ts": html, "index.html": page(script(src)), "server.ts": server });
+      const commands = [
+        ["check", "server.ts"],
+        ["--check", "server.ts"],
+        ["--check", "index.html"],
+      ];
+      const results = await Promise.all(commands.map(cmd => run(String(dir), cmd)));
+      expect(results.map(it => [printed(it).trim().split("\n")[0], codes(printed(it)), it.exitCode])).toEqual(
+        commands.map(() => [`error TS6053: File '<dir>/missing.ts' not found.`, ["TS6053"], 1]),
+      );
+    });
+
+    // Not the files in a folder, as for a directory that `bun check` is given. What is not installed may be installed
+    // later, a name without an extension may be a route of the server, and a URL is not a file.
+    test.each(["./folder", "not-installed", "./missing", "app://bundle/main.js", "ws://localhost/hmr.js"])(
+      "src=%j, which the bundler does not resolve, names no file",
+      async src => {
+        using dir = project({
+          "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), include: ["server.ts", "*.d.ts"] }),
+          "html.d.ts": html,
+          "index.html": page(script(src)),
+          "server.ts": server,
+          "folder/other.ts": wrong,
+        });
+        const [checked, ran] = await Promise.all([
+          run(String(dir), ["check", "server.ts"]),
+          run(String(dir), ["--check", "server.ts"]),
+        ]);
+        expect([codes(printed(checked)), checked.exitCode]).toEqual([[], 0]);
+        expect([codes(printed(ran)), ran.stdout, ran.exitCode]).toEqual([[], "ran object", 0]);
+      },
+    );
+
+    // The type checker knows an `.html` file by its name, not by how it is imported: a template that a server fills in is
+    // read as a page.
+    test("a template that is imported as text is read as a page", async () => {
+      using dir = project({
+        "html.d.ts": html,
+        "template.html": page(`<script src="/assets/app.js"></script>`, script("./main")),
+        "main.ts": wrong,
+        "server.ts": `import it from "./template.html" with { type: "text" };\nconsole.log("ran", typeof it);\n`,
+      });
+      const commands = [
+        ["check", "server.ts"],
+        ["--check", "server.ts"],
+        ["build", "--check", "--target=bun", "server.ts", "--outdir", "out"],
+      ];
+      const results = await Promise.all(commands.map(cmd => run(String(dir), cmd)));
+      expect(results.map(it => [found(printed(it)), codes(printed(it)).sort(), it.exitCode])).toEqual(
+        commands.map(() => [["main.ts:1:14 TS2322"], ["TS2322", "TS6053"], 1]),
+      );
+    });
+
+    // Only a script and a worker have types. `there`: whether the other files of the page are on the disk.
+    test.each([true, false])("a page with stylesheets, images and a worker, which are there: %p", async there => {
+      using dir = project({
+        "html.d.ts": html,
+        "index.html": page(
+          `<link rel="stylesheet" href="./theme.css">`,
+          `<link rel="stylesheet" href="./print.css?v=3">`,
+          `<link rel="icon" href="/public/icon.png">`,
+          `<img src="/public/hero.png">`,
+          `<link rel="preload" as="worker" href="./worker.ts">`,
+          script("./plant.ts"),
+        ),
+        "plant.ts": wrong,
+        "worker.ts": wrong,
+        "server.ts": server,
+        ...(there ? { "theme.css": "body { margin: 0 }\n", "print.css": "p { margin: 0 }\n" } : {}),
+        ...(there ? { "public/icon.png": "", "public/hero.png": "" } : {}),
+      });
+      const commands = [
+        ["check", "server.ts"],
+        ["--check", "server.ts"],
+        ["--check", "index.html"],
+      ];
+      const results = await Promise.all(commands.map(cmd => run(String(dir), cmd)));
+      expect(results.map(it => [found(printed(it)), codes(printed(it)), it.exitCode])).toEqual(
+        commands.map(() => [["plant.ts:1:14 TS2322", "worker.ts:1:14 TS2322"], ["TS2322"], 1]),
+      );
+    });
+
+    // A page is for the browser: the `browser` condition and the `browser` field of a package.json apply.
+    test("a script that the package.json names for the browser", async () => {
+      using dir = project({
+        "package.json": JSON.stringify({
+          name: "app",
+          imports: { "#client": { browser: "./for-browser.ts", default: "./for-server.ts" } },
+          browser: { "./server-only.ts": "./browser-shim.ts", "./off.ts": false },
+        }),
+        "html.d.ts": html,
+        "index.html": page(script("#client"), script("./server-only.ts"), script("./off.ts")),
+        "for-browser.ts": wrong,
+        "for-server.ts": right,
+        "server-only.ts": right,
+        "browser-shim.ts": wrong,
+        "off.ts": wrong,
+        "server.ts": server,
+      });
+      const commands = [
+        ["check", "server.ts"],
+        ["--check", "server.ts"],
+        ["--check", "index.html"],
+        ["build", "--check", "index.html", "--outdir", "out"],
+      ];
+      const results = await Promise.all(commands.map(cmd => run(String(dir), cmd)));
+      expect(results.map(it => [found(printed(it)), it.exitCode])).toEqual(
+        commands.map(() => [["browser-shim.ts:1:14 TS2322", "for-browser.ts:1:14 TS2322"], 1]),
+      );
+    });
+
+    // What a build does with a script of its page is in its graph: a plugin resolves it, or it stays a URL.
+    describe("a page of a bundle", () => {
+      test("a script that a plugin resolves is the file that the plugin names", async () => {
+        using dir = project({
+          "build.mjs": `
+            import { basename, join } from "node:path";
+            const plugin = {
+              name: "resolves a script of the page",
+              setup(build) {
+                build.onResolve({ filter: /generated[.]ts$/ }, () => ({ path: join(process.cwd(), "src/real.ts") }));
+              },
+            };
+            const result = await Bun.build({ entrypoints: ["server.ts"], target: "bun", outdir: "out", check: true, throw: false, plugins: [plugin] });
+            console.log(JSON.stringify(result.logs.map(log => [log.message.slice(0, 6), basename(log.position?.file ?? "")])));
+          `,
+          "html.d.ts": html,
+          "index.html": page(script("./generated.ts")),
+          "src/real.ts": wrong,
+          "server.ts": server,
+        });
+        const { stdout } = await run(String(dir), ["build.mjs"]);
+        expect(JSON.parse(stdout)).toEqual([["TS2322", "real.ts"]]);
+      });
+
+      // The bundle holds what the plugin provides, not the file, or it holds nothing.
+      test.each([
+        [
+          "provides under a namespace",
+          `build.onResolve({ filter: /virtual[.]ts$/ }, args => ({ path: args.path, namespace: "virtual" }));
+           build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({ contents: "export const v = 1;", loader: "ts" }));`,
+        ],
+        [
+          "leaves to the browser",
+          `build.onResolve({ filter: /virtual[.]ts$/ }, () => ({ path: "https://example.com/virtual.js", external: true }));`,
+        ],
+      ])("a script that a plugin %s is not checked", async (_, setup) => {
+        using dir = project({
+          "build.mjs": `
+            const plugin = { name: "takes a script of the page", setup(build) { ${setup} } };
+            const result = await Bun.build({ entrypoints: ["server.ts"], target: "bun", outdir: "out", check: true, throw: false, plugins: [plugin] });
+            console.log(JSON.stringify([result.success, result.logs.map(log => log.message.slice(0, 6))]));
+          `,
+          "html.d.ts": html,
+          "index.html": page(script("./virtual.ts")),
+          "virtual.ts": wrong,
+          "server.ts": server,
+        });
+        const { stdout } = await run(String(dir), ["build.mjs"]);
+        expect(JSON.parse(stdout)).toEqual([true, []]);
+      });
+
+      // Every other command takes it for a file of the project.
+      test.each([
+        ["has an error", { "main.ts": wrong }, "TS2322"],
+        ["is not there", {}, "TS6053"],
+      ])("a script that the build leaves to the browser and that %s is not checked", async (_, files, code) => {
+        using dir = project({
+          "html.d.ts": html,
+          "index.html": page(script("./main.ts")),
+          "server.ts": server,
+          ...files,
+        });
+        const external = ["--external", "./main.ts"];
+        const [built, checked] = await Promise.all([
+          run(String(dir), ["build", "--check", "--target=bun", ...external, "server.ts", "--outdir", "out"]),
+          run(String(dir), ["check", "server.ts"]),
+        ]);
+        expect([codes(printed(built)), built.exitCode]).toEqual([[], 0]);
+        expect([codes(printed(checked)), checked.exitCode]).toEqual([[code], 1]);
+      });
+    });
+
+    // The check reads the folders of a page with a resolver of its own. What that resolver reads first, it reads for
+    // itself: the main fields of a package.json, where a link leads, the warnings. The program reads them again.
+    describe("the program runs as it does without --check", () => {
+      // Each in a project of its own, because a program can write files. `before` and `after`: the arguments around `--check`.
+      const withAndWithout = async (
+        files: Record<string, string>,
+        [before, after]: [string[], string[]],
+        extra: (dir: string) => Record<string, string> = () => ({}),
+        setUp: (dir: string) => void = () => {},
+        make: (files: Record<string, string>) => Disposable & { toString(): string } = project,
+      ) => {
+        using plain = make(files);
+        using checked = make(files);
+        for (const dir of [plain, checked]) setUp(String(dir));
+        return await Promise.all([
+          run(String(plain), [...before, ...after], extra(String(plain))),
+          run(String(checked), [...before, "--check", ...after], extra(String(checked))),
+        ]);
+      };
+      const lib = {
+        "html.d.ts": html,
+        "lib/package.json": JSON.stringify({ name: "lib", custom: "./custom.ts", main: "./main.ts" }),
+        "lib/custom.ts": `export const from: string = "custom";\n`,
+        "lib/main.ts": `export const from: string = "main";\n`,
+        "lib/index.html": page(script("./client.ts")),
+        "lib/client.ts": right,
+      };
+
+      test("--main-fields", async () => {
+        const files = {
+          ...lib,
+          "server.ts": `import it from "./lib/index.html";\nimport { from } from "./lib";\nconsole.log(from, typeof it);\n`,
+        };
+        const [plain, checked] = await withAndWithout(files, [["--main-fields", "custom"], ["server.ts"]]);
+        expect(checked).toEqual(plain);
+        expect([plain.stdout, plain.exitCode]).toEqual(["custom object", 0]);
+      });
+
+      test("--main-fields of bun test", async () => {
+        const files = {
+          ...lib,
+          "bun-test.d.ts": `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n  export function expect(value: unknown): { toBe(expected: unknown): void };\n}\n`,
+          "lib.test.ts": `import { expect, test } from "bun:test";\nimport it from "./lib/index.html";\nimport { from } from "./lib";\ntest("from", () => {\n  expect(from + " " + typeof it).toBe("custom object");\n});\n`,
+        };
+        const [plain, checked] = await withAndWithout(files, [["test", "--main-fields", "custom"], ["./lib.test.ts"]]);
+        const counts = (it: { stderr: string }) => it.stderr.match(/^\s*\d+ (pass|fail)$/gm);
+        expect([counts(checked), checked.exitCode]).toEqual([counts(plain), plain.exitCode]);
+        expect([counts(plain)?.map(it => it.trim()), plain.exitCode]).toEqual([["1 pass", "0 fail"], 0]);
+      });
+
+      test.each([
+        ["--preserve-symlinks", ["--preserve-symlinks"], {}],
+        ["NODE_PRESERVE_SYMLINKS", [], { NODE_PRESERVE_SYMLINKS: "1" }],
+      ])("%s", async (_, flags, extra) => {
+        const files = {
+          "html.d.ts": html,
+          "meta.d.ts": `interface ImportMeta {\n  url: string;\n}\n`,
+          "real/index.html": page(script("./client.ts")),
+          "real/client.ts": right,
+          "real/mod.ts": `export const at: string = import.meta.url.split("/").slice(-2).join("/");\n`,
+          "server.ts": `import it from "./web/index.html";\nimport { at } from "./web/mod";\nconsole.log(at, typeof it);\n`,
+        };
+        const link = (dir: string) => symlinkSync(join(dir, "real"), join(dir, "web"), "junction");
+        const [plain, checked] = await withAndWithout(files, [flags, ["server.ts"]], () => extra, link);
+        expect(checked).toEqual(plain);
+        expect([plain.stdout, plain.exitCode]).toEqual(["web/mod.ts object", 0]);
+      });
+
+      test("a warning about a package.json", async () => {
+        const files = {
+          "package.json": JSON.stringify({ name: "app", type: "weird" }),
+          "html.d.ts": html,
+          "index.html": page(script("./client.ts")),
+          "client.ts": right,
+          "server.ts": server,
+        };
+        const [plain, checked] = await withAndWithout(files, [[], ["server.ts"]]);
+        expect(checked).toEqual(plain);
+        expect([plain.stderr.includes(`"weird"`), plain.stdout, plain.exitCode]).toEqual([true, "ran object", 0]);
+      });
+
+      test("a package that the program installs before it imports it", async () => {
+        const files = {
+          "html.d.ts": html,
+          "bun.d.ts": `declare const Bun: { write(path: string, text: string): Promise<number> };\n`,
+          "index.html": page(script("late"), script("./client.ts")),
+          "client.ts": right,
+          "node_modules/early/package.json": JSON.stringify({ name: "early", version: "1.0.0" }),
+          "server.ts": `import it from "./index.html";\nawait Bun.write("node_modules/late/index.js", "module.exports = 'late';");\nconst name: string = "late";\nconsole.log((await import(name)).default, typeof it);\n`,
+        };
+        const [plain, checked] = await withAndWithout(files, [[], ["server.ts"]]);
+        expect(checked).toEqual(plain);
+        expect([plain.stdout, plain.exitCode]).toEqual(["late object", 0]);
+      });
+
+      // The check lists the folder of a script. The program writes a file there afterwards.
+      test("a file that the program writes before it imports it", async () => {
+        const files = {
+          "html.d.ts": html,
+          "bun.d.ts": `declare const Bun: { write(path: string, text: string): Promise<number> };\n`,
+          "index.html": page(script("./app/client.ts")),
+          "app/client.ts": right,
+          "server.ts": `import it from "./index.html";\nawait Bun.write("app/index.ts", "export default 'app';");\nconst name: string = "./app";\nconsole.log((await import(name)).default, typeof it);\n`,
+        };
+        const [plain, checked] = await withAndWithout(files, [[], ["server.ts"]]);
+        expect(checked).toEqual(plain);
+        expect([plain.stdout, plain.exitCode]).toEqual(["app object", 0]);
+      });
+
+      // Without a tsconfig.json, the check of a project names every file below the working directory, so it comes to the page.
+      test.each(["--sequential", "--parallel"])("the scripts of a package.json under %s", async how => {
+        const files = {
+          "package.json": JSON.stringify({ name: "app", scripts: { a: "echo ran-a", b: "echo ran-b" } }),
+          "html.d.ts": html,
+          "index.html": page(script("./client.ts")),
+          "client.ts": right,
+          "server.ts": `import it from "./index.html";\nexport default it;\n`,
+        };
+        const bare = (files: Record<string, string>) => tempDir("bun-check", files);
+        const [plain, checked] = await withAndWithout(
+          files,
+          [
+            ["run", how],
+            ["a", "b"],
+          ],
+          undefined,
+          undefined,
+          bare,
+        );
+        const ran = (it: { stdout: string }) => it.stdout.match(/ran-[ab]/g)?.sort();
+        expect([ran(checked), checked.exitCode]).toEqual([ran(plain), plain.exitCode]);
+        expect([ran(plain), plain.exitCode]).toEqual([["ran-a", "ran-b"], 0]);
+      });
+
+      // The check of a build makes a resolver for a page that is not in the bundle. The program goes on after the build.
+      test("what the program imports after Bun.build", async () => {
+        const files = {
+          ...lib,
+          "build.mjs": `
+            const check = process.argv[2] === "--check";
+            const { success } = await Bun.build({ entrypoints: ["server.ts"], target: "bun", external: ["*.html"], outdir: "out", check, throw: false });
+            const { from } = await import("./lib");
+            console.log(success, from);
+          `,
+          "server.ts": `import it from "./lib/index.html";\nconsole.log(typeof it);\n`,
+        };
+        using plain = project(files);
+        using checked = project(files);
+        const [without, withCheck] = await Promise.all([
+          run(String(plain), ["--main-fields", "custom", "build.mjs"]),
+          run(String(checked), ["--main-fields", "custom", "build.mjs", "--check"]),
+        ]);
+        expect(withCheck).toEqual(without);
+        expect([without.stdout, without.exitCode]).toEqual(["true custom", 0]);
+      });
+
+      // `latest` is 2.0.0. An auto-install takes the range from the package.json that the resolver has read.
+      test("the range of a dependency that is installed when it is imported", async () => {
+        using registry = new TestRegistry().start();
+        const files = {
+          "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "^1.0.0" } }),
+          "bunfig.toml": `[install]\nregistry = "${registry.url}"\n`,
+          "index.html": page(script("./client.ts")),
+          "client.ts": right,
+          "index.js": `import it from "./index.html";\nconsole.log(require("no-deps").version, typeof it);\n`,
+        };
+        const cache = (dir: string) => ({ BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") });
+        const [plain, checked] = await withAndWithout(files, [[], ["index.js"]], cache);
+        expect([checked.stdout, checked.exitCode]).toEqual([plain.stdout, plain.exitCode]);
+        expect([plain.stdout, plain.exitCode]).toEqual(["1.1.0 object", 0]);
+      });
+    });
+
+    // No file has such a name. The other scripts of the page are checked.
+    describe("a value that is too long for a path", () => {
+      const long = Buffer.alloc(4100, "A").toString();
+      const planted = [["plant.ts:1:14 TS2322"], 1];
+
+      test.each([
+        ["an inline icon", `<link rel="icon" href="data:image/png;base64,${long}">`],
+        ["an inline image", `<img src="data:image/png;base64,${long}">`],
+        ["an image", `<img src="./${long}.png">`],
+        ["an image from the root", `<img src="/${long}.png">`],
+        ["an image without `./`", `<img src="${long}.png">`],
+        ["a script", script(`./${long}.ts`)],
+      ])("%s", async (_, tag) => {
+        using dir = project({
+          "html.d.ts": html,
+          "index.html": page(tag, script("./plant.ts")),
+          "plant.ts": wrong,
+          "server.ts": server,
+        });
+        const commands = [
+          ["check", "server.ts"],
+          ["--check", "server.ts"],
+          ["--check", "index.html"],
+        ];
+        const results = await Promise.all(commands.map(cmd => run(String(dir), cmd)));
+        expect(results.map(it => [found(printed(it)), it.exitCode])).toEqual(commands.map(() => planted));
+      });
+
+      // The resolver puts a name, and then an extension, in a buffer of the size of a path. One script for each length in
+      // the last bytes of it. With a `browser` field in the package.json, the resolver looks each name up in that too.
+      test.each([false, true])(
+        "a script whose path only fits without an extension, `browser` field: %p",
+        async browser => {
+          using dir = project({
+            "html.d.ts": html,
+            "plant.ts": wrong,
+            "server.ts": server,
+            ...(browser
+              ? { "package.json": JSON.stringify({ name: "app", browser: { "./server-only.ts": "./plant.ts" } }) }
+              : {}),
+          });
+          const root = realpathSync(String(dir));
+          const maxPathBytes = isWindows ? 32767 * 3 + 1 : process.platform === "linux" ? 4096 : 1024;
+          const scripts = Array.from({ length: 10 }, (_, i) =>
+            script("./" + Buffer.alloc(maxPathBytes - 8 + i - (root.length + 1), "a").toString()),
+          );
+          writeFileSync(join(root, "index.html"), page(...scripts, script("./plant.ts")));
+          const commands = [
+            ["check", "server.ts"],
+            ["--check", "index.html"],
+          ];
+          const results = await Promise.all(commands.map(cmd => run(root, cmd)));
+          expect(results.map(it => [found(printed(it)), it.exitCode])).toEqual(commands.map(() => planted));
+        },
+      );
+
+      // Every module that the check reaches is asked for its pages, also a declaration file of a package. The scripts of
+      // such a page are installed, so they are not checked.
+      test.each([
+        [
+          "a page with an inline icon",
+          {
+            "node_modules/dep/index.d.ts": `import "./page.html";\nexport declare const d: number;\n`,
+            "node_modules/dep/page.html": page(
+              `<link rel="icon" href="data:image/png;base64,${long}">`,
+              script("./installed.ts"),
+            ),
+            "node_modules/dep/installed.ts": wrong,
+          },
+        ],
+        [
+          "a page that is not there",
+          { "node_modules/dep/index.d.ts": `import "./${long}.html";\nexport declare const d: number;\n` },
+        ],
+      ])("in a dependency: %s", async (_, files) => {
+        using dir = project({
+          "server.ts": `import { d } from "dep";\nexport const planted: string = d;\n`,
+          "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", types: "index.d.ts" }),
+          ...files,
+        });
+        const result = await check(dir, ["server.ts"]);
+        expect([found(printed(result)), result.exitCode]).toEqual([["server.ts:2:14 TS2322"], 1]);
+      });
+
+      test("a page that `bun` is given", async () => {
+        using dir = project({ "index.html": page(script("./plant.ts")), "plant.ts": wrong });
+        const result = await run(String(dir), ["--check", "index.html", `${long}.html`]);
+        expect([found(printed(result)), result.exitCode]).toEqual(planted);
+      });
+    });
   });
 
   test("resolves with --conditions in the type check too", async () => {

@@ -242,7 +242,21 @@ struct Entries<'a> {
     script_kinds: &'a [(Vec<u8>, ScriptKind)],
     script_kinds_by_extension: &'a [(Vec<u8>, ScriptKind)],
     conditions: &'a [Box<[u8]>],
+    /// `TypeChecked::pages`
+    pages: &'a [Vec<u8>],
 }
+
+/// What decides the scripts of a page: see `scripts_of_pages`.
+#[derive(Clone, Copy)]
+struct PageOptions<'a> {
+    /// `--tsconfig-override`, `tsconfig` of `Bun.build`, or `--project` of `bun check`.
+    tsconfig: Option<&'a [u8]>,
+    /// `Request::script_kinds_by_extension`
+    by_extension: &'a [(Vec<u8>, ScriptKind)],
+}
+
+/// What the resolvers of `scripts_of_pages` put in the cache of directories that every resolver of the process reads. Its drop takes that out again.
+type ReadForPages = bun_threading::Guarded<Option<bun_resolver::DirectoryCacheScope>>;
 
 fn run<R>(
     cwd: &[u8],
@@ -301,21 +315,45 @@ fn run_quietly<R>(
     then: impl FnOnce(Report) -> R,
 ) -> R {
     let request = request(cwd, project, paths, compiler_options, threads, progress);
-    bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), then)
+    bun_sema_driver::check_provided_then(&request, with_pages(cwd, project, paths, provided), then)
 }
 
-/// Returns `provided` with `Provided::scripts_of_page` set.
-fn with_pages(cwd: &[u8], provided: Provided) -> Provided {
+/// `provided`, with `Provided::scripts_of_page`: see `scripts_of_pages`.
+fn with_pages(cwd: &[u8], project: Option<&[u8]>, paths: &Paths, provided: Provided) -> Provided {
+    use bun_paths::{platform::Auto, resolve_path::join_abs_string_checked};
     use bun_sema_driver::host::{from_native, to_native};
-    // One thread at a time, because the first call initializes the `FileSystem` that the scanner
-    // reads.
-    let (cwd, turn) = (cwd.to_vec(), bun_threading::Guarded::new(()));
+    let entries = match *paths {
+        Paths::Arguments(_) => Entries::default(),
+        Paths::EntryPoints(entries) => entries,
+    };
+    let (cwd, tsconfig) = (cwd.to_vec(), project.map(<[u8]>::to_vec));
+    let by_extension = entries.script_kinds_by_extension.to_vec();
+    // By the path of a page, its scripts. For a page of the bundle, the paths of the check have them, and no other is named.
+    let mut known = bun_collections::StringHashMap::<Vec<Vec<u8>>>::default();
+    for page in entries.pages {
+        // A key of `files` of `Bun.build` may be relative.
+        if let Some(page) = join_abs_string_checked::<Auto>(&cwd, &[page]) {
+            bun_core::handle_oom(known.put(&from_native(page), Vec::new()));
+        }
+    }
+    // A page is read once. One thread at a time: the first sets up what the scanner reads.
+    let known = bun_threading::Guarded::new(known);
+    // A process that goes on after the check has a resolver of its own. The check drops this with the closure when it ends.
+    let read = (!provided.ends_the_process).then(|| ReadForPages::new(None));
     Provided {
         scripts_of_page: Some(Box::new(move |page| {
-            let _turn = turn.lock();
-            let scripts = imports_of_page(&cwd, to_native(page)).into_iter();
-            let scripts = scripts.filter(|path| has_types(path));
-            scripts.map(|path| from_native(&path)).collect()
+            let mut known = known.lock();
+            if let Some(scripts) = known.get(page) {
+                return scripts.clone();
+            }
+            let options = PageOptions {
+                tsconfig: tsconfig.as_deref(),
+                by_extension: &by_extension,
+            };
+            let scripts = scripts_of_pages(&cwd, &[to_native(page)], &options, read.as_ref());
+            let scripts: Vec<Vec<u8>> = scripts.iter().map(|path| from_native(path)).collect();
+            bun_core::handle_oom(known.put(page, scripts.clone()));
+            scripts
         })),
         ..provided
     }
@@ -551,7 +589,12 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
     let loaders = args.and_then(|args| args.loaders.as_ref());
     let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun);
     let by_extension = script_kinds_by_extension(&loaders.unwrap_or_default());
-    let Some((paths, script_kinds)) = paths_to_check(&cwd, entry_points, &by_extension) else {
+    let conditions = args.map_or(&[][..], |args| &args.conditions[..]);
+    let of_pages = PageOptions {
+        tsconfig: tsconfig_override(),
+        by_extension: &by_extension,
+    };
+    let Some((paths, script_kinds)) = paths_to_check(&cwd, entry_points, &of_pages) else {
         return true;
     };
     let mut in_memory = (entry_points.iter()).filter_map(|it| Some((it.path, it.text?)));
@@ -564,7 +607,8 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         paths: &paths,
         script_kinds: &script_kinds,
         script_kinds_by_extension: &by_extension,
-        conditions: args.map_or(&[][..], |args| &args.conditions[..]),
+        conditions,
+        pages: &[],
     };
     check_and_report(&Paths::EntryPoints(entries), provided)
 }
@@ -645,6 +689,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         conditions,
         loaders,
         entry_points,
+        pages,
         sources,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
@@ -672,11 +717,13 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     if paths.is_empty() {
         return true;
     }
+    let pages: Vec<Vec<u8>> = pages.map(<[u8]>::to_vec).collect();
     let paths = Paths::EntryPoints(Entries {
         paths: &paths,
         script_kinds: &script_kinds,
         script_kinds_by_extension: &by_extension,
         conditions,
+        pages: &pages,
     });
     let then = |report| report;
     let report = match shows_progress {
@@ -754,17 +801,15 @@ pub(crate) fn has_types(path: &[u8]) -> bool {
 fn paths_to_check(
     cwd: &[u8],
     entry_points: &[EntryPoint],
-    by_extension: &[(Vec<u8>, ScriptKind)],
+    of_pages: &PageOptions,
 ) -> Option<(Vec<Vec<u8>>, Vec<(Vec<u8>, ScriptKind)>)> {
-    let has_types = |path: &[u8]| has_types_with(by_extension, path);
+    let has_types = |path: &[u8]| has_types_with(of_pages.by_extension, path);
     let (mut paths, mut script_kinds) = (Vec::new(), Vec::new());
+    let mut pages = Vec::new();
     for entry_point in entry_points {
         let path = entry_point.path;
         if path.ends_with(b".html") {
-            for page in pages_of(cwd, path) {
-                let scripts = imports_of_page(cwd, &page);
-                paths.extend(scripts.into_iter().filter(|path| has_types(path)));
-            }
+            pages.extend(pages_of(cwd, path));
         } else if let Some(loader) = entry_point.loader {
             // An explicit loader overrides the extension.
             let Some(script_kind) = script_kind_of(loader) else {
@@ -778,6 +823,9 @@ fn paths_to_check(
             paths.push(path.to_vec());
         }
     }
+    // The program reads for itself what a resolver reads here.
+    let read = ReadForPages::new(None);
+    paths.extend(scripts_of_pages(cwd, &pages, of_pages, Some(&read)));
     (!paths.is_empty()).then_some((paths, script_kinds))
 }
 
@@ -809,29 +857,93 @@ fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
     pages
 }
 
-/// Absolute paths of the local files that the HTML entry point `page` imports, found with the
-/// bundler's HTML scanner. Empty if the page can't be read or parsed. The bundler reports that.
-fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
+/// The absolute paths of the scripts of `pages`: the bundler's HTML scanner finds them and its resolver resolves them. Empty for a page that can't be read or parsed. The bundler reports that.
+fn scripts_of_pages(
+    cwd: &[u8],
+    pages: &[impl AsRef<[u8]>],
+    options: &PageOptions,
+    read: Option<&ReadForPages>,
+) -> Vec<Vec<u8>> {
     use bun_paths::{platform::Auto, resolve_path};
-    let page = resolve_path::join_abs_string::<Auto>(cwd, &[page]).to_vec();
-    let Ok(contents) = bun_sys::File::read_from(bun_core::Fd::cwd(), &page) else {
-        return Vec::new();
-    };
-    let source = bun_ast::Source::init_path_string(&page[..], &contents[..]);
-    let mut log = bun_ast::Log::init();
+    let mut scripts = Vec::new();
     // The scanner resolves `/src/main.tsx` against `FileSystem`'s top-level directory, which
     // `bun ./index.html` hasn't initialized yet.
-    if bun_resolver::fs::FileSystem::init(None).is_err() {
-        return Vec::new();
+    if pages.is_empty() || bun_resolver::fs::FileSystem::init(None).is_err() {
+        return scripts;
     }
-    let records = bun_bundler::html_scanner::scan_import_records(&mut log, &source);
-    let directory = resolve_path::dirname::<Auto>(&page);
-    let is_url = |path: &[u8]| path.starts_with(b"//") || bun_core::strings::contains(path, b"://");
-    (records.unwrap_or_default().iter())
-        .map(|record| record.path.text())
-        .filter(|path| !is_url(path))
-        .map(|path| resolve_path::join_abs_string::<Auto>(directory, &[path]).to_vec())
-        .collect()
+    // The scanner allocates as the parser does, which this thread has not set up if it is one of the checker's.
+    let arena = bun_alloc::Arena::new();
+    let mut allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _scope = allocator.enter();
+    let (mut log, mut log_of_resolver) = (bun_ast::Log::init(), bun_ast::Log::init());
+    let (mut log_of_resolver, mut resolver) = (Some(&mut log_of_resolver), None);
+    for page in pages {
+        let Some(page) = resolve_path::join_abs_string_checked::<Auto>(cwd, &[page.as_ref()])
+        else {
+            continue;
+        };
+        let page = page.to_vec();
+        let Ok(contents) = bun_sys::File::read_from(bun_core::Fd::cwd(), &page) else {
+            continue;
+        };
+        let source = bun_ast::Source::init_path_string(&page[..], &contents[..]);
+        let records = bun_bundler::html_scanner::scan_import_records(&mut log, &source);
+        let directory = source.path.source_dir();
+        for record in &records.unwrap_or_default() {
+            if let Some(log) = log_of_resolver.take() {
+                resolver = resolver_of_pages(log, cwd, options);
+                // What a directory keeps depends on its first reader: the main fields of a package.json, where a link leads, the warnings.
+                if let (Some(resolver), Some(read)) = (&mut resolver, read) {
+                    (read.lock()).get_or_insert_with(|| resolver.directory_cache_scope());
+                }
+            }
+            let text = record.path.text();
+            let found = resolver
+                .as_mut()
+                .and_then(|resolver| (resolver.resolve(directory, text, record.kind)).ok());
+            match found {
+                Some(found) => {
+                    // Not a URL, not what a package.json turns off, not what is installed.
+                    let file = (found.path_const())
+                        .filter(|path| !found.flags.is_external() && path.is_file())
+                        .filter(|path| !path.is_node_module());
+                    if let Some(file) = file
+                        && has_types_with(options.by_extension, file.text)
+                    {
+                        scripts.push(file.text.to_vec());
+                    }
+                }
+                // What has the name of a script is named as it is written: the type checker reports that `./missing.ts` is not found.
+                None if has_types_with(options.by_extension, text)
+                    && !bun_core::strings::contains(text, b"://") =>
+                {
+                    let written = resolve_path::join_abs_string_checked::<Auto>(directory, &[text]);
+                    scripts.extend(written.map(<[u8]>::to_vec));
+                }
+                None => {}
+            }
+        }
+    }
+    scripts
+}
+
+/// The bundler's resolver for what a page imports, which is bundled for the browser.
+fn resolver_of_pages<'a>(
+    log: &'a mut bun_ast::Log,
+    cwd: &[u8],
+    options: &PageOptions,
+) -> Option<bun_resolver::Resolver<'a>> {
+    use bun_options_types::schema::api;
+    use bun_paths::{platform::Auto, resolve_path::join_abs_string_spill};
+    let mut spill = Vec::new();
+    let tsconfig = (options.tsconfig)
+        .map(|path| Box::from(join_abs_string_spill::<Auto>(cwd, &mut spill, &[path])));
+    let transform = api::TransformOptions {
+        target: Some(api::Target::browser),
+        tsconfig_override: tsconfig,
+        ..Default::default()
+    };
+    bun_bundler::transpiler::resolver_with_options(log, transform).ok()
 }
 
 /// Type-checks the project containing the working directory, like `bun check`, before running one

@@ -2312,6 +2312,36 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
     }
+
+    /// Where the next new key stores its value. See [`Self::forget_since`].
+    pub fn mark(&mut self) -> BSSMapMark {
+        let _guard = self.mutex.lock();
+        BSSMapMark {
+            backing: self.backing_buf_used,
+            overflow: self.overflow_list.len(),
+        }
+    }
+
+    /// Forgets every key that got its value since `mark`, and every key without a value (`NOT_FOUND`, `UNASSIGNED`). The values stay allocated, so a handle to one stays valid.
+    pub fn forget_since(&mut self, mark: BSSMapMark) {
+        let _guard = self.mutex.lock();
+        // `NOT_FOUND` and `UNASSIGNED` are above every `backing` mark.
+        self.index.retain(|_, index| {
+            let end = if index.is_overflow() {
+                mark.overflow
+            } else {
+                u32::from(mark.backing)
+            };
+            index.index() < end
+        });
+    }
+}
+
+/// [`BSSMapInner::mark`].
+#[derive(Clone, Copy)]
+pub struct BSSMapMark {
+    backing: u16,
+    overflow: u32,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

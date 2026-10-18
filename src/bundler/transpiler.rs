@@ -1071,6 +1071,22 @@ fn resolver_bundle_options_subset(
     }
 }
 
+/// The resolver that [`Transpiler::init`] makes for `opts`, alone: no environment is loaded, and nothing of the parser is set up.
+pub fn resolver_with_options<'a>(
+    log: &'a mut bun_ast::Log,
+    opts: api::TransformOptions,
+) -> crate::Result<Resolver<'a>> {
+    let fs: *mut Fs::FileSystem = init_file_system(None)?;
+    let log = core::ptr::NonNull::from(log);
+    // SAFETY: `fs` is the process-lifetime `Fs::FileSystem` singleton, which every resolver of the process borrows in this way.
+    let options = options::BundleOptions::from_api(unsafe { &mut *fs }, log.as_ptr(), opts)?;
+    Ok(Resolver::init1(
+        log,
+        fs,
+        resolver_bundle_options_subset(&options),
+    ))
+}
+
 impl<'a> Transpiler<'a> {
     /// Called by [`init_runtime_state`](../runtime/jsc_hooks.rs)
     /// to write `vm.transpiler`. Builds on:

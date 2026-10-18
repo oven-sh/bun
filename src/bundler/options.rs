@@ -1190,6 +1190,8 @@ pub struct TypeChecked<'a, 'i> {
     /// The path of each JavaScript or TypeScript file that an entry point resolved to, or that a
     /// page imports.
     pub entry_points: &'i mut dyn Iterator<Item = &'a [u8]>,
+    /// The path of each page of the bundle. `entry_points` has the scripts that the bundle holds as files for it: the check names no other script for such a page.
+    pub pages: &'i mut dyn Iterator<Item = &'a [u8]>,
     /// The path, the text and the loader of each JavaScript, TypeScript and JSON file of the
     /// bundle, which the type checker takes instead of reading the file again.
     pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,

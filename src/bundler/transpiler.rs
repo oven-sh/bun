@@ -865,10 +865,7 @@ pub struct ParseOptions<'a, 'b> {
     pub dirname_fd: FD,
     pub file_descriptor: Option<FD>,
 
-    /// Set to `Some` once the source was read from the file at `path`, so the
-    /// caller can watch that file even if the parse then fails. The descriptor
-    /// in it is not valid when the reader closed it
-    /// (`RealFS::need_to_close_files`).
+    /// `Some` once the source was read from a file, whether or not the parse then fails.
     pub file_fd_ptr: Option<&'b mut Option<FD>>,
 
     pub path: bun_paths::fs::Path<'static>,

@@ -81,11 +81,7 @@ impl ImportWatcher {
         }
     }
 
-    /// Watch a module the runtime loaded. `read_fd` is what the parse wrote
-    /// through `ParseOptions::file_fd_ptr`: `None` when the source did not
-    /// come from a file read, else the descriptor of that read, which is not
-    /// valid when the reader closed it. The answer says who owns that
-    /// descriptor now.
+    /// Watches a module the runtime loaded. `read_fd`: see `ParseOptions::file_fd_ptr`.
     pub fn add_module(
         &mut self,
         read_fd: Option<Fd>,

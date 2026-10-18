@@ -588,8 +588,6 @@ impl Watcher {
         Ok(FdOwnership::Watcher)
     }
 
-    /// `open_missing_fd`: open a descriptor for the entry when `stored_fd` is
-    /// not one.
     fn append_directory_assume_capacity<const CLONE_FILE_PATH: bool>(
         &mut self,
         stored_fd: Fd,
@@ -729,8 +727,7 @@ impl Watcher {
                 Some(v) => v,
                 None => match self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
                     dir_fd,
-                    // inotify watches a directory by path, so a file that
-                    // brought no descriptor costs none for its directory.
+                    // On inotify, a file that brought no descriptor costs none for its directory.
                     fd.is_valid() || !cfg!(any(target_os = "linux", target_os = "android")),
                     parent_dir,
                     parent_dir_hash,
@@ -873,12 +870,7 @@ impl Watcher {
         }
     }
 
-    /// Watch a file. `fd` is the descriptor its caller read it through, or
-    /// `Fd::INVALID` when the caller has none, for example because the reader
-    /// closed it (`RealFS::need_to_close_files`). inotify and Windows watch
-    /// the path. kqueue watches a descriptor and this function opens none, so
-    /// there a file with no descriptor is not watched
-    /// (`add_file_by_path_slow` opens one).
+    /// `fd` can be `Fd::INVALID`: inotify and Windows watch the path, kqueue declines the file.
     pub fn add_file<const CLONE_FILE_PATH: bool>(
         &mut self,
         fd: Fd,
@@ -1089,10 +1081,9 @@ pub enum FdOwnership {
     /// close it. The caller must not use or close it afterwards.
     Watcher,
     /// The watchlist did not take the descriptor: the file was already
-    /// watched with a valid stored one, the path is not watchable (e.g.
-    /// outside the project root on Windows), or kqueue got no descriptor to
-    /// watch through. The caller still owns `fd` and must close it (or keep
-    /// using it).
+    /// watched with a valid stored one, or the path is not watchable (e.g.
+    /// outside the project root on Windows). The caller still owns `fd` and
+    /// must close it (or keep using it).
     Caller,
 }
 

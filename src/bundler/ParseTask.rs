@@ -180,8 +180,7 @@ impl ResultValue {
 pub(crate) struct WatcherData {
     pub(crate) fd: Fd,
     pub(crate) dir_fd: Fd,
-    /// The source was read from its file, which is to be watched. `fd` is
-    /// not valid when the reader closed it (`RealFS::need_to_close_files`).
+    /// The source was read from a file. `fd` is not valid when the reader closed it.
     pub(crate) watch: bool,
 }
 

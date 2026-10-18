@@ -2775,8 +2775,10 @@ impl<'a> Installer<'a> {
                 sys::Tag::fstatat,
             ));
         }
-        // Not `append_join`, which does not split at `\` on POSIX as the check above does.
-        buf.join(&[folder]).assume_ok();
+        // The check above splits at `\` too, and `append_join` does not on POSIX.
+        let mut folder = folder.to_vec();
+        paths::resolve_path::slashes_to_posix_in_place(&mut folder[..]);
+        buf.append_join(&folder[..]).assume_ok();
 
         match sys::directory_exists_at(Fd::cwd(), buf.slice_z()) {
             Ok(is_dir) => Ok(is_dir),

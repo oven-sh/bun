@@ -1575,7 +1575,7 @@ describe.concurrent("transitive file dependencies of a tarball, written with a b
 
   test("are not linked when `..` leads out of the package", async () => {
     // Six folders down where `\` separates, and one where it does not. `<project>/outside` is six up from there.
-    const { err, beside } = await install(`a\\a\\a\\a\\a\\a/${"../".repeat(6)}outside`, {
+    const { err, beside } = await install("a\\a\\a\\a\\a\\a/../../../../../../outside", {
       allowErrors: true,
       savesLockfile: false,
       expectedExitCode: 1,

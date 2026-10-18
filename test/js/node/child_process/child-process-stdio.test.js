@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isPosix, isWindows, nodeExe } from "harness";
+import { describe, expect, it, onTestFinished } from "bun:test";
+import { bunEnv, bunExe, isPosix, isWindows, nodeExe, tempDir } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
@@ -188,17 +188,24 @@ describe("child.stdin", () => {
     child.stdout.setEncoding("utf8").on("data", chunk => (stdout += chunk));
     child.stdin._writableState.autoDestroy = false;
     const chunk = Buffer.alloc(1024 * 1024, "x");
-    const backedUp = !child.stdin.write(chunk);
+    // On Windows one uv_write takes a whole chunk, and write() reports no backlog for it.
+    const most = isWindows ? chunk.length : 64 * chunk.length;
+    let written = 0;
+    let backedUp = false;
+    while (!backedUp && written < most) {
+      backedUp = !child.stdin.write(chunk);
+      written += chunk.length;
+    }
     child.stdin.end();
     child.send("go");
     const [code, signal] = await once(child, "close");
-    // On Windows one uv_write takes the whole chunk, and write() reports no backlog for it.
     if (!isWindows) expect(backedUp).toBe(true);
-    expect({ stdout, code, signal }).toEqual({ stdout: String(chunk.length), code: 0, signal: null });
+    expect({ stdout, code, signal }).toEqual({ stdout: String(written), code: 0, signal: null });
   });
 
-  // node emits 'close' from the close callback of the handle, a loop turn after 'finish'.
-  it("'finish' and 'close' can be awaited one after the other", async () => {
+  // node emits 'close' from the close callback of the handle, a loop turn after 'finish'. Here
+  // it comes after the promise jobs and the ticks that the 'finish' listeners queued.
+  it("'close' comes after a promise job and after a tick of 'finish'", async () => {
     const child = spawn(bunExe(), ["-e", `console.log(require("fs").readFileSync(0).length);`], {
       env: bunEnv,
       stdio: ["pipe", "pipe", "inherit"],
@@ -206,11 +213,69 @@ describe("child.stdin", () => {
     let stdout = "";
     child.stdout.setEncoding("utf8").on("data", chunk => (stdout += chunk));
     const closed = once(child, "close");
-    child.stdin.end("hello");
-    await once(child.stdin, "finish");
-    await once(child.stdin, "close");
+    const stdin = child.stdin;
+    const afterTick = new Promise(resolve =>
+      stdin.on("finish", () => process.nextTick(() => stdin.on("close", resolve))),
+    );
+    stdin.end("hello");
+    await once(stdin, "finish");
+    await once(stdin, "close");
+    await afterTick;
     expect(await closed).toEqual([0, null]);
     expect(stdout).toBe("5\n");
+  });
+
+  // The fake timers of a test replace these globals. `use` runs with both replaced.
+  async function withoutTimerGlobals(use) {
+    const { setImmediate, queueMicrotask } = globalThis;
+    const restore = () => void Object.assign(globalThis, { setImmediate, queueMicrotask });
+    // Runs after a timeout too: the tests below need the real ones.
+    onTestFinished(restore);
+    globalThis.setImmediate = globalThis.queueMicrotask = () => {};
+    try {
+      return await use();
+    } finally {
+      restore();
+    }
+  }
+
+  // The stream module read the real queueMicrotask when an earlier test loaded it.
+  it("the finish events do not wait for a setImmediate or queueMicrotask that is replaced later", async () => {
+    const child = spawn(bunExe(), ["-e", `console.log(require("fs").readFileSync(0).length);`], {
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+    let stdout = "";
+    child.stdout.setEncoding("utf8").on("data", chunk => (stdout += chunk));
+    const closed = once(child, "close");
+    const stdin = child.stdin;
+    const events = [];
+    for (const event of ["prefinish", "finish"]) stdin.on(event, () => events.push(event));
+    await withoutTimerGlobals(() => {
+      stdin.end("hello", err => events.push(`end callback ${err}`));
+      return once(stdin, "close");
+    });
+    expect(events).toEqual(["prefinish", "end callback null", "finish"]);
+    expect(await closed).toEqual([0, null]);
+    expect(stdout).toBe("5\n");
+  });
+
+  // The flush is inside end(): the byte is on the pipe before kill(), so no write fails later.
+  // Not on Windows: the uv_write of the byte completes after kill() there.
+  it.skipIf(isWindows)("write(), end() and kill() in one block give no 'error'", async () => {
+    const child = spawn("cat", [], { stdio: ["pipe", "ignore", "inherit"] });
+    const stdin = child.stdin;
+    const events = [];
+    for (const event of ["finish", "close"]) stdin.on(event, () => events.push(event));
+    stdin.on("error", err => events.push(`error ${err.code}`));
+    const closed = once(child, "close");
+    // The stream is constructed by the time setImmediate runs.
+    await new Promise(resolve => setImmediate(resolve));
+    stdin.write("x");
+    stdin.end();
+    child.kill("SIGKILL");
+    expect(await closed).toEqual([null, "SIGKILL"]);
+    expect(events).toEqual(["finish", "close"]);
   });
 
   // _destroy finds the sink already ended. 'close' still comes after the queued 'finish'.
@@ -258,6 +323,87 @@ describe("child.stdin", () => {
     });
   });
 
+  // The next four tests replace end() of the FileSink that child.stdin writes to. The real end()
+  // returns a promise while a write is in flight on Windows, and fails when that write fails.
+  // On POSIX _final flushes until nothing is left, so the real end() has nothing to wait for.
+  // The child waits for an end-of-file that the replaced end() never gives it.
+  function withSinkEnd(end, use) {
+    const child = spawn(bunExe(), ["-e", `require("fs").readFileSync(0);`], {
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "inherit"],
+    });
+    const stdin = child.stdin;
+    const slot = Object.getOwnPropertySymbols(stdin).find(symbol => symbol.description === "kWriteStreamFastPath");
+    Object.defineProperty(stdin[slot], "end", { value: end });
+    const events = [];
+    for (const event of ["prefinish", "finish"]) stdin.on(event, () => events.push(event));
+    stdin.on("error", err => events.push(`error ${err.message}`));
+    const closed = new Promise(resolve => stdin.on("close", () => resolve(events.push("close"))));
+    return use(stdin, events, closed).finally(() => child.kill("SIGKILL"));
+  }
+
+  const failingEnds = {
+    "throws from": () => {
+      throw new Error("end failed");
+    },
+    "rejects from": () => Promise.reject(new Error("end failed")),
+  };
+  for (const [how, end] of Object.entries(failingEnds)) {
+    it(`end() reports a sink that ${how} its end()`, async () => {
+      const events = await withSinkEnd(end, async (stdin, events, closed) => {
+        stdin.end(err => events.push(`end callback ${err?.message}, destroyed ${stdin.destroyed}`));
+        await closed;
+        return events;
+      });
+      expect(events).toEqual(["end callback end failed, destroyed true", "error end failed", "close"]);
+    });
+  }
+
+  // The callbacks of a pending end() need no timer either. They run from a tick, not inside the
+  // promise job that the sink settles: a callback that throws is then an uncaughtException.
+  it("end() finishes when the pending end() of the sink settles", async () => {
+    const ended = Promise.withResolvers();
+    const events = await withSinkEnd(
+      () => ended.promise,
+      async (stdin, events, closed) => {
+        stdin.end(() => events.push("end callback"));
+        await new Promise(resolve => setImmediate(resolve));
+        events.push("the sink ends");
+        await withoutTimerGlobals(() => {
+          ended.resolve(0);
+          Promise.resolve().then(() => events.push("promise job"));
+          return closed;
+        });
+        return events;
+      },
+    );
+    expect(events).toEqual(["the sink ends", "promise job", "prefinish", "end callback", "finish", "close"]);
+  });
+
+  // While the sink still ends, the pipe is open and the stream keeps its sink: a destroy() finds
+  // it, and spawn() takes its fd. A FileSink has no fd number on Windows.
+  it.skipIf(isWindows)("a stdin whose sink is still ending is the stdio of another spawn", async () => {
+    const called = Promise.withResolvers();
+    const ended = Promise.withResolvers();
+    const events = await withSinkEnd(
+      () => {
+        called.resolve();
+        return ended.promise;
+      },
+      async (stdin, events, closed) => {
+        stdin.end();
+        await called.promise;
+        const writer = spawn("true", [], { stdio: ["ignore", stdin, "ignore"] });
+        const [code, signal] = await once(writer, "close");
+        events.push(`the writer exited ${code} ${signal}`);
+        ended.resolve(0);
+        await closed;
+        return events;
+      },
+    );
+    expect(events).toEqual(["the writer exited 0 null", "prefinish", "finish", "close"]);
+  });
+
   // A FileSink has no fd number on Windows: spawn() refuses every child.stdin there.
   it.skipIf(isWindows)("an ended stdin is the stdio of another spawn until _final has run", async () => {
     const first = spawn(
@@ -276,8 +422,8 @@ describe("child.stdin", () => {
       try {
         writer();
         resolve("spawned");
-      } catch (err) {
-        resolve(err.message);
+      } catch {
+        resolve("refused");
       }
     });
     // The stream is constructed by now, so end() calls _final at once. The sink ends a microtask
@@ -287,9 +433,7 @@ describe("child.stdin", () => {
     const inBlock = writer();
 
     expect(await once(inBlock, "close")).toEqual([0, null]);
-    expect(await fromPrefinish).toBe(
-      "Passing a stream.Readable without an underlying file descriptor as stdio[1] is not yet implemented in Bun",
-    );
+    expect(await fromPrefinish).toBe("refused");
     expect(await firstClosed).toEqual([0, null]);
     expect(stdout).toBe("ready\nend-of-file\n");
   });
@@ -320,8 +464,9 @@ describe("child.stdin", () => {
     }
   }
 
-  // The chunk is buffered, so the flush in _final is the write that fails. As for a failed write,
-  // the stream is destroyed before the callback runs.
+  // The sink holds a chunk of less than 4096 bytes (16384 on Apple Silicon) until a flush, so the
+  // flush in _final is the write that fails. As for a failed write, the stream is destroyed
+  // before the callback runs.
   it.skipIf(isWindows)("end() reports EPIPE when the child closed its stdin", async () => {
     const events = await withClosedStdin((stdin, events, done) => {
       stdin.on("close", done);
@@ -341,16 +486,29 @@ describe("child.stdin", () => {
   });
 
   // node destroys the stream here whatever autoDestroy says. bun reports the error and calls back.
+  // The place of the callback among the other events is not pinned: #45552 moves it.
   it.skipIf(isWindows)("end(cb) after a write() that failed calls back without autoDestroy", async () => {
     const events = await withClosedStdin((stdin, events, done) => {
       stdin._writableState.autoDestroy = false;
-      stdin.write(Buffer.alloc(64 * 1024, "x"), err => events.push(`write callback ${err?.code}`));
+      stdin.write(Buffer.alloc(64 * 1024, "x"));
       stdin.end(err => {
         events.push(`end callback ${err?.code}`);
         done();
       });
     });
-    expect(events).toEqual(["write callback EPIPE", "error EPIPE write", "end callback EPIPE"]);
+    expect(events.filter(event => event.startsWith("end callback"))).toEqual(["end callback EPIPE"]);
+  });
+
+  // The flush in _final is the write that fails. Nothing destroys the stream, so the callback
+  // runs first and then emits 'error', as before this _final: a listener that throws, or none,
+  // does not cost the caller the callback.
+  it.skipIf(isWindows)("end() calls back before 'error' when the flush fails without autoDestroy", async () => {
+    const events = await withClosedStdin((stdin, events, done) => {
+      stdin._writableState.autoDestroy = false;
+      stdin.on("error", done);
+      stdin.end("hello", err => events.push(`end callback ${err?.code}`));
+    });
+    expect(events).toEqual(["end callback EPIPE", "error EPIPE write"]);
   });
 
   // This passes without the _final of child.stdin too: it pins the error contract of a backlog.
@@ -385,12 +543,19 @@ describe("child.stdin", () => {
   // prints for the same fixture on POSIX.
   const fixture = join(import.meta.dir, "fixtures", "stdin-end-eof-fixture.js");
   async function reportOf(exe, ...groups) {
-    await using proc = Bun.spawn({ cmd: [exe, fixture, ...groups], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    using directory = tempDir("stdin-end-eof", {});
+    await using proc = Bun.spawn({
+      cmd: [exe, fixture, String(directory), ...groups],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { report: stdout.startsWith("{") ? JSON.parse(stdout) : stdout, stderr, exitCode };
   }
   const threw = ["prefinish", "uncaughtException", "close"];
   const finished = ["prefinish", "finish", "close"];
+  const destroyed = ["end callback ERR_STREAM_DESTROYED", "close"];
   const reports = {
     throws: {
       "end callback": { stdin: threw, stdout: "5", code: 0, signal: null },
@@ -407,7 +572,7 @@ describe("child.stdin", () => {
       "'prefinish' listener, after a backlog": {
         stdin: threw,
         backedUp: true,
-        stdout: "1048576",
+        stdout: "the backlog",
         code: 0,
         signal: null,
       },
@@ -428,6 +593,28 @@ describe("child.stdin", () => {
         code: 0,
         signal: null,
       },
+      "end callback waits for the child, after a write and a backlog": {
+        stdin: finished,
+        backedUp: true,
+        childReachedEndOfFile: true,
+        stdout: "",
+        code: 0,
+        signal: null,
+      },
+      "the block of write(line) and end() waits for the child": {
+        stdin: finished,
+        childReadTheLine: true,
+        stdout: "",
+        code: 0,
+        signal: null,
+      },
+    },
+    destroys: {
+      "end(cb), destroy()": { stdin: destroyed, stdout: "0", code: 0, signal: null },
+      "write(), end(cb), destroy()": { stdin: destroyed, stdout: "3", code: 0, signal: null },
+      "end(chunk, cb), destroy()": { stdin: destroyed, stdout: "5", code: 0, signal: null },
+      "end(chunk, cb), destroy() on the next tick": { stdin: destroyed, stdout: "5", code: 0, signal: null },
+      "end(chunk, cb), destroy() in a promise job": { stdin: destroyed, stdout: "5", code: 0, signal: null },
     },
   };
   // node calls the end() callback before it destroys the stream, so the throw costs node the
@@ -446,7 +633,7 @@ describe("child.stdin", () => {
     expect(await reportOf(bunExe(), "throws")).toEqual({ report: reports.throws, stderr: "", exitCode: 0 });
   });
 
-  // The cells stop the child with SIGSTOP while the parent writes.
+  // The child of a backlog cell opens a fifo before it reads: the fixture needs mkfifo and sh.
   it.skipIf(isWindows)("end() gives the child end-of-file when a finish callback throws after a backlog", async () => {
     expect(await reportOf(bunExe(), "backlog", "fails")).toEqual({
       report: { ...reports.backlog, ...fails },
@@ -458,6 +645,11 @@ describe("child.stdin", () => {
   // The children of these cells are sh and cat.
   it.skipIf(isWindows)("the child reads end-of-file while the end() callback waits for it", async () => {
     expect(await reportOf(bunExe(), "wait")).toEqual({ report: reports.wait, stderr: "", exitCode: 0 });
+  });
+
+  // Not on Windows: what node prints there is not known.
+  it.skipIf(isWindows)("destroy() in the turn of end() gives no 'finish'", async () => {
+    expect(await reportOf(bunExe(), "destroys")).toEqual({ report: reports.destroys, stderr: "", exitCode: 0 });
   });
 
   // Not on Windows: what node prints there is not known.

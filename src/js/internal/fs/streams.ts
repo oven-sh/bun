@@ -45,6 +45,8 @@ const kIoDone = Symbol("kIoDone");
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
+// Read when this module loads, as fs.ts reads nextTick: fake timers that replace the global later do not hold back 'finish' and 'close'.
+const queueMicrotaskGlobal = globalThis.queueMicrotask;
 
 const {
   read: fileHandlePrototypeRead,
@@ -355,8 +357,8 @@ function close(stream, err, cb) {
   }
 
   if (!stream.fd) {
-    // finalEndSink ended the sink: 'close' comes a loop turn after 'finish', as from node's handle.close() https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L346-L350
-    if (fastPath === false) setImmediate(cb, err);
+    // finalEndSink ended the sink: 'close' waits for the promise jobs that 'finish' queued, so an `await` of 'close' behind one of 'finish' gets it. node's comes later still, from handle.close() https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L346-L350
+    if (fastPath === false) queueMicrotaskGlobal(() => cb(err));
     else cb(err);
   } else if (stream.flush) {
     stream[kFs].fsync(stream.fd, flushErr => {
@@ -662,43 +664,58 @@ function finalFast(this: FSStream, cb: (err?: any) => void) {
   cb(null);
 }
 
-// child.stdin's _final ends the sink as node's shuts the pipe down: before 'prefinish', the end() callback and 'finish' https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L536-L558
+// child.stdin's _final ends the sink before 'prefinish', the end() callback and 'finish'. On POSIX node shuts the pipe down there https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L536-L558
 function finalEndSink(this: FSStream, cb: (err?: any) => void) {
-  // Not inside end(): libuv waits for the event loop too. A write() that failed in the caller's block has errored the stream before this microtask runs.
-  queueMicrotask(() => {
-    const errored = this._writableState!.errored;
-    if (errored) {
-      process.nextTick(cb, errored);
-      return;
-    }
-    const sink = this[kWriteStreamFastPath];
-    finalFast.$call(this, err => {
+  // The flush stays inside end(), where finalFast has it: after write(x); end() the bytes are on the pipe. The close waits one microtask: libuv waits for the event loop too, and a write() that failed in the caller's block has errored the stream by then.
+  flushSink(this, err => {
+    queueMicrotaskGlobal(() => {
+      const errored = this._writableState!.errored;
+      if (errored) return cb(errored);
       if (err) failFinal(this, err, cb);
-      else if (!sink || sink === true) process.nextTick(cb, null);
-      else endSink(this, sink, cb);
+      else endSink(this, cb);
     });
   });
 }
 
-function endSink(stream: FSStream, sink: FileSink, cb: (err?: any) => void) {
-  // The ended sink still reports its fd number: _destroy, close() and streamFdOf() must see no sink.
-  stream[kWriteStreamFastPath] = false;
-  const ended = sink.end();
+// The promise of a flush can settle with bytes still in the sink (#45318). end() would then wait for them and call back before it closes the pipe: flush again until a flush has nothing to wait for.
+function flushSink(stream: FSStream, cb: (err?: any) => void) {
+  let waited = false;
+  finalFast.$call(stream, err => {
+    if (err || !waited) cb(err);
+    else flushSink(stream, cb);
+  });
+  waited = true;
+}
+
+function endSink(stream: FSStream, cb: (err?: any) => void) {
+  let ended;
+  try {
+    ended = (stream[kWriteStreamFastPath] as FileSink).end();
+  } catch (err) {
+    failFinal(stream, err, cb);
+    return;
+  }
+  // A sink that still has bytes to push stays in the slot, where a destroy() finds it. The callback leaves the promise job through a tick: a listener that throws there would be an unhandled rejection.
   if ($isPromise(ended)) {
-    // The sink still has bytes to push and settles this promise just before it closes the pipe: setImmediate runs after that close.
-    ended.then(
-      () => setImmediate(cb, null),
+    ended.$then(
+      () => process.nextTick(sinkEnded, stream, cb),
       err => failFinal(stream, err, cb),
     );
   } else {
-    process.nextTick(cb, null);
+    sinkEnded(stream, cb);
   }
 }
 
-// A flush that fails is a write that failed: node destroys the stream before the end() callback runs.
+// The ended sink still reports its fd number: _destroy, close() and streamFdOf() must see no sink.
+function sinkEnded(stream: FSStream, cb: (err?: any) => void) {
+  stream[kWriteStreamFastPath] = false;
+  cb(null);
+}
+
+// A flush that fails is a write that failed: node destroys the stream before the end() callback runs. Without autoDestroy nothing is emitted here: the callback comes first and emits 'error' itself, as it did before this _final.
 function failFinal(stream: FSStream, err: any, cb: (err?: any) => void) {
-  require("internal/streams/destroy").errorOrDestroy(stream, err);
   process.nextTick(cb, err);
+  require("internal/streams/destroy").errorOrDestroy(stream, err, true);
 }
 
 // This function implementation is not correct.

@@ -187,9 +187,10 @@ impl ClientSession {
                 continue;
             }
             // The consumer can be paused again by the time this runs.
-            let paused = client.signals.is_receive_paused();
-            if let Some(qs) = stream.qstream_mut() {
-                qs.hold_window(paused);
+            if !client.signals.is_receive_paused() {
+                if let Some(qs) = stream.qstream_mut() {
+                    qs.resume();
+                }
             }
             return true;
         }
@@ -229,8 +230,8 @@ impl ClientSession {
             if abort || !request_body_done {
                 qs.reset();
             } else {
-                // Trailers and the FIN still arrive on this stream, and nothing else releases it.
-                qs.hold_window(false);
+                // Trailers and the FIN still arrive on this stream, and nothing else resumes it.
+                qs.resume();
             }
         }
         st.qstream = None;
@@ -328,7 +329,8 @@ impl ClientSession {
         false
     }
 
-    /// Runs from inside lsquic's process_conns via on_stream_{headers,data,close}.
+    /// Runs from on_stream_{headers,data,close}: inside lsquic's process_conns, or for
+    /// parked bytes as callbacks.rs says.
     /// `done` = the lsquic stream is gone; deliver whatever is buffered then
     /// detach. Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
     /// machine sees the same call sequence regardless of transport.

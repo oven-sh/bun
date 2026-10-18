@@ -827,16 +827,99 @@ describe("aborted upload", () => {
   });
 });
 
-// A body that nothing reads pauses its stream at 256 KiB (BODY_HIGH_WATER_MARK). The pause holds
-// the stream's flow-control window (6 MiB) and the client keeps reading, so nothing waits in the
-// QUIC engine: bytes there are lost with the connection, and they hold the connection's window.
+// A body that nothing reads pauses its stream at 256 KiB (BODY_HIGH_WATER_MARK). The client
+// keeps reading a paused stream and parks what it reads, so nothing waits in the QUIC engine:
+// bytes there are lost with the connection, and they hold the connection's window. The parked
+// bytes count against the stream's flow-control window (6 MiB). A complete body does not wait
+// for a reader.
 describe("a paused response body", () => {
   const MiB = 1024 * 1024;
   const turn = () => new Promise(resolve => setImmediate(resolve));
 
+  // Bytes that say where they are: each 32-bit word holds its own index. A body that arrives
+  // in another order is another body.
+  function ordered(offset: number, length: number) {
+    const words = new Uint32Array(length / 4);
+    for (let i = 0; i < words.length; i++) words[i] = offset / 4 + i;
+    return Buffer.from(words.buffer);
+  }
+
+  // A node:quic origin, for a stream that the test can watch from the sending side. `/hello`
+  // answers "hello". Any other path answers with as many bytes as its number says, one piece
+  // per turn of the event loop, and its stream goes into `streams`. With `trailers`, the test
+  // ends that stream itself.
+  async function pacedOrigin({ contentLength = false, trailers = 0 } = {}) {
+    const piece = 64 * 1024;
+    const streams = new Map<string, any>();
+    const origin = await listen(
+      async (session: any) => {
+        session.onstream = (stream: any) => stream.closed.catch(() => {});
+        await session.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+        transportParams: { maxIdleTimeout: 5 },
+        async onheaders(this: any, received: NodeJS.Dict<string | string[]>) {
+          const path = received[":path"] as string;
+          if (path === "/hello") {
+            this.sendHeaders({ ":status": "200" });
+            this.writer.writeSync(new TextEncoder().encode("hello"));
+            this.writer.endSync();
+            return;
+          }
+          streams.set(path, this);
+          const size = parseInt(path.slice(1));
+          this.sendHeaders({ ":status": "200", ...(contentLength && { "content-length": String(size) }) });
+          for (let offset = 0; offset < size; offset += piece) {
+            const part = ordered(offset, Math.min(piece, size - offset));
+            // A stream whose flow control is closed is offered the same piece on the next turn.
+            do await turn();
+            while (!this.destroyed && !this.writer.writeSync(part));
+            if (this.destroyed) return;
+          }
+          if (!trailers) this.writer.endSync();
+        },
+        // Only with trailers to send: a stream that is asked for them does not end without them.
+        ...(trailers && {
+          onwanttrailers(this: any) {
+            const fields: Record<string, string> = {};
+            for (let i = 0; i < trailers; i += 1024)
+              fields[`x-trailer-${i / 1024}`] = Buffer.alloc(1024, "t").toString();
+            this.sendTrailers(fields);
+          },
+        }),
+      } as any,
+    );
+    return {
+      url: `https://127.0.0.1:${origin.address!.port}`,
+      streams,
+      // Not close(): it waits for the session that fetch() keeps in its pool.
+      [Symbol.asyncDispose]: () => origin.destroy(),
+    };
+  }
+
+  // What arrived, in a form that a failed expectation can print.
+  function seen(chunks: Uint8Array[]) {
+    const bytes = Buffer.concat(chunks);
+    return { length: bytes.length, sha: Bun.SHA256.hash(bytes, "hex") };
+  }
+
+  // A request that the origin answers is one sample. Three that find the stream at the same
+  // offset: the origin has stopped. Returns that offset.
+  async function stopped(origin: { url: string }, stream: any) {
+    let sent = -1n;
+    for (let still = 0; still < 3;) {
+      await (await fetch(`${origin.url}/hello`, h3)).text();
+      const now: bigint = stream.stats.bytesSent;
+      still = now === sent ? still + 1 : 0;
+      sent = now;
+    }
+    return Number(sent);
+  }
+
   describe("arrives whole and outlives its server", () => {
     // Past the mark, so the client pauses. Within the stream window, so the server sends all.
-    const body = Buffer.alloc(2 * MiB, "abcdefghijklmnop");
+    const body = ordered(0, 2 * MiB);
     // Stored blocks: about as many bytes on the wire, and the decoder still runs over each.
     const gzipped = gzipSync(body, { level: 0 });
     const gzip = { "content-encoding": "gzip" };
@@ -879,63 +962,68 @@ describe("a paused response body", () => {
     });
   });
 
+  // Each of these has 2 MiB that nothing reads: past the mark, and within the stream window.
+  // The origin leaves the stream open, so the body is not complete.
+  describe("that is not complete", () => {
+    const size = 2 * MiB;
+    const whole = seen([ordered(0, size)]);
+
+    async function unread(origin: Awaited<ReturnType<typeof pacedOrigin>>) {
+      const res = await fetch(`${origin.url}/${size}`, h3);
+      const stream = origin.streams.get(`/${size}`);
+      const sent = await stopped(origin, stream);
+      return { res, stream, sent };
+    }
+
+    test("stays out of the Response past the mark until a reader takes it", async () => {
+      await using origin = await pacedOrigin({ trailers: 1024 });
+      const { res, stream, sent } = await unread(origin);
+      const reader = res.body!.getReader();
+      // All that the Response took with nothing reading it.
+      const chunks = [(await reader.read()).value!];
+      const taken = chunks[0].length;
+      stream.writer.endSync();
+      for (let next; !(next = await reader.read()).done;) chunks.push(next.value);
+
+      expect({
+        sent,
+        // The 256 KiB mark, and the 16 KiB read that crossed it.
+        taken: taken <= (256 + 16) * 1024,
+        body: seen(chunks),
+      }).toEqual({ sent: size, taken: true, body: whole });
+    });
+
+    test("arrives in order: a part when its reader comes back, the rest when the stream ends", async () => {
+      await using origin = await pacedOrigin({ trailers: 1024 });
+      const { res, stream } = await unread(origin);
+      const reader = res.body!.getReader();
+      // The first read takes what the Response had. The second takes bytes that the client
+      // parked. The reader then stops again, with more of them still parked.
+      const chunks = [(await reader.read()).value!, (await reader.read()).value!];
+      await stopped(origin, stream);
+      // The end of the stream hands over the rest.
+      stream.writer.endSync();
+      for (let next; !(next = await reader.read()).done;) chunks.push(next.value);
+
+      expect(seen(chunks)).toEqual(whole);
+    });
+  });
+
+  test("is complete at its content-length, on a stream that its origin leaves open", async () => {
+    await using origin = await pacedOrigin({ contentLength: true, trailers: 1024 });
+    const size = 2 * MiB;
+    const { streams } = liveCounts();
+    const res = await fetch(`${origin.url}/${size}`, h3);
+    // The request is complete with no reader, and with no end of the stream.
+    while (liveCounts().streams > streams) await turn();
+    origin.streams.get(`/${size}`).writer.endSync();
+
+    expect(seen([await res.bytes()])).toEqual(seen([ordered(0, size)]));
+  });
+
   // The stream window is 6 MiB, so each of these moves 6 MiB or more. A debug build takes 1 to
   // 5 s for that, and the default timeout is 5 s.
   describe.skipIf(isDebug)("of 6 MiB and more", () => {
-    // A node:quic origin, for a stream that the test can watch from the sending side. `/hello`
-    // answers "hello". Any other path answers with as many bytes as its number says, one piece
-    // per turn of the event loop, and its stream goes into `streams`. With `trailers`, the test
-    // ends that stream itself.
-    async function pacedOrigin({ contentLength = false, trailers = 0 } = {}) {
-      const piece = Buffer.alloc(64 * 1024, "abcdefghijklmnop");
-      const streams = new Map<string, any>();
-      const origin = await listen(
-        async (session: any) => {
-          session.onstream = (stream: any) => stream.closed.catch(() => {});
-          await session.closed.catch(() => {});
-        },
-        {
-          sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
-          transportParams: { maxIdleTimeout: 5 },
-          async onheaders(this: any, received: NodeJS.Dict<string | string[]>) {
-            const path = received[":path"] as string;
-            if (path === "/hello") {
-              this.sendHeaders({ ":status": "200" });
-              this.writer.writeSync(new TextEncoder().encode("hello"));
-              this.writer.endSync();
-              return;
-            }
-            streams.set(path, this);
-            const size = parseInt(path.slice(1));
-            this.sendHeaders({ ":status": "200", ...(contentLength && { "content-length": String(size) }) });
-            for (let offset = 0; offset < size; offset += piece.length) {
-              const part = piece.subarray(0, Math.min(piece.length, size - offset));
-              // A stream whose flow control is closed is offered the same piece on the next turn.
-              do await turn();
-              while (!this.destroyed && !this.writer.writeSync(part));
-              if (this.destroyed) return;
-            }
-            if (!trailers) this.writer.endSync();
-          },
-          // Only with trailers to send: a stream that is asked for them does not end without them.
-          ...(trailers && {
-            onwanttrailers(this: any) {
-              const fields: Record<string, string> = {};
-              for (let i = 0; i < trailers; i += 1024)
-                fields[`x-trailer-${i / 1024}`] = Buffer.alloc(1024, "t").toString();
-              this.sendTrailers(fields);
-            },
-          }),
-        } as any,
-      );
-      return {
-        url: `https://127.0.0.1:${origin.address!.port}`,
-        streams,
-        // Not close(): it waits for the session that fetch() keeps in its pool.
-        [Symbol.asyncDispose]: () => origin.destroy(),
-      };
-    }
-
     test("lets the origin end the stream once its content-length is in", async () => {
       // The body ends 16 KiB under the stream window, and the trailers cross it.
       await using origin = await pacedOrigin({ contentLength: true, trailers: 32 * 1024 });
@@ -986,6 +1074,66 @@ describe("a paused response body", () => {
       const sibling = await (await fetch(`${origin.url}/hello`, h3)).text();
       const lengths = await Promise.all(held.map(async res => (await res.bytes()).length));
       expect({ sibling, lengths }).toEqual({ sibling: "hello", lengths: [size, size, size] });
+    });
+
+    test("lets its origin send on once a stalled sink has taken half of the stream window", async () => {
+      await using origin = await pacedOrigin();
+      const size = 16 * MiB;
+      const res = await fetch(`${origin.url}/${size}`, h3);
+      const stream = origin.streams.get(`/${size}`);
+      const taken = Promise.withResolvers<string>();
+      // A process that takes nothing from its stdin until it is told to. Then it takes 4 MiB,
+      // says so, and reads no more.
+      await using sink = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const fs = require("fs"), piece = Buffer.alloc(65536);
+           process.on("message", () => {
+             for (let taken = 0; taken < ${4 * MiB}; ) taken += fs.readSync(0, piece);
+             process.send("taken");
+           });`,
+        ],
+        env: bunEnv,
+        stdin: res.body!,
+        stdout: "inherit",
+        stderr: "inherit",
+        ipc: message => taken.resolve(message),
+      });
+      // The sink is full: the origin stops at the stream window.
+      const first = await stopped(origin, stream);
+      sink.send("take");
+      const told = await taken.promise;
+      // The rest of that window is still on its way to the sink. The origin does not wait for it.
+      const second = await stopped(origin, stream);
+
+      expect({ told, first: Math.ceil(first / MiB), sentOn: second > first }).toEqual({
+        told: "taken",
+        first: 6,
+        sentOn: true,
+      });
+    });
+
+    test("moves its origin's limit by half of the stream window", async () => {
+      await using origin = await pacedOrigin();
+      const size = 16 * MiB;
+      const res = await fetch(`${origin.url}/${size}`, h3);
+      const stream = origin.streams.get(`/${size}`);
+      // Nothing reads: the origin stops at the stream window.
+      const first = await stopped(origin, stream);
+      const reader = res.body!.getReader();
+      let taken = 0;
+      while (taken < 3.5 * MiB) taken += (await reader.read()).value!.length;
+      // The reader has more than half of that window, and it stalls here.
+      const second = await stopped(origin, stream);
+      await reader.cancel();
+
+      expect({
+        first: Math.ceil(first / MiB),
+        sentOn: second > first,
+        // Half of the window, and what was on its way to the reader when it stalled.
+        step: second - first <= 4 * MiB,
+      }).toEqual({ first: 6, sentOn: true, step: true });
     });
   });
 });

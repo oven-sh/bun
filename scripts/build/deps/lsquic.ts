@@ -137,7 +137,8 @@ export const lsquic: Dependency = {
     // lsquic_stream_hold_window(): receive backpressure that keeps reading a
     // stream and stops its receive limit. Data left in a stream by
     // lsquic_stream_wantread(s, 0) also holds the connection's window and is
-    // dropped with the connection.
+    // dropped with the connection. lsquic_stream_set_unread(): the limit of a
+    // held stream follows what the reader of those bytes has consumed.
     "patches/lsquic/hold-stream-window.patch",
   ],
 

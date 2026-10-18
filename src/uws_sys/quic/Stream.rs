@@ -25,7 +25,8 @@ unsafe extern "C" {
     safe fn us_quic_stream_ext(s: &mut Stream) -> *mut c_void;
     fn us_quic_stream_write(s: *mut Stream, data: *const u8, len: c_uint) -> c_int;
     safe fn us_quic_stream_want_write(s: &mut Stream, want: c_int);
-    safe fn us_quic_stream_hold_window(s: &mut Stream, hold: c_int);
+    safe fn us_quic_stream_pause(s: &mut Stream, left: u64);
+    safe fn us_quic_stream_resume(s: &mut Stream);
     fn us_quic_stream_send_headers(
         s: *mut Stream,
         h: *const Header,
@@ -89,9 +90,14 @@ impl Stream {
         us_quic_stream_want_write(self, want as c_int)
     }
 
-    /// Receive backpressure: `lsquic_stream_hold_window()` in lsquic.h.
-    pub fn hold_window(&mut self, hold: bool) {
-        us_quic_stream_hold_window(self, hold as c_int)
+    /// Receive backpressure: see `us_quic_stream_pause` in quic.h. `left`: the body is
+    /// complete with this many more bytes (0: not known).
+    pub fn pause(&mut self, left: u64) {
+        us_quic_stream_pause(self, left)
+    }
+
+    pub fn resume(&mut self) {
+        us_quic_stream_resume(self)
     }
 
     pub fn send_headers(&mut self, headers: &[Header], end_stream: bool) -> c_int {

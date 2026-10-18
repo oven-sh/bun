@@ -132,8 +132,13 @@ void us_quic_socket_context_on_stream_close(us_quic_socket_context_t *ctx,
 /* Stream I/O. Read happens via on_stream_data; write returns bytes accepted
  * (may be < len under flow-control backpressure). */
 int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len);
-/* Receive backpressure: lsquic_stream_hold_window() in lsquic.h. */
-void us_quic_stream_hold_window(us_quic_stream_t *s, int hold);
+/* Receive backpressure. No on_stream_data runs from pause until resume: what
+ * the stream reads meanwhile is parked, one stream window of it at most.
+ * resume hands it over from the loop's next tick. A complete message does not
+ * wait for resume: FIN, trailers, and `left` more bytes (how many the message
+ * still has, 0 when that is not known) each hand over all that is parked. */
+void us_quic_stream_pause(us_quic_stream_t *s, unsigned long long left);
+void us_quic_stream_resume(us_quic_stream_t *s);
 void us_quic_stream_want_write(us_quic_stream_t *s, int want);
 int us_quic_stream_send_headers(us_quic_stream_t *s,
     const struct us_quic_header_t *headers, unsigned int count, int end_stream);

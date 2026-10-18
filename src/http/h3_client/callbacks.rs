@@ -4,6 +4,9 @@
 //! `ClientSession` / `Stream` from the ext slot and forwards into the
 //! corresponding session/stream method so the protocol logic stays in
 //! `client_session.rs` / `encode.rs`.
+//!
+//! `on_stream_data` has one more caller in quic.c, for the bytes that a paused
+//! stream parked: the loop's next tick after `quic::Stream::resume`.
 
 use core::ffi::{c_int, c_uint};
 use core::ptr::NonNull;
@@ -278,11 +281,14 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
         return;
     }
     let Some(client) = stream.client else { return };
-    s.hold_window(
-        super::client_session::client_mut(client)
-            .signals
-            .is_receive_paused(),
-    );
+    let client = super::client_session::client_mut(client);
+    if client.signals.is_receive_paused() {
+        // A body that is complete at its content-length does not wait for its reader.
+        let left = client.state.content_length.map_or(0, |length| {
+            length.saturating_sub(client.state.total_body_received)
+        });
+        s.pause(left as u64);
+    }
 }
 
 extern "C" fn on_stream_writable(s: *mut quic::Stream) {

@@ -1,6 +1,6 @@
 --- a/include/lsquic.h
 +++ b/include/lsquic.h
-@@ -1758,6 +1758,23 @@
+@@ -1758,6 +1758,36 @@
  lsquic_stream_wantread (lsquic_stream_t *s, int is_want);
  
  /**
@@ -21,6 +21,19 @@
 +lsquic_stream_hold_window (lsquic_stream_t *s, int hold);
 +
 +/**
++ * bun: the application still has `unread` of the bytes that it read from a
++ * stream whose window it holds.  The stream's window counts them as it counts
++ * the bytes that wait in the stream: the receive limit is one window past
++ * what the application has consumed, and it moves when less than half a
++ * window is left.  The connection's window does not count them.
++ *
++ * A held stream's limit moves only here.  The application calls this as it
++ * consumes what it read while it held the window.
++ */
++void
++lsquic_stream_set_unread (lsquic_stream_t *s, uint64_t unread);
++
++/**
   * Read up to @param len bytes from stream into @param buf.  Returns number
   * of bytes read or -1 on error, in which case errno is set.  Possible
   * errno values:
@@ -34,6 +47,19 @@
      lsquic_stream_id_t  sf_stream_id;       /* Used for logging */
  } lsquic_sfcw_t;
  
+@@ -35,6 +36,12 @@
+ int
+ lsquic_sfcw_fc_offsets_changed (lsquic_sfcw_t *);
+ 
++/* bun: the same for a held window whose owner still has `unread` of the
++ * bytes that were read.
++ */
++int
++lsquic_sfcw_fc_unread_changed (lsquic_sfcw_t *, uint64_t unread);
++
+ static inline uint64_t
+ lsquic_sfcw_get_fc_recv_off (const lsquic_sfcw_t *fc)
+ {
 --- a/src/liblsquic/lsquic_sfcw.c
 +++ b/src/liblsquic/lsquic_sfcw.c
 @@ -94,6 +94,10 @@
@@ -47,9 +73,32 @@
      if (fc->sf_recv_off - fc->sf_read_off >= fc->sf_max_recv_win / 2)
      {
          LSQ_DEBUG("recv_off has not changed, still at %"PRIu64,
+@@ -116,6 +120,22 @@
+ }
+ 
+ 
++/* bun: lsquic_stream_set_unread() */
++int
++lsquic_sfcw_fc_unread_changed (struct lsquic_sfcw *fc, uint64_t unread)
++{
++    const unsigned hold = fc->sf_hold;
++    int changed;
++
++    fc->sf_hold = 0;
++    fc->sf_read_off -= unread;
++    changed = lsquic_sfcw_fc_offsets_changed(fc);
++    fc->sf_read_off += unread;
++    fc->sf_hold = hold;
++    return changed;
++}
++
++
+ int
+ lsquic_sfcw_set_max_recv_off (struct lsquic_sfcw *fc, uint64_t max_recv_off)
+ {
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
-@@ -1524,6 +1524,20 @@
+@@ -1524,6 +1524,38 @@
  }
  
  
@@ -64,6 +113,24 @@
 +     * update would take the unread bytes' credit from the connection. */
 +    if (!hold && !(stream->stream_flags & (STREAM_RST_RECVD|STREAM_U_READ_DONE)))
 +        stream_consumed_bytes(stream);
++}
++
++
++/* bun: see lsquic.h */
++void
++lsquic_stream_set_unread (struct lsquic_stream *stream, uint64_t unread)
++{
++    /* A stream whose final size is known needs no update. */
++    if (!(stream->stream_flags & (STREAM_FIN_RECVD|STREAM_RST_RECVD
++                                                    |STREAM_U_READ_DONE))
++            && lsquic_sfcw_fc_unread_changed(&stream->fc, unread))
++    {
++        if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
++            TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
++                                                            next_send_stream);
++        stream->sm_qflags |= SMQF_SEND_WUF;
++        maybe_conn_to_tickable_if_writeable(stream, 1);
++    }
 +}
 +
 +

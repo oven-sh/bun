@@ -2,7 +2,7 @@ import type { ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls } from "harness";
 import { once } from "node:events";
 import type { SocketAddress } from "node:net";
 import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
@@ -1680,15 +1680,24 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
   });
 
   // A request body that no handler reads pauses its stream: at 256 KiB before a handler asks
-  // for it, at 1 MiB behind a reader that stalls. The pause holds the stream's flow-control
-  // window and the server keeps reading, so nothing waits in the QUIC engine: bytes there are
-  // lost with the connection, and they hold the connection's window.
+  // for it, at 1 MiB behind a reader that stalls. The server keeps reading a paused stream and
+  // parks what it reads, so nothing waits in the QUIC engine: bytes there are lost with the
+  // connection, and they hold the connection's window. The parked bytes count against the
+  // stream's flow-control window. A complete body does not wait for a reader.
   describe("a paused request body", () => {
     // Bun.serve's HTTP/3 stream window (lsquic's default for a server).
     const window = 1024 * 1024;
     const turn = () => new Promise(resolve => setImmediate(resolve));
     type Session = Awaited<ReturnType<typeof connect>>;
     type Stream = Awaited<ReturnType<Session["createBidirectionalStream"]>>;
+
+    // Bytes that say where they are: each 32-bit word holds its own index. A body that arrives
+    // in another order is another body.
+    function ordered(length: number) {
+      const words = new Uint32Array(length / 4);
+      for (let i = 0; i < words.length; i++) words[i] = i;
+      return Buffer.from(words.buffer);
+    }
 
     async function session(port: number, endpoint: QuicEndpoint) {
       const client = await connect(`127.0.0.1:${port}`, {
@@ -1733,6 +1742,19 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       }
       return body;
     };
+
+    // A request that the server answers is one sample. Three that find the stream at the same
+    // offset: its client has stopped. Returns that offset.
+    async function stopped(client: Session, stream: Stream) {
+      let sent = -1n;
+      for (let still = 0; still < 3;) {
+        await text(await client.createBidirectionalStream({ headers: requestHeaders("/hello") }));
+        const now = stream.stats.bytesSent;
+        still = now === sent ? still + 1 : 0;
+        sent = now;
+      }
+      return Number(sent);
+    }
 
     // HTTP/2's twin is "request body: stream window stays at the initial 64 KB until the
     // handler reads, then opens" in serve-http2.test.ts.
@@ -1782,7 +1804,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     test("arrives whole when its reader stalls, and outlives its connection", async () => {
       // Past the mark, and within the half window (512 KiB) that a held stream can always
       // still take.
-      const body = Buffer.alloc(1408 * 1024, "abcdefghijklmnop");
+      const body = ordered(1408 * 1024);
       const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
       const seen = Promise.withResolvers<{ length: number; sha: string } | { name: string }>();
       await using server = Bun.serve({
@@ -1814,6 +1836,103 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       client.close({ type: "application", code: 0x100 }).catch(() => {});
 
       expect(await seen.promise).toEqual({ length: body.length, sha: sha(body) });
+    });
+
+    test("stays out of the request past the mark until a reader takes it, and arrives in order", async () => {
+      const body = ordered(window + window / 2);
+      const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+      const start = Promise.withResolvers<void>();
+      const first = Promise.withResolvers<number>();
+      await using server = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        http1: false,
+        routes: {
+          "/hello": () => new Response("hello"),
+          "/held": async req => {
+            await start.promise;
+            const reader = req.body!.getReader();
+            // All that the request took with nothing reading it.
+            const chunks = [(await reader.read()).value!];
+            first.resolve(chunks[0].length);
+            for (let next; !(next = await reader.read()).done;) chunks.push(next.value);
+            const bytes = Buffer.concat(chunks);
+            return Response.json({ length: bytes.length, sha: sha(bytes) });
+          },
+        },
+      });
+
+      await using endpoint = new QuicEndpoint();
+      const client = await session(server.port!, endpoint);
+      const held = await post(client, "/held");
+      const sending = send([held], body);
+      // Nothing reads: the client stops at the first window.
+      const parked = await stopped(client, held);
+      start.resolve();
+      const taken = await first.promise;
+      const seen = JSON.parse(await text(held));
+      await sending;
+      if (!client.destroyed) client.close().catch(() => {});
+
+      expect({
+        // In units of 64 KiB: all of the first window, and nothing past it.
+        parked: Math.ceil(parked / (64 * 1024)),
+        // The 256 KiB mark, and the 16 KiB read that crossed it.
+        taken: taken <= (256 + 16) * 1024,
+        seen,
+      }).toEqual({ parked: 16, taken: true, seen: { length: body.length, sha: sha(body) } });
+    });
+
+    // This moves 3 MiB and stops three times. A debug build takes 2 to 5 s for that, and the
+    // default timeout is 5 s.
+    test.skipIf(isDebug)("keeps its client within three windows of a reader that stalls", async () => {
+      // More than the client can send while the reader stalls.
+      const body = Buffer.alloc(6 * window, "abcdefghijklmnop");
+      const reads = [1, 2].map(() => ({ go: Promise.withResolvers<void>(), taken: Promise.withResolvers<number>() }));
+      const finish = Promise.withResolvers<void>();
+      await using server = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        http1: false,
+        routes: {
+          "/hello": () => new Response("hello"),
+          "/held": async req => {
+            let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+            let taken = 0;
+            // One read each time the client has stopped. The reader stalls after each.
+            for (const read of reads) {
+              await read.go.promise;
+              reader ??= req.body!.getReader();
+              taken += (await reader.read()).value!.length;
+              read.taken.resolve(taken);
+            }
+            await finish.promise;
+            return new Response();
+          },
+        },
+      });
+
+      await using endpoint = new QuicEndpoint();
+      const client = await session(server.port!, endpoint);
+      const held = await post(client, "/held");
+      const sending = send([held], body);
+      let ahead = await stopped(client, held);
+      for (const read of reads) {
+        read.go.resolve();
+        const taken = await read.taken.promise;
+        ahead = (await stopped(client, held)) - taken;
+      }
+      held.writer.fail();
+      finish.resolve();
+      await sending;
+      if (!client.destroyed) client.close().catch(() => {});
+
+      // What the reader left: one chunk that its stream took ahead of it, what the stream then
+      // took behind that chunk, and what the server parked. Each is 1 MiB at most, and the
+      // 64 KiB is for the reads that crossed those marks.
+      expect(ahead).toBeLessThanOrEqual(3 * window + 64 * 1024);
     });
 
     test("that its client resets aborts its own request only", async () => {

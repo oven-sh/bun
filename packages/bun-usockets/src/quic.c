@@ -90,6 +90,9 @@ struct us_quic_socket_context_s {
     void (*on_stream_writable)(us_quic_stream_t *);
     void (*on_stream_close)(us_quic_stream_t *);
 
+    /* Streams that us_quic_stream_resume left with parked bytes to hand over. */
+    struct us_quic_stream_s *resumed;
+
     char read_buf[US_QUIC_READ_BUF];
     /* ext follows */
 };
@@ -117,6 +120,19 @@ struct us_quic_socket_s {
     /* ext follows */
 };
 
+/* What a paused stream read and on_stream_data has not seen: buf[off, len).
+ * See "receive pause" below. */
+struct us_quic_park {
+    char *buf;
+    unsigned int off, len, cap;
+    int paused;
+    /* On ctx->resumed. */
+    int resumed;
+    struct us_quic_stream_s *next_resumed;
+    /* The consumer's message is complete with this many more bytes. 0: not known. */
+    unsigned long long left;
+};
+
 struct us_quic_stream_s {
     lsquic_stream_t *stream;
     us_quic_socket_context_t *ctx;
@@ -124,6 +140,8 @@ struct us_quic_stream_s {
     int fin_delivered;
     /* Set by us_quic_flush_from_on_write, cleared by on_write. */
     int flush_on_write;
+    /* NULL until the first us_quic_stream_pause. */
+    struct us_quic_park *park;
     /* ext follows */
 };
 
@@ -155,6 +173,7 @@ static void us_quic_on_timer(struct us_timer_t *t) {
 #endif
 
 static void us_quic_after_engine_call(us_quic_socket_context_t *ctx);
+static void us_quic_unpark_resumed(us_quic_socket_context_t *ctx);
 
 /* lsquic forbids entering the engine from a callback it made. Every engine
  * call that can make callbacks sits between this pair. */
@@ -174,11 +193,19 @@ void us_quic_loop_process(struct us_loop_t *loop) {
     for (us_quic_socket_context_t *ctx = loop->data.quic_head; ctx; ctx = ctx->next) {
         if (!us_quic_engine_enter(ctx)) continue;
         ctx->pending_write_bytes = 0;
+        /* First: the window updates it queues go out in this pass. */
+        if (ctx->resumed) us_quic_unpark_resumed(ctx);
         lsquic_engine_process_conns(ctx->engine);
         us_quic_engine_leave(ctx);
         int diff;
         if (lsquic_engine_earliest_adv_tick(ctx->engine, &diff)) {
             if (!have_tick || diff < min_diff) min_diff = diff;
+            have_tick = 1;
+        }
+        /* A callback in process_conns resumed a stream. Its parked bytes go
+         * out on the next pass: the loop does not sleep before it. */
+        if (ctx->resumed) {
+            min_diff = 0;
             have_tick = 1;
         }
     }
@@ -668,11 +695,135 @@ static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t 
     return (lsquic_stream_ctx_t *) s;
 }
 
+/* ───── receive pause ─────
+ *
+ * A paused stream is still read. Bytes that wait in lsquic hold the
+ * connection's window, and lsquic drops them when the connection goes away.
+ * What a paused stream reads is parked here, and on_stream_data does not run
+ * until us_quic_stream_resume. lsquic counts the parked bytes against the
+ * stream's window (lsquic_stream_set_unread), so the peer's limit is one
+ * window past what on_stream_data has seen. It moves as lsquic's own does: by
+ * half a window, while half a window is still parked.
+ *
+ * A complete message does not wait for a reader: FIN, trailers, and the
+ * length that us_quic_stream_pause was given each hand over all that is
+ * parked. What is still parked when the stream closes is a part of a message
+ * that did not complete, and it goes with the stream.
+ *
+ * us_quic_on_read and us_quic_on_close run for every stream. A stream that
+ * never pauses pays one test of s->park in each: the rest is out of line.
+ */
+
+/* One window is the most a peer can send past what on_stream_data has seen. */
+static unsigned int us_quic_stream_window(const us_quic_socket_context_t *ctx) {
+    return ctx->is_client ? ctx->settings.es_init_max_stream_data_bidi_local
+                          : ctx->settings.es_init_max_stream_data_bidi_remote;
+}
+
+/* Room for one more lsquic_stream_read behind the parked bytes. */
+static char *us_quic_park_reserve(us_quic_stream_t *s) {
+    struct us_quic_park *park = s->park;
+    unsigned int parked = park->len - park->off;
+    if (park->cap - park->len >= US_QUIC_READ_BUF) return park->buf + park->len;
+    unsigned int most = us_quic_stream_window(s->ctx) + US_QUIC_READ_BUF;
+    /* Take back the room in front once it is the larger part, so that each
+     * byte moves once, or when the buffer is as large as it gets. */
+    if (park->off && (park->off >= parked || park->cap >= most)) {
+        memmove(park->buf, park->buf + park->off, parked);
+        park->off = 0;
+        park->len = parked;
+        if (park->cap - park->len >= US_QUIC_READ_BUF) return park->buf + park->len;
+    }
+    unsigned int cap = park->cap ? park->cap * 2 : 4 * US_QUIC_READ_BUF;
+    if (cap > most) cap = most;
+    if (cap < park->len + US_QUIC_READ_BUF) cap = park->len + US_QUIC_READ_BUF;
+    char *grown = (char *) us_realloc(park->buf, cap);
+    if (!grown) Bun__outOfMemory();
+    park->buf = grown;
+    park->cap = cap;
+    return park->buf + park->len;
+}
+
+/* Hands the parked bytes to on_stream_data, one read's worth at a time, until
+ * the consumer pauses again. `all`: the message is complete, and its consumer
+ * gets the rest paused or not. */
+__attribute__((noinline)) static void us_quic_unpark(us_quic_stream_t *s, int all) {
+    struct us_quic_park *park = s->park;
+    us_quic_socket_context_t *ctx = s->ctx;
+    while (park->len != park->off && (all || !park->paused)) {
+        unsigned int len = park->len - park->off;
+        if (len > US_QUIC_READ_BUF) len = US_QUIC_READ_BUF;
+        const char *piece = park->buf + park->off;
+        park->off += len;
+        park->left = park->left > len ? park->left - len : 0;
+        /* Per piece: lsquic's half-window rule then moves the limit where it
+         * moved it when these bytes waited in lsquic. */
+        lsquic_stream_set_unread(s->stream, park->len - park->off);
+        if (ctx->on_stream_data) ctx->on_stream_data(s, piece, len, 0);
+    }
+    if (park->len == park->off) {
+        park->off = park->len = 0;
+        if (!park->paused) lsquic_stream_hold_window(s->stream, 0);
+    }
+}
+
+__attribute__((noinline)) static void us_quic_unpark_resumed(us_quic_socket_context_t *ctx) {
+    us_quic_stream_t *s;
+    while ((s = ctx->resumed)) {
+        ctx->resumed = s->park->next_resumed;
+        s->park->resumed = 0;
+        us_quic_unpark(s, 0);
+    }
+}
+
+static void us_quic_forget_resumed(us_quic_stream_t *s) {
+    if (!s->park->resumed) return;
+    for (us_quic_stream_t **link = &s->ctx->resumed; *link; link = &(*link)->park->next_resumed) {
+        if (*link == s) { *link = s->park->next_resumed; break; }
+    }
+    s->park->resumed = 0;
+}
+
+/* The read loop of a stream that is paused, or that still has bytes parked.
+ * Returns what the last lsquic_stream_read returned. */
+__attribute__((noinline)) static ssize_t us_quic_read_into_park(lsquic_stream_t *stream, us_quic_stream_t *s) {
+    struct us_quic_park *park = s->park;
+    ssize_t r;
+    for (;;) {
+        char *room = us_quic_park_reserve(s);
+        if ((r = lsquic_stream_read(stream, room, US_QUIC_READ_BUF)) <= 0) break;
+        park->len += (unsigned int) r;
+    }
+    if (r == 0 || (park->left && park->len - park->off >= park->left))
+        us_quic_unpark(s, 1);
+    return r;
+}
+
+/* Before on_stream_close. */
+__attribute__((noinline)) static void us_quic_drop_at_close(us_quic_stream_t *s) {
+    us_quic_forget_resumed(s);
+    s->park->off = s->park->len = 0;
+}
+
+/* After on_stream_close. A resume in there links nothing: the park is empty
+ * since us_quic_drop_at_close, or it is new. */
+__attribute__((noinline)) static void us_quic_free_park(us_quic_stream_t *s) {
+    us_free(s->park->buf);
+    us_free(s->park);
+}
+
+/* The consumer gave the stream up: what is parked has no reader. */
+static void us_quic_drop_parked(us_quic_stream_t *s) {
+    if (s->park) s->park->off = s->park->len = 0;
+}
+
 /* Hands the next header block lsquic has decoded to on_stream_headers.
  * Returns 1 for a block, 0 for none, -1 if on_stream_headers closed the stream. */
 static int us_quic_deliver_hset(lsquic_stream_t *stream, us_quic_stream_t *s) {
     struct us_quic_hset *hset = (struct us_quic_hset *) lsquic_stream_get_hset(stream);
     if (!hset) return 0;
+    /* Trailers: the body before them is complete. */
+    if (s->park) us_quic_unpark(s, 1);
     us_quic_hset_finalize(hset);
     us_quic_hset_free(s->hset);
     s->hset = hset;
@@ -692,7 +843,13 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     if (us_quic_deliver_hset(stream, s) < 0) return;
 
     ssize_t r;
-    while ((r = lsquic_stream_read(stream, ctx->read_buf, US_QUIC_READ_BUF)) > 0) {
+    for (;;) {
+        struct us_quic_park *park = s->park;
+        if (park && (park->paused || park->len != park->off)) {
+            r = us_quic_read_into_park(stream, s);
+            break;
+        }
+        if ((r = lsquic_stream_read(stream, ctx->read_buf, US_QUIC_READ_BUF)) <= 0) break;
         if (ctx->on_stream_data)
             ctx->on_stream_data(s, ctx->read_buf, (unsigned int) r, 0);
         if (!s->stream) return;
@@ -725,8 +882,10 @@ static void us_quic_on_close(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     (void) stream;
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     if (!s) return;
+    if (s->park) us_quic_drop_at_close(s);
     if (s->ctx->on_stream_close) s->ctx->on_stream_close(s);
     s->stream = NULL;
+    if (s->park) us_quic_free_park(s);
     us_quic_hset_free(s->hset);
     us_free(s);
 }
@@ -1111,8 +1270,34 @@ int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len
     return (int) w;
 }
 
-void us_quic_stream_hold_window(us_quic_stream_t *s, int hold) {
-    if (s->stream) lsquic_stream_hold_window(s->stream, hold);
+void us_quic_stream_pause(us_quic_stream_t *s, unsigned long long left) {
+    if (!s->stream) return;
+    struct us_quic_park *park = s->park;
+    if (!park) {
+        park = (struct us_quic_park *) us_calloc(1, sizeof(struct us_quic_park));
+        if (!park) Bun__outOfMemory();
+        s->park = park;
+    }
+    park->left = left;
+    if (park->paused) return;
+    park->paused = 1;
+    lsquic_stream_hold_window(s->stream, 1);
+}
+
+void us_quic_stream_resume(us_quic_stream_t *s) {
+    struct us_quic_park *park = s->park;
+    if (!park || !park->paused) return;
+    park->paused = 0;
+    if (!s->stream) return;
+    if (park->len == park->off) {
+        lsquic_stream_hold_window(s->stream, 0);
+    } else if (!park->resumed) {
+        /* Not from here: the caller can be the consumer, inside the callback
+         * that took the last bytes it had. us_quic_loop_process hands them over. */
+        park->resumed = 1;
+        park->next_resumed = s->ctx->resumed;
+        s->ctx->resumed = s;
+    }
 }
 
 void us_quic_stream_want_write(us_quic_stream_t *s, int want) {
@@ -1206,10 +1391,12 @@ void us_quic_stream_flush(us_quic_stream_t *s) {
 }
 
 void us_quic_stream_shutdown_read(us_quic_stream_t *s) {
+    us_quic_drop_parked(s);
     if (s->stream) lsquic_stream_shutdown(s->stream, 0);
 }
 
 void us_quic_stream_close(us_quic_stream_t *s) {
+    us_quic_drop_parked(s);
     if (s->stream) lsquic_stream_close(s->stream);
 }
 
@@ -1225,6 +1412,7 @@ void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int)
  * as a stream-level cancellation rather than a malformed message.
  * Sends nothing once lsquic_stream_close/shutdown has run, so call it first. */
 void us_quic_stream_reset(us_quic_stream_t *s) {
+    us_quic_drop_parked(s);
     if (!s->stream) return;
     /* do_close=0: with no reset due, maybe_reset's own close shuts only the read half. */
     lsquic_stream_maybe_reset(s->stream, 0x10C, 0);

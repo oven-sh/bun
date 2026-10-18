@@ -411,9 +411,18 @@ impl PackageManagerCommand {
                 let dry_run = pm.options.dry_run;
 
                 // Not `pm.options`: a project's `.env`, bunfig.toml or `.npmrc` does not choose what is deleted.
+                // `~/.bunfig.toml` is honored because a project can't write to it. `~/.npmrc`
+                // isn't, because its `cache` setting is npm's cache, which Bun shouldn't delete.
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
-                let cache_dir = match fetch_cache_directory_path(&mut process_env, cli.cache_dir) {
+                let user_cache_dir = match cli.cache_dir {
+                    Some(_) => None,
+                    None => (bun_bunfig::arguments::load_user_install_section().ok())
+                        .flatten()
+                        .and_then(|install| install.cache_directory),
+                };
+                let configured = cli.cache_dir.or(user_cache_dir.as_deref());
+                let cache_dir = match fetch_cache_directory_path(&mut process_env, configured) {
                     Ok(cache_dir) => cache_dir,
                     Err(err) => Self::crash_getting_cache_directory(err),
                 };
@@ -459,7 +468,7 @@ impl PackageManagerCommand {
                         ),
                     );
                     bun_core::note!(
-                        "cache directory comes from <b>$BUN_INSTALL_CACHE_DIR<r>, <b>--cache-dir<r> or <b>$BUN_INSTALL<r>. point it at a directory used only for the bun install cache"
+                        "cache directory comes from <b>$BUN_INSTALL_CACHE_DIR<r>, <b>--cache-dir<r>, <b>~/.bunfig.toml<r> or <b>$BUN_INSTALL<r>. point it at a directory used only for the bun install cache"
                     );
                     had_err = true;
                 } else if prune {
@@ -613,13 +622,16 @@ impl PackageManagerCommand {
             Output::disable_buffering();
             let lockfile: &Lockfile = &pm.lockfile;
 
-            let Some(mut installed) = InstalledFilter::init() else {
-                if log_level != LogLevel::Silent {
-                    Output::err_generic("node_modules not found, nothing to list", ());
-                    bun_core::note!("run 'bun install' first");
-                }
-                Global::exit(1);
-            };
+            // If there's no `node_modules`, list every dependency that the lockfile resolved.
+            let mut on_disk = InstalledFilter::init();
+            let mut is_installed =
+                |dir: &[u8], dep_id: DependencyID, or_in_store: bool| match on_disk.as_mut() {
+                    Some(on_disk) => on_disk.is_installed(lockfile, dir, dep_id, or_in_store),
+                    None => {
+                        (lockfile.buffers.resolutions[dep_id as usize] as usize)
+                            < lockfile.packages.len()
+                    }
+                };
 
             let resolutions = lockfile.buffers.resolutions.as_slice();
             // `--production` and `--omit` exclude a dependency group, along with every package that
@@ -655,7 +667,7 @@ impl PackageManagerCommand {
                 let mut dependencies = node_modules.dependencies.to_vec();
                 dependencies.retain(|&dep_id| {
                     wanted.is_set_allow_out_of_bound(resolutions[dep_id as usize] as usize, false)
-                        && installed.is_installed(lockfile, dir, dep_id, true)
+                        && is_installed(dir, dep_id, true)
                 });
                 installed_count += dependencies.len();
                 max_depth = max_depth.max(node_modules.depth + 1);
@@ -732,8 +744,7 @@ impl PackageManagerCommand {
                 });
 
                 sorted_dependencies.retain(|&dep_id| {
-                    installed.is_installed(lockfile, b"node_modules", dep_id, false)
-                        && selected(dep_id)
+                    is_installed(b"node_modules", dep_id, false) && selected(dep_id)
                 });
                 print_flat_list(lockfile, &sorted_dependencies);
                 !sorted_dependencies.is_empty()

@@ -125,6 +125,13 @@ impl<'p, 's> Checker<'p, 's> {
         then: impl FnOnce(&mut Services<'_, 'p, 's>) -> R,
     ) -> R {
         let arena = Arena::new();
+        // `check_file` skips a file that reports no semantic errors, and rules do not ask in source order.
+        if self.task.file == Some(file)
+            && self.bound(file).has_types_that_depend_on_order()
+            && !self.reports_semantic_errors(file)
+        {
+            self.check_source_file_and_report_nothing(file);
+        }
         // A reference whose control flow walk is too deep disables the analysis (2563), and from then
         // on every reference has the error type, until the function or module block around it ends: at
         // the top level of a file, for good. The questions of the rules are in no block, and begin
@@ -343,10 +350,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             }
             names
         })
-    }
-
-    pub fn source_file(&mut self, file_name: &[u8]) -> Option<FileId> {
-        self.c.files().by_path.get(file_name)
     }
 
     /// `checker.getAmbientModules().find(it => it.name === '"name"')`

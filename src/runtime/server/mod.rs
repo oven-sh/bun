@@ -2598,15 +2598,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Cloning here (not `.take()`) so subsequent `Bun.serve()` calls in
             // the same process — and `DevServer`'s tailwind-hack probe of the
             // same field — still see the bunfig-configured plugin list.
-            if let Some(serve_plugins_config) = jsc::VirtualMachine::get()
+            let vm = jsc::VirtualMachine::get();
+            let names = vm
                 .transpiler
                 .options
                 .serve_plugins
-                .as_ref()
-            {
-                if !serve_plugins_config.is_empty() {
-                    self.plugins = Some(ServePlugins::init(serve_plugins_config.clone()));
-                }
+                .clone()
+                .unwrap_or_default();
+            // `load_and_resolve_plugins` adds the plugins of `bake.config.ts`.
+            if !names.is_empty() || vm.bake_config_plugins.has() {
+                self.plugins = Some(ServePlugins::init(names));
             }
         }
 

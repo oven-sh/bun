@@ -136,6 +136,77 @@ it("should fetch packages missing from cache when lockfile exists", async () => 
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);
 });
 
+// Simulates a Docker layer: `COPY package.json bun.lock ./` followed by `RUN bun pm fetch`.
+it.each(["packages/*", "packages/web"])(
+  "should fetch the dependencies of a workspace in %s that isn't on disk yet",
+  async workspace => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeBunfig(textLockfile);
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", workspaces: [workspace] }));
+    await mkdir(join(package_dir, "packages", "web"), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", "web", "package.json"),
+      JSON.stringify({ name: "web", dependencies: { bar: "^0.0.2" } }),
+    );
+    {
+      const { stderr, exitCode } = await runBun(["install"], { BUN_INSTALL_CACHE_DIR: cacheDir() });
+      expect(stderr).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+    }
+    for (const name of [".bun-cache", "node_modules", "packages"]) {
+      await rm(join(package_dir, name), { recursive: true, force: true });
+    }
+    urls.length = 0;
+
+    const { stdout, stderr, exitCode } = await fetchIntoCache(cacheDir());
+    expect(stdout).toMatchInlineSnapshot(`
+    "bun pm fetch <version> (<revision>)
+
+    Fetched 1 package into cache
+    Cache: <cache>"
+  `);
+    expect(stderr).toContain('skipped 1 workspace listed in bun.lock but not on disk: "web"');
+    expect(urls).toEqual([`${root_url}/bar-0.0.2.tgz`]);
+    expect(await cachedPackages(cacheDir())).toBe(1);
+    expect(exitCode).toBe(0);
+  },
+);
+
+it.each(["*", "^1.0.0", "workspace:*"])(
+  "should not look up a missing workspace in the registry when the root depends on it as %s",
+  async range => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeBunfig(textLockfile);
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "foo", workspaces: ["packages/*"], dependencies: { lib: range } }),
+    );
+    await mkdir(join(package_dir, "packages", "lib"), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", "lib", "package.json"),
+      JSON.stringify({ name: "lib", version: "1.0.0" }),
+    );
+    {
+      const { stderr, exitCode } = await runBun(["install"], { BUN_INSTALL_CACHE_DIR: cacheDir() });
+      expect(stderr).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+    }
+    for (const name of [".bun-cache", "node_modules", "packages"]) {
+      await rm(join(package_dir, name), { recursive: true, force: true });
+    }
+    urls.length = 0;
+
+    const { stderr, exitCode } = await fetchIntoCache(cacheDir());
+    expect(stderr).toContain(
+      'error: the root package depends on workspace "lib" (packages/lib), which is listed in bun.lock but not on disk',
+    );
+    expect(urls).toEqual([]);
+    expect(exitCode).toBe(1);
+  },
+);
+
 it("should not write bun.lock when the lockfile comes from package-lock.json", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

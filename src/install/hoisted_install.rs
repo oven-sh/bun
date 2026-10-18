@@ -428,6 +428,7 @@ pub(crate) fn install_hoisted_packages(
                 command_ctx: ctx,
                 tree_ids_to_trees_the_id_depends_on,
                 completed_trees,
+                pending_install_count: 0,
                 trees: 'trees: {
                     let mut trees: Vec<TreeContext> = Vec::with_capacity(trees_count);
                     for _i in 0..trees_count {
@@ -549,13 +550,9 @@ pub(crate) fn install_hoisted_packages(
         this.tick_lifecycle_scripts();
         this.report_slow_lifecycle_scripts();
 
-        // Index instead of `.iter()` so the immutable borrow of
-        // `installer.trees` doesn't overlap `&mut self`.
-        for tree_idx in 0..installer.trees.len() {
-            debug_assert!(installer.trees[tree_idx].pending_installs.len() == 0);
-            // force = true
-            installer.install_available_packages::<true>(log_level);
-        }
+        // A tree never completes if one of its packages failed to download. Install everything
+        // that was still waiting on it (force = true).
+        installer.install_available_packages::<true>(log_level);
         // Every package is linked; the scripts still to run need no lock.
         installer.staging_lock = None;
         installer.tree_dir = None;

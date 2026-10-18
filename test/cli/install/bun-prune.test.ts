@@ -4242,6 +4242,20 @@ test.concurrent("hoisted: an install removes the packages of the last dependency
   expect(readdirSync(join(nm, ".bin"))).toEqual([]);
 });
 
+test.concurrent.each([[[]], [false]])(
+  "hoisted: bundleDependencies %j means no bundled dependencies",
+  async bundleDependencies => {
+    const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });
+    const packageJson = join(dir, "node_modules", "no-deps", "package.json");
+    await write(packageJson, JSON.stringify({ ...(await file(packageJson).json()), bundleDependencies }));
+    const nested = plant(dir, "node_modules/no-deps/node_modules/junk");
+
+    const { exitCode } = await prune(dir);
+    expect(existsSync(nested)).toBeFalse();
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("hoisted: a nested copy left behind by an override to a tarball is removed", async () => {
   const dir = await setup({ name: "foo", dependencies: { "no-deps": "2.0.0", "one-dep": "1.0.0" } });
   const nm = join(dir, "node_modules");

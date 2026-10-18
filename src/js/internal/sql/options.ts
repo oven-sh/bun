@@ -12,11 +12,20 @@ type AnyOptions = Bun.SQL.__internal.AnyOptions;
 type TLSOptions = Bun.SQL.TLSOptions;
 
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectHasOwn = Object.hasOwn;
+const ObjectPrototype = Object.prototype;
 const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 const env = Bun.env;
 
+/** `Bun.env` inherits from `Object.prototype`, and what is there is no variable. */
+function envVar(name: string): string | undefined {
+  return ObjectHasOwn(env, name) ? env[name] : undefined;
+}
+
 const SQLITE_MEMORY = ":memory:";
+const REDACTED = "[REDACTED]";
+const SCHEME = /^[a-z][a-z0-9+.-]*$/i;
 const SUPPORTED_ADAPTERS = `"postgres", "sqlite", "mysql", "mariadb"`;
 
 function decodeIfValid(value: string | null | undefined): string | null {
@@ -143,7 +152,7 @@ function urlFromEnvironment(
 
     for (let i = 1; i < row.length; i++) {
       const name = row[i] as string;
-      const url = env[name];
+      const url = envVar(name);
       if (!url) continue;
 
       const tls = name.startsWith("TLS_");
@@ -220,10 +229,17 @@ const SERVER_OPTIONS = [
   "onclose",
 ];
 
+/** What somebody put on `Object.prototype` is not the caller's. What the caller's own prototypes have is. */
+function isFromObjectPrototype(object: object | null, name: string): boolean {
+  if (!ObjectHasOwn(ObjectPrototype, name)) return false;
+  while (object && object !== ObjectPrototype && !ObjectHasOwn(object, name)) object = ObjectGetPrototypeOf(object);
+  return !object || object === ObjectPrototype;
+}
+
 /** `options` has the own keys of `source` already. Every key is read once: a getter is the caller's code. */
 function readInherited(options: AnyOptions, source: AnyOptions, names: string[]) {
   for (const name of names) {
-    if (ObjectHasOwn(options, name)) continue;
+    if (ObjectHasOwn(options, name) || isFromObjectPrototype(source, name)) continue;
     const value = source[name];
     if (value !== undefined) options[name] = value;
   }
@@ -245,7 +261,7 @@ function resolveTarget(
     first = undefined;
   }
   const readsEnvironment = target === null;
-  const options: AnyOptions = { ...first, ...second };
+  const options = { __proto__: null, ...first, ...second } as unknown as AnyOptions;
   // An options object that stands alone behind a URL, or behind nothing, also gives what it inherits.
   const inherits = first ? null : second;
   if (inherits) readInherited(options, inherits, TARGET_OPTIONS);
@@ -298,7 +314,9 @@ function resolveTarget(
         ? "postgres"
         : adapterFromScheme(scheme);
     if (!adapter) {
-      throw new Error(`Unsupported protocol: ${scheme}. Supported adapters: ${SUPPORTED_ADAPTERS}`);
+      // Without a scheme, what is in front of a `://` further back can be anything.
+      const named = SCHEME.test(scheme) ? scheme : REDACTED;
+      throw new Error(`Unsupported protocol: ${named}. Supported adapters: ${SUPPORTED_ADAPTERS}`);
     }
   }
 
@@ -375,9 +393,18 @@ function parseSQLiteOptions(target: string | URL | null, options: AnyOptions): B
   const safeIntegers = options.safeIntegers ?? options.bigint;
   if (safeIntegers !== undefined) sqliteOptions.safeIntegers = safeIntegers;
 
-  if (sqliteOptions.transform != null) sqliteOptions.transform = parseTransform(sqliteOptions.transform);
+  const transform = options.transform;
+  if (transform != null) sqliteOptions.transform = parseTransform(transform);
 
   return sqliteOptions;
+}
+
+/** What an error may say of a connection URL that cannot be parsed: anything behind the scheme can be a password. */
+function withoutSecrets(value: string): string {
+  const start = value.indexOf("://") + 3;
+  // The `://` is further back, and anything can be in front of it.
+  if (!SCHEME.test(value.slice(0, start - 3))) return REDACTED;
+  return value.slice(0, start) + (value.startsWith(SQLITE_MEMORY, start) ? SQLITE_MEMORY : REDACTED);
 }
 
 function parseServerUrl(
@@ -392,7 +419,7 @@ function parseServerUrl(
     const value = target.includes("://") ? target : `${adapter}://${target}`;
     try {
       url = new URL(value);
-    } catch (e) {
+    } catch {
       // `new URL()` refuses credentials or a port without a host. libpq takes the host from elsewhere.
       const start = value.indexOf("://") + 3;
       let end = start;
@@ -403,13 +430,18 @@ function parseServerUrl(
         if (withHost) return [withHost, ""];
       }
 
+      // The error of `new URL()` has the whole string.
+      const input = withoutSecrets(value);
       if (adapterOption && value.includes("sqlite")) {
         throw new Error(
-          `Invalid URL '${value}' for ${adapterOption}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
-          { cause: e },
+          `Invalid URL '${input}' for ${adapterOption}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
         );
       }
-      throw e;
+      // The error of `new URL()` in all but `input`. The intrinsic for this code has `code` on a prototype of its own.
+      const error = new TypeError("Invalid URL");
+      $putByValDirect(error, "code", "ERR_INVALID_URL");
+      $putByValDirect(error, "input", input);
+      throw error;
     }
   }
 
@@ -491,14 +523,14 @@ function isLibpqClientKeyword(key: string, value: string): boolean {
 function setStartupParameter(parameters: Record<string, string>, name: string, key: string, raw: unknown) {
   const value = `${raw}`;
   if (key.includes("\0") || value.includes("\0")) {
-    throw $ERR_INVALID_ARG_VALUE(name, raw, "must not contain null bytes");
+    throw $ERR_INVALID_ARG_VALUE(name, REDACTED, "must not contain null bytes");
   }
   parameters[key] = value;
 }
 
 function readUrlQuery(url: URL, isPostgres: boolean, parameters: Record<string, string>): UrlQuery {
   const query: UrlQuery = { __proto__: null };
-  const queryObject = url.searchParams.toJSON();
+  const queryObject = { __proto__: null, ...url.searchParams.toJSON() };
   for (const key in queryObject) {
     const value = `${queryObject[key]}`;
     const lowerKey = key.toLowerCase();
@@ -519,7 +551,7 @@ function readUrlQuery(url: URL, isPostgres: boolean, parameters: Record<string, 
       if (value) query[option] ||= value;
     } else if (isPostgres && (option = LIBPQ_TLS_OPTIONS[lowerKey])) {
       if (!value) continue;
-      const tls = $isObject(query.tls) ? query.tls : (query.tls = {});
+      const tls = $isObject(query.tls) ? query.tls : (query.tls = { __proto__: null } as unknown as TLSOptions);
       if (lowerKey === "sslrootcert" && value === "system") tls.rejectUnauthorized = true;
       else tls[option] = value;
     } else if (!isPostgres || !isLibpqClientKeyword(lowerKey, value)) {
@@ -532,7 +564,7 @@ function readUrlQuery(url: URL, isPostgres: boolean, parameters: Record<string, 
 const NO_QUERY: UrlQuery = { __proto__: null };
 
 function envOf(prefix: string, name: string): string | undefined {
-  return env[`${prefix}_${name}`] || env[prefix + name];
+  return envVar(`${prefix}_${name}`) || envVar(prefix + name);
 }
 
 function isDirectory(path: string): boolean {
@@ -581,11 +613,11 @@ function parseTransform(transform: any): import("./shared").Transform {
 
 function inspectOptions(this: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
   const copy = { ...this };
-  if (copy.password) copy.password = "[REDACTED]";
+  if (copy.password) copy.password = REDACTED;
   if ($isObject(copy.tls)) {
     const tls = { ...(copy.tls as TLSOptions) };
-    if (tls.key) tls.key = "[REDACTED]";
-    if (tls.passphrase) tls.passphrase = "[REDACTED]";
+    if (tls.key) tls.key = REDACTED;
+    if (tls.passphrase) tls.passphrase = REDACTED;
     copy.tls = tls;
   }
   return copy;
@@ -619,7 +651,8 @@ function parseOptions(
 
   const parameters = { __proto__: null } as unknown as Record<string, string>;
   if (isPostgres) {
-    const { PGAPPNAME, PGOPTIONS } = env;
+    const PGAPPNAME = envVar("PGAPPNAME");
+    const PGOPTIONS = envVar("PGOPTIONS");
     if (PGAPPNAME) parameters.application_name = PGAPPNAME;
     if (PGOPTIONS) parameters.options = PGOPTIONS;
   }
@@ -638,6 +671,7 @@ function parseOptions(
   const connection = options.connection;
   if (connection && $isObject(connection)) {
     for (const key in connection) {
+      if (isFromObjectPrototype(connection, key)) continue;
       if (connection[key] !== undefined) {
         setStartupParameter(parameters, `options.connection.${key}`, key, connection[key]);
       }
@@ -664,10 +698,10 @@ function parseOptions(
     options.user ||
     query.username ||
     decodeIfValid(url?.username) ||
-    (isPostgres && env.PGUSERNAME) ||
+    (isPostgres && envVar("PGUSERNAME")) ||
     envOf(prefix, "USER") ||
-    env.USER ||
-    env.USERNAME ||
+    envVar("USER") ||
+    envVar("USERNAME") ||
     (isPostgres ? "postgres" : "root");
 
   const password =
@@ -714,7 +748,7 @@ function parseOptions(
       options.connectTimeout ??
       options.connect_timeout ??
       query.connectionTimeout ??
-      ((isPostgres && env.PGCONNECT_TIMEOUT) || undefined),
+      ((isPostgres && envVar("PGCONNECT_TIMEOUT")) || undefined),
   );
   const maxLifetime = secondsToMilliseconds(
     "options.max_lifetime",
@@ -733,7 +767,7 @@ function parseOptions(
 
   const channelBinding = (options.channelBinding ||
     query.channelBinding ||
-    (isPostgres && env.PGCHANNELBINDING) ||
+    (isPostgres && envVar("PGCHANNELBINDING")) ||
     "disable") as Bun.SQL.__internal.ChannelBinding;
   if (channelBinding !== "disable" && channelBinding !== "prefer" && channelBinding !== "require") {
     throw $ERR_INVALID_ARG_VALUE("channelBinding", channelBinding, "must be one of: disable, prefer, require");

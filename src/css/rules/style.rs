@@ -210,10 +210,7 @@ impl<R> StyleRule<R> {
                             );
                         }
 
-                        // `handle_composes` needs `&mut dest` while the
-                        // module also lives in `dest.css_module`. Move the
-                        // module out for the duration of the call, then put
-                        // it back before any `dest.new_error` early return.
+                        // Move the module out of `dest`: `handle_composes` also takes `&mut dest`.
                         let mut cm = dest.css_module.take();
                         let err = if let Some(css_module) = &mut cm {
                             css_module

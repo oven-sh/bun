@@ -260,6 +260,8 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     sigfillset(&blockall);
+    // The child execs with an empty mask, not the spawning thread's, like libuv:
+    // https://github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L374-L377
     sigemptyset(&childmask);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
 #if !OS(ANDROID)

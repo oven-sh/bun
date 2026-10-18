@@ -1018,9 +1018,10 @@ extern "C" int ffi_fileno(FILE* file)
 #include <signal.h>
 #include <pthread.h>
 
-// bun.spawnSync runs on the main thread, but a process-directed signal is
-// delivered to any thread that does not block it, so the handler below can
-// run on another thread while the main thread publishes the pid.
+// One synchronous spawn at a time owns these. The thread that spawns
+// publishes the pid, but a process-directed signal is delivered to any thread
+// that does not block it, so the handler below can run on another thread
+// while the pid is published.
 // Rust declares this as `AtomicI64`, which is layout-compatible.
 extern "C" std::atomic<int64_t> Bun__currentSyncPID { 0 };
 static_assert(std::atomic<int64_t>::is_always_lock_free);
@@ -1062,16 +1063,11 @@ static struct sigaction previous_actions[NSIG];
     FOR_EACH_LINUX_ONLY_SIGNAL(M)
 #endif
 
-static void Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid_t pid, int sig)
+// `pid` is the child, or (negative) the process group the child leads. Bun is
+// in neither, so nothing needs to be blocked around the kill.
+static void Bun__forwardSignalToChild(pid_t pid, int sig)
 {
-    sigset_t previous_mask;
-    sigset_t mask;
-    sigemptyset(&mask);
-    sigaddset(&mask, sig);
-    pthread_sigmask(SIG_BLOCK, &mask, &previous_mask);
     kill(pid, sig);
-    // Not SIG_UNBLOCK: from Bun__sendPendingSignalIfNecessary, `sig` is not in previous_mask and would stay blocked.
-    pthread_sigmask(SIG_SETMASK, &previous_mask, nullptr);
 }
 
 // The caller stores the pid (seq_cst) before this exchange, and the handler
@@ -1084,7 +1080,7 @@ extern "C" void Bun__sendPendingSignalIfNecessary()
     if (sig == 0 || pid == 0)
         return;
 
-    Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid, sig);
+    Bun__forwardSignalToChild(pid, sig);
 }
 
 extern "C" void Bun__registerSignalsForForwarding()
@@ -1105,7 +1101,7 @@ extern "C" void Bun__registerSignalsForForwarding()
                 return;
         }
 
-        Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid, sig);
+        Bun__forwardSignalToChild(pid, sig);
     };
 
 #define REGISTER_SIGNAL(SIG)                                 \

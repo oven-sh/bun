@@ -3264,7 +3264,7 @@ mod spawn_process_body {
                 }
             }
 
-            Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);
+            Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::SeqCst);
             let _signals = SignalForwarding::register();
 
             // SAFETY: caller-built argv/envp are null-terminated C-string

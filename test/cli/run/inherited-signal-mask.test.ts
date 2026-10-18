@@ -8,7 +8,6 @@
 // script (src/jsc/bindings/c-bindings.cpp).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isAndroid, isLinux, isPosix, libcPathForDlopen, tempDir } from "harness";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const SIGTERM = 15;
@@ -196,73 +195,58 @@ test.concurrent.skipIf(!isPosix)("children do not inherit a signal bun itself ha
   expect(await report([bunExe(), "-e", fixture])).toEqual(reported(CHILDREN_KILLED));
 });
 
-/** Contents of a /proc file, or "" once the process it belongs to is gone. */
-function procRead(path: string): string {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return "";
-  }
-}
-
-// /proc/<pid>/task/<tid>/children needs CONFIG_PROC_CHILDREN.
-const canListChildren =
-  isLinux &&
-  (() => {
-    try {
-      readFileSync(`/proc/self/task/${process.pid}/children`);
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-
-// `bun run` only learns the script's pid once the spawn returns; a signal that
-// arrives before that is forwarded afterwards, outside the signal handler. That
-// forwarding must not leave the signal blocked in bun: the re-raise that ends
-// `bun run` once the script has died from it would then fall through to
-// abort(), and bun would die from SIGABRT instead. The script shows up in
-// bun's children the moment it is created, while bun is still suspended in
-// vfork, so a signal sent right then is delivered before bun has the pid.
-// Whether or not an attempt wins that race, bun has to die from SIGTERM.
-const SPAWN_DEADLINE_MS = 15_000;
-test.skipIf(!canListChildren)(
-  "bun run forwards a signal that arrives before it knows the script's pid",
-  async () => {
-    using project = tempDir("inherited-signal-mask-early", {
-      "package.json": JSON.stringify({ name: "inherited-signal-mask", scripts: { start: "exec sleep 30" } }),
+// `bun run` only learns the script's pid once the spawn returns. A signal that
+// arrives after its handler is installed but before that is remembered and
+// sent afterwards, from normal code (`Bun__sendPendingSignalIfNecessary`). It
+// used to stay blocked in bun from then on, so the re-raise that ends
+// `bun run` once the script has died from it pended instead of killing, and
+// bun died from the abort() behind it: SIGABRT instead of SIGINT.
+//
+// To land a signal in that window: bun starts with SIGINT ignored (`trap ""
+// INT` survives exec), so the flood below is dropped until the handler
+// replaces SIG_IGN, and from then on a delivery every few microseconds covers
+// the spawn. The window is the spawn itself, so short that one flood in ten
+// misses it on a release build; three attempts have to end in SIGINT.
+// `--shell=system`: the script has to be a process of its own.
+test.skipIf(!isPosix)("bun run forwards a signal that arrives before it knows the script's pid", async () => {
+  using project = tempDir("inherited-signal-mask-early", {
+    "package.json": JSON.stringify({ name: "inherited-signal-mask", scripts: { go: "kill -INT $$" } }),
+  });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", 'trap "" INT; echo ready; read _; exec "$0" "$@"', bunExe(), "run", "--shell=system", "go"],
+      cwd: String(project),
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      killSignal: "SIGKILL",
     });
-    for (let attempt = 0; attempt < 2; attempt++) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "start"],
-        cwd: String(project),
-        env: bunEnv,
-        stdout: "ignore",
-        stderr: "pipe",
-        killSignal: "SIGKILL",
-      });
-      const children = `/proc/${proc.pid}/task/${proc.pid}/children`;
-      // Spinning, not awaiting: the window is the script's pre-exec setup, a
-      // fraction of a millisecond. A SIGTERM sent before bun has installed its
-      // forwarding handler kills bun outright, so the spin has to outlast a slow
-      // (debug, sanitizer) startup. The deadline is only for a bun that never
-      // spawns; the test timeout allows for both attempts to reach it.
-      const deadline = performance.now() + SPAWN_DEADLINE_MS;
-      while (procRead(children).trim() === "") {
-        if (performance.now() > deadline) {
-          throw new Error(`attempt ${attempt}: bun run did not start the script within ${SPAWN_DEADLINE_MS}ms`);
-        }
-      }
-      proc.kill("SIGTERM");
-
-      const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain('script "start" was terminated by signal SIGTERM');
-      expect({ attempt, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
-        attempt,
-        exitCode: null,
-        signalCode: "SIGTERM",
-      });
+    // The flood starts once the trap is in place (a SIGINT before it kills the
+    // launcher) and before the launcher execs bun, so it covers all of bun.
+    const reader = proc.stdout.getReader();
+    let seen = "";
+    while (!seen.includes("ready\n")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      seen += Buffer.from(value).toString();
     }
-  },
-  3 * SPAWN_DEADLINE_MS,
-);
+    expect(seen).toBe("ready\n");
+    await using flood = Bun.spawn({
+      cmd: ["sh", "-c", "while kill -INT $1 2>/dev/null; do :; done", "sh", String(proc.pid)],
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    proc.stdin.write("\n");
+    await proc.stdin.end();
+
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+    flood.kill();
+    expect(stderr).toContain("$ kill -INT $$");
+    expect({ attempt, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+      attempt,
+      exitCode: null,
+      signalCode: "SIGINT",
+    });
+  }
+});

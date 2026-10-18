@@ -9,8 +9,8 @@ use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::platform::{Loose, Posix};
 use bun_paths::typed::{
-    AbsPath, AbsPathBuf, DynPathBuf, HoldsAbs, PathBuf, PathError, Pooled, RelPathBuf, Scratch,
-    Storage, SubPathBuf, TailBuf, Unit, View, Z, relative_in, top_level_dir,
+    AbsPath, AbsPathBuf, DynPathBuf, HoldsAbs, PathError, Pooled, RelPathBuf, Scratch, Storage,
+    SubPathBuf, TailBuf, Unit, View, Z, relative_in, top_level_dir,
 };
 use bun_paths::{self as paths, component, sub_path};
 use bun_sys::{self as sys, Fd};
@@ -1882,7 +1882,7 @@ impl<'a> Installer<'a> {
         let mut dest = RelPathBuf::from_in(&mut dest_mem, hidden_node_modules);
         dest.push_names::<Posix>(name);
 
-        // MISFIT: `relative_in` relates absolute paths only, so the `..` are counted by hand.
+        // `relative_in` relates absolute paths only, so the `..` are counted by hand.
         let mut target = RelPathBuf::new_in(&mut target_mem);
         target.up();
         if strings::index_of_char(name, b'/').is_some() {
@@ -2461,7 +2461,7 @@ impl<'a> Installer<'a> {
         mem: S,
         entry_id: StoreEntryId,
         which: Which,
-    ) -> AbsPathBuf<S> {
+    ) -> AbsPathBuf<S::Held> {
         let mut path = AbsPathBuf::from_in(mem, self.global_store_dir());
         self.push_global_store_entry_name(path.tail(), entry_id, which);
         path
@@ -2958,7 +2958,7 @@ pub(crate) fn push_installed_marker(
 }
 
 /// Best effort: a path that could not be built names nothing on disk.
-fn delete_tree(path: &PathBuf<impl View<Unit = u8> + ?Sized, impl Storage<u8>>) {
+fn delete_tree(path: &DynPathBuf<'_, impl View<Unit = u8> + ?Sized>) {
     if let Ok(path) = path.get() {
         let _ = Fd::cwd().delete_tree(path.units());
     }

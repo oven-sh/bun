@@ -33,7 +33,7 @@ impl Symlinker<'_> {
             return Ok(false);
         };
         if self.real_len < self.node_modules_len {
-            // MISFIT: only a builder can terminate a prefix in place, so a view's is copied as bytes.
+            // No terminator follows a prefix of a view, so it is copied.
             let mut buf = bun_paths::path_buffer_pool::get();
             let node_modules =
                 bun_paths::resolve_path::z(&parent[..self.node_modules_len], &mut buf);

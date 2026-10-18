@@ -56,6 +56,11 @@ const MIRI_CRATES = [
   "bun_wyhash",
 ];
 
+// Miri interprets any target from any host, so these also run as this target:
+// it is the only run their `cfg(windows)` tests get.
+const WINDOWS_TARGET = "x86_64-pc-windows-msvc";
+const MIRI_WINDOWS_CRATES = ["bun_paths"];
+
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {
   return spawnSync(cmd, args, { stdio: "inherit", cwd: repo, ...opts });
 }
@@ -110,13 +115,14 @@ const allCrates = MIRI_CRATES.flatMap(c => ["-p", c]);
 console.log(`\x1b[36m[miri]\x1b[0m cargo miri test --no-run ${allCrates.join(" ")}`);
 if (run("cargo", ["miri", "test", "--no-run", ...allCrates], { env }).status !== 0) process.exit(1);
 
+type Job = { crate: string; args: string[] };
 type Result = { crate: string; ok: boolean; seconds: number; output: string };
 
-function testCrate(crate: string): Promise<Result> {
+function testCrate({ crate, args }: Job): Promise<Result> {
   return new Promise(done => {
     const started = Date.now();
     const chunks: Buffer[] = [];
-    const child = spawn("cargo", ["miri", "test", "-p", crate, "--color", "always"], { cwd: repo, env });
+    const child = spawn("cargo", ["miri", "test", ...args, "--color", "always"], { cwd: repo, env });
     child.stdout.on("data", chunk => chunks.push(chunk));
     child.stderr.on("data", chunk => chunks.push(chunk));
     child.on("close", code =>
@@ -125,15 +131,21 @@ function testCrate(crate: string): Promise<Result> {
   });
 }
 
-const width = Math.max(1, Math.min(availableParallelism(), MIRI_CRATES.length));
-console.log(`\x1b[36m[miri]\x1b[0m ${MIRI_CRATES.length} crates, ${width} at a time`);
-const queue = [...MIRI_CRATES];
+const queue: Job[] = [
+  ...MIRI_WINDOWS_CRATES.map(crate => ({
+    crate: `${crate} (windows)`,
+    args: ["-p", crate, "--target", WINDOWS_TARGET],
+  })),
+  ...MIRI_CRATES.map(crate => ({ crate, args: ["-p", crate] })),
+];
+const width = Math.max(1, Math.min(availableParallelism(), queue.length));
+console.log(`\x1b[36m[miri]\x1b[0m ${queue.length} runs, ${width} at a time`);
 const results: Result[] = [];
 const inActions = !!process.env.GITHUB_ACTIONS;
 
 async function worker() {
-  for (let crate = queue.shift(); crate; crate = queue.shift()) {
-    const result = await testCrate(crate);
+  for (let job = queue.shift(); job; job = queue.shift()) {
+    const result = await testCrate(job);
     results.push(result);
     const status = result.ok ? "\x1b[32mok\x1b[0m" : "\x1b[31mFAILED\x1b[0m";
     console.log(`\x1b[36m[miri]\x1b[0m ${result.crate} ${status} ${result.seconds.toFixed(0)}s`);
@@ -152,4 +164,4 @@ if (failed.length) {
   console.error(`\x1b[31m[miri]\x1b[0m failed: ${failed.join(", ")}`);
   process.exit(1);
 }
-console.log(`\x1b[36m[miri]\x1b[0m all ${results.length} crates passed`);
+console.log(`\x1b[36m[miri]\x1b[0m all ${results.length} runs passed`);

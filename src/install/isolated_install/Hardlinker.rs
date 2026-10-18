@@ -88,8 +88,7 @@ impl Hardlinker {
                             Classified::Abs(dest) => &[dest.units()],
                             Classified::Rel(dest) => &[cwd.units(), dest.units()],
                         };
-                        // MISFIT: no view holds the NT prefix, so the link's own path is raw units.
-                        // The join and the NT prefix below write into the buffers unchecked.
+                        // No view holds the NT prefix. The join and the prefix below write into the buffers unchecked.
                         let needed_len =
                             dest_parts.iter().map(|part| part.len() + 1).sum::<usize>()
                                 + bun_paths::windows::NT_OBJECT_PREFIX.len();

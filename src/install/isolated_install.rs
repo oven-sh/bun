@@ -1639,7 +1639,7 @@ fn move_entries_aside(
             (Err(err), _) | (_, Err(err)) => Err(path_error(sys::Tag::rename)(err)),
         } && log_level != LogLevel::Silent
         {
-            // MISFIT: `shown()` ends before the name that did not fit, so only that name is shown.
+            // `shown()` ends before the name that did not fit, so only that name is shown.
             bun_core::warn!(
                 "{}: failed to remove {} (installed by another linker)",
                 BStr::new(err.name()),

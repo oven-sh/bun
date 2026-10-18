@@ -1,5 +1,5 @@
 //! Typed paths. A view borrows its units and costs nothing; a [`PathBuf`] writes into storage that
-//! its caller picks, and never takes the heap unless the caller hands it a `Vec`.
+//! its caller picks: the stack or the pool of path buffers.
 //!
 //! Every view holds a native path in one form: native separators, no empty, `.` or inner `..`
 //! component, no trailing separator except in a root, no NUL.
@@ -21,7 +21,7 @@
 
 use core::fmt;
 use core::marker::PhantomData;
-use core::mem::{ManuallyDrop, MaybeUninit};
+use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 
 use bun_core::PathByte as _;
@@ -143,7 +143,7 @@ macro_rules! view {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
         #[repr(transparent)]
-        #[derive(PartialEq, Eq, Hash)]
+        #[derive(PartialEq, Eq)]
         pub struct $name<C = u8>([C]);
 
         impl<C> $name<C> {
@@ -261,7 +261,6 @@ buildable!(Tail, may be absolute: false, when relative: Fail);
 
 /// A `V` with a terminator after its last unit.
 #[repr(transparent)]
-#[derive(PartialEq, Eq, Hash)]
 pub struct Z<V: ?Sized>(V);
 impl<V: Units + ?Sized> Z<V> {
     /// # Safety
@@ -447,9 +446,8 @@ fn is_forbidden_in_name<C: PathUnit>(c: C) -> bool {
     c.eq_ascii(0) || c.eq_ascii(b'/') || (cfg!(windows) && (c.eq_ascii(b'\\') || c.eq_ascii(b':')))
 }
 
-/// Whether `units`, past its root, is in the one form the views hold.
-fn is_clean_below_root<C: PathUnit>(units: &[C], leading_dot_dot: bool) -> bool {
-    let mut may_climb = leading_dot_dot;
+/// Whether `units`, past its root, is in the one form the views hold, with no `..`.
+fn is_clean_below_root<C: PathUnit>(units: &[C]) -> bool {
     let mut start = 0;
     while start < units.len() {
         let mut end = start;
@@ -460,9 +458,8 @@ fn is_clean_below_root<C: PathUnit>(units: &[C], leading_dot_dot: bool) -> bool 
             end += 1;
         }
         let name = &units[start..end];
-        may_climb &= is_dot_dot(name);
         // A separator at the very end leaves no name after it.
-        if name.is_empty() || (is_dots(name) && !may_climb) || end + 1 == units.len() {
+        if name.is_empty() || is_dots(name) || end + 1 == units.len() {
             return false;
         }
         start = end + 1;
@@ -505,7 +502,7 @@ impl<C: PathUnit> AbsPath<C> {
     /// `None` unless `units` is absolute and already in the form the views hold.
     pub fn new(units: &[C]) -> Option<&Self> {
         let root = root_len(units);
-        (root > 0 && is_clean_below_root(&units[root..], false)).then(|| Self::wrap_units(units))
+        (root > 0 && is_clean_below_root(&units[root..])).then(|| Self::wrap_units(units))
     }
 
     /// For what the OS returned as an absolute path: `getcwd`, `realpath`, the path of an fd. Only
@@ -540,12 +537,6 @@ impl<C: PathUnit> AbsPath<C> {
         Some(Self::wrap_units(&self.0[..end]))
     }
 
-    /// This path, then each directory above it up to the root. Every one is a prefix of this one.
-    #[inline]
-    pub fn ancestors(&self) -> impl Iterator<Item = &Self> {
-        core::iter::successors(Some(self), |p| p.parent())
-    }
-
     /// What is left of this path below `dir`. `None` if it is not `dir` or below it.
     #[inline]
     pub fn strip_prefix(&self, dir: &Self) -> Option<&SubPath<C>> {
@@ -559,21 +550,10 @@ impl<C: PathUnit> AbsPath<C> {
     }
 }
 
-impl<C: PathUnit> RelPath<C> {
-    pub const EMPTY: &'static Self = Self::wrap_units(&[]);
-
-    /// `None` unless `units` is relative and already in the form the views hold.
-    pub fn new(units: &[C]) -> Option<&Self> {
-        (root_len(units) == 0 && is_clean_below_root(units, true)).then(|| Self::wrap_units(units))
-    }
-}
-
 impl<C: PathUnit> SubPath<C> {
-    pub const EMPTY: &'static Self = Self::wrap_units(&[]);
-
     /// `None` unless `units` is relative, holds no `..` and is already in the form the views hold.
     pub fn new(units: &[C]) -> Option<&Self> {
-        (root_len(units) == 0 && is_clean_below_root(units, false)).then(|| Self::wrap_units(units))
+        (root_len(units) == 0 && is_clean_below_root(units)).then(|| Self::wrap_units(units))
     }
 
     /// For names the OS listed, joined with the native separator by the code that listed them.
@@ -581,22 +561,6 @@ impl<C: PathUnit> SubPath<C> {
     pub fn from_os(units: &[C]) -> &Self {
         debug_assert!(Self::new(units).is_some());
         Self::wrap_units(units)
-    }
-
-    #[inline]
-    pub fn components(&self) -> impl Iterator<Item = &Component<C>> {
-        self.0
-            .split(|&c| is_native_sep(c))
-            .filter(|name| !name.is_empty())
-            .map(Component::wrap_units)
-    }
-
-    #[inline]
-    pub fn parent(&self) -> Option<&Self> {
-        if self.0.is_empty() {
-            return None;
-        }
-        Some(Self::wrap_units(&self.0[..last_sep(&self.0).unwrap_or(0)]))
     }
 }
 
@@ -693,45 +657,22 @@ macro_rules! component {
 
 // ── storage ──────────────────────────────────────────────────────────────────────────────────────
 
-/// Where a [`PathBuf`] writes. The builder asks where that is once, and again only when it runs out.
+/// What a [`PathBuf`] is given to write in: one path buffer.
 ///
 /// # Safety
-/// What `room` and `grow` return is valid for writes of that many units, and for reads of every
-/// unit written there, until the next `grow` or the drop of the storage, wherever the storage is
-/// moved to in between. After `grow(used, total)` returns `Some`, there is room for `total` units
-/// and the first `used` are kept.
+/// What `lend` returns is at least one unit, and valid for writes of that many units and for reads
+/// of every unit written there until the drop of the `Held`, wherever that is moved to.
 pub unsafe trait Storage<C> {
-    fn room(&mut self) -> (*mut C, usize);
-    fn grow(&mut self, used: usize, total: usize) -> Option<(*mut C, usize)> {
-        let _ = (used, total);
-        None
-    }
+    type Held: Held;
+    fn lend(self) -> (*mut C, usize, Self::Held);
 }
+/// What a [`PathBuf`] keeps of its [`Storage`]. It holds no reference and no `Box` to the memory: a
+/// move of one claims the memory anew, which ends the pointer the builder writes through.
+pub trait Held {}
 
-macro_rules! storage_by_mut {
-    ($owner:ty) => {
-        // SAFETY: forwards.
-        unsafe impl<C: PathUnit> Storage<C> for &mut $owner {
-            #[inline(always)]
-            fn room(&mut self) -> (*mut C, usize) {
-                Storage::room(&mut **self)
-            }
-            fn grow(&mut self, used: usize, total: usize) -> Option<(*mut C, usize)> {
-                Storage::grow(&mut **self, used, total)
-            }
-        }
-    };
-}
-storage_by_mut!(Pooled<C>);
-storage_by_mut!(Vec<C>);
-
-// SAFETY: a slice is valid for its length.
-unsafe impl<C> Storage<C> for &mut [C] {
-    #[inline(always)]
-    fn room(&mut self) -> (*mut C, usize) {
-        (self.as_mut_ptr(), self.len())
-    }
-}
+/// The borrow of storage that its owner keeps.
+pub struct Lent<'a>(PhantomData<&'a mut ()>);
+impl Held for Lent<'_> {}
 
 /// One path buffer in place, not initialized. Only `&mut Stack` is storage: the memory must stay
 /// where it is when the `PathBuf` moves.
@@ -742,39 +683,52 @@ impl<C: PathUnit> Stack<C> {
         Self(MaybeUninit::uninit())
     }
 }
-// SAFETY: `C::Buffer` is an array of `C`.
-unsafe impl<C: PathUnit> Storage<C> for &mut Stack<C> {
+// SAFETY: `C::Buffer` is an array of `C`, borrowed for as long as the `Lent` lives.
+unsafe impl<'a, C: PathUnit> Storage<C> for &'a mut Stack<C> {
+    type Held = Lent<'a>;
     #[inline(always)]
-    fn room(&mut self) -> (*mut C, usize) {
+    fn lend(self) -> (*mut C, usize, Lent<'a>) {
         (
             self.0.as_mut_ptr().cast(),
             size_of::<C::Buffer>() / size_of::<C>(),
+            Lent(PhantomData),
         )
     }
 }
 
 /// One path buffer out of this thread's pool.
-pub struct Pooled<C: PathUnit = u8>(ManuallyDrop<Box<C::Buffer>>);
+pub struct Pooled<C: PathUnit = u8>(*mut C::Buffer);
 impl<C: PathUnit> Pooled<C> {
     #[inline]
     pub fn new() -> Self {
-        Self(ManuallyDrop::new(C::pool_get()))
+        Self(bun_core::heap::into_raw(C::pool_get()))
     }
 }
 impl<C: PathUnit> Drop for Pooled<C> {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: taken once, here.
-        C::pool_put(unsafe { ManuallyDrop::take(&mut self.0) });
+        // SAFETY: out of `into_raw`, taken once, here.
+        C::pool_put(unsafe { bun_core::heap::take(self.0) });
     }
 }
-// SAFETY: `C::Buffer` is an array of `C` on the heap.
+impl<C: PathUnit> Held for Pooled<C> {}
+// SAFETY: `C::Buffer` is an array of `C` on the heap, freed by the drop of the `Pooled`.
 unsafe impl<C: PathUnit> Storage<C> for Pooled<C> {
+    type Held = Self;
     #[inline(always)]
-    fn room(&mut self) -> (*mut C, usize) {
+    fn lend(self) -> (*mut C, usize, Self) {
+        (self.0.cast(), size_of::<C::Buffer>() / size_of::<C>(), self)
+    }
+}
+// SAFETY: as above, and borrowed for as long as the `Lent` lives.
+unsafe impl<'a, C: PathUnit> Storage<C> for &'a mut Pooled<C> {
+    type Held = Lent<'a>;
+    #[inline(always)]
+    fn lend(self) -> (*mut C, usize, Lent<'a>) {
         (
-            core::ptr::from_mut::<C::Buffer>(&mut self.0).cast(),
+            self.0.cast(),
             size_of::<C::Buffer>() / size_of::<C>(),
+            Lent(PhantomData),
         )
     }
 }
@@ -784,38 +738,6 @@ unsafe impl<C: PathUnit> Storage<C> for Pooled<C> {
 pub type Scratch<C = u8> = Stack<C>;
 #[cfg(windows)]
 pub type Scratch<C = u8> = Pooled<C>;
-
-// SAFETY: the spare capacity of a `Vec` is valid for writes; `grow` sets the length it must keep.
-unsafe impl<C> Storage<C> for Vec<C> {
-    #[inline(always)]
-    fn room(&mut self) -> (*mut C, usize) {
-        (self.as_mut_ptr(), Vec::capacity(self))
-    }
-    fn grow(&mut self, used: usize, total: usize) -> Option<(*mut C, usize)> {
-        // SAFETY: the `PathBuf` wrote the first `used` units.
-        unsafe { self.set_len(used) };
-        Vec::reserve(self, total - used);
-        Some(self.room())
-    }
-}
-
-/// Lets the OS write text into `mem`: the target of a link, say. `fill` returns the units it wrote.
-/// What comes back is text, which only `join` and its kin take.
-///
-/// # Safety
-/// `fill` initializes as many units, from the first, as it returns, and takes the value of none.
-#[inline]
-pub unsafe fn text_from_os<C: PathUnit, S: Storage<C>, E>(
-    mem: &mut S,
-    fill: impl FnOnce(&mut [MaybeUninit<C>]) -> Result<usize, E>,
-) -> Result<&[C], E> {
-    let (ptr, capacity) = mem.room();
-    // SAFETY: `Storage`'s, and `fill` leaves what is initialized so.
-    let len = fill(unsafe { core::slice::from_raw_parts_mut(ptr.cast(), capacity) })?;
-    assert!(len <= capacity);
-    // SAFETY: the caller's.
-    Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
-}
 
 // ── the builder ──────────────────────────────────────────────────────────────────────────────────
 
@@ -843,76 +765,59 @@ struct Saved {
     at_fence: AtFence,
 }
 
-/// Builds a `V` in `S`.
+/// Builds a `V` in the storage that `H` holds.
 ///
 /// The first step that fails is remembered, and [`get`](Self::get), the only way to the path,
 /// returns it from then on.
 #[repr(C)]
-pub struct PathBuf<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> {
-    /// What `mem` last said.
+pub struct PathBuf<V: View + ?Sized, H: Held + ?Sized> {
+    /// What the storage lent.
     ptr: *mut V::Unit,
     cap: usize,
-    /// 0 or less than `cap`. While `err` is `None` it is less, and the unit there is the terminator.
+    /// Less than `cap`. While `err` is `None` the unit there is the terminator.
     len: usize,
     /// `..` removes nothing below this length, which is never more than `len`.
     fence: usize,
     at_fence: AtFence,
     err: Option<PathError>,
     view: PhantomData<fn(&V)>,
-    /// Last, so that `&mut PathBuf<V, S>` coerces to `&mut DynPathBuf<V>`.
-    mem: S,
+    /// Last, so that `&mut PathBuf<V, H>` coerces to `&mut DynPathBuf<V>`.
+    held: H,
 }
 /// A builder in any storage, for a parameter, a field or a closure.
-pub type DynPathBuf<'m, V> = PathBuf<V, dyn Storage<<V as Units>::Unit> + 'm>;
+pub type DynPathBuf<'m, V> = PathBuf<V, dyn Held + 'm>;
 /// What a function that only appends takes: the `tail()` of any builder.
 pub type TailBuf<'m, C = u8> = DynPathBuf<'m, Tail<C>>;
-pub type AbsPathBuf<S> = PathBuf<AbsPath, S>;
-pub type RelPathBuf<S> = PathBuf<RelPath, S>;
-pub type SubPathBuf<S> = PathBuf<SubPath, S>;
-pub type AnyPathBuf<S> = PathBuf<Path, S>;
+pub type AbsPathBuf<H> = PathBuf<AbsPath, H>;
+pub type RelPathBuf<H> = PathBuf<RelPath, H>;
+pub type SubPathBuf<H> = PathBuf<SubPath, H>;
+pub type AnyPathBuf<H> = PathBuf<Path, H>;
 
-impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> PathBuf<V, S> {
+impl<V: View + ?Sized, H: Held + ?Sized> PathBuf<V, H> {
     /// Holds no path yet: [`get`](Self::get) fails as `Relative` until one is set.
     #[inline(always)]
-    pub fn unset_in(mem: S) -> Self
+    pub fn unset_in(mem: impl Storage<V::Unit, Held = H>) -> Self
     where
-        S: Sized,
+        H: Sized,
     {
-        let mut this = Self {
-            ptr: core::ptr::null_mut(),
-            cap: 0,
+        let (ptr, cap, held) = mem.lend();
+        Self {
+            ptr,
+            cap,
             len: 0,
             fence: 0,
             at_fence: V::WHEN_RELATIVE,
             err: Some(PathError::Relative),
             view: PhantomData,
-            mem,
-        };
-        // Asked once `mem` is where it stays, next to the pointer.
-        (this.ptr, this.cap) = this.mem.room();
-        this
-    }
-
-    #[inline(always)]
-    fn reserve(&mut self, used: usize, total: usize) -> bool {
-        total <= self.cap || self.grow(used, total)
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn grow(&mut self, used: usize, total: usize) -> bool {
-        let Some((ptr, cap)) = self.mem.grow(used, total) else {
-            return false;
-        };
-        (self.ptr, self.cap) = (ptr, cap);
-        true
+            held,
+        }
     }
 
     /// Holds a copy of `path`.
     #[inline]
-    pub fn from_in(mem: S, path: &V) -> Self
+    pub fn from_in(mem: impl Storage<V::Unit, Held = H>, path: &V) -> Self
     where
-        S: Sized,
+        H: Sized,
         V: Known,
     {
         let mut this = Self::unset_in(mem);
@@ -922,9 +827,9 @@ impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> PathBuf<V, S> {
 
     /// Holds a copy of the absolute `path`, of either unit.
     #[inline]
-    pub fn from_abs_in<D: PathUnit>(mem: S, path: &AbsPath<D>) -> Self
+    pub fn from_abs_in<D: PathUnit>(mem: impl Storage<V::Unit, Held = H>, path: &AbsPath<D>) -> Self
     where
-        S: Sized,
+        H: Sized,
         V: HoldsAbs,
         V::Unit: FromUnit<D>,
     {
@@ -933,30 +838,53 @@ impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> PathBuf<V, S> {
         this
     }
 
-    /// Holds what [`set_from_os`](Self::set_from_os) gets from `fill`.
+    /// Holds an absolute path that the OS writes: `getcwd`, `realpath`, the path of an fd. `fill` gets
+    /// all of the storage and returns the units it wrote, without a terminator.
     ///
     /// # Safety
-    /// [`set_from_os`](Self::set_from_os)'s.
-    #[inline]
+    /// `fill` initializes as many units, from the first, as it returns, unless that is all it was
+    /// given or more.
     pub unsafe fn from_os_in<E>(
-        mem: S,
+        mem: impl Storage<V::Unit, Held = H>,
         fill: impl FnOnce(&mut [MaybeUninit<V::Unit>]) -> Result<usize, E>,
     ) -> Result<Self, E>
     where
-        S: Sized,
+        H: Sized,
         V: HoldsAbs,
     {
         let mut this = Self::unset_in(mem);
-        // SAFETY: the caller's.
-        unsafe { this.set_from_os(fill)? };
+        // SAFETY: `Storage`'s.
+        let len = fill(unsafe { core::slice::from_raw_parts_mut(this.ptr.cast(), this.cap) })?;
+        // No room left for the terminator also means the OS may have cut the path short.
+        if len >= this.cap {
+            this.err = Some(PathError::TooLong);
+            return Ok(this);
+        }
+        this.len = len;
+        #[cfg(windows)]
+        if is_open_root(this.written()) {
+            this.write::<V::Unit>(true, &[]);
+        }
+        let root = root_len(this.written());
+        if root == 0 {
+            this.len = 0;
+            return Ok(this);
+        }
+        this.err = None;
+        let mut end = this.len;
+        while end > root && is_native_sep(this.written()[end - 1]) {
+            end -= 1;
+        }
+        this.truncate(end);
+        this.fence_at_root();
         Ok(this)
     }
 
     /// Empty: the base itself.
     #[inline(always)]
-    pub fn new_in(mem: S) -> Self
+    pub fn new_in(mem: impl Storage<V::Unit, Held = H>) -> Self
     where
-        S: Sized,
+        H: Sized,
         V: HoldsEmpty,
     {
         let mut this = Self::unset_in(mem);
@@ -1047,60 +975,6 @@ impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> PathBuf<V, S> {
         };
     }
 
-    /// Replaces the whole path with an absolute one that the OS writes: `getcwd`, `realpath`, the
-    /// path of an fd. `fill` gets all of the storage and returns the units it wrote, without a
-    /// terminator.
-    ///
-    /// # Safety
-    /// `fill` takes the value of no unit, and initializes as many, from the first, as it returns
-    /// unless that is all it was given or more.
-    pub unsafe fn set_from_os<E>(
-        &mut self,
-        fill: impl FnOnce(&mut [MaybeUninit<V::Unit>]) -> Result<usize, E>,
-    ) -> Result<&mut Self, E>
-    where
-        V: HoldsAbs,
-    {
-        if self.is_scoped() {
-            return Ok(self);
-        }
-        // Until the OS has written one there is no path, whichever way this returns.
-        self.err = Some(PathError::Relative);
-        self.len = 0;
-        self.fence = 0;
-        self.at_fence = V::WHEN_RELATIVE;
-        // Storage that cannot grow lends what it has, and the OS says whether that is enough.
-        self.reserve(0, V::Unit::MAX_PATH);
-        let capacity = self.cap;
-        // SAFETY: `Storage`'s, and `fill` leaves what is initialized so.
-        let room = unsafe { core::slice::from_raw_parts_mut(self.ptr.cast(), capacity) };
-        let len = fill(room)?;
-        // No room left for the terminator also means the OS may have cut the path short.
-        if len >= capacity {
-            self.err = Some(PathError::TooLong);
-            return Ok(self);
-        }
-        self.len = len;
-        #[cfg(windows)]
-        if is_open_root(self.written()) {
-            self.write::<V::Unit>(true, &[]);
-        }
-        let len = self.len;
-        let root = root_len(self.written());
-        if root == 0 {
-            self.len = 0;
-            return Ok(self);
-        }
-        self.err = None;
-        let mut end = len;
-        while end > root && is_native_sep(self.written()[end - 1]) {
-            end -= 1;
-        }
-        self.truncate(end);
-        self.fence_at_root();
-        Ok(self)
-    }
-
     #[inline(always)]
     fn written(&self) -> &[V::Unit] {
         // SAFETY: the first `len` units were written.
@@ -1122,12 +996,11 @@ impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> PathBuf<V, S> {
     {
         let at = self.len;
         let start = at + usize::from(sep);
-        if !self.reserve(at, start + V::Unit::bound(units) + 1) {
+        if start + V::Unit::bound(units) + 1 > self.cap {
             self.poison(PathError::TooLong);
             return;
         }
-        // SAFETY: `reserve` made the room, and `units` is not in `mem`, which `self` borrows
-        // mutably or owns.
+        // SAFETY: there is the room, and `units` is not in the storage, which `self` holds.
         unsafe {
             let base = self.ptr;
             // Overwritten by `units` or the terminator when there is no separator to write.
@@ -1144,7 +1017,7 @@ impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> PathBuf<V, S> {
     fn truncate(&mut self, len: usize) {
         debug_assert!(len <= self.len);
         self.len = len;
-        // SAFETY: no more than `len`, and no caller passes 0 while `len` is 0.
+        // SAFETY: no more than `len`, which is less than `cap`.
         unsafe { self.ptr.add(len).write(V::Unit::from_u8(0)) };
     }
 
@@ -1194,22 +1067,22 @@ impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> PathBuf<V, S> {
 
     /// Appends one name written by `args`, in place.
     pub fn push_fmt(&mut self, args: fmt::Arguments<'_>) -> &mut Self {
-        struct Name<'a, V: View + ?Sized, S: Storage<V::Unit> + ?Sized> {
-            buf: &'a mut PathBuf<V, S>,
+        struct Name<'a, V: View + ?Sized, H: Held + ?Sized> {
+            buf: &'a mut PathBuf<V, H>,
             len: usize,
             failure: Option<PathError>,
         }
-        impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> fmt::Write for Name<'_, V, S> {
+        impl<V: View + ?Sized, H: Held + ?Sized> fmt::Write for Name<'_, V, H> {
             fn write_str(&mut self, text: &str) -> fmt::Result {
                 let text = text.as_bytes();
                 let bound = <V::Unit as FromUnit<u8>>::bound(text);
-                if self.failure.is_none() && !self.buf.reserve(self.len, self.len + bound + 1) {
+                if self.failure.is_none() && self.len + bound + 1 > self.buf.cap {
                     self.failure = Some(PathError::TooLong);
                 }
                 if self.failure.is_some() {
                     return Err(fmt::Error);
                 }
-                // SAFETY: `reserve` made the room.
+                // SAFETY: there is the room.
                 match unsafe { V::Unit::transcode(text, self.buf.ptr.add(self.len)) } {
                     Some(written) => self.len += written,
                     None => self.failure = Some(PathError::BadName),
@@ -1292,48 +1165,9 @@ impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> PathBuf<V, S> {
     }
 
     #[inline(always)]
-    fn restoring(&mut self) -> Restore<'_, V, S> {
+    fn restoring(&mut self) -> Restore<'_, V, H> {
         let saved = self.raise_fence(AtFence::Scoped);
         Restore { buf: self, saved }
-    }
-
-    /// Hands `f` the first `len` units of the path with a terminator after them, with no copy: the
-    /// unit there is put back afterwards. `len` is the length of an ancestor.
-    #[inline]
-    pub fn with_ancestor<R>(
-        &mut self,
-        len: usize,
-        f: impl FnOnce(&Z<V>) -> R,
-    ) -> Result<R, PathError> {
-        if let Some(err) = self.err {
-            return Err(err);
-        }
-        struct PutBack<C: Copy>(*mut C, C);
-        impl<C: Copy> Drop for PutBack<C> {
-            fn drop(&mut self) {
-                // SAFETY: where it was read.
-                unsafe { self.0.write(self.1) };
-            }
-        }
-        let units = self.written();
-        let root = root_len(units);
-        let is_ancestor = len > 0
-            && (len == units.len()
-                || len == root
-                || (len > root && len < units.len() && is_native_sep(units[len])));
-        if !is_ancestor {
-            return Err(PathError::BadName);
-        }
-        // SAFETY: `len` is at most the written length, where a unit or the terminator is.
-        unsafe {
-            let at = self.ptr.add(len);
-            let put_back = PutBack(at, at.read());
-            at.write(V::Unit::from_u8(0));
-            let ancestor = core::slice::from_raw_parts(self.ptr.cast_const(), len);
-            let result = f(Z::wrap(V::wrap(ancestor, Token(()))));
-            drop(put_back);
-            Ok(result)
-        }
     }
 
     /// Hands `f` the path with `count` times `..` after it, for the OS to resolve once it has
@@ -1482,12 +1316,12 @@ impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> PathBuf<V, S> {
     }
 }
 
-impl<C: Unit, S: Storage<C> + ?Sized> PathBuf<AbsPath<C>, S> {
+impl<C: Unit, H: Held + ?Sized> PathBuf<AbsPath<C>, H> {
     /// [`from_abs_in`](Self::from_abs_in). On Windows a path on a drive or a share gets the `\\?\`
     /// prefix, with which the OS takes the path as it is written, however long.
-    pub fn long_in<D: PathUnit>(mem: S, path: &AbsPath<D>) -> Self
+    pub fn long_in<D: PathUnit>(mem: impl Storage<C, Held = H>, path: &AbsPath<D>) -> Self
     where
-        S: Sized,
+        H: Sized,
         C: FromUnit<D>,
     {
         let mut this = Self::unset_in(mem);
@@ -1524,12 +1358,11 @@ impl<C: Unit, S: Storage<C> + ?Sized> PathBuf<AbsPath<C>, S> {
         };
         let below = below.len();
         let start = to.len() + usize::from(below > 0 && !to.is_root());
-        if !self.reserve(self.len, start + below + 1) {
+        if start + below + 1 > self.cap {
             self.poison(PathError::TooLong);
             return true;
         }
-        // SAFETY: `reserve` made room for `start + below + 1` units, the last `below` written units
-        // may overlap where they go, and `to` is not in `mem`, which `self` borrows mutably or owns.
+        // SAFETY: there is room for `start + below + 1` units, and `to` is not in the storage, which `self` holds.
         unsafe {
             let base = self.ptr;
             core::ptr::copy(base.add(self.len - below), base.add(start), below);
@@ -1548,12 +1381,12 @@ impl<C: Unit, S: Storage<C> + ?Sized> PathBuf<AbsPath<C>, S> {
 macro_rules! erased {
     () => {
         /// The same builder for a function that only appends and need not know the kind of path.
+        /// Nothing that reads what `V` says of its kind takes a [`Tail`], which is not [`Known`], and
+        /// being unsized it cannot be swapped with the tail of a path of another kind.
         #[inline(always)]
         pub fn tail(&mut self) -> &mut TailBuf<'_, V::Unit> {
             let this: &mut DynPathBuf<'_, V> = self;
-            // SAFETY: `repr(C)`, and `V` is only in a `PhantomData` and in the type of `ptr`, which
-            // has the same unit. What a `Tail` is not `Known` for is all that reads `V`'s constants,
-            // and being unsized it cannot be swapped with the tail of another kind.
+            // SAFETY: `repr(C)`, and `V` is only in a `PhantomData` and, as the same unit, in the type of `ptr`.
             unsafe { &mut *(core::ptr::from_mut(this) as *mut TailBuf<'_, V::Unit>) }
         }
 
@@ -1565,34 +1398,31 @@ macro_rules! erased {
         }
     };
 }
-impl<V: View + ?Sized, S: Storage<V::Unit>> PathBuf<V, S> {
+impl<V: View + ?Sized, H: Held> PathBuf<V, H> {
     erased!();
 }
 impl<V: View + ?Sized> DynPathBuf<'_, V> {
     erased!();
 }
 
-struct Restore<'a, V: View + ?Sized, S: Storage<V::Unit> + ?Sized> {
-    buf: &'a mut PathBuf<V, S>,
+struct Restore<'a, V: View + ?Sized, H: Held + ?Sized> {
+    buf: &'a mut PathBuf<V, H>,
     saved: Saved,
 }
-impl<V: View + ?Sized, S: Storage<V::Unit> + ?Sized> Drop for Restore<'_, V, S> {
+impl<V: View + ?Sized, H: Held + ?Sized> Drop for Restore<'_, V, H> {
     #[inline(always)]
     fn drop(&mut self) {
-        self.buf.len = self.saved.len;
+        self.buf.truncate(self.saved.len);
         self.buf.err = self.saved.err;
         self.buf.fence = self.saved.fence;
         self.buf.at_fence = self.saved.at_fence;
-        if self.saved.err.is_none() {
-            self.buf.truncate(self.saved.len);
-        }
     }
 }
 
 /// A [`PathBuf`] that goes back to what it was, failures included, when this is dropped. Until then
 /// nothing removes or replaces what was there: what this lends is unsized, so no other builder can
 /// be moved into its place.
-pub struct Scope<'a, V: View + ?Sized>(Restore<'a, V, dyn Storage<V::Unit> + 'a>);
+pub struct Scope<'a, V: View + ?Sized>(Restore<'a, V, dyn Held + 'a>);
 impl<V: View + ?Sized> Scope<'_, V> {
     /// The path as it was when the scope began, which it still starts with.
     #[inline]
@@ -1626,11 +1456,7 @@ fn text_root_len<P: PlatformT>(text: &[u8]) -> usize {
     match P::P {
         Platform::Posix => usize::from(text.first() == Some(&b'/')),
         // Elsewhere than on Windows this is a POSIX path that may be written with `\`.
-        Platform::Loose if !cfg!(windows) => match text {
-            [_, b':', b'/' | b'\\', ..] => 3,
-            [b'/' | b'\\', ..] => 1,
-            _ => 0,
-        },
+        Platform::Loose if !cfg!(windows) => usize::from(matches!(text, [b'/' | b'\\', ..])),
         _ => windows_root_len(text, |c| P::P.is_separator(c)),
     }
 }
@@ -1651,8 +1477,8 @@ pub fn relative_in<C: Unit, S: Storage<C>>(
     mem: S,
     from: &AbsPath<C>,
     to: &AbsPath<C>,
-) -> PathBuf<RelPath<C>, S> {
-    let mut out = PathBuf::<RelPath<C>, S>::new_in(mem);
+) -> PathBuf<RelPath<C>, S::Held> {
+    let mut out = PathBuf::<RelPath<C>, S::Held>::new_in(mem);
     let mut common = from;
     let below = loop {
         if let Some(below) = to.strip_prefix(common) {
@@ -1681,7 +1507,836 @@ pub fn top_level_dir() -> &'static AbsPath {
 
 #[cfg(test)]
 mod tests {
-    use super::{whole_root_len, windows_root_len};
+    use super::*;
+    use crate::resolve_path::platform::{Loose, Posix, Windows};
+
+    /// simdutf is C++, which neither `cargo test` links nor Miri runs. The other direction is in
+    /// `string_paths`.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__convert_utf16le_to_utf8_with_errors(
+        from: *const u16,
+        len: usize,
+        to: *mut u8,
+    ) -> simdutf::SIMDUTFResult {
+        // SAFETY: the caller's, with room for three units for each one.
+        let (status, count) = unsafe {
+            match String::from_utf16(core::slice::from_raw_parts(from, len)) {
+                Ok(text) => {
+                    core::ptr::copy_nonoverlapping(text.as_ptr(), to, text.len());
+                    (simdutf::Status::SUCCESS, text.len())
+                }
+                Err(_) => (simdutf::Status::SURROGATE, 0),
+            }
+        };
+        simdutf::SIMDUTFResult { status, count }
+    }
+
+    #[cfg(not(windows))]
+    const ROOT: &str = "/";
+    #[cfg(windows)]
+    const ROOT: &str = "C:\\";
+
+    /// Storage small enough to fill.
+    struct Small<C = u8>([MaybeUninit<C>; SMALL]);
+    const SMALL: usize = 24;
+    impl<C: Copy> Small<C> {
+        fn new() -> Self {
+            Self([MaybeUninit::uninit(); SMALL])
+        }
+    }
+    // SAFETY: an array of `C`, borrowed for as long as the `Lent` lives.
+    unsafe impl<'a, C> Storage<C> for &'a mut Small<C> {
+        type Held = Lent<'a>;
+        fn lend(self) -> (*mut C, usize, Lent<'a>) {
+            (self.0.as_mut_ptr().cast(), SMALL, Lent(PhantomData))
+        }
+    }
+    fn small<'a>(mem: &'a mut Small, path: &str) -> AbsPathBuf<Lent<'a>> {
+        AbsPathBuf::from_in(mem, AbsPath::new(&native(path)).unwrap())
+    }
+    /// A name that with [`ROOT`] before it takes `len` units.
+    fn name_up_to(len: usize) -> Vec<u8> {
+        vec![b'x'; len - ROOT.len()]
+    }
+
+    /// A path of this host from one written with `/`, where a leading `/` stands for [`ROOT`].
+    fn native(portable: &str) -> Vec<u8> {
+        let (root, below) = match portable.strip_prefix('/') {
+            Some(below) => (ROOT, below),
+            None => ("", portable),
+        };
+        format!("{root}{}", below.replace('/', &char::from(SEP).to_string())).into_bytes()
+    }
+    /// The reverse of [`native`].
+    fn portable(native: &[u8]) -> String {
+        let native = core::str::from_utf8(native).unwrap();
+        match native.strip_prefix(ROOT) {
+            Some(below) => format!("/{}", below.replace(char::from(SEP), "/")),
+            None => native.replace(char::from(SEP), "/"),
+        }
+    }
+    /// The path as it is written on this host, or the name of the failure. Reads the terminator.
+    fn raw<V: Units<Unit = u8> + ?Sized>(path: Result<&Z<V>, PathError>) -> String {
+        match path {
+            Ok(path) => {
+                let z = path.z();
+                // SAFETY: what a `Z` promises.
+                assert_eq!(unsafe { *z.as_ptr().add(z.len()) }, 0);
+                assert_eq!(z.as_bytes(), path.units());
+                String::from_utf8(path.units().to_vec()).unwrap()
+            }
+            Err(err) => format!("{err:?}"),
+        }
+    }
+    fn show<V: Units<Unit = u8> + ?Sized>(path: Result<&Z<V>, PathError>) -> String {
+        match path {
+            Ok(_) => portable(raw(path).as_bytes()),
+            Err(err) => format!("{err:?}"),
+        }
+    }
+    fn show_wide<V: Units<Unit = u16> + ?Sized>(path: Result<&Z<V>, PathError>) -> String {
+        match path {
+            Ok(path) => {
+                let z = path.z();
+                // SAFETY: what a `Z` promises.
+                assert_eq!(unsafe { *z.as_ptr().add(z.len()) }, 0);
+                portable(String::from_utf16(path.units()).unwrap().as_bytes())
+            }
+            Err(err) => format!("{err:?}"),
+        }
+    }
+    fn at<'a>(mem: &'a mut Stack, path: &str) -> AbsPathBuf<Lent<'a>> {
+        AbsPathBuf::from_in(mem, AbsPath::new(&native(path)).unwrap())
+    }
+    /// What an OS call that writes `text` does with the room it is given.
+    fn writes<C: Copy>(text: &[C]) -> impl FnOnce(&mut [MaybeUninit<C>]) -> Result<usize, ()> {
+        move |room| {
+            for (unit, from) in room.iter_mut().zip(text) {
+                unit.write(*from);
+            }
+            Ok(text.len())
+        }
+    }
+
+    #[test]
+    fn a_view_takes_one_form() {
+        for (text, kinds) in [
+            ("", "s"),
+            ("a", "sn"),
+            ("a/b", "s"),
+            ("..", ""),
+            ("../..", ""),
+            ("../a", ""),
+            ("a/..", ""),
+            ("a/../b", ""),
+            (".", ""),
+            ("a/./b", ""),
+            ("a/", ""),
+            ("a//b", ""),
+            ("a\0b", ""),
+            ("/", "a"),
+            ("/a", "a"),
+            ("/a/b", "a"),
+            ("/a/", ""),
+            ("/a//b", ""),
+            ("/..", ""),
+            ("/a/../b", ""),
+            ("/./a", ""),
+        ] {
+            let units = native(text);
+            let mut taken = String::new();
+            taken.extend(AbsPath::new(&units).map(|_| 'a'));
+            taken.extend(SubPath::new(&units).map(|_| 's'));
+            taken.extend(Component::new(&units).map(|_| 'n'));
+            assert_eq!(taken, kinds, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn parents_names_and_what_is_below() {
+        let path = native("/a/b/cd");
+        let path = AbsPath::new(&path).unwrap();
+        let up = core::iter::successors(Some(path), |path| path.parent());
+        let up: Vec<String> = up.map(|path| portable(path.as_bytes())).collect();
+        assert_eq!(up, ["/a/b/cd", "/a/b", "/a", "/"]);
+        assert_eq!(path.basename().unwrap().as_bytes(), b"cd");
+        let root = AbsPath::new(ROOT.as_bytes()).unwrap();
+        assert!(root.is_root() && root.parent().is_none() && root.basename().is_none());
+
+        for (dir, below) in [
+            ("/a/b/cd", Some("")),
+            ("/a/b", Some("cd")),
+            ("/a", Some("b/cd")),
+            ("/", Some("a/b/cd")),
+            ("/a/b/cd/e", None),
+            ("/a/b/c", None),
+            ("/a/bb", None),
+            ("/x", None),
+        ] {
+            let dir = native(dir);
+            let got = path.strip_prefix(AbsPath::new(&dir).unwrap());
+            assert_eq!(
+                got.map(|p| portable(p.as_bytes())).as_deref(),
+                below,
+                "{dir:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn literals() {
+        assert_eq!(raw(Ok(component!("node_modules"))), "node_modules");
+        assert_eq!(
+            show(Ok(sub_path!("node_modules/.bun"))),
+            "node_modules/.bun"
+        );
+    }
+
+    #[test]
+    fn join() {
+        for (text, joined) in [
+            ("", "/a/b"),
+            (".", "/a/b"),
+            ("c", "/a/b/c"),
+            ("c/d", "/a/b/c/d"),
+            ("c//d/./e/", "/a/b/c/d/e"),
+            ("..", "/a"),
+            ("../..", "/"),
+            ("../../../..", "/"),
+            ("c/../d", "/a/b/d"),
+            ("../../../x", "/x"),
+            ("/x/y", "/x/y"),
+            ("/x/../..", "/"),
+            ("a\0b", "BadName"),
+        ] {
+            let mut mem = Stack::new();
+            assert_eq!(
+                show(at(&mut mem, "/a/b").join::<Posix>(text.as_bytes()).get()),
+                joined,
+                "{text:?}"
+            );
+            assert_eq!(
+                show(at(&mut mem, "/a/b").join::<Loose>(text.as_bytes()).get()),
+                joined,
+                "{text:?}"
+            );
+        }
+        let mut mem = Stack::new();
+        assert_eq!(
+            show(
+                at(&mut mem, "/a/b")
+                    .join::<Loose>(b"c\\d\\..\\..\\..\\x")
+                    .get()
+            ),
+            "/a/x"
+        );
+        assert_eq!(
+            show(at(&mut mem, "/a/b").join::<Windows>(b"c\\d/e").get()),
+            "/a/b/c/d/e"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn a_backslash_and_a_colon_are_part_of_a_name_here() {
+        let mut mem = Stack::new();
+        assert_eq!(
+            show(at(&mut mem, "/a").join::<Posix>(b"c\\..\\d").get()),
+            "/a/c\\..\\d"
+        );
+        assert_eq!(
+            show(at(&mut mem, "/a").push_names::<Posix>(b"c\\d").get()),
+            "/a/c\\d"
+        );
+        assert_eq!(
+            show(at(&mut mem, "/a").join_below::<Loose>(b"pkgs:a/x").get()),
+            "/a/pkgs:a/x"
+        );
+        assert_eq!(
+            show(at(&mut mem, "/a").join::<Loose>(b"C:x").get()),
+            "/a/C:x"
+        );
+        assert_eq!(
+            show(at(&mut mem, "/a").join::<Loose>(b"C:\\x").get()),
+            "/a/C:/x"
+        );
+        assert_eq!(
+            show(at(&mut mem, "/a").join_below::<Loose>(b"C:/x").get()),
+            "/a/C:/x"
+        );
+        // Text that is a Windows path: a drive or a share has no meaning here.
+        assert_eq!(
+            show(at(&mut mem, "/a").join::<Windows>(b"C:\\x").get()),
+            "BadName"
+        );
+        assert_eq!(
+            show(
+                at(&mut mem, "/a")
+                    .join::<Windows>(b"\\\\srv\\share\\x")
+                    .get()
+            ),
+            "BadName"
+        );
+        assert_eq!(
+            show(at(&mut mem, "/a").join_below::<Windows>(b"C:/x").get()),
+            "Absolute"
+        );
+        assert_eq!(
+            show(at(&mut mem, "/a").join::<Windows>(b"C:x").get()),
+            "Absolute"
+        );
+    }
+
+    #[test]
+    fn join_below_stays_below() {
+        for (text, joined) in [
+            ("", "/a/b"),
+            ("x", "/a/b/x"),
+            ("x/../y", "/a/b/y"),
+            ("x/..", "/a/b"),
+            ("..", "Escapes"),
+            ("x/../..", "Escapes"),
+            ("x/../../b/y", "Escapes"),
+            ("/etc", "Absolute"),
+            ("/a/b/x", "Absolute"),
+        ] {
+            let mut mem = Stack::new();
+            assert_eq!(
+                show(
+                    at(&mut mem, "/a/b")
+                        .join_below::<Posix>(text.as_bytes())
+                        .get()
+                ),
+                joined,
+                "{text:?}"
+            );
+        }
+        let mut mem = Stack::new();
+        assert_eq!(
+            show(
+                at(&mut mem, "/a/b")
+                    .join_below::<Loose>(b"x\\..\\..\\..\\etc")
+                    .get()
+            ),
+            "Escapes"
+        );
+        assert_eq!(
+            show(
+                at(&mut mem, "/a/b")
+                    .join_below::<Loose>(b"x\\y/../..\\z")
+                    .get()
+            ),
+            "/a/b/z"
+        );
+
+        let mut rel = RelPathBuf::new_in(&mut mem);
+        assert_eq!(show(rel.join_below::<Posix>(b"..").get()), "Escapes");
+    }
+
+    #[test]
+    fn push_names_takes_names_only() {
+        for (text, pushed) in [
+            ("react", "/nm/react"),
+            ("@scope/pkg", "/nm/@scope/pkg"),
+            ("...", "/nm/..."),
+            ("", "BadName"),
+            (".", "BadName"),
+            ("..", "BadName"),
+            ("a/..", "BadName"),
+            ("a/./b", "BadName"),
+            ("a//b", "BadName"),
+            ("a/", "BadName"),
+            ("a\0b", "BadName"),
+            ("/a", "Absolute"),
+        ] {
+            let mut mem = Stack::new();
+            assert_eq!(
+                show(
+                    at(&mut mem, "/nm")
+                        .push_names::<Posix>(text.as_bytes())
+                        .get()
+                ),
+                pushed,
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn what_dot_dot_does_with_no_name_left() {
+        let mut mem = Stack::new();
+        assert_eq!(show(at(&mut mem, "/a").up().up().up().get()), "/");
+
+        let mut rel = RelPathBuf::new_in(&mut mem);
+        assert_eq!(
+            show(rel.up().up().push(component!("x")).up().up().get()),
+            "../../.."
+        );
+        assert_eq!(show(rel.join::<Posix>(b"a/../../b").get()), "../../../../b");
+
+        let mut sub = SubPathBuf::new_in(&mut mem);
+        assert_eq!(show(sub.push(component!("a")).up().get()), "");
+        assert_eq!(show(sub.up().get()), "Escapes");
+
+        let mut any = AnyPathBuf::new_in(&mut mem);
+        assert_eq!(show(any.join::<Posix>(b"a/../..").get()), "..");
+        assert!(matches!(any.get().unwrap().classify(), Classified::Rel(_)));
+    }
+
+    #[test]
+    fn the_first_failure_stays_until_the_path_is_set() {
+        let mut mem = Small::new();
+        let mut path = small(&mut mem, "/a/b");
+        path.join_below::<Posix>(b"../x")
+            .push(component!("more"))
+            .join::<Posix>(b"/y");
+        path.push(SubPath::new(&name_up_to(SMALL)).unwrap());
+        assert_eq!(path.error(), Some(PathError::Escapes));
+        assert_eq!(show(path.get()), "Escapes");
+        assert_eq!(
+            show(path.set(AbsPath::new(&native("/z")).unwrap()).get()),
+            "/z"
+        );
+
+        let mut unset = AbsPathBuf::unset_in(&mut mem);
+        assert_eq!(show(unset.get()), "Relative");
+        assert_eq!(show(unset.push(component!("x")).up().get()), "Relative");
+        assert_eq!(unset.shown(), b"");
+    }
+
+    #[test]
+    fn a_path_fills_its_storage_and_no_more() {
+        let (fits, too_long) = (name_up_to(SMALL - 1), name_up_to(SMALL));
+        let mut mem = Small::new();
+        let mut path = small(&mut mem, "/");
+        path.push(SubPath::new(&fits).unwrap());
+        assert_eq!(raw(path.get()).len(), SMALL - 1);
+        assert_eq!(show(path.push(component!("y")).get()), "TooLong");
+
+        type Step = fn(&mut DynPathBuf<'_, AbsPath>, &[u8]);
+        let steps: [Step; 5] = [
+            |path, name| _ = path.push(SubPath::new(name).unwrap()),
+            |path, name| _ = path.push_names::<Posix>(name),
+            |path, name| _ = path.join::<Posix>(name),
+            |path, name| _ = path.join_below::<Posix>(name),
+            |path, name| _ = path.push_fmt(format_args!("{}", name.escape_ascii())),
+        ];
+        for step in steps {
+            let mut path = small(&mut mem, "/");
+            step(&mut path, &fits);
+            assert_eq!(raw(path.get()).len(), SMALL - 1);
+            assert_eq!(show(path.up().get()), "/");
+            step(&mut path, &too_long);
+            assert_eq!(show(path.get()), "TooLong");
+        }
+
+        let whole = [native("/").as_slice(), &too_long].concat();
+        let whole = AbsPath::new(&whole).unwrap();
+        assert_eq!(show(AbsPathBuf::from_in(&mut mem, whole).get()), "TooLong");
+        assert_eq!(
+            show(small(&mut mem, "/").set_os(whole.as_bytes()).get()),
+            "TooLong"
+        );
+    }
+
+    #[test]
+    fn the_stack_and_the_pool_lend_one_path_buffer() {
+        fn ends<C: PathUnit>(mem: impl Storage<C>) {
+            let (ptr, cap, _held) = mem.lend();
+            assert_eq!(cap, size_of::<C::Buffer>() / size_of::<C>());
+            // SAFETY: what `Storage` promises.
+            unsafe { ptr.add(cap - 1).write(C::from_u8(0)) };
+        }
+        ends::<u8>(&mut Stack::new());
+        ends::<u16>(&mut Stack::new());
+        ends::<u8>(&mut Pooled::new());
+        ends::<u16>(Pooled::new());
+    }
+
+    #[test]
+    fn push_fmt_writes_one_name() {
+        let mut mem = Stack::new();
+        assert_eq!(
+            show(
+                at(&mut mem, "/a")
+                    .push_fmt(format_args!("{}@{}", "react", 18))
+                    .get()
+            ),
+            "/a/react@18"
+        );
+        assert_eq!(
+            show(at(&mut mem, "/").push_fmt(format_args!("x")).get()),
+            "/x"
+        );
+        for name in ["", ".", "..", "a\0b", "a/b"] {
+            let name = String::from_utf8(native(name)).unwrap();
+            assert_eq!(
+                show(at(&mut mem, "/a").push_fmt(format_args!("{name}")).get()),
+                "BadName",
+                "{name:?}"
+            );
+        }
+
+        struct Fails;
+        impl fmt::Display for Fails {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("half")?;
+                Err(fmt::Error)
+            }
+        }
+        let mut path = at(&mut mem, "/a");
+        assert_eq!(
+            show(path.push_fmt(format_args!("{Fails}")).get()),
+            "BadName"
+        );
+        assert_eq!(portable(path.shown()), "/a");
+
+        struct Panics;
+        impl fmt::Display for Panics {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("half")?;
+                panic!("in the middle of a name")
+            }
+        }
+        let mut path = at(&mut mem, "/a");
+        let unwound = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| {
+            path.push_fmt(format_args!("{Panics}"));
+        }));
+        assert!(unwound.is_err());
+        assert_eq!(show(path.get()), "BadName");
+    }
+
+    #[test]
+    fn a_scope_puts_the_path_back() {
+        let mut mem = Small::new();
+        let mut path = small(&mut mem, "/a/b");
+        {
+            let mut outer = path.scope();
+            outer.push(component!("c"));
+            {
+                let mut inner = outer.scope();
+                assert_eq!(portable(inner.base().unwrap().as_bytes()), "/a/b/c");
+                assert_eq!(show(inner.push(component!("d")).get()), "/a/b/c/d");
+            }
+            assert_eq!(portable(outer.base().unwrap().as_bytes()), "/a/b");
+            assert_eq!(show(outer.get()), "/a/b/c");
+            assert_eq!(show(outer.up().get()), "/a/b");
+            assert_eq!(show(outer.up().get()), "Escapes");
+        }
+        assert_eq!(show(path.get()), "/a/b");
+
+        let elsewhere = native("/x");
+        let elsewhere = AbsPath::new(&elsewhere).unwrap();
+        let steps: [fn(&mut DynPathBuf<'_, AbsPath>, &AbsPath); 6] = [
+            |path, _| _ = path.join::<Posix>(b"../../.."),
+            |path, _| _ = path.join::<Posix>(b"/etc"),
+            |path, elsewhere| _ = path.set(elsewhere),
+            |path, elsewhere| _ = path.set_abs(elsewhere),
+            |path, elsewhere| _ = path.set_os(elsewhere.as_bytes()),
+            |path, elsewhere| _ = path.rebase(AbsPath::new(&native("/a")).unwrap(), elsewhere),
+        ];
+        for step in steps {
+            let mut scope = path.scope();
+            step(&mut scope, elsewhere);
+            assert_eq!(show(scope.get()), "Escapes");
+            drop(scope);
+            assert_eq!(show(path.get()), "/a/b");
+        }
+
+        path.scope().push(SubPath::new(&name_up_to(SMALL)).unwrap());
+        assert_eq!(show(path.push(component!("ok")).get()), "/a/b/ok");
+
+        fn leaves_early(path: &mut DynPathBuf<'_, AbsPath>) -> Result<(), PathError> {
+            let mut scope = path.scope();
+            scope
+                .push(component!("deep"))
+                .join_below::<Posix>(b"..")
+                .get()?;
+            scope.join_below::<Posix>(b"../..").get()?;
+            unreachable!()
+        }
+        assert_eq!(leaves_early(&mut path), Err(PathError::Escapes));
+        assert_eq!(show(path.get()), "/a/b/ok");
+
+        path.join_below::<Posix>(b"..");
+        path.scope().push(component!("x"));
+        assert_eq!(show(path.get()), "Escapes");
+    }
+
+    #[test]
+    fn a_forgotten_scope_leaves_a_path_that_cannot_be_led_out() {
+        let mut mem = Stack::new();
+        let mut path = at(&mut mem, "/a/b");
+        let mut scope = path.scope();
+        scope.push(component!("c"));
+        core::mem::forget(scope);
+        assert_eq!(show(path.get()), "/a/b/c");
+        assert_eq!(show(path.up().up().get()), "Escapes");
+    }
+
+    #[test]
+    fn a_tail_only_appends() {
+        fn helper<C: Unit>(tail: &mut TailBuf<'_, C>, name: &[u8]) {
+            tail.push(component!("node_modules"))
+                .push_names::<Posix>(name);
+        }
+        let mut mem = Stack::new();
+        let mut abs = at(&mut mem, "/w");
+        helper(abs.tail(), b"react");
+        assert_eq!(show(abs.tail().get()), "/w/node_modules/react");
+        assert_eq!(show(abs.get()), "/w/node_modules/react");
+        assert_eq!(
+            show(abs.tail().join_below::<Posix>(b"x/../..").get()),
+            "Escapes"
+        );
+
+        let mut rel = RelPathBuf::new_in(Pooled::new());
+        helper(rel.tail(), b"@s/p");
+        assert_eq!(show(rel.get()), "node_modules/@s/p");
+        assert_eq!(
+            show(rel.tail().join_below::<Posix>(b"/etc").get()),
+            "Absolute"
+        );
+
+        let mut abs = at(&mut mem, "/w");
+        let mut scope = abs.scope();
+        helper(scope.tail(), b"x");
+        assert_eq!(
+            show(scope.tail().scope().push(component!("y")).get()),
+            "/w/node_modules/x/y"
+        );
+        assert_eq!(show(scope.get()), "/w/node_modules/x");
+        drop(scope);
+        assert_eq!(show(abs.get()), "/w");
+    }
+
+    #[test]
+    fn a_builder_moves_and_its_memory_is_lent_again() {
+        fn made(mem: &mut Stack) -> AbsPathBuf<Lent<'_>> {
+            let mut path = at(mem, "/a");
+            path.push(component!("b"));
+            path
+        }
+        let mut mem = Stack::new();
+        let mut path = made(&mut mem);
+        path.push(component!("c"));
+        let mut boxed = Box::new(path);
+        boxed.push(component!("d"));
+        assert_eq!(show(boxed.get()), "/a/b/c/d");
+        assert_eq!(show(at(&mut mem, "/again").get()), "/again");
+
+        let mut pool = Pooled::new();
+        let mut lent = AbsPathBuf::from_in(&mut pool, AbsPath::new(&native("/p")).unwrap());
+        lent.push(component!("q"));
+        let mut moved = [lent];
+        assert_eq!(show(moved[0].push(component!("r")).get()), "/p/q/r");
+        assert_eq!(
+            show(RelPathBuf::new_in(&mut pool).push(component!("s")).get()),
+            "s"
+        );
+
+        let mut owned = AbsPathBuf::from_in(pool, AbsPath::new(&native("/o")).unwrap());
+        owned.push(component!("p"));
+        let mut kept = vec![owned];
+        kept.reserve(64);
+        assert_eq!(show(kept[0].push(component!("q")).get()), "/o/p/q");
+    }
+
+    #[test]
+    fn rebase() {
+        for (path, from, to, moved) in [
+            ("/old/root/x/y", "/old/root", "/new", Some("/new/x/y")),
+            (
+                "/old/root/x/y",
+                "/old/root",
+                "/a/longer/base/than/that",
+                Some("/a/longer/base/than/that/x/y"),
+            ),
+            ("/old/root", "/old/root", "/new", Some("/new")),
+            ("/old/root/x", "/old/root", "/", Some("/x")),
+            ("/old/root", "/old/root", "/", Some("/")),
+            ("/x/y", "/", "/new", Some("/new/x/y")),
+            ("/", "/", "/new", Some("/new")),
+            ("/old/rooted", "/old/root", "/new", None),
+            ("/old", "/old/root", "/new", None),
+        ] {
+            let (from, to) = (native(from), native(to));
+            let mut mem = Stack::new();
+            let mut built = at(&mut mem, path);
+            let did = built.rebase(AbsPath::new(&from).unwrap(), AbsPath::new(&to).unwrap());
+            assert_eq!(did, moved.is_some(), "{path}");
+            assert_eq!(show(built.get()), moved.unwrap_or(path));
+            assert_eq!(show(built.up().up().up().up().up().up().up().get()), "/");
+        }
+        for (len, moved) in [(SMALL - 1, true), (SMALL, false)] {
+            let from = native("/a");
+            let to = [native("/"), name_up_to(len - "/0123456789".len())].concat();
+            let mut mem = Small::new();
+            let mut built = small(&mut mem, "/a/0123456789");
+            assert!(built.rebase(AbsPath::new(&from).unwrap(), AbsPath::new(&to).unwrap()));
+            assert_eq!(
+                built.get().map(|path| path.len()).ok(),
+                moved.then_some(len)
+            );
+            assert_eq!(built.error(), (!moved).then_some(PathError::TooLong));
+        }
+    }
+
+    #[test]
+    fn the_way_from_one_directory_to_another() {
+        for (from, to, way) in [
+            ("/a/b", "/a/b", ""),
+            ("/a/b", "/a/b/c/d", "c/d"),
+            ("/a/b", "/a", ".."),
+            ("/a/b", "/", "../.."),
+            ("/a/b", "/a/c", "../c"),
+            ("/a/b", "/a/bb", "../bb"),
+            ("/a/b", "/x/y", "../../x/y"),
+            ("/", "/x", "x"),
+            ("/", "/", ""),
+        ] {
+            let (from, to) = (native(from), native(to));
+            let mut mem = Stack::new();
+            let built = relative_in(
+                &mut mem,
+                AbsPath::new(&from).unwrap(),
+                AbsPath::new(&to).unwrap(),
+            );
+            assert_eq!(show(built.get()), way);
+        }
+    }
+
+    #[test]
+    fn what_the_os_wrote() {
+        assert!(AbsPath::<u8>::from_os(b"").is_none());
+        assert!(AbsPath::<u8>::from_os(b"rel").is_none());
+        for (wrote, path) in [
+            ("/a/b", "/a/b"),
+            ("/a/b///", "/a/b"),
+            ("/", "/"),
+            ("rel", "Relative"),
+            ("", "Relative"),
+        ] {
+            let wrote = native(wrote);
+            let mut mem = Stack::new();
+            assert_eq!(
+                show(AbsPathBuf::unset_in(&mut mem).set_os(&wrote).get()),
+                path
+            );
+            // SAFETY: `writes` initializes what it returns, or all it was given.
+            let mut built = unsafe { AbsPathBuf::from_os_in(&mut mem, writes(&wrote)) }.unwrap();
+            assert_eq!(show(built.get()), path);
+            if built.error().is_none() {
+                assert_eq!(
+                    show(built.push(component!("x")).up().up().up().up().get()),
+                    "/"
+                );
+            }
+        }
+
+        let mut mem = Small::new();
+        // SAFETY: it returns no length.
+        let failed = unsafe { AbsPathBuf::from_os_in(&mut mem, |_| Err("the call failed")) };
+        assert_eq!(failed.err(), Some("the call failed"));
+
+        // With no room left for the terminator the OS may have cut the path short.
+        let filled = [native("/"), name_up_to(SMALL + 1)].concat();
+        for len in [SMALL, SMALL + 1] {
+            // SAFETY: as above.
+            let path = unsafe { AbsPathBuf::from_os_in(&mut mem, writes(&filled[..len])) }.unwrap();
+            assert_eq!(show(path.get()), "TooLong");
+        }
+        let fits = writes(&filled[..SMALL - 1]);
+        // SAFETY: as above.
+        let mut path = unsafe { AbsPathBuf::from_os_in(&mut mem, fits) }.unwrap();
+        assert_eq!(raw(path.get()).len(), SMALL - 1);
+        assert_eq!(show(path.up().get()), "/");
+    }
+
+    #[test]
+    fn dot_dot_for_the_os_to_resolve() {
+        let mut mem = Small::new();
+        let mut path = small(&mut mem, "/a/b");
+        let seen = path.with_os_parents(2, |text| portable(text.as_bytes()));
+        assert_eq!(seen.as_deref(), Ok("/a/b/../.."));
+        let seen = path.with_os_parents(0, |text| portable(text.as_bytes()));
+        assert_eq!(seen.as_deref(), Ok("/a/b"));
+
+        path.up()
+            .up()
+            .push(SubPath::new(&name_up_to(SMALL - 1 - 2 * "/..".len())).unwrap());
+        assert_eq!(path.with_os_parents(2, |text| text.len()), Ok(SMALL - 1));
+        assert_eq!(path.with_os_parents(3, |_| ()), Err(PathError::TooLong));
+        assert_eq!(raw(path.get()).len(), SMALL - 1 - 2 * "/..".len());
+
+        let shown = path.join_below::<Posix>(b"..").shown().to_vec();
+        assert_eq!(path.with_os_parents(1, |_| ()), Err(PathError::Escapes));
+        assert_eq!(path.shown(), shown);
+    }
+
+    #[test]
+    fn both_units() {
+        let base = native("/w");
+        let base = AbsPath::new(&base).unwrap();
+        let mut mem = Stack::<u16>::new();
+        let mut wide = PathBuf::<AbsPath<u16>, _>::from_abs_in(&mut mem, base);
+        wide.push(component!("node_modules"))
+            .join_below::<Posix>("a/\u{e9}/../b".as_bytes());
+        wide.push_fmt(format_args!("{}@{}", "r\u{e9}act", 18));
+        assert_eq!(show_wide(wide.get()), "/w/node_modules/a/b/r\u{e9}act@18");
+
+        let wide_base: Vec<u16> = base.as_bytes().iter().map(|&c| u16::from(c)).collect();
+        let below = wide
+            .get()
+            .unwrap()
+            .strip_prefix(AbsPath::new(&wide_base).unwrap())
+            .unwrap();
+        let mut narrow_mem = Stack::new();
+        let mut narrow = at(&mut narrow_mem, "/back");
+        assert_eq!(
+            show(narrow.push(below).get()),
+            "/back/node_modules/a/b/r\u{e9}act@18"
+        );
+        assert_eq!(
+            show(narrow.set_abs(&**wide.get().unwrap()).get()),
+            "/w/node_modules/a/b/r\u{e9}act@18"
+        );
+
+        // Half of a surrogate pair is a name on Windows and is nothing in UTF-8.
+        assert_eq!(
+            show(narrow.push(Component::<u16>::new(&[0xD800]).unwrap()).get()),
+            "BadName"
+        );
+
+        // One unit of UTF-16 can take three of UTF-8, and the room is asked for before they are read.
+        let most = (SMALL - 1 - ROOT.len()) / 3;
+        let name = [u16::from(b'x'); SMALL];
+        let mut mem = Small::new();
+        let mut path = small(&mut mem, "/");
+        path.push(SubPath::new(&name[..most]).unwrap());
+        assert_eq!(raw(path.get()).len(), ROOT.len() + most);
+        path.up().push(SubPath::new(&name[..most + 1]).unwrap());
+        assert_eq!(show(path.get()), "TooLong");
+
+        let mut mem = Small::<u16>::new();
+        for (len, fits) in [(SMALL - 1, true), (SMALL, false)] {
+            let mut path =
+                PathBuf::<AbsPath<u16>, _>::from_abs_in(&mut mem, base.parent().unwrap());
+            path.push(SubPath::new(&name_up_to(len)).unwrap());
+            assert_eq!(path.get().map(|path| path.len()).ok(), fits.then_some(len));
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn the_long_form_is_the_path_itself_here() {
+        let path = native("/a/b");
+        let mut mem = Stack::new();
+        assert_eq!(
+            show(AbsPathBuf::long_in(&mut mem, AbsPath::new(&path).unwrap()).get()),
+            "/a/b"
+        );
+    }
 
     #[test]
     fn windows_roots() {
@@ -1737,5 +2392,287 @@ mod tests {
         }
         assert_eq!(either("C:/x"), 3);
         assert_eq!(either("\\/srv/share\\x"), 12);
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+    use crate::resolve_path::platform::Windows;
+
+    fn raw<V: Units<Unit = u8> + ?Sized>(path: Result<&Z<V>, PathError>) -> String {
+        match path {
+            Ok(path) => String::from_utf8(path.units().to_vec()).unwrap(),
+            Err(err) => format!("{err:?}"),
+        }
+    }
+    fn at<'a>(mem: &'a mut Stack, path: &str) -> AbsPathBuf<Lent<'a>> {
+        AbsPathBuf::from_in(mem, AbsPath::new(path.as_bytes()).unwrap())
+    }
+
+    const BASES: [&str; 3] = ["C:\\a\\b", "\\\\srv\\share\\d", "\\\\?\\C:\\a"];
+    #[rustfmt::skip]
+    const JOIN: &[(&str, [&str; 3])] = &[
+        ("", ["C:\\a\\b", "\\\\srv\\share\\d", "\\\\?\\C:\\a"]),
+        ("..\\..\\..", ["C:\\", "\\\\srv\\share\\", "\\\\?\\C:\\"]),
+        ("x/y", ["C:\\a\\b\\x\\y", "\\\\srv\\share\\d\\x\\y", "\\\\?\\C:\\a\\x\\y"]),
+        ("x\\..\\y", ["C:\\a\\b\\y", "\\\\srv\\share\\d\\y", "\\\\?\\C:\\a\\y"]),
+        ("C:\\", ["C:\\", "C:\\", "C:\\"]),
+        ("c:/x/y", ["c:\\x\\y", "c:\\x\\y", "c:\\x\\y"]),
+        ("D:\\x", ["D:\\x", "D:\\x", "D:\\x"]),
+        ("C:", ["Absolute", "Absolute", "Absolute"]),
+        ("C:x", ["Absolute", "Absolute", "Absolute"]),
+        ("1:\\x", ["Absolute", "Absolute", "Absolute"]),
+        ("\\", ["C:\\", "\\\\srv\\share\\", "\\\\?\\C:\\"]),
+        ("\\x", ["C:\\x", "\\\\srv\\share\\x", "\\\\?\\C:\\x"]),
+        ("/x", ["C:\\x", "\\\\srv\\share\\x", "\\\\?\\C:\\x"]),
+        ("\\\\srv\\share", ["\\\\srv\\share\\", "\\\\srv\\share\\", "\\\\srv\\share\\"]),
+        ("\\\\srv\\share\\x\\..\\..", ["\\\\srv\\share\\", "\\\\srv\\share\\", "\\\\srv\\share\\"]),
+        ("//srv/share/x", ["\\\\srv\\share\\x", "\\\\srv\\share\\x", "\\\\srv\\share\\x"]),
+        ("\\\\srv", ["C:\\srv", "\\\\srv\\share\\srv", "\\\\?\\C:\\srv"]),
+        ("\\\\", ["C:\\", "\\\\srv\\share\\", "\\\\?\\C:\\"]),
+        ("\\\\?\\C:\\x\\..\\..", ["\\\\?\\C:\\", "\\\\?\\C:\\", "\\\\?\\C:\\"]),
+        ("\\\\?\\UNC\\srv\\share\\x\\..\\..", ["\\\\?\\UNC\\srv\\share\\", "\\\\?\\UNC\\srv\\share\\", "\\\\?\\UNC\\srv\\share\\"]),
+        ("\\\\.\\pipe\\x", ["\\\\.\\pipe\\x", "\\\\.\\pipe\\x", "\\\\.\\pipe\\x"]),
+        ("x:y", ["Absolute", "Absolute", "Absolute"]),
+        ("x\\C:\\y", ["BadName", "BadName", "BadName"]),
+        (".\\C:\\y", ["BadName", "BadName", "BadName"]),
+        ("a\0b", ["BadName", "BadName", "BadName"]),
+    ];
+    #[rustfmt::skip]
+    const JOIN_BELOW: &[(&str, [&str; 3])] = &[
+        ("", ["C:\\a\\b", "\\\\srv\\share\\d", "\\\\?\\C:\\a"]),
+        ("..\\..\\..", ["Escapes", "Escapes", "Escapes"]),
+        ("x/y", ["C:\\a\\b\\x\\y", "\\\\srv\\share\\d\\x\\y", "\\\\?\\C:\\a\\x\\y"]),
+        ("x\\..\\y", ["C:\\a\\b\\y", "\\\\srv\\share\\d\\y", "\\\\?\\C:\\a\\y"]),
+        ("C:\\", ["Absolute", "Absolute", "Absolute"]),
+        ("c:/x/y", ["Absolute", "Absolute", "Absolute"]),
+        ("D:\\x", ["Absolute", "Absolute", "Absolute"]),
+        ("C:", ["Absolute", "Absolute", "Absolute"]),
+        ("C:x", ["Absolute", "Absolute", "Absolute"]),
+        ("1:\\x", ["Absolute", "Absolute", "Absolute"]),
+        ("\\", ["Absolute", "Absolute", "Absolute"]),
+        ("\\x", ["Absolute", "Absolute", "Absolute"]),
+        ("/x", ["Absolute", "Absolute", "Absolute"]),
+        ("\\\\srv\\share", ["Absolute", "Absolute", "Absolute"]),
+        ("\\\\srv\\share\\x\\..\\..", ["Absolute", "Absolute", "Absolute"]),
+        ("//srv/share/x", ["Absolute", "Absolute", "Absolute"]),
+        ("\\\\srv", ["Absolute", "Absolute", "Absolute"]),
+        ("\\\\", ["Absolute", "Absolute", "Absolute"]),
+        ("\\\\?\\C:\\x\\..\\..", ["Absolute", "Absolute", "Absolute"]),
+        ("\\\\?\\UNC\\srv\\share\\x\\..\\..", ["Absolute", "Absolute", "Absolute"]),
+        ("\\\\.\\pipe\\x", ["Absolute", "Absolute", "Absolute"]),
+        ("x:y", ["Absolute", "Absolute", "Absolute"]),
+        ("x\\C:\\y", ["BadName", "BadName", "BadName"]),
+        (".\\C:\\y", ["BadName", "BadName", "BadName"]),
+        ("a\0b", ["BadName", "BadName", "BadName"]),
+    ];
+    #[rustfmt::skip]
+    const VIEWS: &[(&str, &str)] = &[
+        ("", "s"),
+        ("a", "sn"),
+        ("a\\b", "s"),
+        ("a/b", ""),
+        ("a\\", ""),
+        ("a\\\\b", ""),
+        ("a\\.\\b", ""),
+        ("a\\..\\b", ""),
+        ("..", ""),
+        ("..\\a", ""),
+        ("a\\..", ""),
+        (".", ""),
+        ("C:", ""),
+        ("C:a", ""),
+        ("C:\\", "a"),
+        ("C:\\a", "a"),
+        ("C:\\a\\", ""),
+        ("C:/a", ""),
+        ("c:\\a", "a"),
+        ("1:\\a", ""),
+        ("\\", ""),
+        ("\\a", ""),
+        ("/a", ""),
+        ("\\\\srv\\share", ""),
+        ("\\\\srv\\share\\", "a"),
+        ("\\\\srv\\share\\a", "a"),
+        ("\\\\srv\\share\\a\\b", "a"),
+        ("//srv/share/a", ""),
+        ("\\\\srv", ""),
+        ("\\\\srv\\", ""),
+        ("\\\\?\\C:\\", "a"),
+        ("\\\\?\\C:\\a", "a"),
+        ("\\\\?\\C:", ""),
+        ("\\\\?\\UNC\\srv\\share\\", "a"),
+        ("\\\\?\\UNC\\srv\\share\\a", "a"),
+        ("\\\\.\\pipe\\a", "a"),
+        ("\\??\\C:\\a", ""),
+        ("a:b", ""),
+        ("a\\b:c", ""),
+    ];
+    #[rustfmt::skip]
+    const RELATIVE: &[(&str, &str, &str)] = &[
+        ("C:\\", "c:\\a", "a"),
+        ("c:\\a", "C:\\", ".."),
+        ("C:\\a", "c:\\a", ""),
+        ("C:\\a", "\\\\srv\\share\\a", "Absolute"),
+        ("\\\\srv\\share\\a\\b", "\\\\srv\\share\\", "..\\.."),
+        ("\\\\srv\\share\\", "\\\\srv\\share\\a\\b", "a\\b"),
+        ("\\\\?\\C:\\a", "\\\\?\\C:\\", ".."),
+        ("\\\\?\\C:\\a", "C:\\a", "Absolute"),
+        ("\\\\?\\UNC\\srv\\share\\a", "\\\\srv\\share\\a", "Absolute"),
+    ];
+    #[rustfmt::skip]
+    const LONG: &[(&str, &str)] = &[
+        ("C:\\", "\\\\?\\C:\\"),
+        ("C:\\a", "\\\\?\\C:\\a"),
+        ("c:\\a", "\\\\?\\c:\\a"),
+        ("\\\\srv\\share\\", "\\\\?\\UNC\\srv\\share\\"),
+        ("\\\\srv\\share\\a", "\\\\?\\UNC\\srv\\share\\a"),
+        ("\\\\srv\\share\\a\\b", "\\\\?\\UNC\\srv\\share\\a\\b"),
+        ("\\\\?\\C:\\", "\\\\?\\C:\\"),
+        ("\\\\?\\C:\\a", "\\\\?\\C:\\a"),
+        ("\\\\?\\UNC\\srv\\share\\", "\\\\?\\UNC\\srv\\share\\"),
+        ("\\\\?\\UNC\\srv\\share\\a", "\\\\?\\UNC\\srv\\share\\a"),
+        ("\\\\.\\pipe\\a", "\\\\.\\pipe\\a"),
+    ];
+    #[rustfmt::skip]
+    const FROM_THE_OS: &[(&str, &str)] = &[
+        ("C:\\", "C:\\"),
+        ("C:\\a\\", "C:\\a"),
+        ("C:\\a\\\\", "C:\\a"),
+        ("\\\\srv\\share", "\\\\srv\\share\\"),
+        ("\\\\srv\\share\\", "\\\\srv\\share\\"),
+        ("\\\\srv\\share\\a\\", "\\\\srv\\share\\a"),
+        ("\\\\?\\C:\\", "\\\\?\\C:\\"),
+        ("\\\\?\\C:\\a\\", "\\\\?\\C:\\a"),
+        ("a", "Relative"),
+        ("C:", "Relative"),
+        ("\\\\localhost\\C$", "\\\\localhost\\C$\\"),
+        ("\\\\?\\UNC\\localhost\\C$", "\\\\?\\UNC\\localhost\\C$\\"),
+        ("\\\\?\\C:", "\\\\?\\C:\\"),
+    ];
+
+    #[test]
+    fn join() {
+        for (text, joined) in JOIN {
+            for (base, joined) in BASES.iter().zip(joined) {
+                let mut mem = Stack::new();
+                assert_eq!(
+                    raw(at(&mut mem, base).join::<Windows>(text.as_bytes()).get()),
+                    *joined,
+                    "{base:?} {text:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn join_below() {
+        for (text, joined) in JOIN_BELOW {
+            for (base, joined) in BASES.iter().zip(joined) {
+                let mut mem = Stack::new();
+                assert_eq!(
+                    raw(at(&mut mem, base)
+                        .join_below::<Windows>(text.as_bytes())
+                        .get()),
+                    *joined,
+                    "{base:?} {text:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_view_takes_one_form() {
+        for (text, kinds) in VIEWS {
+            let units = text.as_bytes();
+            let mut taken = String::new();
+            taken.extend(AbsPath::new(units).map(|_| 'a'));
+            taken.extend(SubPath::new(units).map(|_| 's'));
+            taken.extend(Component::new(units).map(|_| 'n'));
+            assert_eq!(taken, *kinds, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn the_way_from_one_directory_to_another() {
+        for (from, to, way) in RELATIVE {
+            let mut mem = Stack::new();
+            let (from, to) = (
+                AbsPath::new(from.as_bytes()).unwrap(),
+                AbsPath::new(to.as_bytes()).unwrap(),
+            );
+            assert_eq!(
+                raw(relative_in(&mut mem, from, to).get()),
+                *way,
+                "{from:?} {to:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_long_form() {
+        for (path, long) in LONG {
+            let mut mem = Stack::new();
+            assert_eq!(
+                raw(AbsPathBuf::long_in(&mut mem, AbsPath::new(path.as_bytes()).unwrap()).get()),
+                *long,
+                "{path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn what_the_os_wrote() {
+        for (wrote, path) in FROM_THE_OS {
+            let mut mem = Stack::new();
+            assert_eq!(
+                raw(AbsPathBuf::unset_in(&mut mem)
+                    .set_os(wrote.as_bytes())
+                    .get()),
+                *path,
+                "{wrote:?}"
+            );
+            // SAFETY: it initializes what it returns, or all it was given.
+            let mut built = unsafe {
+                AbsPathBuf::from_os_in(&mut mem, |room: &mut [MaybeUninit<u8>]| {
+                    for (unit, from) in room.iter_mut().zip(wrote.as_bytes()) {
+                        unit.write(*from);
+                    }
+                    Ok::<usize, ()>(wrote.len())
+                })
+            }
+            .unwrap();
+            assert_eq!(raw(built.get()), *path, "{wrote:?}");
+            if built.error().is_none() {
+                built
+                    .push(component!("x"))
+                    .join::<Windows>(b"..\\..\\..\\..\\..");
+                assert!(built.get().unwrap().is_root(), "{wrote:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_letters_of_a_root_match_in_either_case() {
+        let path = AbsPath::new(b"c:\\Users\\x").unwrap();
+        assert_eq!(
+            path.strip_prefix(AbsPath::new(b"C:\\Users").unwrap())
+                .unwrap()
+                .as_bytes(),
+            b"x"
+        );
+        assert!(
+            path.strip_prefix(AbsPath::new(b"C:\\users").unwrap())
+                .is_none()
+        );
+        let share = AbsPath::new(b"\\\\SRV\\Share\\x").unwrap();
+        assert_eq!(
+            share
+                .strip_prefix(AbsPath::new(b"\\\\srv\\share\\").unwrap())
+                .unwrap()
+                .as_bytes(),
+            b"x"
+        );
     }
 }

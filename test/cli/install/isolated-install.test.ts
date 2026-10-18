@@ -1539,6 +1539,59 @@ describe.concurrent("link: dependencies", () => {
 // A `file:` dependency declared by a registry package points at a folder inside
 // that package (the same fixtures as "transitive file dependencies" in
 // bun-install-registry.test.ts, which covers the hoisted linker).
+describe.concurrent("transitive file dependencies of a tarball, written with a backslash", () => {
+  // Installs a tarball `p` that declares `"q": "file:<folder>"`, and returns what is beside `p` in its store entry.
+  async function install(folder: string, options?: Parameters<typeof runBunInstall>[2]) {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const q = JSON.stringify({ name: "q", version: "1.0.0" });
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "tarball-file-deps", dependencies: { p: "file:./p.tgz" } })),
+      write(
+        join(packageDir, "p.tgz"),
+        await new Bun.Archive({
+          "package/package.json": JSON.stringify({
+            name: "p",
+            version: "1.0.0",
+            dependencies: { q: `file:${folder}` },
+          }),
+          "package/sub/inner/package.json": q,
+        }).bytes("gzip"),
+      ),
+      // Outside of `p`, and inside the directory of this test.
+      write(join(packageDir, "outside", "package.json"), q),
+    ]);
+
+    const { err } = await runBunInstall(installEnv(packageDir), packageDir, options);
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const entry = (await readdirSorted(bunDir)).find(name => name.startsWith("p@"))!;
+    return { err, beside: join(bunDir, entry, "node_modules") };
+  }
+
+  test("are linked from inside the package that declares them", async () => {
+    const { beside } = await install("sub\\inner");
+    expect(await readdirSorted(beside)).toEqual(["p", "q"]);
+    expect(realpathSync(join(beside, "q"))).toBe(realpathSync(join(beside, "p", "sub", "inner")));
+  });
+
+  test("are not linked when `..` leads out of the package", async () => {
+    // Six folders down where `\` separates, and one where it does not. `<project>/outside` is six up from there.
+    const { err, beside } = await install("a\\a\\a\\a\\a\\a/../../../../../../outside", {
+      allowErrors: true,
+      savesLockfile: false,
+      expectedExitCode: 1,
+    });
+    expect(err).toContain("failed to read package.json");
+    expect(await readdirSorted(beside)).toEqual(["p"]);
+  });
+
+  test("are measured once `.` is resolved", async () => {
+    // Longer as written than any path may be.
+    const { beside } = await install("sub\\inner\\" + Buffer.alloc(isWindows ? 100_000 : 5000, ".\\").toString());
+    expect(await readdirSorted(beside)).toEqual(["p", "q"]);
+    expect(realpathSync(join(beside, "q"))).toBe(realpathSync(join(beside, "p", "sub", "inner")));
+  });
+});
+
 describe.concurrent("transitive file dependencies of registry packages", () => {
   const dependencies = {
     // depends on file-dep@1.0.0
@@ -7001,6 +7054,36 @@ describe.concurrent("package trees deeper than the path buffer", () => {
 
     expectInstalled(await bunInstall(String(dir)));
     expect(readFileSync(join(String(dir), "node_modules", "pkg", ...dirs, LEAF.name), "utf8")).toBe(LEAF.contents);
+  });
+
+  // No process starts in a directory this deep on Windows.
+  test.skipIf(isWindows)("a project too deep for its own node_modules fails with ENAMETOOLONG", async () => {
+    using dir = tempDir("isolated-deep-project", {});
+    // Room for `/packages/a/package.json`, and not for the links below `/node_modules/.bun`.
+    const project = join(String(dir), ...chainDirs(PATH_BUFFER_LEN - 40 - (String(dir).length + 1)));
+    mkdirSync(join(project, "packages", "a"), { recursive: true });
+    writeFileSync(
+      join(project, "package.json"),
+      JSON.stringify({
+        name: "proj",
+        workspaces: ["packages/*"],
+        dependencies: { a: "workspace:*", bar: "file:./bar.tgz" },
+      }),
+    );
+    writeFileSync(join(project, "packages", "a", "package.json"), JSON.stringify({ name: "a", version: "1.0.0" }));
+    cpSync(join(import.meta.dir, "bar-0.0.2.tgz"), join(project, "bar.tgz"));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker", "isolated"],
+      cwd: project,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("ENAMETOOLONG");
+    expect(stdout).toContain("Failed to install 2 packages");
+    expect(exitCode).toBe(1);
   });
 
   // On Windows the buffer holds as much as the filesystem does, so no tree that exists overflows it

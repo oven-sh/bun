@@ -560,9 +560,13 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) linked: reachable::Linked,
 }
 
-/// The hoisted package's required peers (does staying put find it in range?); who has any.
+/// The peer dependencies of the package that's being hoisted, each with the package it loads under
+/// that name from the highest folder checked so far. The bit set caches which packages have peers.
 #[derive(Default)]
-pub(crate) struct PeerProbes(Vec<(DependencyID, bool)>, Option<DynamicBitSet>);
+pub(crate) struct PeerProbes(
+    Vec<(DependencyID, Option<PackageID>)>,
+    Option<DynamicBitSet>,
+);
 
 impl PeerProbes {
     /// `package_id` is about to be hoisted out of the package with `owner_deps`.
@@ -580,9 +584,7 @@ impl PeerProbes {
         }
 
         let is_probed = |peer: &Dependency| {
-            peer.behavior.is_peer()
-                && !peer.behavior.is_optional_peer()
-                && peer.version.tag == crate::dependency::VersionTag::Npm
+            peer.behavior.is_peer() && peer.version.tag == crate::dependency::VersionTag::Npm
         };
         let with_peers = self.1.get_or_insert_with(|| {
             let lists = lockfile.packages.items_resolutions();
@@ -624,26 +626,26 @@ impl PeerProbes {
                 continue;
             }
 
-            // The owner's own copy of the peer, if any, is the one the package finds from here.
+            // The package loads whatever its owner loads under this name: the owner's regular
+            // dependency, or else the owner's own peer.
             let owner_copy = (owner_deps.begin()..owner_deps.end())
-                .find(|&dep_id| {
-                    let dep = &deps[dep_id as usize];
-                    dep.name_hash == peer.name_hash
-                        && !dep.behavior.is_peer()
+                .filter(|&dep_id| {
+                    deps[dep_id as usize].name_hash == peer.name_hash
                         && resolutions[dep_id as usize] != invalid_package_id
                 })
-                .map(|dep_id| {
-                    pkg_resolutions[resolutions[dep_id as usize] as usize]
-                        .satisfies_dependency_version(&peer.version, buf, buf)
-                });
-            if owner_copy != Some(false) {
-                self.0.push((peer_dep_id, owner_copy.is_some()));
+                .min_by_key(|&dep_id| deps[dep_id as usize].behavior.is_peer())
+                .map(|dep_id| resolutions[dep_id as usize]);
+            if owner_copy.is_none_or(|id| {
+                pkg_resolutions[id as usize].satisfies_dependency_version(&peer.version, buf, buf)
+            }) {
+                self.0.push((peer_dep_id, owner_copy));
             }
         }
     }
 
-    /// Whether tree `tree_id` holds an out-of-range version of a peer that the package would find
-    /// in range if it were not hoisted.
+    /// Returns true if moving the package up to tree `tree_id` would change which package it loads
+    /// for one of its peers. As in pnpm, a plugin stays with the copy that its host provides, even if
+    /// the copy higher up is also in range.
     fn is_hidden_by(
         &mut self,
         lockfile: &Lockfile,
@@ -662,23 +664,23 @@ impl PeerProbes {
             let held = placed
                 .get(&(tree_id, peer.name_hash))
                 .map(|&dep_id| resolutions[dep_id as usize])
-                .filter(|&res_id| res_id != invalid_package_id)
-                .map(|res_id| {
-                    pkg_resolutions[res_id as usize].satisfies_dependency_version(
+                .filter(|&res_id| res_id != invalid_package_id);
+            match (held, provided) {
+                (None, _) => i += 1,
+                (Some(held), Some(provided)) if held == provided => i += 1,
+                (Some(_), Some(_)) => return true,
+                (Some(held), None)
+                    if pkg_resolutions[held as usize].satisfies_dependency_version(
                         &peer.version,
                         buf,
                         buf,
-                    )
-                });
-            match held {
-                None => i += 1,
-                Some(true) => {
-                    self.0[i].1 = true;
+                    ) =>
+                {
+                    self.0[i].1 = Some(held);
                     i += 1;
                 }
-                Some(false) if provided => return true,
                 // Out of range wherever the package ends up.
-                Some(false) => {
+                (Some(_), None) => {
                     self.0.swap_remove(i);
                 }
             }

@@ -967,13 +967,14 @@ impl Lockfile {
     }
 
     /// Returns true if `pkg_id` is a workspace whose folder is outside the project. Another project
-    /// may own that folder, so `prune` never deletes anything from its `node_modules`.
+    /// may own that folder, so nothing is ever deleted from its `node_modules`.
     pub(crate) fn is_member_outside(&self, pkg_id: PackageID) -> bool {
         let res = &self.packages.items_resolution()[pkg_id as usize];
-        if res.tag != ResolutionTag::Workspace {
-            return false;
-        }
-        let path = res.workspace().slice(&self.buffers.string_bytes);
+        res.tag == ResolutionTag::Workspace
+            && self.is_member_path_outside(res.workspace().slice(&self.buffers.string_bytes))
+    }
+
+    pub(crate) fn is_member_path_outside(&self, path: &[u8]) -> bool {
         crate::bin::path_climbs_out(path)
             || (self.linked_members.get(path)).is_some_and(|member| member.is_outside)
     }

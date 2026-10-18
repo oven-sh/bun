@@ -32,6 +32,13 @@ static void touch(const std::string &path) {
   }
 }
 
+static void write_probe(const std::string &path, const std::string &line) {
+  if (FILE *f = fopen(path.c_str(), "w")) {
+    fputs(line.c_str(), f);
+    fclose(f);
+  }
+}
+
 static void probe(napi_env env, const std::string &signal_path,
                   const std::string &probe_path) {
   napi_value object = nullptr;
@@ -84,36 +91,32 @@ static void probe(napi_env env, const std::string &signal_path,
     break;
   }
 
+  write_probe(probe_path, line);
+
 #if NAPI_VERSION < 10
   // Object::Set on a refused napi_set_named_property runs
   // Error::New(env).ThrowAsJavaScriptException(). node-addon-api 8.0.0 swallows
   // only napi_pending_exception there, so under NAPI_VERSION >= 10 (napi_cannot_run_js)
   // it is fatal on Node too.
   Napi::Object(env, object).Set("k", Napi::Number::New(env, 1));
-  line += "; node-addon-api returned";
+  write_probe(probe_path, line + "; node-addon-api returned");
 #endif
-
-  if (FILE *f = fopen(probe_path.c_str(), "w")) {
-    fputs(line.c_str(), f);
-    fclose(f);
-  }
 }
 
-// spinScript(signal, probe, fn): enter `fn` (a JS loop that never returns on
-// its own) until the stop lands inside it. JSC then throws the termination in
+// spinScript(probe, fn): enter `fn` (a JS loop that never returns on its own)
+// until the stop lands inside it. JSC then throws the termination in
 // the script, so it is pending on the VM when napi_call_function returns. The
 // readers must not hand it out, and napi_throw answers as the closed gate does.
 // Bun only: Node's TryCatch stores null as last_exception for a termination,
 // so Node reports an exception pending here and hands out null.
 static Napi::Value spin_script(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
-  std::string signal_path = info[0].As<Napi::String>().Utf8Value();
-  std::string probe_path = info[1].As<Napi::String>().Utf8Value();
-  napi_value fn = info[2];
+  std::string probe_path = info[0].As<Napi::String>().Utf8Value();
+  napi_value fn = info[1];
   napi_value undefined = nullptr;
   napi_get_undefined(env, &undefined);
-  touch(signal_path);
 
+  // `fn` creates the signal file itself, so the stop lands while it runs.
   napi_value unused = nullptr;
   napi_status call_status =
       napi_call_function(env, undefined, fn, 0, nullptr, &unused);
@@ -140,10 +143,7 @@ static Napi::Value spin_script(const Napi::CallbackInfo &info) {
                      " pending_after_clear=" +
                      std::to_string(pending_after_clear) +
                      " napi_throw=" + std::to_string(throw_status);
-  if (FILE *f = fopen(probe_path.c_str(), "w")) {
-    fputs(line.c_str(), f);
-    fclose(f);
-  }
+  write_probe(probe_path, line);
   return info.Env().Undefined();
 }
 

@@ -405,7 +405,6 @@ nativeTests.test_get_all_property_names_throwing_proxy_traps = () => {
       napi_key_keep_numbers,
     ),
   );
-
 };
 
 nativeTests.test_get_all_property_names_get_prototype_throws_in_descriptor_walk = () => {
@@ -1955,23 +1954,31 @@ nativeTests.test_ungated_calls_worker_terminate = async () => {
 // terminate_probe_addon.cpp records what the refused call, the exception
 // readers and napi_throw say, then makes one node-addon-api call refused (that
 // escalates to napi_fatal_error unless those agree the env is stopping). The
-// parent arms terminate() once the addon has created the signal file.
-nativeTests.test_terminate_during_gated_calls = async (_gc, version, frame) => {
+// parent arms terminate() once the addon has created the signal file. `dir` is
+// the test's temporary directory; the probe file is left there for the test to
+// read if this process does not get to print it.
+nativeTests.test_terminate_during_gated_calls = async (_gc, version, frame, dir) => {
   const { Worker } = require("node:worker_threads");
   const fs = require("node:fs");
-  const os = require("node:os");
   const path = require("node:path");
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "terminate-probe-"));
+  dir = path.join(dir, process.versions.bun ? "bun" : "node");
+  fs.mkdirSync(dir, { recursive: true });
   const signal = path.join(dir, "signal");
   const probe = path.join(dir, "probe");
   const worker = new Worker(path.join(__dirname, "terminate-probe-worker.js"), {
     workerData: { version, frame, signal, probe },
   });
-  const failed = new Promise((_, reject) => worker.once("error", reject));
-  while (!fs.existsSync(signal)) await new Promise(resolve => setImmediate(resolve));
+  const failed = new Promise((_, reject) => {
+    worker.once("error", reject);
+    worker.once("exit", code => reject(new Error(`worker exited with ${code} before the signal`)));
+  });
+  const signalSeen = (async () => {
+    while (!fs.existsSync(signal)) await new Promise(resolve => setImmediate(resolve));
+  })();
+  await Promise.race([signalSeen, failed]);
+  worker.removeAllListeners("exit");
   console.log("terminate() resolved with", await Promise.race([worker.terminate(), failed]));
   console.log(fs.readFileSync(probe, "utf8"));
-  fs.rmSync(dir, { recursive: true });
 };
 
 // See ungated_calls_through_timeout in standalone_tests.cpp: 600ms of ungated

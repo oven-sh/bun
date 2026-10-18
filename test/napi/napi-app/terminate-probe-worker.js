@@ -8,7 +8,9 @@ globalThis.__terminateProbe = { signal, probe, inInit: frame === "init" };
 const addon = require(`./build/Debug/terminate_probe_addon_v${version}.node`);
 if (frame === "method") addon.spin(signal, probe);
 if (frame === "script") {
-  addon.spinScript(signal, probe, () => {
+  const { writeFileSync } = require("node:fs");
+  addon.spinScript(probe, () => {
+    writeFileSync(signal, "");
     for (;;) {}
   });
 }

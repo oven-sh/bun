@@ -632,6 +632,18 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       "refused: status=10 pending=0 napi_throw=10 pending_after_throw=0 get_and_clear=0 exception_type=0";
     const refusedV10 =
       "refused: status=23 pending=0 napi_throw=23 pending_after_throw=0 get_and_clear=0 exception_type=0";
+    // The fixture leaves its probe line in the test's directory: what the addon
+    // saw is in the failure when the process did not live to print it.
+    async function terminateProbe(version: number, frame: string, run: (dir: string) => Promise<string>) {
+      await using dir = tempDir("terminate-probe", {});
+      try {
+        return await run(String(dir));
+      } catch (error) {
+        const probe = join(String(dir), "bun", "probe");
+        if (existsSync(probe)) (error as Error).message += `\nbun probe file: ${readFileSync(probe, "utf8")}`;
+        throw error;
+      }
+    }
     describe.each([
       [9, "init", `${refusedV9}; node-addon-api returned`],
       [9, "method", `${refusedV9}; node-addon-api returned`],
@@ -639,7 +651,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       [10, "method", refusedV10],
     ])("worker.terminate() during gated calls (NAPI_VERSION=%i, %s frame)", (version, frame, probe) => {
       it("refuses the calls as Node does and the process survives", async () => {
-        const result = await checkSameOutput("test_terminate_during_gated_calls", [version, frame]);
+        const result = await terminateProbe(version, frame, dir =>
+          checkSameOutput("test_terminate_during_gated_calls", [version, frame, dir]),
+        );
         expect(result.split(/\r?\n/)).toEqual(["terminate() resolved with 1", probe, "resolved to undefined"]);
       }, 30_000);
     });
@@ -655,7 +669,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     ])(
       "worker.terminate() inside script entered from an addon (NAPI_VERSION=%i) is not a readable exception",
       async (version, gateStatus) => {
-        const result = await runOn(bunExe(), "test_terminate_during_gated_calls", [version, "script"]);
+        const result = await terminateProbe(version, "script", dir =>
+          runOn(bunExe(), "test_terminate_during_gated_calls", [version, "script", dir]),
+        );
         expect(result.trim().split(/\r?\n/)).toEqual([
           "terminate() resolved with 1",
           `call_function=10 pending=0 get_and_clear=0 exception_type=0 pending_after_clear=0 napi_throw=${gateStatus}`,

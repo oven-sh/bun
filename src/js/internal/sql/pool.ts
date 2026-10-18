@@ -207,7 +207,7 @@ class PooledConnection<ConnectionHandle extends NativeConnection = any> {
       return false;
     }
     // an explicit connectionTimeout of 0 disables the connect timer, and with it the retry budget
-    const connectionTimeout = adapter.connectionInfo.connectionTimeout ?? 30 * 1000;
+    const connectionTimeout = $getByIdDirect(adapter.connectionInfo, "connectionTimeout") ?? 30 * 1000;
     return connectionTimeout > 0 && monotonicNowMs() - this.connectStartedAt < connectionTimeout;
   }
 
@@ -559,7 +559,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     this.connectionInfo = connectionInfo;
     this.ownerGraphFrame = AsyncContextFrame.currentGraphFrame();
     this.callbackAsyncContext =
-      connectionInfo.onconnect || connectionInfo.onclose ? AsyncContextFrame.current() : undefined;
+      $getByIdDirect(connectionInfo, "onconnect") || $getByIdDirect(connectionInfo, "onclose")
+        ? AsyncContextFrame.current()
+        : undefined;
     if (this.generation !== -1) {
       hotPools.add(this);
     }
@@ -837,7 +839,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       this.#dialsHeld = false;
       this.#dial(true);
     }
-    this.runUserCallback(this.connectionInfo.onconnect, null);
+    this.runUserCallback($getByIdDirect(this.connectionInfo, "onconnect"), null);
     this.#serve();
     // The server has room: the callers that still wait do not have to wait for the next one to arrive. One more
     // connection, not a start: a reservation that has just taken this one leaves nothing ready.
@@ -881,7 +883,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       }
       this.#closeIfDrained();
     }
-    this.runUserCallback(this.connectionInfo.onclose, err);
+    this.runUserCallback($getByIdDirect(this.connectionInfo, "onclose"), err);
   }
 
   #failQueued(err: Error) {

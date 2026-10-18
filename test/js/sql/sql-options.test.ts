@@ -616,7 +616,25 @@ test.each(["postgres", "mysql", "sqlite"])("%s: what is on Object.prototype is n
         data() {},
       },
     });
-    await new Bun.SQL("${adapter}://user:secret@127.0.0.1:${nobodyListens}/app", { max: 1 }).unsafe("select 1").catch(() => {});`;
+    await new Bun.SQL("${adapter}://user:secret@127.0.0.1:${nobodyListens}/app", { max: 1 }).unsafe("select 1").catch(() => {});
+
+    // A server that is still starting is dialed again, for as long as the connection timeout says.
+    let dials = 0;
+    const third = Promise.withResolvers();
+    using starting = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          if (++dials === 3) third.resolve("dials again");
+          socket.end();
+        },
+        data() {},
+      },
+    });
+    const patient = new Bun.SQL("${adapter}://user:secret@127.0.0.1:" + starting.port + "/app", { max: 1 });
+    console.log(await Promise.race([third.promise, patient.unsafe("select 1").catch(error => "gave up: " + error.code)]));
+    await patient.close({ timeout: 0 });`;
   const src = `
     const args = {
       postgres: ["postgres://user:secret@db.example:5433/app?sslmode=verify-full&sslrootcert=/ca.pem&application_name=a", { max: 2, connection: { search_path: "s" } }],
@@ -626,7 +644,8 @@ test.each(["postgres", "mysql", "sqlite"])("%s: what is on Object.prototype is n
     const observed = async () => {
       await using memory = new Bun.SQL(":memory:");
       const fromVariables = new Bun.SQL({ adapter: ${JSON.stringify(adapter)} }).options;
-      return JSON.stringify([new Bun.SQL(...args).options, fromVariables, await memory\`select \${undefined} as a_b\`]);
+      const inherited = new Bun.SQL(args[0], Object.create({ adapter: ${JSON.stringify(adapter)}, username: "heir", readonly: true })).options;
+      return JSON.stringify([new Bun.SQL(...args).options, fromVariables, inherited, await memory\`select \${undefined} as a_b\`]);
     };
     const clean = await observed();
     Object.assign(Object.prototype, {
@@ -649,6 +668,8 @@ test.each(["postgres", "mysql", "sqlite"])("%s: what is on Object.prototype is n
       create: true,
       connection: { evil: "1" },
       transform: { undefined: "evil", column: name => name.toUpperCase() },
+      connectionTimeout: 30,
+      onclose: 5,
       DATABASE_URL: "postgres://evil.example:1",
       MYSQL_URL: "mysql://evil.example:1",
       SQLITE_URL: "evil.db",
@@ -667,7 +688,11 @@ test.each(["postgres", "mysql", "sqlite"])("%s: what is on Object.prototype is n
   };
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "the same", stderr: "", exitCode: 0 });
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: dial ? "the same\ndials again" : "the same",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 describe("inspecting sql.options", () => {

@@ -238,7 +238,7 @@ class SQLiteAdapter
     }
 
     try {
-      const onclose = this.connectionInfo.onclose;
+      const onclose = $getByIdDirect(this.connectionInfo, "onclose");
       if (onclose) onclose(this.storedError);
     } catch (thrown) {
       reportError(thrown);

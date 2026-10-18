@@ -12,6 +12,7 @@ type AnyOptions = Bun.SQL.__internal.AnyOptions;
 type TLSOptions = Bun.SQL.TLSOptions;
 
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectPrototype = Object.prototype;
 const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
@@ -228,11 +229,16 @@ const SERVER_OPTIONS = [
   "onclose",
 ];
 
+/** What somebody put on `Object.prototype` is not the caller's. What the caller's own prototypes have is. */
+function isFromObjectPrototype(object: object | null, name: string): boolean {
+  while (object && !ObjectHasOwn(object, name)) object = ObjectGetPrototypeOf(object);
+  return object === ObjectPrototype;
+}
+
 /** `options` has the own keys of `source` already. Every key is read once: a getter is the caller's code. */
 function readInherited(options: AnyOptions, source: AnyOptions, names: string[]) {
   for (const name of names) {
-    // What somebody put on `Object.prototype` is not the caller's.
-    if (ObjectHasOwn(options, name) || ObjectHasOwn(ObjectPrototype, name)) continue;
+    if (ObjectHasOwn(options, name) || isFromObjectPrototype(source, name)) continue;
     const value = source[name];
     if (value !== undefined) options[name] = value;
   }
@@ -664,7 +670,7 @@ function parseOptions(
   const connection = options.connection;
   if (connection && $isObject(connection)) {
     for (const key in connection) {
-      if (!ObjectHasOwn(connection, key) && ObjectHasOwn(ObjectPrototype, key)) continue;
+      if (isFromObjectPrototype(connection, key)) continue;
       if (connection[key] !== undefined) {
         setStartupParameter(parameters, `options.connection.${key}`, key, connection[key]);
       }

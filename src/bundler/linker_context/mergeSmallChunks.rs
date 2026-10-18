@@ -884,13 +884,18 @@ pub(crate) fn merge_small_chunks(
     // at a top-level await while it loads. Every other entry is a root: it may
     // be the first thing loaded (a user entry), or nothing says what precedes it.
     let mut guaranteed = AutoBitSet::init_empty(entry_points_len)?;
+    // ... and the ones that are a root only because an importer has a top-level await.
+    let mut behind_await = AutoBitSet::init_empty(entry_points_len)?;
     for entry_id in 0..entry_points_len {
         if is_dynamic_entry(entry_id)
             && !required_sync.is_set(entry_id)
             && importer_bits[entry_id].find_first_set().is_some()
-            && !importer_bits[entry_id].has_intersection(&awaits)
         {
-            guaranteed.set(entry_id);
+            if importer_bits[entry_id].has_intersection(&awaits) {
+                behind_await.set(entry_id);
+            } else {
+                guaranteed.set(entry_id);
+            }
         }
     }
     // The `import()` graph over entries as CSR (`successors_of(n)` =
@@ -1230,6 +1235,8 @@ pub(crate) fn merge_small_chunks(
             groups.values(),
             &classes,
             &required_sync,
+            &behind_await,
+            &importer_bits,
             entry_points_len,
         )?);
         debug!(
@@ -1631,6 +1638,8 @@ pub(crate) fn merge_small_chunks(
         groups,
         &classes,
         &required_sync,
+        &behind_await,
+        &importer_bits,
         entry_points_len,
     )?);
     debug!(
@@ -1661,10 +1670,16 @@ fn rekey_files(
 /// `LinkerContext::first_loaders_of_key`: the class of each group that is left, under the key that its files now have.
 /// A file that runs code at load keeps the class of its group: rule 1 folds groups of one class, and rule 2 moves only
 /// files that run nothing.
+///
+/// A class keeps an `import()` target of `behind_await`: its importer can still be waiting when the target loads, so
+/// nothing of the importer folds into what the target needs. The importer has run its own imports by then all the
+/// same. When every importer of such a target is in the key, the target is not the first to load the files.
 fn first_loaders_of_keys(
     groups: &[Group],
     classes: &ArrayHashMap<&[u8], (AutoBitSet, Vec<usize>)>,
     required_sync: &AutoBitSet,
+    behind_await: &AutoBitSet,
+    importer_bits: &[AutoBitSet],
     entry_points_len: usize,
 ) -> crate::Result<StringHashMap<AutoBitSet>> {
     let mut first_loaders_of_key = StringHashMap::default();
@@ -1677,7 +1692,21 @@ fn first_loaders_of_keys(
             if group.merged_into.is_some() || required_sync.has_intersection(&group.bits) {
                 continue;
             }
-            first_loaders_of_key.put(group.bits.bytes(entry_points_len), class.clone()?)?;
+            let mut first_loaders = class.clone()?;
+            if class.has_intersection(behind_await) {
+                let mut entries = class.iterator::<true, true>();
+                while let Some(entry_id) = entries.next() {
+                    if behind_await.is_set(entry_id)
+                        && importer_bits[entry_id].subset_of(&group.bits)
+                    {
+                        first_loaders.unset(entry_id);
+                    }
+                }
+                if first_loaders.count() < 2 {
+                    continue;
+                }
+            }
+            first_loaders_of_key.put(group.bits.bytes(entry_points_len), first_loaders)?;
         }
     }
     Ok(first_loaders_of_key)

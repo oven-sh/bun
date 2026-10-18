@@ -560,10 +560,13 @@ impl OrderWatch {
             .collect();
         loaders.sort_by_key(|walk| rank[walk.entry_id as usize]);
 
-        // Per file of the chunk at hand: its place in the order of the entry point at hand.
-        let mut their_place: Vec<u32> = vec![u32::MAX; c.graph.files.len()];
+        // Per file of the chunk at hand: 1 + its place in the order of the chunk (0: it has none).
+        let mut chunk_place: Vec<u32> = vec![0; c.graph.files.len()];
         let mut conflicts: Vec<OrderConflict> = Vec::new();
         for (watch_index, (owner, layout)) in layouts.iter().enumerate() {
+            for (index, &source_index) in layout.iter().enumerate() {
+                chunk_place[source_index as usize] = index as u32 + 1;
+            }
             let mut with_bare_import: Option<OrderConflict> = None;
             let mut other_pair: Option<OrderConflict> = None;
             for walk in &loaders {
@@ -572,58 +575,42 @@ impl OrderWatch {
                     continue;
                 }
                 let theirs = &walk.watched[slot as usize];
-                for (index, &source_index) in theirs.iter().enumerate() {
-                    their_place[source_index as usize] = index as u32;
+                if theirs == layout {
+                    continue;
                 }
-                let conflict =
-                    |runs_first: IndexInt, runs_second: IndexInt, is_warning: bool| OrderConflict {
-                        loader: walk.entry_id,
-                        owner: *owner,
-                        runs_first,
-                        runs_second,
-                        is_warning,
-                    };
-                // One pass over the order of the chunk. Of the files so far, `last` is the one that this entry point
-                // runs last, and `last_bare` the one with a bare import that it runs last. A file that this entry
-                // point runs ahead of one of the two runs after it in the chunk.
-                let mut last: Option<IndexInt> = None;
-                let mut last_bare: Option<IndexInt> = None;
-                for &source_index in layout {
-                    // Chunk folding can move a file into a chunk whose entry points do not import it: such a file
-                    // has no place in the order of this entry point.
-                    let place = their_place[source_index as usize];
-                    if place == u32::MAX {
-                        continue;
-                    }
-                    let runs_ahead_of = |other: Option<IndexInt>| {
-                        other.filter(|&other| place < their_place[other as usize])
-                    };
+                // The chunk runs `runs_first` ahead of the file at `place`. This entry point runs it after that file.
+                let conflict = |runs_first: IndexInt, place: u32, is_warning: bool| OrderConflict {
+                    loader: walk.entry_id,
+                    owner: *owner,
+                    runs_first,
+                    runs_second: layout[place as usize - 1],
+                    is_warning,
+                };
+                // One pass over the order of this entry point. Of the files so far, `last` is the place of the one
+                // that the chunk runs last, and `last_bare` the same among the files with a bare import.
+                let (mut last, mut last_bare) = (0, 0);
+                for &source_index in theirs {
+                    let place = chunk_place[source_index as usize];
                     let has_bare_import = self.has_bare_import(source_index);
-                    let other = runs_ahead_of(last_bare)
-                        .or_else(|| runs_ahead_of(last).filter(|_| has_bare_import));
-                    if let Some(other) = other {
-                        with_bare_import = Some(conflict(other, source_index, true));
+                    if place < last_bare || (has_bare_import && place < last) {
+                        let other = if place < last_bare { last_bare } else { last };
+                        with_bare_import = Some(conflict(source_index, other, true));
                         break;
                     }
-                    if self.all_pairs
-                        && other_pair.is_none()
-                        && let Some(other) = runs_ahead_of(last)
-                    {
-                        other_pair = Some(conflict(other, source_index, false));
+                    if self.all_pairs && other_pair.is_none() && place < last {
+                        other_pair = Some(conflict(source_index, last, false));
                     }
-                    if runs_ahead_of(last).is_none() {
-                        last = Some(source_index);
+                    last = last.max(place);
+                    if has_bare_import {
+                        last_bare = last_bare.max(place);
                     }
-                    if has_bare_import && runs_ahead_of(last_bare).is_none() {
-                        last_bare = Some(source_index);
-                    }
-                }
-                for &source_index in theirs.iter() {
-                    their_place[source_index as usize] = u32::MAX;
                 }
                 if with_bare_import.is_some() {
                     break;
                 }
+            }
+            for &source_index in layout {
+                chunk_place[source_index as usize] = 0;
             }
             conflicts.extend(with_bare_import.or(other_pair));
         }
@@ -688,22 +675,28 @@ fn for_each_bare_import(c: &LinkerContext, mut each: impl FnMut(IndexInt, &Impor
     let sources = c.parse_graph().input_files.items_source();
     for source_index in c.graph.reachable_files.iter() {
         let importer = source_index.get();
-        if !c.graph.files_live.is_set(importer as usize)
-            || css[importer as usize].is_some()
-            || sources[importer as usize].path.is_node_module()
-        {
+        if !c.graph.files_live.is_set(importer as usize) || css[importer as usize].is_some() {
             continue;
         }
+        // Only a file with such a statement has its path read.
+        let mut in_node_modules: Option<bool> = None;
         for record in c.graph.ast.items_import_records()[importer as usize].as_slice() {
-            if record.kind == ImportKind::Stmt
-                && record.source_index.is_valid()
-                && record
+            if record.kind != ImportKind::Stmt
+                || !record.source_index.is_valid()
+                || !record
                     .flags
                     .contains(ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT)
-                && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
-                && css[record.source_index.get() as usize].is_none()
-                && each(importer, record)
+                || record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                || css[record.source_index.get() as usize].is_some()
             {
+                continue;
+            }
+            if *in_node_modules
+                .get_or_insert_with(|| sources[importer as usize].path.is_node_module())
+            {
+                break;
+            }
+            if each(importer, record) {
                 return;
             }
         }
@@ -1164,9 +1157,12 @@ enum WalkFrame {
     Place { run: PartRun, slot: u32 },
     /// The class-name object of a CSS file goes at the end of `owned[slot].runs`, unless the list has it.
     PlaceCss { source_index: IndexInt, slot: u32 },
-    /// The walk is past a file of a chunk of `OrderWatch` that it does not lay out.
-    Leave(IndexInt),
 }
+
+/// In the `slot` of a `WalkFrame::Place` of a walk that fills `watched`: the walk is past a file of a chunk of
+/// `OrderWatch` that it does not lay out. The file goes at the end of `watched[slot]`, and of no `runs`. A flag and
+/// not a variant of its own: a fourth variant made every walk slower, by about 3 instructions for each frame.
+const WATCHED_ONLY: u32 = 1 << 31;
 
 struct OwnedChunk {
     chunk_index: u32,
@@ -1190,16 +1186,6 @@ struct EntryWalk {
 }
 
 impl EntryWalk {
-    /// The list of `watched` that a file belongs in.
-    fn watch_slot_of(&self, plan: &WalkPlan, source_index: IndexInt) -> Option<u32> {
-        let watch = plan.watch.as_ref()?;
-        let watch_index = *watch.watch_of_file.get(source_index as usize)?;
-        self.watch_slots
-            .get(watch_index as usize)
-            .copied()
-            .filter(|&slot| slot != u32::MAX)
-    }
-
     fn run(&mut self, c: &LinkerContext, plan: &WalkPlan, chunks: &[Chunk]) {
         let mut seen = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut left = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
@@ -1267,6 +1253,19 @@ impl EntryWalk {
         root: IndexInt,
     ) {
         let entry_id = self.entry_id;
+        // Per file: the number of its chunk in `OrderWatch`, when this walk fills `watched`.
+        let watch_of_file: &[u32] = match &plan.watch {
+            Some(watch) if WATCH => &watch.watch_of_file,
+            _ => &[],
+        };
+        // The list of `watched` that a file belongs in.
+        let watch_slot_of = |watch_slots: &[u32], source_index: IndexInt| -> Option<u32> {
+            let watch_index = *watch_of_file.get(source_index as usize)?;
+            watch_slots
+                .get(watch_index as usize)
+                .copied()
+                .filter(|&slot| slot != u32::MAX)
+        };
         let files_live = &c.graph.files_live;
         let entry_bits = c.graph.files.items_entry_bits();
         let flags = c.graph.meta.items_flags();
@@ -1296,18 +1295,18 @@ impl EntryWalk {
         while let Some(frame) = stack.pop() {
             let (source_index, loader) = match frame {
                 WalkFrame::Place { run, slot } => {
+                    if WATCH && slot & WATCHED_ONLY != 0 {
+                        self.watched[(slot & !WATCHED_ONLY) as usize].push(run.source_index);
+                        continue;
+                    }
                     self.owned[slot as usize].runs.push(run);
                     if run.end == u32::MAX {
                         left.set(run.source_index as usize);
-                        if WATCH && let Some(slot) = self.watch_slot_of(plan, run.source_index) {
+                        if WATCH
+                            && let Some(slot) = watch_slot_of(&self.watch_slots, run.source_index)
+                        {
                             self.watched[slot as usize].push(run.source_index);
                         }
-                    }
-                    continue;
-                }
-                WalkFrame::Leave(source_index) => {
-                    if let Some(slot) = self.watch_slot_of(plan, source_index) {
-                        self.watched[slot as usize].push(source_index);
                     }
                     continue;
                 }
@@ -1419,8 +1418,20 @@ impl EntryWalk {
                     },
                     slot,
                 });
-            } else if WATCH && self.watch_slot_of(plan, source_index).is_some() {
-                stack.push(WalkFrame::Leave(source_index));
+            } else if WATCH && let Some(slot) = watch_slot_of(&self.watch_slots, source_index) {
+                if stack.len() == mark {
+                    // No file to walk first: the walk is past this one.
+                    self.watched[slot as usize].push(source_index);
+                } else {
+                    stack.push(WalkFrame::Place {
+                        run: PartRun {
+                            source_index,
+                            begin: 0,
+                            end: u32::MAX,
+                        },
+                        slot: WATCHED_ONLY | slot,
+                    });
+                }
             }
             stack[mark..].reverse();
         }

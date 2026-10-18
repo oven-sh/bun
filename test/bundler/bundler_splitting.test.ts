@@ -2757,6 +2757,19 @@ describe("bundler", () => {
       },
       ["ok q-noP aq-noP", "worker"],
     ],
+    // The same with a top-level await at the import(): index.js has still run its own imports first.
+    [
+      "OwnImportCallAfterTopLevelAwait",
+      {
+        "/index.js": /* js */ `
+          import { q } from "./q.js"; import "./p.js";
+          const m = await import("./a.js");
+          console.log("ok", q, m.a);
+        `,
+        "/worker.js": `console.log("worker");`,
+      },
+      ["ok q-noP aq-noP", "worker"],
+    ],
     // a.js imports p.js for a binding. Where p.js runs is then not something that a.js asks for.
     [
       "NoSideEffectImport",

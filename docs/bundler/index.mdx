@@ -599,8 +599,10 @@ From source, `index.ts` prints `production` and `worker.ts` prints `undefined`. 
 Bun warns about such a pair of modules when an `import` statement in your code names one of the two for its side effects only, as `import "./p.ts"` does. The warning names the entrypoint that the chunk follows:
 
 ```txt
+1 | import "./p.ts";
+           ^
 warn: The imports of "a.ts" run "p.ts" before "q.ts", but the chunk that holds both files follows "worker.ts" and runs "q.ts" first
-   at a.ts:1:8
+   at /path/to/a.ts:1:8
 
 note: A chunk runs its files in one order for every entry point that loads it. If "q.ts" needs "p.ts" to run first, add an import of "p.ts" to "q.ts".
 ```
@@ -611,7 +613,7 @@ Bun does not warn in these cases:
 
 - Both modules are imported for their bindings, as in `import { q } from "./q.ts"`. Most such pairs do not depend on each other. With `logLevel = "debug"` in [`bunfig.toml`](/runtime/bunfig#loglevel), the build lists one such pair for each shared chunk.
 - The `import` statement is in a file inside `node_modules`.
-- The module that runs in another order is CommonJS.
+- One of the two modules is CommonJS.
 
 #### Tree-shaking `import()` and `require()` results
 

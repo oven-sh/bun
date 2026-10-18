@@ -16924,6 +16924,9 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     [["--package-lock-only"], ["--lockfile-only"], []],
     [["--immutable"], ["--frozen-lockfile"], ["dep", "dev", "opt"]],
     [["--shamefully-hoist"], ["--linker=hoisted"], ["dep", "dev", "opt"]],
+    [["--node-linker=hoisted"], ["--linker=hoisted"], ["dep", "dev", "opt"]],
+    [["--node-linker", "isolated"], ["--linker=isolated"], ["dep", "dev", "opt"]],
+    [["--install-strategy=linked"], ["--linker=isolated"], ["dep", "dev", "opt"]],
     [["--progress=false"], ["--no-progress"], ["dep", "dev", "opt"]],
     [["--progress", "false"], ["--no-progress"], ["dep", "dev", "opt"]],
     [["--loglevel=silent"], ["--silent"], ["dep", "dev", "opt"]],
@@ -16964,6 +16967,40 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     ["--loglevel=info"],
   ].flat();
 
+  // Flags with no Bun equivalent. `dep` is a folder that could be installed, so these also check that the value of a
+  // flag is skipped along with it.
+  const ignored = [
+    ["--ci"],
+    ["--yes"],
+    ["--no-color"],
+    ["--color=always"],
+    ["--no-package-lock"],
+    ["--no-lockfile"],
+    ["--pure-lockfile"],
+    ["--no-frozen-lockfile"],
+    ["--no-immutable"],
+    ["--check-files"],
+    ["--no-bin-links"],
+    ["--foreground-scripts"],
+    ["--strict-peer-dependencies"],
+    ["--no-strict-peer-dependencies"],
+    ["--prefer-dedupe"],
+    ["--strict-ssl=false"],
+    ["--include=dev"],
+    ["--include", "dep"],
+    ["--only=dev"],
+    ["--network-timeout=100000"],
+    ["--network-timeout", "dep"],
+    ["--fetch-retries", "dep"],
+    ["--reporter=append-only"],
+    ["--cache", "dep"],
+    ["--cache-folder=dep"],
+    ["--store-dir", "dep"],
+    ["--mutex", "dep"],
+    ["--install-strategy=nested"],
+    ["--loglevel=debug"],
+  ].flat();
+
   it.each([
     ["install", groups, []],
     ["ci", groups, []],
@@ -16979,19 +17016,16 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
 
       expect(await outcome([command, ...satisfied, ...args], pkg, true)).toEqual(plain);
       expect(await outcome([command, ...args, ...satisfied], pkg, true)).toEqual(plain);
+      expect(await outcome([command, ...ignored, ...args], pkg, true)).toEqual(plain);
+      expect(await outcome([command, ...args, ...ignored], pkg, true)).toEqual(plain);
     },
   );
 
   it.each([
-    [["install", "--no-package-lock"], "install", "--no-package-lock", "--no-save"],
-    [["add", "--no-lockfile", "./dep"], "add", "--no-lockfile", "--no-save"],
-    [["install", "--pure-lockfile"], "install", "--pure-lockfile", "--no-save"],
-    [["ci", "--cache", "dep"], "install", "--cache", "--cache-dir"],
-    [["ci", "--cache=dep"], "install", "--cache", "--cache-dir"],
-    [["install", "--cache-folder", "dep"], "install", "--cache-folder", "--cache-dir"],
     [["install", "--workspace=dep"], "install", "--workspace", "--filter"],
-    [["install", "--install-strategy=nested"], "install", "--install-strategy", "--linker"],
-    [["install", "--node-linker=hoisted"], "install", "--node-linker", "--linker"],
+    [["add", "--workspace", "dep", "./dep"], "add", "--workspace", "--filter"],
+    [["install", "--prefix=dep"], "install", "--prefix", "--cwd"],
+    [["add", "--dir", "dep", "./dep"], "add", "--dir", "--cwd"],
   ])("bun %j is an error that names the closest flag", async (cmd, command, theirs, ours) => {
     expect(await outcome(cmd, {})).toEqual({
       stdout: "",

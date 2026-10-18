@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use crate::bun_fs::FileSystem;
+use bun_collections::DynamicBitSet;
 use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, strings};
 use bun_paths as Path;
@@ -3375,7 +3376,19 @@ fn settle_without_manifest(
 ) -> Option<Settled> {
     let is_peer = dependency.behavior.is_peer();
     if install_peer && is_peer && !latest_for_target {
-        if let Some(existing_id) = existing_peer_target(this, name_hash, version, dependency_id) {
+        index_peer_askers(this);
+        let ranges = if version_was_replaced {
+            Vec::new()
+        } else {
+            ranges_of_every_asker(this, dependency, dependency_id)
+        };
+        // If no installed version satisfies every range, the registry may have one.
+        let existing_id = if ranges.is_empty() {
+            installed_peer_target(this, name_hash, version, dependency_id)
+        } else {
+            installed_version_in_ranges(&this.lockfile, name_hash, version, &ranges)
+        };
+        if let Some(existing_id) = existing_id {
             return Some(Settled::Package(existing_id));
         }
     }
@@ -3512,6 +3525,11 @@ fn get_or_put_resolved_package(
                     .flatten()
             {
                 shared
+            } else if install_peer
+                && behavior.is_peer()
+                && let Some(id) = installed_peer_target(this, name_hash, version, dependency_id)
+            {
+                return bind_existing(this, dependency_id, id, success_fn);
             } else {
                 manifest.find_for_dependency(
                     version,
@@ -3556,7 +3574,7 @@ fn get_or_put_resolved_package(
                 }
                 Npm::FindVersionResult::Err(err_type) => {
                     // No published version satisfies the range, so fall back to the installed
-                    // version that `existing_peer_target` skipped.
+                    // version that `installed_peer_target` skipped.
                     if install_peer && behavior.is_peer() {
                         if let Some(id) = highest_peer_candidate(&this.lockfile, name_hash, version)
                         {
@@ -3955,8 +3973,9 @@ fn locked_version_in_lockfile<'a>(
         .then(|| (res.npm().version, lockfile.buffers.string_bytes.as_slice()))
 }
 
-/// The highest-or-nothing fallback is what `resolve_peer_dep_version_based` rebinds to on load.
-fn existing_peer_target(
+/// Picks an installed package for a peer dependency, going by its own range. Returns `None` if the
+/// registry should decide.
+fn installed_peer_target(
     this: &PackageManager,
     name_hash: PackageNameHash,
     version: &dependency::Version,
@@ -3966,61 +3985,88 @@ fn existing_peer_target(
     if let Some(id) = lockfile.package_satisfying(name_hash, version, |_| true) {
         return Some(id);
     }
-    let highest = highest_peer_candidate(lockfile, name_hash, version)?;
-    (can_share_out_of_range_peer(lockfile, name_hash, row, highest)
-        && !would_revive_leftover(lockfile, row, highest))
-    .then_some(highest)
+    let provided = peer_provided_from_above(lockfile, name_hash, row)?;
+    (!would_revive_leftover(lockfile, row, provided)).then_some(provided)
 }
 
-/// Decides whether a peer dependency can fall back to `candidate`, an installed version that's
-/// outside its range. Returns false only if `candidate` is a private dependency of unrelated
-/// packages. In that case the peer gets its own version from the registry.
+/// Returns the highest installed version that satisfies `version` and every range in `ranges`.
+fn installed_version_in_ranges(
+    lockfile: &Lockfile::Lockfile,
+    name_hash: PackageNameHash,
+    version: &dependency::Version,
+    ranges: &[dependency::Version],
+) -> Option<PackageID> {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let resolutions = lockfile.packages.items_resolution();
+    lockfile.package_satisfying(name_hash, version, |id| {
+        let resolution = &resolutions[id as usize];
+        resolution.tag == ResolutionTag::Npm
+            && (ranges.iter())
+                .all(|range| (range.npm().version).satisfies(resolution.npm().version, buf, buf))
+    })
+}
+
+/// Returns the package that the nearest package above `row`'s owner depends on under this name. As
+/// in pnpm, that package provides the peer even if its version is out of range. For example, every
+/// library under a workspace that depends on `react@17` uses `react@17`.
 ///
-/// The peer shares `candidate` if any of these is true:
-/// - A package above it in the dependency graph depends on that name. For example, `react@17` in a
-///   workspace is used by every library under that workspace.
-/// - `candidate` satisfies another package's peer range. For example, `@octokit/rest` and its
-///   plugins share one `@octokit/core`, and hoisting a second copy above it would split them up.
-/// - No regular dependency resolves to `candidate`, so it was installed for a peer to begin with.
-fn can_share_out_of_range_peer(
+/// "Above" follows regular dependencies only. A project's own peer dependencies also provide,
+/// because they're installed like its regular ones.
+fn peer_provided_from_above(
     lockfile: &Lockfile::Lockfile,
     name_hash: PackageNameHash,
     row: DependencyID,
-    candidate: PackageID,
-) -> bool {
+) -> Option<PackageID> {
     let deps = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
-    let Some(peer_owner) = lockfile.get_parent_pkg_of_dependency(row) else {
-        return true;
-    };
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    let resolution = &lockfile.packages.items_resolution()[candidate as usize];
-    let accepts_candidate = |id: DependencyID, dep: &Dependency| {
-        resolution.tag == ResolutionTag::Npm
-            && crate::dedupe::effective_npm_range(lockfile, id, dep).is_some_and(|range| {
-                (range.npm().version).satisfies(resolution.npm().version, buf, buf)
-            })
-    };
-    let mut is_regular_dependency = false;
-    let mut dependents: Vec<PackageID> = Vec::new();
-    for (owner, list) in lockfile.packages.items_dependencies().iter().enumerate() {
-        for id in list.begin()..list.end() {
-            let dep = &deps[id as usize];
-            if dep.name_hash == name_hash && id != row {
-                if !dep.behavior.is_peer() {
-                    dependents.push(owner as PackageID);
-                } else if accepts_candidate(id, dep) {
-                    return true;
-                }
+    let lists = lockfile.packages.items_dependencies();
+    let packages = lockfile.packages.items_resolution();
+    let owner = lockfile.get_parent_pkg_of_dependency(row)?;
+
+    let mut seen = DynamicBitSet::init_empty(packages.len()).unwrap_or_oom();
+    let mut level = DynamicBitSet::init_empty(packages.len()).unwrap_or_oom();
+    seen.set(owner as usize);
+    level.set(owner as usize);
+    loop {
+        let mut above = DynamicBitSet::init_empty(packages.len()).unwrap_or_oom();
+        let mut provided = None;
+        let mut any_above = false;
+        for (parent, list) in lists.iter().enumerate() {
+            let rows = list.begin() as usize..list.end() as usize;
+            if seen.is_set(parent)
+                || !rows.clone().any(|id| {
+                    !deps[id].behavior.is_peer()
+                        && level.is_set_allow_out_of_bound(resolutions[id] as usize, false)
+                })
+            {
+                continue;
             }
-            is_regular_dependency |=
-                !dep.behavior.is_peer() && resolutions[id as usize] == candidate;
+            seen.set(parent);
+            above.set(parent);
+            any_above = true;
+            let is_project = matches!(
+                packages[parent].tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            );
+            let provides = |id: &usize, peer: bool| {
+                let dep = &deps[*id];
+                dep.name_hash == name_hash
+                    && dep.behavior.is_peer() == peer
+                    && !dep.behavior.is_optional_peer()
+                    && (resolutions[*id] as usize) < packages.len()
+            };
+            provided = provided
+                .or_else(|| rows.clone().find(|id| provides(id, false)))
+                .or_else(|| rows.clone().find(|id| is_project && provides(id, true)));
         }
+        if let Some(id) = provided {
+            return Some(resolutions[id]);
+        }
+        if !any_above {
+            return None;
+        }
+        level = above;
     }
-    let options = reachable::Options::all(0);
-    !is_regular_dependency
-        || reachable::packages_from(lockfile, resolutions, &dependents, true, options)
-            .is_set(peer_owner as usize)
 }
 
 /// By a `file:`, `link:`, tarball or git row: the tree builder binds the peer to the nearest copy.
@@ -4151,14 +4197,13 @@ fn peer_askers(
     &askers[start..start + count]
 }
 
-/// The newest version that every package with a peer dependency on this name accepts. Returns
-/// `None` if the range of `row` alone should decide.
-fn version_every_peer_accepts<'m>(
+/// Returns the distinct ranges of every package that has a peer dependency on this name. Returns an
+/// empty list if the range of `row` alone should decide.
+fn ranges_of_every_asker(
     this: &PackageManager,
-    manifest: &'m Npm::PackageManifest,
     peer: &Dependency,
     row: DependencyID,
-) -> Option<Npm::FindVersionResult<'m>> {
+) -> Vec<dependency::Version> {
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
@@ -4178,6 +4223,22 @@ fn version_every_peer_accepts<'m>(
         }
     }
     if !row_counts || ranges.len() < 2 {
+        ranges.clear();
+    }
+    ranges
+}
+
+/// The newest version that every package with a peer dependency on this name accepts. Returns
+/// `None` if the range of `row` alone should decide.
+fn version_every_peer_accepts<'m>(
+    this: &PackageManager,
+    manifest: &'m Npm::PackageManifest,
+    peer: &Dependency,
+    row: DependencyID,
+) -> Option<Npm::FindVersionResult<'m>> {
+    let buf = this.lockfile.buffers.string_bytes.as_slice();
+    let ranges = ranges_of_every_asker(this, peer, row);
+    if ranges.is_empty() {
         return None;
     }
 

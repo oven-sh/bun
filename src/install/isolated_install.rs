@@ -774,8 +774,7 @@ fn build_store(
         // for skipping dependnecies of workspace packages and the root package. the dependencies
         // of these packages should only be pulled in once, but we might need to create more than
         // one entry if there's multiple dependencies on the workspace or root package.
-        let mut skip_dependencies = (entry.pkg_id == 0 && entry.dep_id != invalid_dependency_id)
-            || lockfile.is_member_outside(entry.pkg_id);
+        let mut skip_dependencies = entry.pkg_id == 0 && entry.dep_id != invalid_dependency_id;
 
         if entry.dep_id != invalid_dependency_id {
             let entry_dep = &dependencies[entry.dep_id as usize];
@@ -2314,9 +2313,7 @@ pub(crate) fn install_isolated_packages(
                 }
                 ResolutionTag::Workspace => {
                     // if injected=true this might be false
-                    if !lockfile_ro.is_member_outside(pkg_id)
-                        && !seen_workspace_ids.get_or_put(pkg_id)?.found_existing
-                    {
+                    if !seen_workspace_ids.get_or_put(pkg_id)?.found_existing {
                         installer.set_step(entry_id, Step::SymlinkDependencies);
                         installer.start_task(entry_id);
                         continue;

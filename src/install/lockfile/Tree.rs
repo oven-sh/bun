@@ -259,28 +259,6 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
         self.tree_id = 0;
     }
 
-    /// Whether tree `id` is under a workspace package whose folder is outside the project. bun.lock
-    /// lists that package's dependencies, but none are installed. See `is_member_outside`.
-    fn is_in_member_outside(&self, id: Id) -> bool {
-        let mut top = self.trees[id as usize];
-        for _ in 0..MAX_DEPTH {
-            if top.parent == 0 {
-                return (self.dependencies.get(top.dependency_id as usize)).is_some_and(|member| {
-                    member.behavior.is_workspace()
-                        && member.version.tag == crate::dependency::VersionTag::Workspace
-                        && crate::bin::path_climbs_out(
-                            member.version.workspace().slice(self.string_bytes),
-                        )
-                });
-            }
-            match self.trees.get(top.parent as usize) {
-                Some(parent) => top = *parent,
-                None => break,
-            }
-        }
-        false
-    }
-
     // `Option<&mut DynamicBitSet>` is accepted unconditionally; callers with PkgPath must pass None.
     pub fn next(
         &mut self,
@@ -294,10 +272,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
 
         let mut completed_trees = completed_trees;
 
-        while trees[self.tree_id as usize].dependencies.len == 0
-            || (PATH_STYLE == IteratorPathStyle::NodeModules
-                && self.is_in_member_outside(self.tree_id))
-        {
+        while trees[self.tree_id as usize].dependencies.len == 0 {
             if PATH_STYLE == IteratorPathStyle::NodeModules {
                 if let Some(ct) = completed_trees.as_deref_mut() {
                     ct.set(self.tree_id as usize);
@@ -558,6 +533,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// Workspace package ids that are hoisting barriers (self-contained node_modules).
     pub(crate) self_contained: Vec<PackageID>,
     pub(crate) peer_probes: PeerProbes,
+    pub(crate) peer_ranges: bun_lock::PeerRangeIndex,
     /// The first row of each name in each tree, which is what `hoist_dependency` looks for.
     pub(crate) placed: Placed,
     /// A later dependency replaced a row, so a row no longer tells which dependency placed it.
@@ -813,6 +789,10 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         let lockfile = self.lockfile();
         bun_lock::resolve_peer_dep_version_based(
             &self.dependencies[dep_id as usize],
+            bun_lock::PeerRanges {
+                index: &self.peer_ranges,
+                dependencies: self.dependencies,
+            },
             &lockfile.catalogs,
             &lockfile.package_index,
             &lockfile.overrides,
@@ -1341,7 +1321,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     }
 
     if parent_pkg_id != 0 {
-        return linked.is_member_outside(lockfile, parent_pkg_id);
+        return false;
     }
 
     if !dep.behavior.is_workspace() {
@@ -1373,14 +1353,6 @@ impl Tree {
         let resolution_list = builder.resolution_lists[parent_pkg_id as usize];
 
         if resolution_list.len == 0 {
-            return Ok(());
-        }
-
-        // Nothing is installed into a workspace package outside the project. Only `Filter` skips
-        // it: the check can depend on symlinks on disk, and the tree saved in bun.lock must not.
-        if METHOD == BuilderMethod::Filter
-            && builder.lockfile.get().is_member_outside(parent_pkg_id)
-        {
             return Ok(());
         }
 

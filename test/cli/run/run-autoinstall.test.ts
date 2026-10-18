@@ -2377,7 +2377,7 @@ describe.concurrent("--prefer-offline resolves an auto-installed package from th
 describe.concurrent("auto-install is off when a security scanner is configured", () => {
   const scanner = `[install.security]\nscanner = "./scanner.ts"\n`;
   const configured = `Cannot find package "no-deps": auto-install is off because a security scanner is configured. Run "bun install"`;
-  const unreadable = `Cannot find package "no-deps": auto-install is off because a package.json, bunfig.toml or .npmrc cannot be read or parsed. Run "bun install"`;
+  const unreadable = `Cannot find package "no-deps": auto-install is off because a package.json or bunfig.toml cannot be read or parsed. Run "bun install"`;
   const print = (expression: string) =>
     `try { console.log("loaded", ${expression}); } catch (e) { console.log(e.message); }\n`;
   const requireIt = print(`require("no-deps").version`);
@@ -2431,6 +2431,14 @@ describe.concurrent("auto-install is off when a security scanner is configured",
   }
 
   const refused = (why: string) => ({ stdout: why + "\n", stderr: "", exitCode: 0, requests: [] });
+  // `bun install` in `app/src` reads the bunfig.toml of `app`, and none above it.
+  const project = { "app/package.json": JSON.stringify({ name: "app" }), "app/src/index.js": requireIt };
+  const installed = {
+    stdout: "loaded 2.0.0\n",
+    stderr: "",
+    exitCode: 0,
+    requests: ["/no-deps", "/no-deps/-/no-deps-2.0.0.tgz"],
+  };
 
   test.each([
     `require("no-deps").version`,
@@ -2550,13 +2558,13 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     [".npmrc", "a folder of the project", { cwd: "app/src" }],
     [".npmrc", "outside the project", { cwd: "elsewhere", args: ["../app/src/index.js"] }],
     ["bunfig.toml", "outside the project", { cwd: "elsewhere", args: ["../app/src/index.js"] }],
-  ])("the project's %s cannot be read, run from %s", async (name, _, options) => {
+  ])("on when the project's %s cannot be read, run from %s", async (name, _, options) => {
     const files = {
       [`app/${name}`]: UNREADABLE,
       "app/package.json": JSON.stringify({ name: "app" }),
       "app/src/index.js": requireIt,
     };
-    expect(await run(files, options)).toEqual(refused(unreadable));
+    expect(await run(files, options)).toEqual(installed);
   });
 
   test("configured with --config", async () => {
@@ -2573,38 +2581,25 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     ["the user's bunfig", "home/.bunfig.toml"],
     ["the user's .npmrc", "home/.npmrc"],
     ["the project's .npmrc", "app/.npmrc"],
-  ])("%s cannot be read", async (_, path) => {
-    expect(await run({ [path]: UNREADABLE, "app/index.js": requireIt })).toEqual(refused(unreadable));
+    ["the project's bunfig.toml", "app/bunfig.toml"],
+  ])("on when %s cannot be read", async (_, path) => {
+    expect(await run({ [path]: UNREADABLE, "app/index.js": requireIt })).toEqual(installed);
   });
 
-  // `bun install` in `app/src` reads the bunfig.toml of `app`, and none above it.
-  const project = { "app/package.json": JSON.stringify({ name: "app" }), "app/src/index.js": requireIt };
-  const installed = {
-    stdout: "loaded 2.0.0\n",
-    stderr: "",
-    exitCode: 0,
-    requests: ["/no-deps", "/no-deps/-/no-deps-2.0.0.tgz"],
-  };
-
-  describe.each(
-    [
-      ["cannot be read", UNREADABLE, unreadable],
-      ["cannot be parsed", "[install.security\n", unreadable],
-      ["configures a scanner", scanner, configured],
-    ].filter(([, bunfig]) => !isWindows || bunfig !== UNREADABLE),
-  )("a bunfig.toml that %s", (_, bunfig, why) => {
-    const cell = test.serialIf(bunfig === UNREADABLE);
-
-    cell("in the project root", async () => {
+  describe.each([
+    ["cannot be parsed", "[install.security\n", unreadable],
+    ["configures a scanner", scanner, configured],
+  ])("a bunfig.toml that %s", (_, bunfig, why) => {
+    test("in the project root", async () => {
       expect(await run({ ...project, "app/bunfig.toml": bunfig }, { cwd: "app/src" })).toEqual(refused(why));
     });
 
-    cell("between the working directory and the project root", async () => {
+    test("between the working directory and the project root", async () => {
       const files = { ...project, "app/src/bunfig.toml": bunfig, "app/src/deep/index.js": requireIt };
       expect(await run(files, { cwd: "app/src/deep" })).toEqual(refused(why));
     });
 
-    cell("above the project root is not read", async () => {
+    test("above the project root is not read", async () => {
       expect(await run({ ...project, "bunfig.toml": bunfig }, { cwd: "app/src" })).toEqual(installed);
     });
   });
@@ -2643,12 +2638,6 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     expect(result.stderr).toContain(unreadable);
     expect(result.stderr).toMatch(/cannot read or parse "\S+[\\/]bunfig\.toml"/);
     expect({ ...result, stderr: "" }).toEqual({ stdout: "", stderr: "", exitCode: 1, requests: [] });
-  });
-
-  test.serial.skipIf(isWindows)("the project's bunfig.toml cannot be read", async () => {
-    const result = await run({ "app/bunfig.toml": UNREADABLE, "app/index.js": requireIt });
-    expect(result.stderr).toMatch(/^ignoring settings in \S+bunfig\.toml$/m);
-    expect({ ...result, stderr: "" }).toEqual(refused(unreadable));
   });
 
   // What Docker makes of a `-v` mount of a file that the host does not have. It holds no settings.

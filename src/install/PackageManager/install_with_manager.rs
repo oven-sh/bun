@@ -77,8 +77,6 @@ pub fn install_with_manager(
         }
     }
 
-    manager.refuse_unreadable_config(ctx, "install");
-
     // An error from the options or the environment is printed at every log level.
     if manager.log_mut().has_errors() {
         manager
@@ -621,11 +619,18 @@ pub fn install_with_manager(
         resolve_peers_without_waiting(manager)?;
     }
 
+    // `TransitiveUpdate::plan` only saw the versions in bun.lock. A direct dependency that `--latest`
+    // moves to a new major can have different dependencies and peer ranges.
+    let moved_direct = (bare_update
+        && manager.options.do_.update_to_latest()
+        && !manager.options.do_.update_direct_only())
+    .then_some(&direct_deps_before);
     if manager.pending_task_count() > 0
         || manager.peer_dependencies.readable_length() > 0
         || !named.latest_rows.is_empty()
+        || moved_direct.is_some()
     {
-        resolve_pending_tasks(manager, &root, log_level, &mut named)?;
+        resolve_pending_tasks(manager, &root, log_level, &mut named, moved_direct)?;
     }
 
     if manager.summary.changes_resolutions()
@@ -633,7 +638,13 @@ pub fn install_with_manager(
         && reresolve_links_to_dropped_workspaces(manager)
         && (manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0)
     {
-        resolve_pending_tasks(manager, &root, log_level, &mut NamedUpdates::default())?;
+        resolve_pending_tasks(
+            manager,
+            &root,
+            log_level,
+            &mut NamedUpdates::default(),
+            None,
+        )?;
     }
 
     // `--depth 0`: a transitive edge that shared the old package with a moved entry stays.
@@ -910,7 +921,6 @@ pub fn install_with_manager(
             root_package_json_path,
             had_errors_before_cleaning_lockfile,
         );
-        note_members_outside(manager);
 
         // Every workspace is a root dependency, so without a diff the workspace set is unchanged.
         if had_any_diffs {
@@ -1556,31 +1566,6 @@ fn warn_unsupported_platform(
     }
 }
 
-/// Prints a note that names the workspaces outside the project, whose dependencies and scripts
-/// were skipped. See `Lockfile::is_member_outside`.
-fn note_members_outside(manager: &PackageManager) {
-    let lockfile: &Lockfile = &manager.lockfile;
-    let pkgs = lockfile.packages.slice();
-    let left_alone: Vec<&[u8]> = (0..pkgs.len())
-        .filter(|&id| {
-            lockfile.is_member_outside(id as PackageID)
-                && (pkgs.items_dependencies()[id].len > 0
-                    || pkgs.items_meta()[id].has_install_script())
-                && !(manager.summary.pruned_workspaces).contains(&pkgs.items_name_hash()[id])
-        })
-        .map(|id| lockfile.str(pkgs.items_resolution()[id].workspace()))
-        .collect();
-    if left_alone.is_empty() || manager.options.log_level.is_silent() {
-        return;
-    }
-    bun_core::note!(
-        "skipping dependencies and scripts of {} workspace{} outside the project: {}",
-        left_alone.len(),
-        if left_alone.len() == 1 { "" } else { "s" },
-        lockfile::pruned_workspaces::quoted_names(&mut left_alone.iter().copied()),
-    );
-}
-
 pub(crate) fn get_workspace_filters(
     manager: &mut PackageManager,
     original_cwd: &[u8],
@@ -2211,6 +2196,7 @@ fn resolve_pending_tasks(
     root: &lockfile::Package,
     log_level: Options::LogLevel,
     named: &mut NamedUpdates,
+    moved_direct: Option<&DirectDependencies>,
 ) -> crate::Result<()> {
     if root.dependencies.len > 0 {
         let _ = manager.get_cache_directory();
@@ -2233,6 +2219,14 @@ fn resolve_pending_tasks(
     if !named.latest_rows.is_empty() {
         let child_moves = refresh_children_of_named(manager, &named.latest_rows)?;
         named.moved.extend(child_moves);
+        wait_for_resolution(manager)?;
+    }
+
+    let moved_to = moved_direct.map_or(Vec::new(), |direct| direct.moved_to(&manager.lockfile));
+    if !moved_to.is_empty() {
+        let child_moves = crate::update_transitive::refresh_children_of(manager, &moved_to)?;
+        named.moved.extend(child_moves);
+        manager.drain_dependency_list();
         wait_for_resolution(manager)?;
     }
 
@@ -2517,7 +2511,7 @@ fn reresolve_rows_outside_overrides(
     enqueue_peer_rows(manager, &peer_rows, &mut moved)?;
     manager.drain_dependency_list();
     if manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0 {
-        resolve_pending_tasks(manager, root, log_level, &mut NamedUpdates::default())?;
+        resolve_pending_tasks(manager, root, log_level, &mut NamedUpdates::default(), None)?;
     }
     if manager.log_mut().has_errors() {
         manager.crash();

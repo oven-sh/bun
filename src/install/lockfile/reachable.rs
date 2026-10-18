@@ -87,25 +87,9 @@ impl Options {
 pub(crate) struct Linked {
     /// The packages that this install links, given `--production`, `--omit` and `--filter`.
     packages: Option<DynamicBitSet>,
-    members_outside: Option<DynamicBitSet>,
 }
 
 impl Linked {
-    /// A cached `Lockfile::is_member_outside`. That function inspects the workspace's path, and
-    /// this one is called for every dependency edge.
-    pub(crate) fn is_member_outside(&mut self, lockfile: &Lockfile, pkg_id: PackageID) -> bool {
-        let outside = self.members_outside.get_or_insert_with(|| {
-            let mut outside = DynamicBitSet::init_empty(lockfile.packages.len()).unwrap_or_oom();
-            for id in 0..lockfile.packages.len() {
-                if lockfile.is_member_outside(id as PackageID) {
-                    outside.set(id);
-                }
-            }
-            outside
-        });
-        outside.is_set(pkg_id as usize)
-    }
-
     /// An optional peer of `parent_pkg_id` whose package only an omitted group asked for.
     pub(crate) fn omits_optional_peer(
         &mut self,

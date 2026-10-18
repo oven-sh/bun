@@ -237,18 +237,6 @@ impl LinkedMembers {
         }
     }
 
-    /// Returns the real path of the workspace at `path` if that folder is outside the project and
-    /// the command was started inside it.
-    pub(crate) fn outside_and_started_in(&self, path: &[u8]) -> Option<&[u8]> {
-        let member = self.get(path).filter(|member| member.is_outside)?;
-        let start = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
-        let start = Self::real_path_of(start);
-        // A symlink can lead to a folder that contains the project. A command that was started in
-        // the project was not started in that workspace.
-        (Self::is_in(&member.real_path, &start) && !Self::is_in(&self.real_root, &start))
-            .then_some(&*member.real_path)
-    }
-
     /// Whether `path` is `folder` or is inside it. Both are real paths. An empty one, for which
     /// `realpath` failed, never matches.
     fn is_in(folder: &[u8], path: &[u8]) -> bool {
@@ -978,16 +966,14 @@ impl Lockfile {
         out
     }
 
-    /// Whether `pkg_id` is a workspace whose folder is outside the project. Packages can depend on
-    /// it and bun.lock lists it, but nothing is written to its folder, which another project may
-    /// own.
+    /// Returns true if `pkg_id` is a workspace whose folder is outside the project. Another project
+    /// may own that folder, so `prune` never deletes anything from its `node_modules`.
     pub(crate) fn is_member_outside(&self, pkg_id: PackageID) -> bool {
         let res = &self.packages.items_resolution()[pkg_id as usize];
-        res.tag == ResolutionTag::Workspace
-            && self.is_member_path_outside(res.workspace().slice(&self.buffers.string_bytes))
-    }
-
-    pub(crate) fn is_member_path_outside(&self, path: &[u8]) -> bool {
+        if res.tag != ResolutionTag::Workspace {
+            return false;
+        }
+        let path = res.workspace().slice(&self.buffers.string_bytes);
         crate::bin::path_climbs_out(path)
             || (self.linked_members.get(path)).is_some_and(|member| member.is_outside)
     }
@@ -1661,6 +1647,13 @@ impl Lockfile {
             Vec::new()
         };
 
+        let peer_ranges = bun_lock::PeerRangeIndex::collect(
+            self.buffers.dependencies.as_slice(),
+            &self.catalogs,
+            &self.overrides,
+            self.buffers.string_bytes.as_slice(),
+        );
+
         // Lets the `&mut buffers.resolutions` split-borrow below coexist with `Builder::lockfile`.
         let lockfile_ref = bun_ptr::ParentRef::<Lockfile>::new(&*self);
         let mut builder = tree::Builder::<METHOD> {
@@ -1683,6 +1676,7 @@ impl Lockfile {
             list: Default::default(),
             sort_buf: Default::default(),
             peer_probes: Default::default(),
+            peer_ranges,
             // Most lookups find nothing, and a miss is cheap in a table that is at most half full.
             placed: tree::Placed::with_capacity(slice.len() * 2),
             replaced_row: false,
@@ -2386,6 +2380,7 @@ impl Lockfile {
                             || (!dep.behavior.is_optional_peer()
                                 && bun_lock::resolve_peer_dep_version_based(
                                     dep,
+                                    bun_lock::PeerRanges::NONE,
                                     &self.catalogs,
                                     &self.package_index,
                                     &self.overrides,

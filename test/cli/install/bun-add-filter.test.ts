@@ -1044,19 +1044,16 @@ test.concurrent("add/remove --filter updates bun.lock for a workspace outside th
   const root = join(String(dir), "root");
   const x = () => file(join(String(dir), "x", "package.json")).json();
   const lockedX = async () => (await lockfileJson(root)).workspaces["../x"];
-  async function runOk(args: string[], note = "") {
+  async function runOk(args: string[]) {
     const { stderr, exitCode } = await run(args, String(dir), { cwd: root, linker: "hoisted" });
-    expect(stderr).toBe(note + "Saved lockfile\n");
+    expect(stderr).toBe("Saved lockfile\n");
     expect(exitCode).toBe(0);
   }
 
   await runOk(["install"]);
   expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0" });
 
-  await runOk(
-    ["add", "--filter", "x", "y@workspace:*"],
-    'note: skipping dependencies and scripts of 1 workspace outside the project: "../x"\n',
-  );
+  await runOk(["add", "--filter", "x", "y@workspace:*"]);
   expect(await x()).toStrictEqual({ name: "x", version: "1.0.0", dependencies: { y: "workspace:*" } });
   expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0", dependencies: { y: "workspace:*" } });
 

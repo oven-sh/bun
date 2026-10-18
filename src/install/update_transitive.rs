@@ -73,6 +73,12 @@ impl DirectDependencies {
         redirect(lockfile, self.moved_pairs(lockfile), direct_only);
     }
 
+    /// Returns the packages that direct dependencies have moved to since the snapshot.
+    pub(crate) fn moved_to(&self, lockfile: &Lockfile) -> Vec<PackageID> {
+        let pairs = self.moved_pairs(lockfile);
+        pairs.into_iter().map(|(_, new)| new).collect()
+    }
+
     fn moved_pairs(&self, lockfile: &Lockfile) -> Vec<(PackageID, PackageID)> {
         let packages_len = lockfile.packages.len();
         let pkg_res = lockfile.packages.items_resolution();

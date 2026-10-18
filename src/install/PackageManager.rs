@@ -746,30 +746,6 @@ impl Subcommand {
             Self::Add | Self::Remove | Self::Update | Self::Patch | Self::PatchCommit
         ) || (matches!(self, Self::Install | Self::Link) && has_package_args)
     }
-
-    /// Whether the command installs or removes packages, which includes editing package.json and
-    /// bun.lock to match.
-    pub(crate) fn installs(self, positionals: &[&[u8]]) -> bool {
-        match self {
-            Self::Install
-            | Self::Update
-            | Self::Add
-            | Self::Remove
-            | Self::Link
-            | Self::Patch
-            | Self::PatchCommit
-            | Self::Dedupe
-            | Self::Prune => true,
-            Self::Audit => positionals.get(1).is_some_and(|arg| *arg == b"fix"),
-            Self::Pm
-            | Self::Unlink
-            | Self::Outdated
-            | Self::Pack
-            | Self::Publish
-            | Self::Info
-            | Self::Why => false,
-        }
-    }
 }
 
 /// The resolved outcome of `--filter` for one install: the importer ids whose dependencies get installed.
@@ -916,26 +892,6 @@ impl PackageManager {
         // outlives every `'a` a caller can name. Exclusive access is upheld by
         // single-threaded use; see doc comment.
         unsafe { &mut *p }
-    }
-
-    /// Exits with an error if a bunfig.toml or .npmrc exists but cannot be read. These files say
-    /// where packages come from, where they are installed and what checks them, so the command does
-    /// not guess. `verb` is what the command does to packages, for the message.
-    pub fn refuse_unreadable_config(&self, ctx: &Command::ContextData, verb: &str) {
-        let Some(path) = ctx.unreadable_config.as_deref() else {
-            return;
-        };
-        let log = self.log_mut();
-        log.add_error_fmt(
-            Some(&bun_ast::Source::init_path_string(path, b"")),
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "cannot read {}, refusing to {verb} packages",
-                bstr::BStr::new(bun_paths::basename(path)),
-            ),
-        );
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-        Global::crash();
     }
 
     /// Reborrow the active progress download node (`self.progress.root`-rooted).
@@ -1934,17 +1890,14 @@ fn push_package_json(path: &mut Vec<u8>) {
     path.extend_from_slice(b"package.json\0");
 }
 
-/// A relative `$NPM_CONFIG_USERCONFIG` is relative to `start_dir`.
-/// If a file exists but cannot be read, its path is stored in `unreadable`, unless that is already
-/// set. A later file in `project_npmrcs` overrides an earlier one, and all of them override the
-/// user's own .npmrc.
+/// A relative `$NPM_CONFIG_USERCONFIG` is relative to `start_dir`. A later file in `project_npmrcs`
+/// overrides an earlier one, and all of them override the user's own .npmrc.
 fn load_npmrc_files<'a>(
     bunfig: &Api::BunInstall,
     env: &dot_env::Loader,
     start_dir: &[u8],
     project_npmrcs: &mut dyn Iterator<Item = &'a ZStr>,
     diagnostics: ini::NpmrcDiagnostics,
-    unreadable: &mut Option<Box<[u8]>>,
 ) -> Api::BunInstall {
     let mut buf = bun_paths::path_buffer_pool::get();
     let parts = [b"./.npmrc" as &[u8]];
@@ -1978,9 +1931,7 @@ fn load_npmrc_files<'a>(
         paths.push(path);
     }
     let mut install = Api::BunInstall::default();
-    if let Some(path) = ini::load_npmrc_config(&mut install, bunfig, env, diagnostics, &paths) {
-        unreadable.get_or_insert_with(|| path.as_bytes().into());
-    }
+    ini::load_npmrc_config(&mut install, bunfig, env, diagnostics, &paths);
     install
 }
 
@@ -2023,7 +1974,6 @@ pub fn config_ignores_scripts(
         cwd,
         &mut core::iter::once(bun_core::zstr!(".npmrc")),
         ini::NpmrcDiagnostics::Discard,
-        &mut None,
     );
     Ok(npmrc.ignore_scripts.unwrap_or(false))
 }
@@ -2040,15 +1990,7 @@ pub fn user_cache_directory(env: &dot_env::Loader, cwd: &[u8]) -> Option<Box<[u8
     }
     initialize_store();
     let diagnostics = ini::NpmrcDiagnostics::Discard;
-    load_npmrc_files(
-        &bunfig,
-        env,
-        cwd,
-        &mut core::iter::empty(),
-        diagnostics,
-        &mut None,
-    )
-    .cache_directory
+    load_npmrc_files(&bunfig, env, cwd, &mut core::iter::empty(), diagnostics).cache_directory
 }
 
 /// The one upward walk of [`init`]: to the first `package.json`, then on to the workspace root.
@@ -2298,35 +2240,6 @@ fn find_workspace_root_above<'a>(
         }
     }
     Ok(None)
-}
-
-/// Nothing is written to a workspace whose folder is outside the project (see
-/// `Lockfile::is_member_outside`). So a command that installs exits here, before it changes
-/// anything, if it was started in such a workspace. `top_level_dir` must already be the project's.
-fn exit_if_started_in_member_outside(
-    members: &Package::WorkspaceMap::WorkspaceMap,
-    name_hash: PackageNameHash,
-) {
-    let Some((path, entry)) = (members.keys().iter().zip(members.values().iter()))
-        .find(|(_, entry)| Semver::string::Builder::string_hash(&entry.name) == name_hash)
-    else {
-        return;
-    };
-    let mut linked = crate::lockfile_real::LinkedMembers::default();
-    linked.see(path, entry.is_behind_link);
-    let Some(real_path) = linked.outside_and_started_in(path) else {
-        return;
-    };
-    let real_path = bun_core::fmt::escape_control_chars(real_path);
-    Output::err_generic(
-        "workspace \"{}\" links to \"{}\" outside the project, no changes made",
-        (bun_core::fmt::escape_control_chars(path), &real_path),
-    );
-    bun_core::note!(
-        "run the command in \"{}\" to use that folder as its own project",
-        real_path
-    );
-    Global::crash();
 }
 
 /// Sticky and group- or world-writable, like `/tmp`: any local user can put a `package.json` there.
@@ -2687,9 +2600,6 @@ pub fn init(
                 // Intern via the resolver's DirnameStore so the slice is
                 // process-lifetime (`set_top_level_dir` requires `'static`).
                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
-                if subcommand.installs(cli.positionals) {
-                    exit_if_started_in_member_outside(&workspace_names, name_hash);
-                }
                 let _ = child_json.close();
                 workspace_name_hash = Some(name_hash);
                 // The root was found above the path as the user typed it. The root reads the
@@ -2799,7 +2709,6 @@ pub fn init(
             )
             .into_iter(),
             ini::NpmrcDiagnostics::Print,
-            &mut ctx.unreadable_config,
         );
 
         overlay_bunfig_install(&mut install, bunfig_install);
@@ -3208,10 +3117,9 @@ fn init_with_runtime_once(
         start_dir,
         &mut npmrcs.iter().map(|path| &**path),
         ini::NpmrcDiagnostics::Discard,
-        &mut unreadable,
     );
-    // The unreadable file may say where packages come from or what checks them, so nothing is
-    // installed without it.
+    // The file may say where packages come from or what checks them, so nothing is installed
+    // without it.
     if let Some(path) = unreadable {
         log.add_warning_fmt(
             None,

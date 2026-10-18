@@ -1076,18 +1076,17 @@ mod draft {
     }
 
     /// Reads every `.npmrc` into `install`; `bunfig` only tells the diagnostics which registries exist.
-    /// Returns the path of the first `.npmrc` that exists but could not be read.
-    pub fn load_npmrc_config<'a>(
+    /// Like npm, skips a file that can't be read.
+    pub fn load_npmrc_config(
         install: &mut BunInstall,
         bunfig: &BunInstall,
         env: &DotEnvLoader,
         diagnostics: NpmrcDiagnostics,
-        npmrc_paths: &[&'a ZStr],
-    ) -> Option<&'a ZStr> {
+        npmrc_paths: &[&ZStr],
+    ) {
         let mut log = Log::init();
         let mut configs: Vec<ConfigItem> = Vec::new();
         let mut sources: Vec<Source> = Vec::new();
-        let mut unreadable = None;
 
         for &npmrc_path in npmrc_paths {
             match bun_ast::source_from_file(
@@ -1095,25 +1094,7 @@ mod draft {
                 bun_ast::ToSourceOptions { convert_bom: true },
             ) {
                 Ok(source) => sources.push(source),
-                Err(err) => {
-                    // A directory named `.npmrc` gets the warning too, but it is not reported to
-                    // the caller as unreadable.
-                    let is_file = err.is_unreadable_file(npmrc_path.as_bytes());
-                    if (is_file || err.is_directory())
-                        && diagnostics == NpmrcDiagnostics::Print
-                        && log.level.at_least(bun_ast::Level::Warn)
-                    {
-                        bun_core::warn!(
-                            "{}\nignoring registry and auth settings in <b>{}<r>",
-                            err,
-                            bstr::BStr::new(npmrc_path.as_bytes()),
-                        );
-                    }
-                    if is_file {
-                        unreadable.get_or_insert(npmrc_path);
-                    }
-                    continue;
-                }
+                Err(_) => continue,
             }
 
             let source_idx = sources.len() - 1;
@@ -1130,7 +1111,6 @@ mod draft {
 
         resolve_url_auth(install, bunfig, &configs, &sources, &mut log);
         report_log(&mut log, diagnostics);
-        unreadable
     }
 
     /// Prints and clears `log`, under a header that names the file of its first error.

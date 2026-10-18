@@ -592,9 +592,9 @@ These files live in `~/.bun/install/cache/*.npm`. The filename pattern is `${has
 
 Bun's usage of `Cache-Control` ignores `Age`. This improves performance, but means Bun may be about 5 minutes behind the latest package version metadata from npm.
 
-## Flags from npm
+## Flags from npm, Yarn and pnpm
 
-A flag that `bun install` does not know is an error. So that a command line written for npm, Yarn or pnpm keeps working, `bun install`, `bun ci`, `bun add`, `bun remove` and `bun update` also take these:
+Command lines written for npm, Yarn or pnpm keep working. `bun install`, `bun ci`, `bun add`, `bun remove` and `bun update` translate these flags:
 
 | Flag                                                           | What Bun does                                   |
 | -------------------------------------------------------------- | ----------------------------------------------- |
@@ -605,6 +605,8 @@ A flag that `bun install` does not know is an error. So that a command line writ
 | `--package-lock-only`                                          | `--lockfile-only`                               |
 | `--immutable`                                                  | `--frozen-lockfile`                             |
 | `--shamefully-hoist`                                           | `--linker=hoisted`                              |
+| `--node-linker=hoisted`, `--install-strategy=hoisted`          | `--linker=hoisted`                              |
+| `--node-linker=isolated`, `--install-strategy=linked`          | `--linker=isolated`                             |
 | `--progress=false`                                             | `--no-progress`                                 |
 | `--loglevel=silent`                                            | `--silent`                                      |
 | `--loglevel=error`, `--loglevel=warn`                          | `--quiet`: hides the progress bar, not warnings |
@@ -625,7 +627,9 @@ A flag that `bun install` does not know is an error. So that a command line writ
 - `--production=true` is an error.
 - `--no-optional` does not update `optionalDependencies`, but it installs them. `--ignore-optional` is `--omit=optional`.
 
-Flags that have no exact counterpart stay errors. For some of them the error names the closest flag, such as `--no-save` for `--no-package-lock`: it does not write `bun.lock`, but it does not update `package.json` either.
+Other flags from those tools that Bun has no equivalent for are ignored, for example `--ci`, `--no-color`, `--no-package-lock`, `--network-timeout=100000` and `--reporter=silent`.
+
+Three flags are errors because ignoring them would install or save to the wrong place: use `--cwd` instead of `--prefix` or `--dir`, and `--filter` instead of `--workspace`. A flag that none of these tools has is also an error, so a typo like `--frozen-lockfil` doesn't go unnoticed.
 
 ## pnpm migration
 

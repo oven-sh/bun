@@ -384,13 +384,14 @@ enum ForeignFlag {
     AliasOf(&'static [u8]),
     /// Asks for something Bun always does, whatever its configuration, so the flag is ignored.
     Satisfied,
-    /// Similar to this Bun flag but not equivalent. It stays an error that suggests this flag.
+    /// Similar to this Bun flag, but ignoring it would install into the wrong directory or save to
+    /// the wrong package.json. It stays an error that suggests this flag.
     Near(&'static [u8]),
 }
 use ForeignFlag::{AliasOf, Near, Satisfied};
 
-/// An entry written as `--name=value` also matches `--name value`. A flag that is neither listed
-/// here nor one of Bun's own is an error.
+/// An entry written as `--name=value` also matches `--name value`. A flag that isn't listed here
+/// or in `IGNORED_FOREIGN_FLAGS`, and isn't one of Bun's own, is an error.
 const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--save-dev", AliasOf(b"--dev")),
     (b"--save-exact", AliasOf(b"--exact")),
@@ -428,16 +429,66 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--unsafe-perm", Satisfied),
     (b"--non-interactive", Satisfied),
     (b"--prefer-frozen-lockfile", Satisfied),
-    // Not an alias: `--no-save` also leaves package.json unchanged, and it still reads bun.lock.
-    (b"--no-package-lock", Near(b"--no-save")),
-    (b"--no-lockfile", Near(b"--no-save")),
-    (b"--pure-lockfile", Near(b"--no-save")),
-    (b"--cache", Near(b"--cache-dir")),
-    (b"--cache-folder", Near(b"--cache-dir")),
+    (b"--install-strategy=hoisted", AliasOf(b"--linker=hoisted")),
+    (b"--install-strategy=linked", AliasOf(b"--linker=isolated")),
+    (b"--node-linker=hoisted", AliasOf(b"--linker=hoisted")),
+    (b"--node-linker=node-modules", AliasOf(b"--linker=hoisted")),
+    (b"--node-linker=isolated", AliasOf(b"--linker=isolated")),
+    (b"--node-linker=pnpm", AliasOf(b"--linker=isolated")),
     (b"--workspace", Near(b"--filter")),
-    (b"--install-strategy", Near(b"--linker")),
-    (b"--node-linker", Near(b"--linker")),
+    (b"--prefix", Near(b"--cwd")),
+    (b"--dir", Near(b"--cwd")),
 ];
+
+/// Flags of npm, yarn and pnpm that Bun has no equivalent for. `bun install`, `add`, `remove` and
+/// `update` skip them, like Bun 1.4 and earlier did, so scripts written for those tools keep working.
+/// A flag that changes where packages are installed or saved isn't listed, so it stays an error.
+const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
+    #[rustfmt::skip]
+    flags: &[
+    b"aggregate-output", b"all", b"allow-same-version", b"audit", b"auto-dedupe",
+    b"auto-install-peers", b"bin-links", b"cached", b"caret", b"changeset", b"check-cache",
+    b"check-files", b"check-resolutions", b"ci", b"color", b"dangerously-allow-all-builds",
+    b"dangerously-allow-all-scripts", b"dedupe-peer-dependents", b"default-rc", b"disable-pnp",
+    b"emoji", b"enable-pnp", b"engine-strict", b"fail-if-no-match", b"fix-lockfile", b"fixed",
+    b"flat", b"focus", b"foreground-scripts", b"format-package-lock", b"frozen-store", b"fund",
+    b"global-style", b"har", b"hoist", b"ignore-manifest-check", b"ignore-platform",
+    b"ignore-pnpmfile", b"ignore-workspace", b"ignore-workspace-root-check", b"immutable-cache",
+    b"include-github-actions", b"include-workspace-root", b"inline-builds", b"install-links",
+    b"iwr", b"json", b"legacy-bundling", b"link-duplicates", b"link-workspace-packages",
+    b"lockfile", b"long", b"merge-git-branch-lockfiles", b"no-frozen-lockfile", b"no-immutable",
+    b"no-prefer-frozen-lockfile", b"no-production", b"node-version-check",
+    b"omit-lockfile-registry-resolved", b"package-lock", b"parseable", b"patches", b"pnp",
+    b"prefer-dedupe", b"prefer-online", b"prefer-workspace-packages", b"progress", b"pure-lockfile",
+    b"rebuild-bundle", b"refresh-lockfile", b"resolution-only",
+    b"resolve-peers-from-workspace-root", b"reverse", b"runtime", b"save-build", b"save-bundle",
+    b"save-catalog", b"save-types", b"scripts-prepend-node-path", b"shared-workspace-lockfile",
+    b"shrinkwrap", b"side-effects-cache", b"skip-integrity-check", b"sort", b"stream",
+    b"strict-allow-scripts", b"strict-peer-dependencies", b"strict-peer-deps", b"strict-semver",
+    b"strict-ssl", b"symlink", b"tilde", b"timing", b"trust-lockfile", b"unicode",
+    b"update-checksums", b"update-notifier", b"use-running-store-server", b"use-stderr",
+    b"use-store-server", b"verify-store-integrity", b"workspace-root", b"workspaces-update", b"ws",
+    b"yes",
+    ],
+    #[rustfmt::skip]
+    options: &[
+    b"allow-build", b"allow-scripts", b"also", b"before", b"cache", b"cache-folder", b"cache-max",
+    b"cache-min", b"cert", b"changed-files-ignore-pattern", b"child-concurrency", b"enjoy-by",
+    b"fetch-min-speed-ki-bps", b"fetch-retries", b"fetch-retry-factor", b"fetch-retry-maxtimeout",
+    b"fetch-retry-mintimeout", b"fetch-timeout", b"fetch-warn-timeout-ms", b"filter-prod",
+    b"global-folder", b"global-pnpmfile", b"globalconfig", b"hoist-pattern", b"http-proxy",
+    b"https-proxy", b"include", b"install-strategy", b"key", b"link-folder", b"local-address",
+    b"location", b"lockfile-dir", b"lockfile-version", b"loglevel", b"logs-dir", b"logs-max",
+    b"maxsockets", b"merge-git-branch-lockfiles-branch-pattern", b"min-release-age", b"mode",
+    b"mutex", b"network-timeout", b"no-proxy", b"node-gyp", b"node-linker", b"node-options",
+    b"noproxy", b"npmrc-auth-file", b"only", b"otp", b"package-import-method", b"pnpmfile",
+    b"pnpr-server", b"preferred-cache-folder", b"proxy", b"public-hoist-pattern",
+    b"replace-registry-host", b"reporter", b"save-catalog-name", b"save-prefix", b"scope",
+    b"script-shell", b"state-dir", b"store-dir", b"tag", b"test-pattern", b"umask", b"use-yarnrc",
+    b"user-agent", b"userconfig", b"virtual-store-dir", b"workspace-concurrency",
+    b"workspace-packages",
+    ],
+};
 
 /// `bun update` accepts these flags too, but there they select which dependencies to update, so no
 /// entry in `FOREIGN_FLAGS` is rewritten to them for `bun update`.
@@ -1401,6 +1452,11 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 stop_after_positional_at: 0,
                 short_aliases: REWRITES.get_or_init(|| rewrites),
                 unknown_long_flags_are_errors: true,
+                ignored_long_flags: if foreign_flags.is_empty() {
+                    Default::default()
+                } else {
+                    IGNORED_FOREIGN_FLAGS
+                },
                 ..Default::default()
             },
         ) {

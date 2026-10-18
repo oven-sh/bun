@@ -106,6 +106,7 @@ fn resolve_peer_like_bun_lock(lockfile: &Lockfile, dep: &Dependency) -> Option<P
     }
     lockfile::bun_lock::resolve_peer_dep_version_based(
         dep,
+        lockfile::bun_lock::PeerRanges::NONE,
         &lockfile.catalogs,
         &lockfile.package_index,
         &lockfile.overrides,

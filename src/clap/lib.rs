@@ -386,6 +386,17 @@ pub struct ParseOptions<'a> {
     pub unknown_long_flags_are_positional: bool,
     /// Such a flag fails the parse, unless it comes from `BUN_OPTIONS`, which is for every command.
     pub unknown_long_flags_are_errors: bool,
+    pub ignored_long_flags: IgnoredLongFlags,
+}
+
+/// Long flags, written without the dashes, that are skipped instead of failing the parse when
+/// `unknown_long_flags_are_errors` is set.
+#[derive(Default, Clone, Copy)]
+pub struct IgnoredLongFlags {
+    /// Skips `--name`, `--no-name` and `--name=value`.
+    pub flags: &'static [&'static [u8]],
+    /// Skips `--name=value` and `--name value`.
+    pub options: &'static [&'static [u8]],
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -475,6 +486,7 @@ pub fn parse<Id: 'static>(
             short_aliases: opt.short_aliases,
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
             unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
+            ignored_long_flags: opt.ignored_long_flags,
         },
     )?;
     Ok(Args { clap })
@@ -497,6 +509,7 @@ pub fn parse_with_table<Id: 'static>(
             short_aliases: opt.short_aliases,
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
             unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
+            ignored_long_flags: opt.ignored_long_flags,
         },
     )?;
     Ok(Args { clap })

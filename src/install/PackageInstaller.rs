@@ -2604,9 +2604,7 @@ impl<'a> PackageInstaller<'a> {
         resolution: &Resolution,
         record_trust: bool,
     ) {
-        if self.lockfile().is_folder_inside_declarer(dependency_id)
-            || self.lockfile().is_member_outside(package_id)
-        {
+        if self.lockfile().is_folder_inside_declarer(dependency_id) {
             return;
         }
 

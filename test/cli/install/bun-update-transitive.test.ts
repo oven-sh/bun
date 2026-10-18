@@ -2096,6 +2096,31 @@ test.concurrent("`bun update <name>` leaves the named package's own dependencies
   expect(bare.exitCode).toBe(0);
 });
 
+// plug@2 has a different peer range than the plug@1 in bun.lock, and `host` is only installed as plug's peer.
+test.concurrent.each([[["--latest"]], [["--latest", "plug"]]])(
+  "one `bun update %j` also moves the peer of a dependency that it moves to a new major",
+  async args => {
+    using server = await serveRegistry({
+      plug: { "1.0.0": { peerDependencies: { host: "^1.0.0" } }, "2.0.0": { peerDependencies: { host: "^2.0.0" } } },
+      host: { "1.0.0": {}, "1.2.0": {}, "2.1.0": {} },
+    });
+    const dir = await installServed(server, "update-latest-moves-peer", pkgJson({ plug: "^1.0.0" }));
+    expect(await installedVersion(dir, "host")).toBe("1.2.0");
+
+    const { exitCode } = await run(dir, "update", ...args);
+    expect({ plug: await installedVersion(dir, "plug"), host: await installedVersion(dir, "host") }).toEqual({
+      plug: "2.0.0",
+      host: "2.1.0",
+    });
+    expect(exitCode).toBe(0);
+
+    const lockfile = await lockText(dir);
+    expect((await run(dir, "update", ...args)).exitCode).toBe(0);
+    expect(await lockText(dir)).toBe(lockfile);
+    await frozen(dir);
+  },
+);
+
 // util's peer `core` is auto-installed and nothing depends on it outright, so `bun update <names>` re-resolves it after a manifest fetch of its own. Every other entry that still waits for its manifest at that point has to resolve too.
 const PEER_ONLY: Manifests = {
   util: { "1.0.0": { peerDependencies: { core: "^1.0.0" } }, "1.1.0": { peerDependencies: { core: "^1.0.0" } } },

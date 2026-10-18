@@ -2797,9 +2797,16 @@ pub(crate) fn parse_into_binary_lockfile(
             )?;
             (members.clone()).find(|&id| pkg_name_hashes[id as usize] == name_hash)
         };
+        let peer_range_index =
+            PeerRangeIndex::collect(dependencies, catalogs, overrides, string_buf);
+        let peer_ranges = PeerRanges {
+            index: &peer_range_index,
+            dependencies,
+        };
         let peer_by_version = |dep: &Dependency| {
             resolve_peer_dep_version_based(
                 dep,
+                peer_ranges,
                 catalogs,
                 package_index,
                 overrides,
@@ -3055,8 +3062,12 @@ pub(crate) fn parse_into_binary_lockfile(
 /// For the hoister this result is only a starting point: `tree::bind_served_peers` prefers the
 /// root's or the package's own dependency of that name if it is in range.
 /// `is_candidate` restricts the scan for lockfiles holding packages a reload will not see.
+///
+/// If more than one version is in range, the highest one that satisfies every range in `ranges`
+/// wins, so that packages with a peer dependency on the same name share one copy.
 pub(crate) fn resolve_peer_dep_version_based(
     dep: &Dependency,
+    ranges: PeerRanges<'_>,
     catalogs: &CatalogMap,
     package_index: &PackageIndexMap,
     overrides: &OverrideMap,
@@ -3065,14 +3076,86 @@ pub(crate) fn resolve_peer_dep_version_based(
     is_candidate: impl Fn(PackageID) -> bool,
 ) -> Option<PackageID> {
     let (range, name_hash) = version_based_peer_range(dep, catalogs, overrides, string_buf)?;
-    resolve_peer_dep_by_range(
-        range,
-        name_hash,
-        package_index,
-        pkg_resolutions,
-        string_buf,
-        is_candidate,
-    )
+    let candidates = package_index.get(&name_hash)?.as_slice();
+    let mut in_range = candidates.iter().copied().filter(|&id| {
+        pkg_resolutions
+            .get(id as usize)
+            .is_some_and(|res| res.satisfies_dependency_version(range, string_buf, string_buf))
+            && is_candidate(id)
+    });
+    let highest = in_range.next()?;
+    let Some(second) = in_range.next() else {
+        return Some(highest);
+    };
+    [highest, second]
+        .into_iter()
+        .chain(in_range)
+        .find(|&id| {
+            let resolution = &pkg_resolutions[id as usize];
+            ranges.all_accept(name_hash, resolution, catalogs, string_buf)
+        })
+        .or(Some(highest))
+}
+
+/// The dependency ids of required peer dependencies, one per distinct range, sorted by the name of
+/// the package they ask for.
+#[derive(Default)]
+pub(crate) struct PeerRangeIndex(Vec<(PackageNameHash, u64, DependencyID)>);
+
+impl PeerRangeIndex {
+    pub(crate) fn collect(
+        dependencies: &[Dependency],
+        catalogs: &CatalogMap,
+        overrides: &OverrideMap,
+        string_buf: &[u8],
+    ) -> PeerRangeIndex {
+        let mut rows = Vec::new();
+        for (id, dep) in dependencies.iter().enumerate() {
+            if let Some((range, name_hash)) =
+                version_based_peer_range(dep, catalogs, overrides, string_buf)
+                && range.tag == DependencyVersionTag::Npm
+            {
+                let literal = bun_wyhash::hash(range.literal.slice(string_buf));
+                rows.push((name_hash, literal, id as DependencyID));
+            }
+        }
+        index_sort::sort_slice_unstable_by(&mut rows, |a, b| a.cmp(b));
+        rows.dedup_by_key(|row| (row.0, row.1));
+        PeerRangeIndex(rows)
+    }
+}
+
+/// A `PeerRangeIndex` with the dependencies it was collected from.
+#[derive(Clone, Copy)]
+pub(crate) struct PeerRanges<'a> {
+    pub(crate) index: &'a PeerRangeIndex,
+    pub(crate) dependencies: &'a [Dependency],
+}
+
+impl PeerRanges<'_> {
+    /// Every version is accepted, so the highest version in range wins.
+    pub(crate) const NONE: PeerRanges<'static> = PeerRanges {
+        index: &PeerRangeIndex(Vec::new()),
+        dependencies: &[],
+    };
+
+    fn all_accept(
+        self,
+        name_hash: PackageNameHash,
+        resolution: &Resolution,
+        catalogs: &CatalogMap,
+        string_buf: &[u8],
+    ) -> bool {
+        let rows = &self.index.0;
+        let start = rows.partition_point(|row| row.0 < name_hash);
+        rows[start..]
+            .iter()
+            .take_while(|row| row.0 == name_hash)
+            .all(|&(_, _, id)| {
+                let range = catalogs.resolve_range(string_buf, &self.dependencies[id as usize]);
+                resolution.satisfies_dependency_version(range, string_buf, string_buf)
+            })
+    }
 }
 
 /// What that scan looks for; `None` for an edge the path walk binds.
@@ -3176,6 +3259,12 @@ pub(crate) fn rebind_peers_to_printed_packages(
         }
     }
 
+    let dependencies: &[Dependency] = dependencies.as_slice();
+    let peer_range_index = PeerRangeIndex::collect(dependencies, catalogs, overrides, string_buf);
+    let peer_ranges = PeerRanges {
+        index: &peer_range_index,
+        dependencies,
+    };
     for (dep, target) in dependencies.iter().zip(resolutions.iter_mut()) {
         if (*target as usize) >= pkg_resolutions.len()
             || printed.is_set(*target as usize)
@@ -3185,6 +3274,7 @@ pub(crate) fn rebind_peers_to_printed_packages(
         }
         if let Some(printed_target) = resolve_peer_dep_version_based(
             dep,
+            peer_ranges,
             catalogs,
             package_index,
             overrides,

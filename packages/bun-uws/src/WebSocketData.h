@@ -32,12 +32,15 @@ struct WebSocketData : AsyncSocketData<false>, WebSocketState<true> {
     template <bool, bool, typename> friend struct WebSocketContext;
     template <bool, typename> friend struct WebSocketContextData;
     template <bool, bool, typename> friend struct WebSocket;
-    template <bool> friend struct HttpContext;
 private:
     std::string fragmentBuffer;
     unsigned int controlTipLength = 0;
     bool isShuttingDown = 0;
+    /* Set together with isShuttingDown, except in a wsPackage context: there isShuttingDown waits for the peer's close frame */
+    bool closeFrameSent = false;
     bool hasTimedOut = false;
+    /* send() returned BACKPRESSURE and the drain handler hasn't run with an empty buffer since */
+    bool needsDrainEvent = false;
     
     enum CompressionStatus : char {
         DISABLED,

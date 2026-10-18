@@ -16,11 +16,8 @@ use bun_ptr::RefPtr;
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::VecExt;
 use bun_core::{self, fmt as bun_fmt};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
-// `err.to_js(global)` on `sys::Error` (the `SysErrorJsc` trait method) is only
-// reached from `#[cfg(not(windows))]` / `#[cfg(unix)]` blocks below.
-#[cfg(not(windows))]
 use bun_jsc::SysErrorJsc;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 // `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
 use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, UpgradedDuplex};
@@ -100,6 +97,8 @@ use std::rc::Rc;
 mod tls_socket_functions;
 use crate::api::bun::h2_frame_parser::H2FrameParser;
 use crate::api::bun_secure_context::SecureContext;
+use crate::server::ServerWebSocket;
+use crate::socket::udp_socket_draft::get_us_error;
 
 bun_output::declare_scope!(Socket, visible);
 macro_rules! log {
@@ -5091,6 +5090,14 @@ pub(crate) fn js_create_socket_pair(
     }
 }
 
+unsafe extern "C" {
+    /// The socket of a `WebSocket` or of a node:http server socket's native handle. Null for
+    /// anything else, and for one that isn't connected.
+    safe fn Bun__usSocketForTesting(value: JSValue) -> *mut uws::us_socket_t;
+}
+
+/// `setSocketOptions(socket, 1 | 2, size)` of `bun:internal-for-testing`: SO_SNDBUF (1) or
+/// SO_RCVBUF (2).
 #[bun_jsc::host_fn]
 pub(crate) fn js_set_socket_options(
     global: &JSGlobalObject,
@@ -5102,57 +5109,38 @@ pub(crate) fn js_set_socket_options(
         return Err(global.throw_not_enough_arguments("setSocketOptions", 3, arguments.len()));
     }
 
-    let Some(socket) = arguments[0].as_class_ref::<TCPSocket>() else {
-        return Err(global.throw(format_args!("Expected a SocketTCP instance")));
+    let target = arguments[0];
+    let socket = if let Some(socket) = target.as_class_ref::<TCPSocket>() {
+        socket.socket.get().socket.get()
+    } else if let Some(socket) = target.as_class_ref::<TLSSocket>() {
+        socket.socket.get().socket.get()
+    } else if let Some(websocket) = target.as_class_ref::<ServerWebSocket>() {
+        websocket.us_socket()
+    } else {
+        NonNull::new(Bun__usSocketForTesting(target)).map(NonNull::as_ptr)
+    };
+    let Some(socket) = socket else {
+        return Err(global.throw(format_args!("Expected a connected socket")));
     };
 
-    let is_for_send_buffer = arguments[1].to_int32() == 1;
-    let is_for_recv_buffer = arguments[1].to_int32() == 2;
-    let buffer_size = arguments[2].to_int32();
-    let file_descriptor = socket.socket.get().fd();
-
-    #[cfg(unix)]
-    {
-        // `bun_sys` exposes no public wrapper, so call libc directly.
-        let setsockopt = |level: libc::c_int, opt: libc::c_int| -> Option<sys::Error> {
-            let val: libc::c_int = buffer_size;
-            // SAFETY: libc FFI; `val` lives for the call.
-            let rc = unsafe {
-                libc::setsockopt(
-                    file_descriptor.native(),
-                    level,
-                    opt,
-                    (&raw const val).cast::<c_void>(),
-                    core::mem::size_of::<libc::c_int>() as libc::socklen_t,
-                )
-            };
-            if rc != 0 {
-                Some(sys::Error::from_code(
-                    sys::get_errno(rc),
-                    sys::Tag::setsockopt,
-                ))
-            } else {
-                None
-            }
-        };
-        if is_for_send_buffer {
-            if let Some(err) = setsockopt(libc::SOL_SOCKET, libc::SO_SNDBUF) {
-                return Err(global.throw_value(err.to_js(global)));
-            }
-        } else if is_for_recv_buffer {
-            if let Some(err) = setsockopt(libc::SOL_SOCKET, libc::SO_RCVBUF) {
-                return Err(global.throw_value(err.to_js(global)));
-            }
+    let is_recv = match arguments[1].to_int32() {
+        1 => false,
+        2 => true,
+        _ => {
+            return Err(global.throw(format_args!(
+                "Expected 1 (send buffer) or 2 (receive buffer)"
+            )));
         }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (
-            is_for_send_buffer,
-            is_for_recv_buffer,
-            buffer_size,
-            file_descriptor,
-        );
+    };
+
+    let mut value: c_int = 0;
+    let res = uws::us_socket_t::opaque_mut(socket).buffer_size(
+        is_recv,
+        arguments[2].to_int32(),
+        &mut value,
+    );
+    if let Some(err) = get_us_error::<true>(res, sys::Tag::setsockopt) {
+        return Err(global.throw_value(err.to_js(global)));
     }
 
     Ok(JSValue::UNDEFINED)

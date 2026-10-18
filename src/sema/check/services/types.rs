@@ -419,10 +419,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         signatures
     }
 
-    pub fn compare_types(&mut self, a: TypeId, b: TypeId) -> Option<std::cmp::Ordering> {
-        Some(self.c.compare_types(a, b))
-    }
-
     pub fn type_to_string(
         &mut self,
         ty: TypeId,

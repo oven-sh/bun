@@ -606,6 +606,7 @@ static void ssl_discard_spill(struct loop_ssl_data *loop_ssl_data, struct us_soc
   if (!s->ssl_spilled) return;
   struct us_ssl_rare_t *rare = us_ssl_rare(s_ssl(s));
   loop_ssl_data->ssl_batch_spills -= rare->spill->is_batch;
+  if (rare->spill->offset != rare->spill->length) s->ssl_spill_dropped = 1;
   us_free(rare->spill);
   rare->spill = NULL;
   s->ssl_spilled = 0;
@@ -1787,6 +1788,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_fatal_error = 0;
   s->ssl_raw_tap = 0;
   s->ssl_spilled = 0;
+  s->ssl_spill_dropped = 0;
   s->ssl_shutdown_after_spill = 0;
   s->ssl_close_after_spill = 0;
   s->ssl_end_delivered = 0;

@@ -159,6 +159,11 @@ public:
         return (LoopData *) us_loop_ext(loop);
     }
 
+    /* Runs the pre handlers and drains leftover corks. For callers that won't tick the loop again. */
+    void flushPendingWrites() {
+        preCb((us_loop_t *) this);
+    }
+
     void addPostHandler(void *key, MoveOnlyFunction<void(Loop *)> &&handler) {
         LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
 

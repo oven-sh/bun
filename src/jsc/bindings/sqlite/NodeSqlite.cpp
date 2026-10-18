@@ -1455,9 +1455,16 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLoadExtension, (JSGlobalObject * globalOb
 
     char* errmsg = nullptr;
     int r = sqlite3_load_extension(self->connection(), pathUtf8.legacyCStringPointer(), entryPtr, &errmsg);
+    WTF::String message;
+    if (errmsg) {
+        message = sqliteText(errmsg);
+        sqlite3_free(errmsg);
+    }
+    // A callback the init routine reached may have thrown; that error wins
+    // over SQLite's report of it, as in exec().
+    CHECK_UDF_EXCEPTION(scope);
     if (r != SQLITE_OK) {
-        WTF::String message = errmsg ? sqliteText(errmsg) : WTF::String::fromUTF8(sqlite3_errstr(r));
-        if (errmsg) sqlite3_free(errmsg);
+        if (message.isNull()) message = WTF::String::fromUTF8(sqlite3_errstr(r));
         Bun::throwError(globalObject, scope, ErrorCode::ERR_LOAD_SQLITE_EXTENSION, message);
         return {};
     }

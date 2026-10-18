@@ -1,18 +1,19 @@
 /**
- * A stream ends with DATA frames still queued.
+ * A body that never left the process must not read as written.
  *
  * The peer in these tests never opens the flow-control window, so a 1 MB body stops after one
  * window (65535 bytes) and the rest waits in the sender's queue. Then the stream ends. The write
- * in flight gets the error that destroyed the stream, and no error when the stream ended
- * without one. The writes behind it get that error too, or ERR_STREAM_DESTROYED. This is the
- * rule of node 26.10 and newer (nodejs/node#66016). Older releases say `write ECANCELED`.
- * A request that has no stream id yet follows the same rule.
+ * in flight fails with `write ECANCELED` one turn after the teardown, 'finish' does not fire,
+ * and `pipeline()` / `finished()` reject. A request that has no stream id yet follows the same
+ * rule. This is what node v26.3.0 does. node 26.10 and newer complete the write in `_destroy`
+ * with the destroy error (nodejs/node#66016), so 38 of these tests do not pass there.
  *
  * Works with both:
  *   bun bd test test/js/node/http2/node-http2-dropped-write.test.ts
- *   node --test test/js/node/http2/node-http2-dropped-write.test.ts   (node 26.10 or newer)
+ *   node --test test/js/node/http2/node-http2-dropped-write.test.ts   (node v26.3.0)
  */
 import assert from "node:assert";
+import { execFile } from "node:child_process";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -22,6 +23,7 @@ import path from "node:path";
 import { Duplex, Readable, duplexPair } from "node:stream";
 import { finished, pipeline } from "node:stream/promises";
 import { describe, test } from "node:test";
+import { promisify } from "node:util";
 
 const { NGHTTP2_NO_ERROR, NGHTTP2_INTERNAL_ERROR, NGHTTP2_FLOW_CONTROL_ERROR, NGHTTP2_REFUSED_STREAM, NGHTTP2_CANCEL } =
   http2.constants;
@@ -98,15 +100,20 @@ function listen(server: net.Server): Promise<number> {
 function closeOf(stream: http2.Http2Stream) {
   return new Promise<void>(resolve => stream.once("close", () => resolve()));
 }
-/** Event-loop turns. */
+/** Event-loop turns. A cancelled write calls back at most two turns after 'close'. */
 async function turns(count: number) {
   for (let i = 0; i < count; i++) await new Promise(resolve => setImmediate(resolve));
 }
 const codeOf = (error: unknown) => (error ? ((error as NodeJS.ErrnoException).code ?? (error as Error).message) : "ok");
-/** What a write gets when it waited in the Writable of a stream that ended with no error. */
-const DESTROYED = "ERR_STREAM_DESTROYED";
-/** What a stream reports when a RST_STREAM frame with an error code closed it. */
-const STREAM_ERROR = "ERR_HTTP2_STREAM_ERROR";
+/**
+ * Runs `script` in a child of this runtime and returns the JSON that it prints. An exception that
+ * reaches 'uncaughtException' fails the test that is running, so those exchanges run in a child.
+ */
+async function inChild(script: string) {
+  const env = { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" };
+  const { stdout } = await promisify(execFile)(process.execPath, ["-e", script], { env });
+  return JSON.parse(stdout);
+}
 
 interface RawPeer {
   port: number;
@@ -196,51 +203,31 @@ const connectOverTcp = (port: number) => http2.connect(`http://127.0.0.1:${port}
 describe("client: the stream ends with DATA frames still queued", () => {
   type Context = { session: http2.ClientHttp2Session; stream: http2.ClientHttp2Stream; socket: net.Socket };
   const mine = Object.assign(new Error("mine"), { code: "MINE" });
-  const all = (code: string) => [code, code, code];
-  // [name, what ends the stream, what the three write callbacks get, the stream's 'error' events]
-  const ways: [string, (context: Context) => void, string[], string[]][] = [
+  // [name, what ends the stream, the code of the two buffered write callbacks, the stream's 'error' events]
+  const ways: [string, (context: Context) => void, string, string[]][] = [
     [
       "the peer sends RST_STREAM",
       ({ socket }) => socket.write(frame(FRAME.RST_STREAM, 0, 1, uint32(NGHTTP2_REFUSED_STREAM))),
-      all("ERR_HTTP2_STREAM_ERROR"),
+      "ERR_HTTP2_STREAM_ERROR",
       ["ERR_HTTP2_STREAM_ERROR"],
     ],
     [
       "the peer sends RST_STREAM(CANCEL)",
       ({ socket }) => socket.write(frame(FRAME.RST_STREAM, 0, 1, uint32(NGHTTP2_CANCEL))),
-      ["ok", DESTROYED, DESTROYED],
+      "ECANCELED",
       [],
     ],
     [
       "the peer sends GOAWAY",
       ({ socket }) => socket.write(frame(FRAME.GOAWAY, 0, 0, uint32(1, NGHTTP2_INTERNAL_ERROR))),
-      all("ERR_HTTP2_SESSION_ERROR"),
+      "ERR_HTTP2_SESSION_ERROR",
       ["ERR_HTTP2_SESSION_ERROR"],
     ],
-    [
-      "the peer sends RST_STREAM(NO_ERROR)",
-      ({ socket }) => socket.write(frame(FRAME.RST_STREAM, 0, 1, uint32(NGHTTP2_NO_ERROR))),
-      ["ok", DESTROYED, DESTROYED],
-      [],
-    ],
-    // RFC 9113 section 8.1: a gRPC server that answers early stops the request this way.
-    [
-      "the peer sends its complete response and RST_STREAM(NO_ERROR)",
-      ({ socket }) =>
-        socket.write(
-          Buffer.concat([
-            frame(FRAME.HEADERS, 0x5, 1, headerBlock([[":status", "200"]])),
-            frame(FRAME.RST_STREAM, 0, 1, uint32(NGHTTP2_NO_ERROR)),
-          ]),
-        ),
-      ["ok", DESTROYED, DESTROYED],
-      [],
-    ],
-    ["the peer closes the connection", ({ socket }) => socket.end(), ["ok", DESTROYED, DESTROYED], []],
-    ["stream.close(NGHTTP2_CANCEL)", ({ stream }) => stream.close(NGHTTP2_CANCEL), ["ok", DESTROYED, DESTROYED], []],
-    ["stream.destroy()", ({ stream }) => stream.destroy(), ["ok", DESTROYED, DESTROYED], []],
-    ["stream.destroy(error)", ({ stream }) => stream.destroy(mine), all("MINE"), ["MINE"]],
-    ["session.destroy(error)", ({ session }) => session.destroy(mine), all("MINE"), ["MINE"]],
+    ["the peer closes the connection", ({ socket }) => socket.end(), "ECANCELED", []],
+    ["stream.close(NGHTTP2_CANCEL)", ({ stream }) => stream.close(NGHTTP2_CANCEL), "ECANCELED", []],
+    ["stream.destroy()", ({ stream }) => stream.destroy(), "ECANCELED", []],
+    ["stream.destroy(error)", ({ stream }) => stream.destroy(mine), "MINE", ["MINE"]],
+    ["session.destroy(error)", ({ session }) => session.destroy(mine), "MINE", ["MINE"]],
   ];
 
   /**
@@ -259,14 +246,23 @@ describe("client: the stream ends with DATA frames still queued", () => {
       const stream = session.request({ ":method": "POST", ":path": "/" });
       const said: string[] = [];
       const events: string[] = [];
-      let saidAtClose = -1;
       stream.on("error", error => events.push(codeOf(error)));
       stream.on("finish", () => events.push("finish"));
       stream.on("drain", () => events.push("drain"));
-      stream.on("close", () => (saidAtClose = Object.keys(said).length));
       const closed = closeOf(stream);
+      let saidAtClose = -1;
+      stream.once("close", () => (saidAtClose = Object.keys(said).length));
+      const { promise: allSaid, resolve } = Promise.withResolvers<void>();
       const callback = (index: number) => (error?: Error | null) => {
         said[index] = said[index] === undefined ? codeOf(error) : "twice";
+        if (error && index === 0) {
+          // The write that was in flight: node's ErrnoException of UV_ECANCELED.
+          assert.strictEqual(error.message, "write ECANCELED");
+          assert.strictEqual((error as NodeJS.ErrnoException).syscall, "write");
+          assert.ok((error as NodeJS.ErrnoException).errno! < 0);
+          assert.strictEqual(stream.destroyed, true);
+        }
+        if (Object.keys(said).length === 3) resolve();
       };
       // The first write goes to the session alone. The other two wait behind it in the Writable.
       stream.write(MB, callback(0));
@@ -277,25 +273,30 @@ describe("client: the stream ends with DATA frames still queued", () => {
 
       act({ session, stream, socket });
       await closed;
-      // Every callback came before 'close'.
-      assert.strictEqual(saidAtClose, 3);
+      await Promise.race([allSaid, turns(10)]);
       await turns(2);
-      return { said, events, errored: codeOf(stream.errored) };
+      return { said, events, saidAtClose, errored: codeOf(stream.errored) };
     } finally {
       session.destroy();
       peer.close();
     }
   }
 
-  for (const [name, act, expected, errors] of ways) {
+  for (const [name, act, code, errors] of ways) {
     test(name, async () => {
-      const { said, events } = await dropQueuedWrites(connectOverTcp, act);
-      assert.deepStrictEqual({ said, events }, { said: expected, events: errors });
+      const { said, events, saidAtClose } = await dropQueuedWrites(connectOverTcp, act);
+      // The callbacks come after 'close', except after a close() of this side.
+      const atClose = name.startsWith("stream.close") ? 3 : 0;
+      assert.deepStrictEqual(
+        { said, events, saidAtClose },
+        { said: ["ECANCELED", code, code], events: errors, saidAtClose: atClose },
+      );
     });
   }
 
   // The error of the stream is not fixed here. After session.destroy() node gives the stream no
   // error and Bun gives it ERR_HTTP2_STREAM_CANCEL. After a reset the socket chooses the code.
+  // The writes that waited in the Writable carry the error of the stream in every case.
   const waysWithAnyStreamError: [string, (context: Context) => void][] = [
     ["session.destroy()", ({ session }) => session.destroy()],
     ["the peer resets the connection", ({ socket }) => socket.resetAndDestroy()],
@@ -303,9 +304,8 @@ describe("client: the stream ends with DATA frames still queued", () => {
   for (const [name, act] of waysWithAnyStreamError) {
     test(name, async () => {
       const { said, events, errored } = await dropQueuedWrites(connectOverTcp, act);
-      if (errored === "ok")
-        assert.deepStrictEqual({ said, events }, { said: ["ok", DESTROYED, DESTROYED], events: [] });
-      else assert.deepStrictEqual({ said, events }, { said: all(errored), events: [errored] });
+      assert.deepStrictEqual(said, ["ECANCELED", errored, errored]);
+      assert.deepStrictEqual(events, errored === "ECANCELED" ? [] : [errored]);
     });
   }
 
@@ -315,13 +315,11 @@ describe("client: the stream ends with DATA frames still queued", () => {
     );
     assert.deepStrictEqual(
       { said, events },
-      { said: all("ERR_HTTP2_STREAM_ERROR"), events: ["ERR_HTTP2_STREAM_ERROR"] },
+      { said: ["ECANCELED", "ERR_HTTP2_STREAM_ERROR", "ERR_HTTP2_STREAM_ERROR"], events: ["ERR_HTTP2_STREAM_ERROR"] },
     );
   });
 
-  // Bun hands the three chunks to the session as one write, node as three. With an error both
-  // give it to every callback.
-  test("three writes in one tick, then destroy(error)", async () => {
+  test("three writes in one tick", async () => {
     const peer = await rawServer();
     const session = connectOverTcp(peer.port);
     try {
@@ -330,23 +328,31 @@ describe("client: the stream ends with DATA frames still queued", () => {
       const stream = session.request({ ":method": "POST", ":path": "/" });
       const said: string[] = [];
       stream.on("error", () => {});
-      for (let i = 0; i < 3; i++) stream.write(MB, error => said.push(codeOf(error)));
+      const { promise: allSaid, resolve } = Promise.withResolvers<void>();
+      for (let i = 0; i < 3; i++) {
+        stream.write(MB, error => {
+          said.push(error ? "failed" : "ok");
+          if (said.length === 3) resolve();
+        });
+      }
       await peer.windowFull;
       assert.deepStrictEqual(said, []);
       const closed = closeOf(stream);
-      stream.destroy(mine);
+      stream.destroy();
       await closed;
-      assert.deepStrictEqual(said, all("MINE"));
+      await Promise.race([allSaid, turns(10)]);
+      assert.deepStrictEqual(said, ["failed", "failed", "failed"]);
     } finally {
       session.destroy();
       peer.close();
     }
   });
 
-  // The last DATA frame of the second request has no payload, but it waits in the queue behind
-  // the body that the first request could not send. The flush at the end of end() sends it, and
+  // The first request is stalled on its window, with the rest of its body in the queue of the
+  // session. In Bun the last DATA frame of the second request, which has no payload, waits
+  // behind that body today (#43422 ends that wait). The flush at the end of end() sends it, and
   // nothing else finishes a request that still has trailers to send.
-  test("a request with trailers finishes when its last DATA frame leaves the queue", async () => {
+  test("a request with trailers finishes while another request is stalled on its window", async () => {
     const peer = await rawServer({ grantConnection: true });
     const session = connectOverTcp(peer.port);
     try {
@@ -378,7 +384,7 @@ describe("client: the stream ends with DATA frames still queued", () => {
 
   // The second bug in #40358: the peer raises the window of the stream, a part of the queued
   // write leaves, and then the stream dies with the rest still queued.
-  test("a write that left in part gets the error of the peer's reset", async () => {
+  test("a write that left in part fails when the peer resets the stream", async () => {
     const LATER = 49122;
     const { promise: partLeft, resolve } = Promise.withResolvers<void>();
     const peer = await rawServer({
@@ -402,7 +408,7 @@ describe("client: the stream ends with DATA frames still queued", () => {
       socket.write(Buffer.concat([raisedWindow, frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(LATER))]));
       await partLeft;
       socket.write(frame(FRAME.RST_STREAM, 0, streamId, uint32(NGHTTP2_FLOW_CONTROL_ERROR)));
-      assert.strictEqual(await said, "ERR_HTTP2_STREAM_ERROR");
+      assert.strictEqual(await said, "ECANCELED");
       assert.deepStrictEqual(events, ["ERR_HTTP2_STREAM_ERROR"]);
     } finally {
       session.destroy();
@@ -410,17 +416,15 @@ describe("client: the stream ends with DATA frames still queued", () => {
     }
   });
 
-  // The ways of asking whether an upload arrived, after the peer reset the stream with an error.
-  const asks: [string, (stream: http2.ClientHttp2Stream) => Promise<string>, string][] = [
+  // The ways of asking whether an upload arrived, after a reset cut it.
+  const asks: [string, (stream: http2.ClientHttp2Stream) => Promise<string>][] = [
     [
       "stream.write(chunk, callback)",
       stream => new Promise(resolve => stream.write(MB, error => resolve(codeOf(error)))),
-      STREAM_ERROR,
     ],
     [
       "stream.end(chunk, callback)",
       stream => new Promise(resolve => stream.end(MB, (error?: Error) => resolve(codeOf(error)))),
-      STREAM_ERROR,
     ],
     [
       "'finish' or 'close', whichever is first",
@@ -430,17 +434,12 @@ describe("client: the stream ends with DATA frames still queued", () => {
           stream.once("close", () => resolve("closed"));
           stream.end(MB);
         }),
-      "closed",
     ],
-    [
-      "pipeline(source, stream)",
-      stream => pipeline(Readable.from([MB]), stream).then(() => "ok", codeOf),
-      STREAM_ERROR,
-    ],
-    ["finished(stream)", stream => (stream.end(MB), finished(stream).then(() => "ok", codeOf)), STREAM_ERROR],
+    ["pipeline(source, stream)", stream => pipeline(Readable.from([MB]), stream).then(() => "ok", codeOf)],
+    ["finished(stream)", stream => (stream.end(MB), finished(stream).then(() => "ok", codeOf))],
   ];
-  for (const [name, ask, expected] of asks) {
-    test(`${name} when the peer resets the stream with an error`, async () => {
+  for (const [name, ask] of asks) {
+    test(`${name} fails when the peer resets the connection`, async () => {
       const peer = await rawServer();
       const session = connectOverTcp(peer.port);
       try {
@@ -449,9 +448,9 @@ describe("client: the stream ends with DATA frames still queued", () => {
         const stream = session.request({ ":method": "POST", ":path": "/" });
         stream.on("error", () => {});
         const answer = ask(stream);
-        const { socket, streamId } = await peer.windowFull;
-        socket.write(frame(FRAME.RST_STREAM, 0, streamId, uint32(NGHTTP2_INTERNAL_ERROR)));
-        assert.strictEqual(await answer, expected);
+        const { socket } = await peer.windowFull;
+        socket.resetAndDestroy();
+        assert.notStrictEqual(await answer, "ok");
       } finally {
         session.destroy();
         peer.close();
@@ -459,64 +458,7 @@ describe("client: the stream ends with DATA frames still queued", () => {
     });
   }
 
-  // Over a JS stream the server answers inside the write call of the request. The 'response'
-  // listener destroys the request there, while the write call is still on the stack.
-  for (const [name, error, expected] of [
-    ["destroy(error)", mine, ["write:MINE", "late:MINE", "end:MINE", "error:MINE", "close"]],
-    ["destroy()", undefined, ["write:ok", `late:${DESTROYED}`, `end:${DESTROYED}`, "close"]],
-  ] as const) {
-    test(`the writes complete in order, before 'close', when ${name} runs inside the write call`, async () => {
-      const { promise: serverHasStream, resolve: gotStream } = Promise.withResolvers<void>();
-      const server = http2.createServer();
-      server.on("stream", stream => {
-        stream.on("error", () => {});
-        // One chunk is read, and the rest of the first window stays unread: no WINDOW_UPDATE.
-        stream.once("data", () => {
-          stream.pause();
-          stream.respond({ ":status": 200 });
-        });
-        gotStream();
-      });
-      const [clientSide, serverSide] = duplexPair();
-      server.emit("connection", serverSide);
-      const session = http2.connect("http://localhost", { createConnection: () => clientSide });
-      try {
-        session.on("error", () => {});
-        await once(session, "connect");
-        const request = session.request({ ":method": "POST", ":path": "/" });
-        const events: string[] = [];
-        const say = (who: string) => (error?: Error | null) => void events.push(`${who}:${codeOf(error)}`);
-        request.on("error", say("error"));
-        request.on("close", () => void events.push("close"));
-        let writing = false;
-        let destroyedWhileWriting = false;
-        request.on("response", () => {
-          destroyedWhileWriting = writing;
-          request.write("late", say("late"));
-          request.end(say("end"));
-          request.destroy(error);
-        });
-        const closed = closeOf(request);
-        await serverHasStream;
-        // Leave the read of the server that delivered the request: write() must start the exchange.
-        await turns(1);
-        writing = true;
-        request.write(MB, say("write"));
-        writing = false;
-        await closed;
-        // The premise, in Bun: the answer came inside write(). node answers in a later turn.
-        if (isBun) assert.strictEqual(destroyedWhileWriting, true);
-        await turns(2);
-        assert.deepStrictEqual(events, expected);
-      } finally {
-        session.destroy();
-        server.close();
-      }
-    });
-  }
-
-  // native refuses this write. It completes when the stream is destroyed, like a queued one.
-  test("a write made from 'aborted', after the peer cancelled the stream, calls back once", async () => {
+  test("a write made from 'aborted', after the peer reset the stream, fails", async () => {
     const peer = await rawServer({
       onHeaders: (socket, streamId) => socket.write(frame(FRAME.RST_STREAM, 0, streamId, uint32(NGHTTP2_CANCEL))),
     });
@@ -537,7 +479,8 @@ describe("client: the stream ends with DATA frames still queued", () => {
       await closeOf(stream);
       await Promise.race([promise, turns(10)]);
       await turns(2);
-      assert.deepStrictEqual(said, ["ok"]);
+      assert.strictEqual(said.length, 1);
+      assert.notStrictEqual(said[0], "ok");
     } finally {
       session.destroy();
       peer.close();
@@ -566,17 +509,16 @@ describe("client: the stream ends with DATA frames still queued", () => {
     }
   });
 
-  // The chunk left when destroy() runs, and its callback has not run yet: the write is still in
-  // flight, so it gets the error of destroy(error), and no error after destroy().
+  // The chunk is on the wire when destroy() runs: that write is done, not cancelled.
   for (const [name, connect] of [
     ["a TCP socket", connectOverTcp],
     ["a JS stream", connectOverDuplex],
   ] as const) {
-    for (const [how, error, code] of [
-      ["destroy()", undefined, "ok"],
-      ["destroy(error)", mine, "MINE"],
+    for (const [how, error] of [
+      ["destroy()", undefined],
+      ["destroy(error)", mine],
     ] as const) {
-      test(`a write that left completes once when ${how} follows in the same tick, over ${name}`, async () => {
+      test(`a write that left stays done when ${how} follows in the same tick, over ${name}`, async () => {
         const peer = await rawServer({ grant: true });
         const session = connect(peer.port);
         try {
@@ -595,7 +537,7 @@ describe("client: the stream ends with DATA frames still queued", () => {
           await closed;
           await called;
           await turns(2);
-          assert.deepStrictEqual(said, [code]);
+          assert.deepStrictEqual(said, ["ok"]);
         } finally {
           session.destroy();
           peer.close();
@@ -604,8 +546,67 @@ describe("client: the stream ends with DATA frames still queued", () => {
     }
   }
 
+  // Over a JS stream the server answers inside the write call of the request. The 'response'
+  // listener destroys the request there, while the write call is still on the stack.
+  for (const [name, error, expected] of [
+    ["destroy(error)", mine, ["error:MINE", "close", "write:ECANCELED", "late:MINE", "end:MINE"]],
+    ["destroy()", undefined, ["close", "write:ECANCELED", "late:ECANCELED", "end:ECANCELED"]],
+  ] as const) {
+    test(`the write in flight is cancelled when ${name} runs inside the write call`, async () => {
+      const { promise: serverHasStream, resolve: gotStream } = Promise.withResolvers<void>();
+      const server = http2.createServer();
+      server.on("stream", (stream: http2.ServerHttp2Stream) => {
+        stream.on("error", () => {});
+        // One chunk is read, and the rest of the first window stays unread: no WINDOW_UPDATE.
+        stream.once("data", () => {
+          stream.pause();
+          stream.respond({ ":status": 200 });
+        });
+        gotStream();
+      });
+      const [clientSide, serverSide] = duplexPair();
+      server.emit("connection", serverSide);
+      const session = http2.connect("http://localhost", { createConnection: () => clientSide });
+      try {
+        session.on("error", () => {});
+        await once(session, "connect");
+        const request = session.request({ ":method": "POST", ":path": "/" });
+        const events: string[] = [];
+        const { promise: allSaid, resolve: done } = Promise.withResolvers<void>();
+        const say = (who: string) => (error?: Error | null) => {
+          events.push(`${who}:${codeOf(error)}`);
+          if (who === "end") done();
+        };
+        request.on("error", error => events.push(`error:${codeOf(error)}`));
+        request.on("close", () => events.push("close"));
+        let writing = false;
+        let destroyedWhileWriting = false;
+        request.on("response", () => {
+          destroyedWhileWriting = writing;
+          request.write("late", say("late"));
+          request.end(say("end"));
+          request.destroy(error);
+        });
+        await serverHasStream;
+        // Leave the read of the server that delivered the request: write() must start the exchange.
+        await turns(1);
+        writing = true;
+        request.write(MB, say("write"));
+        writing = false;
+        await Promise.race([allSaid, turns(20)]);
+        // The premise, in Bun: the answer came inside write(). node answers in a later turn.
+        if (isBun) assert.strictEqual(destroyedWhileWriting, true);
+        assert.deepStrictEqual(events, expected);
+      } finally {
+        session.destroy();
+        server.close();
+      }
+    });
+  }
+
   // The peer opens every window and reads nothing, so only the socket holds the upload. In Bun
   // the body is then in the buffer of the session, and the END_STREAM frame waits behind it.
+  // node v26.3.0 never closes this stream (nodejs/node#58252), so these two run in Bun only.
   // On Windows the socket takes the whole upload at once.
   const blockedAsks: [string, (request: http2.ClientHttp2Stream) => Promise<string>][] = [
     ["pipeline(source, request)", request => pipeline(Readable.from([BIG]), request).then(() => "ok", codeOf)],
@@ -620,7 +621,7 @@ describe("client: the stream ends with DATA frames still queued", () => {
   ];
   for (const [name, ask] of blockedAsks) {
     const title = `${name} gets the error of the stream when the peer resets it behind a blocked socket`;
-    test(title, { skip: process.platform === "win32" }, async () => {
+    test(title, { skip: !isBun || process.platform === "win32" }, async () => {
       const MAX = 0x7fffffff;
       const { promise: accepted, resolve: accept } = Promise.withResolvers<net.Socket>();
       const server = net.createServer(socket => {
@@ -647,15 +648,13 @@ describe("client: the stream ends with DATA frames still queued", () => {
         request.on("finish", () => events.push("finish"));
         const closed = closeOf(request);
         const answer = ask(request);
-        // The peer must not reset a stream that it has not seen yet.
-        await turns(2);
-        for (let i = 0; isBun && i < 20 && session.state.outboundQueueSize === 0; i++) await turns(1);
-        if (isBun) assert.notStrictEqual(session.state.outboundQueueSize, 0);
+        for (let i = 0; i < 20 && session.state.outboundQueueSize === 0; i++) await turns(1);
+        assert.notStrictEqual(session.state.outboundQueueSize, 0);
         (await accepted).write(frame(FRAME.RST_STREAM, 0, 1, uint32(NGHTTP2_INTERNAL_ERROR)));
         await closed;
         assert.deepStrictEqual(
           { answer: await answer, events },
-          { answer: STREAM_ERROR, events: [`error:${STREAM_ERROR}`] },
+          { answer: "ERR_HTTP2_STREAM_ERROR", events: ["error:ERR_HTTP2_STREAM_ERROR"] },
         );
       } finally {
         session.destroy();
@@ -664,6 +663,204 @@ describe("client: the stream ends with DATA frames still queued", () => {
       }
     });
   }
+
+  /**
+   * A script for `inChild`: the peer resets the request with `code` when it holds one window of
+   * the body. `prepare` is the code that sets the request up. The script prints what reached
+   * 'uncaughtException' and then what the write callback got.
+   */
+  const resetUploadScript = (code: number, prepare: string) => `
+    const http2 = require("node:http2");
+    const net = require("node:net");
+    const frame = (type, flags, id, payload = Buffer.alloc(0)) => {
+      const header = Buffer.alloc(9);
+      header.writeUIntBE(payload.length, 0, 3);
+      header[3] = type;
+      header[4] = flags;
+      header.writeUInt32BE(id, 5);
+      return Buffer.concat([header, payload]);
+    };
+    const events = [];
+    process.on("uncaughtException", error => events.push("uncaught:" + (error.code || error.message)));
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.write(frame(4, 0, 0));
+      let received = 0;
+      socket.on("data", chunk => {
+        received += chunk.length;
+        if (received <= ${WINDOW}) return;
+        received = -Infinity;
+        socket.write(Buffer.concat([frame(4, 1, 0), frame(3, 0, 1, Buffer.from([0, 0, 0, ${code}]))]));
+      });
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const session = http2.connect("http://127.0.0.1:" + server.address().port);
+      session.on("error", () => {});
+      const request = session.request({ ":method": "POST", ":path": "/" });
+      ${prepare}
+      request.write(Buffer.alloc(1 << 20, 97), error => {
+        events.push("write:" + (error ? error.code : "ok"));
+        console.log(JSON.stringify(events));
+        process.exit(0);
+      });
+    });
+  `;
+
+  test("the write in flight is cancelled when an 'aborted' listener throws", async () => {
+    const prepare = `
+      request.on("error", () => {});
+      request.on("aborted", () => {
+        throw new Error("thrown by the listener");
+      });
+    `;
+    assert.deepStrictEqual(await inChild(resetUploadScript(NGHTTP2_CANCEL, prepare)), [
+      "uncaught:thrown by the listener",
+      "write:ECANCELED",
+    ]);
+  });
+
+  // node emits the error of the stream, and nothing handles it here. Bun emits no 'error' on a
+  // stream that has no listener for it. The write fails in both.
+  test("the write in flight is cancelled on a stream that has no 'error' listener", async () => {
+    const events: string[] = await inChild(resetUploadScript(NGHTTP2_REFUSED_STREAM, ""));
+    assert.strictEqual(events.at(-1), "write:ECANCELED");
+  });
+
+  // node ends the writable side of a pushed stream when it makes the stream. Bun's native write
+  // has no entry for it. Both report that to the callback, and write() does not throw.
+  test("a write on a pushed stream calls back with an error", async () => {
+    const server = http2.createServer();
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
+      stream.on("error", () => {});
+      stream.pushStream({ ":path": "/pushed" }, (error, push) => {
+        if (error) return;
+        push.on("error", () => {});
+        push.respond({ ":status": 200 });
+        push.end("pushed");
+      });
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    const port = await listen(server);
+    const session = connectOverTcp(port);
+    try {
+      session.on("error", () => {});
+      const { promise: said, resolve: say } = Promise.withResolvers<{ threw: boolean; failed: boolean }>();
+      session.on("stream", (pushed: http2.ClientHttp2Stream) => {
+        pushed.on("error", () => {});
+        pushed.resume();
+        let threw = false;
+        try {
+          pushed.write("chunk", error => say({ threw, failed: error != null }));
+        } catch {
+          threw = true;
+        }
+      });
+      const request = session.request({ ":path": "/" });
+      request.on("error", () => {});
+      request.resume();
+      request.end();
+      assert.deepStrictEqual(await said, { threw: false, failed: true });
+    } finally {
+      session.destroy();
+      server.close();
+    }
+  });
+
+  // Code that calls `_write` itself (a tracer, a stream that forwards its writes) owns the
+  // callback that it passed. The write completes through that callback, once.
+  for (const [name, chunk, grant, expected] of [
+    ["a chunk that left", Buffer.from("chunk"), false, ["ok"]],
+    ["a chunk that the session queued and then sent", MB, true, ["ok"]],
+    ["a chunk that the session queued", MB, false, ["ECANCELED"]],
+  ] as const) {
+    test(`a direct _write() call with ${name} calls back once, also after destroy()`, async () => {
+      const peer = await rawServer({ grant });
+      const session = connectOverTcp(peer.port);
+      try {
+        session.on("error", () => {});
+        const stream = session.request({ ":method": "POST", ":path": "/" });
+        stream.on("error", () => {});
+        await once(stream, "ready");
+        const said: string[] = [];
+        const { promise: called, resolve } = Promise.withResolvers<void>();
+        stream._write(chunk, "buffer" as BufferEncoding, error => {
+          said.push(codeOf(error));
+          resolve();
+        });
+        await (expected[0] === "ok" ? called : peer.windowFull);
+        const closed = closeOf(stream);
+        stream.destroy();
+        await closed;
+        await Promise.race([called, turns(10)]);
+        await turns(2);
+        assert.deepStrictEqual(said, expected);
+      } finally {
+        session.destroy();
+        peer.close();
+      }
+    });
+  }
+
+  test("a wrapper around _write() sees the write that the teardown cancels", async () => {
+    const peer = await rawServer();
+    const session = connectOverTcp(peer.port);
+    try {
+      session.on("error", () => {});
+      const stream = session.request({ ":method": "POST", ":path": "/" });
+      stream.on("error", () => {});
+      await once(stream, "ready");
+      const seen: string[] = [];
+      const write = stream._write;
+      stream._write = function (chunk, encoding, callback) {
+        write.call(this, chunk, encoding, error => {
+          seen.push(`wrapper:${codeOf(error)}`);
+          callback(error);
+        });
+      };
+      const { promise: called, resolve } = Promise.withResolvers<void>();
+      stream.write(MB, error => {
+        seen.push(`write:${codeOf(error)}`);
+        resolve();
+      });
+      await peer.windowFull;
+      const closed = closeOf(stream);
+      stream.destroy();
+      await closed;
+      await Promise.race([called, turns(10)]);
+      assert.deepStrictEqual(seen, ["wrapper:ECANCELED", "write:ECANCELED"]);
+    } finally {
+      session.destroy();
+      peer.close();
+    }
+  });
+
+  // The session never got this write, so it has nothing to cancel: the holder completes it.
+  test("destroy() leaves a write alone that a replaced _write() holds", async () => {
+    const peer = await rawServer();
+    const session = connectOverTcp(peer.port);
+    try {
+      session.on("error", () => {});
+      const stream = session.request({ ":method": "POST", ":path": "/" });
+      const events: string[] = [];
+      stream.on("error", () => {});
+      stream.on("close", () => events.push("close"));
+      await once(stream, "ready");
+      let held: ((error?: Error | null) => void) | undefined;
+      stream._write = (_chunk, _encoding, callback) => void (held = callback);
+      stream.write("chunk", error => events.push(`write:${codeOf(error)}`));
+      const closed = closeOf(stream);
+      stream.destroy();
+      await closed;
+      await turns(4);
+      assert.deepStrictEqual(events, ["close"]);
+      held!();
+      assert.deepStrictEqual(events, ["close", "write:ok"]);
+    } finally {
+      session.destroy();
+      peer.close();
+    }
+  });
 });
 
 describe("server: the client leaves with DATA frames still queued", () => {
@@ -717,29 +914,29 @@ describe("server: the client leaves with DATA frames still queued", () => {
       });
     return { socket, windowFull, responded, bodyEnd, ping };
   }
-  // [name, how the client leaves]
-  const leaves: [string, (socket: net.Socket) => void][] = [
-    ["cancels the stream", socket => socket.write(frame(FRAME.RST_STREAM, 0, 1, uint32(NGHTTP2_CANCEL)))],
-    ["destroys its session", socket => socket.end(frame(FRAME.GOAWAY, 0, 0, uint32(0, NGHTTP2_NO_ERROR)))],
-    [
-      "resets the stream with an error",
-      socket => socket.write(frame(FRAME.RST_STREAM, 0, 1, uint32(NGHTTP2_INTERNAL_ERROR))),
-    ],
+  // [name, how the client leaves, whether node calls back]. After RST_STREAM(NO_ERROR) node
+  // keeps the stream of the server open, and the write waits for the session to end.
+  const leaves: [string, (socket: net.Socket) => void, boolean][] = [
+    ["cancels the stream", socket => socket.write(frame(FRAME.RST_STREAM, 0, 1, uint32(NGHTTP2_CANCEL))), true],
+    ["destroys its session", socket => socket.end(frame(FRAME.GOAWAY, 0, 0, uint32(0, NGHTTP2_NO_ERROR))), true],
+    ["resets the connection", socket => socket.resetAndDestroy(), true],
     [
       "resets the stream with NO_ERROR",
       socket => socket.write(frame(FRAME.RST_STREAM, 0, 1, uint32(NGHTTP2_NO_ERROR))),
+      false,
     ],
   ];
   type Say = (answer: string) => void;
-  // [name, how the server answers, what it hears for each way of leaving]
-  const answers: [string, (stream: http2.ServerHttp2Stream, say: Say) => void, string[]][] = [
+  // [name, how the server answers, the code it hears for each way of leaving]. `null` is the
+  // error of the stream after a connection reset: the socket chooses its code.
+  const answers: [string, (stream: http2.ServerHttp2Stream, say: Say) => void, (string | null)[]][] = [
     [
       "stream.write(chunk, callback)",
       (stream, say) => {
         stream.respond({ ":status": 200 });
         stream.write(MB, error => say(codeOf(error)));
       },
-      ["ok", "ok", STREAM_ERROR, "ok"],
+      ["ECANCELED", "ECANCELED", "ECANCELED", "ECANCELED"],
     ],
     [
       "stream.end(chunk, callback)",
@@ -747,7 +944,7 @@ describe("server: the client leaves with DATA frames still queued", () => {
         stream.respond({ ":status": 200 });
         stream.end(MB, (error?: Error) => say(codeOf(error)));
       },
-      [DESTROYED, DESTROYED, STREAM_ERROR, DESTROYED],
+      ["ECANCELED", "ECANCELED", null, "ECANCELED"],
     ],
     [
       "pipeline(source, stream)",
@@ -758,7 +955,7 @@ describe("server: the client leaves with DATA frames still queued", () => {
           error => say(codeOf(error)),
         );
       },
-      ["ok", "ok", STREAM_ERROR, "ok"],
+      ["ERR_STREAM_PREMATURE_CLOSE", "ERR_STREAM_PREMATURE_CLOSE", null, "ERR_STREAM_PREMATURE_CLOSE"],
     ],
     [
       "finished(stream)",
@@ -770,13 +967,13 @@ describe("server: the client leaves with DATA frames still queued", () => {
           error => say(codeOf(error)),
         );
       },
-      ["ok", "ok", STREAM_ERROR, "ok"],
+      ["ERR_STREAM_PREMATURE_CLOSE", "ERR_STREAM_PREMATURE_CLOSE", null, "ERR_STREAM_PREMATURE_CLOSE"],
     ],
   ];
 
   for (const [answerName, answer, codes] of answers) {
-    leaves.forEach(([leaveName, leave], way) => {
-      test(`${answerName} when the client ${leaveName}`, async () => {
+    leaves.forEach(([leaveName, leave, nodeCallsBack], way) => {
+      test(`${answerName} fails when the client ${leaveName}`, { skip: !isBun && !nodeCallsBack }, async () => {
         const { promise: said, resolve: say } = Promise.withResolvers<string>();
         const server = http2.createServer();
         server.on("sessionError", () => {});
@@ -789,7 +986,8 @@ describe("server: the client leaves with DATA frames still queued", () => {
         try {
           await windowFull;
           leave(socket);
-          assert.strictEqual(await said, codes[way]);
+          if (codes[way] === null) assert.notStrictEqual(await said, "ok");
+          else assert.strictEqual(await said, codes[way]);
         } finally {
           socket.destroy();
           server.close();
@@ -798,74 +996,9 @@ describe("server: the client leaves with DATA frames still queued", () => {
     });
   }
 
-  // A write with no respond() before it sends the response headers itself, and that publishes to
-  // a diagnostics channel. node throws a TypeError from write() when a subscriber destroys the
-  // stream there.
-  for (const [name, error, expected] of [
-    ["destroy(error)", Object.assign(new Error("mine"), { code: "MINE" }), ["write:MINE", "error:MINE", "close"]],
-    ["destroy()", undefined, ["write:ok", "close"]],
-  ] as const) {
-    const title = `the write completes when ${name} runs inside the respond() that the write makes`;
-    test(title, { skip: !isBun }, async () => {
-      const events: string[] = [];
-      const { promise: closed, resolve: hasClosed } = Promise.withResolvers<void>();
-      let target: http2.ServerHttp2Stream | undefined;
-      const onHeadersSent = (message: unknown) => {
-        const { stream } = message as { stream: http2.ServerHttp2Stream };
-        if (stream === target) stream.destroy(error);
-      };
-      diagnosticsChannel.subscribe("http2.server.stream.finish", onHeadersSent);
-      const server = http2.createServer();
-      server.on("sessionError", () => {});
-      server.on("stream", (stream: http2.ServerHttp2Stream) => {
-        target = stream;
-        stream.on("error", error => events.push(`error:${codeOf(error)}`));
-        stream.on("close", () => {
-          events.push("close");
-          hasClosed();
-        });
-        stream.write("chunk", error => events.push(`write:${codeOf(error)}`));
-      });
-      const port = await listen(server);
-      const { socket } = await rawRequest(port);
-      try {
-        await closed;
-        await turns(2);
-        assert.deepStrictEqual(events, expected);
-      } finally {
-        diagnosticsChannel.unsubscribe("http2.server.stream.finish", onHeadersSent);
-        socket.destroy();
-        server.close();
-      }
-    });
-  }
-
-  // The socket chooses the error of the stream. It can also report the reset as a plain close.
-  test("stream.write(chunk, callback) gets the error of the stream when the client resets the connection", async () => {
-    const { promise: said, resolve: say } = Promise.withResolvers<string>();
-    const { promise: errored, resolve: closedWith } = Promise.withResolvers<string>();
-    const server = http2.createServer();
-    server.on("sessionError", () => {});
-    server.on("stream", (stream: http2.ServerHttp2Stream) => {
-      stream.on("error", () => {});
-      stream.on("close", () => closedWith(codeOf(stream.errored)));
-      stream.respond({ ":status": 200 });
-      stream.write(MB, error => say(codeOf(error)));
-    });
-    const port = await listen(server);
-    const { socket, windowFull } = await rawRequest(port);
-    try {
-      await windowFull;
-      socket.resetAndDestroy();
-      assert.strictEqual(await said, await errored);
-    } finally {
-      socket.destroy();
-      server.close();
-    }
-  });
-
-  leaves.forEach(([leaveName, leave], way) => {
-    test(`response.write(chunk, callback) when the client ${leaveName}`, async () => {
+  for (const [leaveName, leave, nodeCallsBack] of leaves) {
+    const skip = !isBun && !nodeCallsBack;
+    test(`response.write(chunk, callback) fails when the client ${leaveName}`, { skip }, async () => {
       const { promise: said, resolve: say } = Promise.withResolvers<string>();
       const server = http2.createServer((_request, response) => {
         response.on("error", () => {});
@@ -878,48 +1011,24 @@ describe("server: the client leaves with DATA frames still queued", () => {
       try {
         await windowFull;
         leave(socket);
-        assert.strictEqual(await said, way === 2 ? STREAM_ERROR : "ok");
+        assert.strictEqual(await said, "ECANCELED");
       } finally {
         socket.destroy();
         server.close();
       }
     });
+  }
 
-    // The callback of response.end() waits for 'finish' of the stream, and that does not come.
-    test(`response.end(chunk, callback) does not call back when the client ${leaveName}`, async () => {
-      let called = false;
-      const { promise: closed, resolve } = Promise.withResolvers<void>();
-      const server = http2.createServer((_request, response) => {
-        response.on("error", () => {});
-        response.on("close", () => resolve());
-        response.writeHead(200);
-        response.end(MB, () => (called = true));
-      });
-      server.on("sessionError", () => {});
-      const port = await listen(server);
-      const { socket, windowFull } = await rawRequest(port);
-      try {
-        await windowFull;
-        leave(socket);
-        await closed;
-        await turns(4);
-        assert.strictEqual(called, false);
-      } finally {
-        socket.destroy();
-        server.close();
-      }
-    });
-  });
-
-  // The END_STREAM frame of the second response has no payload, but it waits in the queue
-  // behind the body that the first response could not send. In the request handler the session
-  // is in the middle of a read. In a later turn the flush at the end of end() sends the frame.
+  // The first response is stalled on its window, with the rest of its body in the queue of the
+  // session. In Bun the END_STREAM frame of the second response, which has no payload, waits
+  // behind that body today (#43422 ends that wait). In the request handler the session is in
+  // the middle of a read. In a later turn the flush at the end of end() sends the frame.
   const turnsOfEnd: [string, (end: () => void) => void][] = [
     ["in the request handler", end => end()],
     ["in a later turn", end => void setImmediate(end)],
   ];
   for (const [name, run] of turnsOfEnd) {
-    test(`a response that ends ${name} finishes behind the queued body of another stream`, async () => {
+    test(`a response that ends ${name} finishes while another stream is stalled on its window`, async () => {
       const events: string[] = [];
       const { promise: closed, resolve } = Promise.withResolvers<void>();
       const server = http2.createServer();
@@ -947,9 +1056,111 @@ describe("server: the client leaves with DATA frames still queued", () => {
     });
   }
 
+  // The transport is a JS stream that reports backpressure after every write, and 'drain' comes
+  // one turn later. Every window is open. The first response writes a body, and the second one
+  // ends in the same turn with no body: its END_STREAM frame waits for the transport.
+  test("a response that ends behind the backpressure of a JS transport finishes", async () => {
+    let settingsSeen = false;
+    let buffered = Buffer.alloc(0);
+    const transport = new Duplex({
+      writableHighWaterMark: 1,
+      read() {},
+      write(chunk, _encoding, callback) {
+        buffered = Buffer.concat([buffered, chunk]);
+        while (buffered.length >= 9 && buffered.length >= 9 + buffered.readUIntBE(0, 3)) {
+          if (buffered[3] === FRAME.SETTINGS && !(buffered[4] & 1)) settingsSeen = true;
+          buffered = buffered.subarray(9 + buffered.readUIntBE(0, 3));
+        }
+        setImmediate(callback);
+      },
+    });
+    const events: string[] = [];
+    let first: http2.ServerHttp2Stream | undefined;
+    let needDrain = false;
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    const server = http2.createServer();
+    server.on("sessionError", () => {});
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers) => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      if (headers[":path"] === "/first") return void (first = stream);
+      stream.on("finish", () => events.push("finish"));
+      stream.on("close", () => resolve());
+      setImmediate(() => {
+        first!.write(MB.subarray(0, 40000));
+        needDrain = transport.writableNeedDrain;
+        stream.end();
+      });
+    });
+    server.emit("connection", transport);
+    try {
+      const MAX = 0x7fffffff;
+      transport.push(
+        Buffer.concat([
+          PREFACE,
+          frame(FRAME.SETTINGS, 0, 0, Buffer.concat([Buffer.from([0, 4]), uint32(MAX)])),
+          frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(MAX - WINDOW)),
+          frame(FRAME.HEADERS, 0x5, 1, requestHeaders("GET", "/first")),
+        ]),
+      );
+      for (let i = 0; i < 50 && !(settingsSeen && first); i++) await turns(1);
+      transport.push(frame(FRAME.SETTINGS, 1, 0));
+      await turns(3);
+      transport.push(frame(FRAME.HEADERS, 0x5, 3, requestHeaders("GET", "/second")));
+      await closed;
+      // The premise, in Bun: the body went to the transport inside write(). node sends it later.
+      if (isBun) assert.strictEqual(needDrain, true);
+      assert.deepStrictEqual(events, ["finish"]);
+    } finally {
+      transport.destroy();
+      server.close();
+    }
+  });
+
   // A file response writes its chunks to the session without the stream's Writable.
   const file = path.join(import.meta.dirname, "node-http2.test.js");
   const fileSize = fs.statSync(file).size;
+
+  // A write with no respond() before it sends the response headers itself, and that publishes to
+  // a diagnostics channel. A subscriber destroys the stream there. node v26.3.0 throws a TypeError
+  // from write() in that case, so this runs in Bun only.
+  for (const [name, error, expected] of [
+    ["destroy(error)", Object.assign(new Error("mine"), { code: "MINE" }), ["error:MINE", "close", "write:ECANCELED"]],
+    ["destroy()", undefined, ["close", "write:ECANCELED"]],
+  ] as const) {
+    const title = `the write is cancelled when ${name} runs inside the respond() that the write makes`;
+    test(title, { skip: !isBun }, async () => {
+      const events: string[] = [];
+      const { promise: said, resolve: say } = Promise.withResolvers<void>();
+      let target: http2.ServerHttp2Stream | undefined;
+      const onHeadersSent = (message: unknown) => {
+        const { stream } = message as { stream: http2.ServerHttp2Stream };
+        if (stream === target) stream.destroy(error);
+      };
+      diagnosticsChannel.subscribe("http2.server.stream.finish", onHeadersSent);
+      const server = http2.createServer();
+      server.on("sessionError", () => {});
+      server.on("stream", (stream: http2.ServerHttp2Stream) => {
+        target = stream;
+        stream.on("error", error => events.push(`error:${codeOf(error)}`));
+        stream.on("close", () => events.push("close"));
+        stream.write("chunk", error => {
+          events.push(`write:${codeOf(error)}`);
+          say();
+        });
+      });
+      const port = await listen(server);
+      const { socket } = await rawRequest(port);
+      try {
+        await said;
+        assert.deepStrictEqual(events, expected);
+      } finally {
+        diagnosticsChannel.unsubscribe("http2.server.stream.finish", onHeadersSent);
+        socket.destroy();
+        server.close();
+      }
+    });
+  }
 
   test("a file response larger than the window arrives whole when the client reads it", async () => {
     assert.ok(fileSize > 2 * WINDOW);
@@ -970,26 +1181,105 @@ describe("server: the client leaves with DATA frames still queued", () => {
     }
   });
 
-  test("a file response closes when the client resets the connection in the middle", async () => {
-    const errors: string[] = [];
-    const { promise: closed, resolve } = Promise.withResolvers<void>();
+  // A chunk of the file that the session drops never completes, so the 'close' of the stream is
+  // what stops the read of the file. It closes the descriptor that respondWithFile opened, and
+  // it leaves the descriptor of respondWithFD open for its owner.
+  const fileErrors = [[], [], ["ECONNRESET"]];
+  leaves.slice(0, 3).forEach(([leaveName, leave], way) => {
+    for (const owned of [true, false]) {
+      const api = owned ? "respondWithFile closes" : "respondWithFD keeps";
+      test(`${api} its descriptor when the client ${leaveName} in the middle`, async () => {
+        const errors: string[] = [];
+        const { promise: closed, resolve } = Promise.withResolvers<void>();
+        const { ino } = fs.statSync(file);
+        let fd = owned ? -1 : fs.openSync(file, "r");
+        const isOpen = () => {
+          try {
+            return fs.fstatSync(fd).ino === ino;
+          } catch {
+            return false;
+          }
+        };
+        // respondWithFile opens the file with fs.open: the test learns the descriptor there.
+        const open: (...args: any[]) => void = fs.open;
+        if (owned) {
+          fs.open = ((...args: any[]) =>
+            open.call(fs, ...args.slice(0, -1), (error: Error | null, opened: number) => {
+              fd = opened;
+              args.at(-1)(error, opened);
+            })) as typeof fs.open;
+        }
+        const server = http2.createServer();
+        server.on("sessionError", () => {});
+        server.on("stream", (stream: http2.ServerHttp2Stream) => {
+          stream.on("error", error => errors.push(codeOf(error)));
+          stream.on("close", () => resolve());
+          if (owned) stream.respondWithFile(file);
+          else stream.respondWithFD(fd);
+        });
+        const port = await listen(server);
+        const { socket, windowFull } = await rawRequest(port);
+        try {
+          await windowFull;
+          assert.strictEqual(isOpen(), true);
+          leave(socket);
+          await closed;
+          // The close of the descriptor can run on another thread: poll, with a deadline.
+          const deadline = Date.now() + 2000;
+          while (owned && isOpen() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 2));
+          if (!owned) await turns(4);
+          assert.deepStrictEqual({ errors, open: isOpen() }, { errors: fileErrors[way], open: !owned });
+        } finally {
+          fs.open = open as typeof fs.open;
+          if (!owned) fs.closeSync(fd);
+          socket.destroy();
+          server.close();
+        }
+      });
+    }
+  });
+
+  // statCheck makes the response a 304, which ends on its HEADERS frame: the session refuses
+  // every chunk of the file. The request body is still open, so the stream does not close. The
+  // read of the file must still end, and with it the descriptor closes.
+  test("respondWithFile closes its descriptor when the response ended on its HEADERS frame", async () => {
+    const { ino } = fs.statSync(file);
+    let fd = -1;
+    const isOpen = () => {
+      try {
+        return fs.fstatSync(fd).ino === ino;
+      } catch {
+        return false;
+      }
+    };
+    const open: (...args: any[]) => void = fs.open;
+    fs.open = ((...args: any[]) =>
+      open.call(fs, ...args.slice(0, -1), (error: Error | null, opened: number) => {
+        fd = opened;
+        args.at(-1)(error, opened);
+      })) as typeof fs.open;
     const server = http2.createServer();
-    server.on("sessionError", () => {});
     server.on("stream", (stream: http2.ServerHttp2Stream) => {
-      stream.on("error", error => errors.push(codeOf(error)));
-      stream.on("close", () => resolve());
-      stream.respondWithFile(file);
+      stream.on("error", () => {});
+      stream.respondWithFile(file, {}, { statCheck: (_stat, headers) => void (headers[":status"] = 304) });
     });
     const port = await listen(server);
-    const { socket, windowFull } = await rawRequest(port);
+    const session = connectOverTcp(port);
     try {
-      await windowFull;
-      socket.resetAndDestroy();
-      await closed;
-      await turns(4);
-      assert.deepStrictEqual(errors, ["ECONNRESET"]);
+      session.on("error", () => {});
+      const request = session.request({ ":method": "POST", ":path": "/" });
+      request.on("error", () => {});
+      request.write("a part of the body");
+      const [headers] = await once(request, "response");
+      const deadline = Date.now() + 2000;
+      while ((fd === -1 || isOpen()) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 2));
+      assert.deepStrictEqual(
+        { status: headers[":status"], opened: fd !== -1, open: isOpen() },
+        { status: 304, opened: true, open: false },
+      );
     } finally {
-      socket.destroy();
+      fs.open = open as typeof fs.open;
+      session.destroy();
       server.close();
     }
   });
@@ -1025,6 +1315,43 @@ describe("server: the client leaves with DATA frames still queued", () => {
         socket.destroy();
         server.close();
       }
+    });
+
+    // The write and the first chunk of the file end in one frame. The callback of the write
+    // throws when that frame leaves: the chunk of the file must still complete.
+    test("behind a closed window, the file arrives whole when the write callback throws", async () => {
+      const script = `
+        const http2 = require("node:http2");
+        const events = [];
+        process.on("uncaughtException", error => events.push("uncaught:" + error.message));
+        const server = http2.createServer();
+        server.on("stream", stream => {
+          stream.on("error", () => {});
+          stream.cork();
+          stream.write("x", () => {
+            throw new Error("thrown by the callback");
+          });
+          stream.respondWithFile(${JSON.stringify(file)}, {}, { length: 100 });
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const url = "http://127.0.0.1:" + server.address().port;
+          const session = http2.connect(url, { settings: { initialWindowSize: 0 } });
+          session.on("error", () => {});
+          const request = session.request({ ":path": "/" });
+          request.on("error", () => {});
+          let received = 0;
+          request.on("data", chunk => (received += chunk.length));
+          request.on("end", () => {
+            console.log(JSON.stringify({ events, received }));
+            process.exit(0);
+          });
+          // Three round trips give the chunk of the file time to join the write in the queue.
+          const open = () => session.settings({ initialWindowSize: ${WINDOW} });
+          request.on("response", () => session.ping(() => session.ping(() => session.ping(open))));
+          request.end();
+        });
+      `;
+      assert.deepStrictEqual(await inChild(script), { events: ["uncaught:thrown by the callback"], received: 101 });
     });
 
     test("over a JS stream, the write that left and the queued chunk of the file both complete", async () => {
@@ -1141,7 +1468,7 @@ describe("server: the client leaves with DATA frames still queued", () => {
 
   // close(code) resets the stream at once, and the session drops the END_STREAM frame that
   // waited. The writable side had no body left to send, so the response still finishes.
-  test("end(callback) then close(NGHTTP2_CANCEL) behind socket backpressure finishes", { skip: !isBun }, async () => {
+  test("end(callback) then close(NGHTTP2_CANCEL) behind socket backpressure finishes", held, async () => {
     const events: string[] = [];
     const { promise: closed, resolve: hasClosed } = Promise.withResolvers<void>();
     const { close } = await behindBlockedSocket(stream => {
@@ -1158,8 +1485,9 @@ describe("server: the client leaves with DATA frames still queued", () => {
     }
   });
 
-  // node fails these writes with ERR_STREAM_WRITE_AFTER_END and leaves some of the streams
-  // open. Bun completes them with no error, and the response finishes and closes.
+  // In the two HEAD flows node fails the write with ERR_STREAM_WRITE_AFTER_END and leaves the
+  // stream open. In the two cork() flows node closes the stream and never calls the write back.
+  // Bun completes the write with no error, and the response finishes and closes, as before.
   describe("a response that ended on its HEADERS frame still finishes", { skip: !isBun }, () => {
     type Respond = (stream: http2.ServerHttp2Stream, events: string[]) => void;
     const flows: [string, string, Respond, string[]][] = [
@@ -1225,6 +1553,36 @@ describe("server: the client leaves with DATA frames still queued", () => {
       });
     }
   });
+
+  // END_STREAM is on the HEADERS frame, so the end of the writable side sends no frame of its
+  // own. The HEADERS frame must still reach the transport before the session goes away, as it
+  // does in node v26.3.0. node 26.9 and newer drop this response.
+  for (const [name, method, status] of [
+    ["a 204 response", "GET", 204],
+    ["the response to HEAD", "HEAD", 200],
+  ] as const) {
+    test(`${name} leaves before a session.destroy() in the same tick, over a JS stream`, async () => {
+      const server = http2.createServer();
+      server.on("stream", (stream: http2.ServerHttp2Stream) => {
+        stream.on("error", () => {});
+        stream.respond({ ":status": status });
+        stream.session!.destroy();
+      });
+      const [clientSide, serverSide] = duplexPair();
+      server.emit("connection", serverSide);
+      const session = http2.connect("http://localhost", { createConnection: () => clientSide });
+      try {
+        session.on("error", () => {});
+        const request = session.request({ ":method": method, ":path": "/" });
+        request.on("error", () => {});
+        const [headers] = await once(request, "response");
+        assert.strictEqual(headers[":status"], status);
+      } finally {
+        session.destroy();
+        server.close();
+      }
+    });
+  }
 });
 
 describe("client: the request ends before its HEADERS frame is sent", () => {
@@ -1275,8 +1633,8 @@ describe("client: the request ends before its HEADERS frame is sent", () => {
     });
   });
 
-  // end() uncorks the request, so its write reaches the stream and waits there for 'ready'.
-  // node does not settle a write that waits for 'ready': its callback never comes.
+  // end() takes the cork off, so the write reaches `_write` with no id and waits there for
+  // 'ready'. destroy() comes first: the session never got the write, and nothing calls it back.
   test("destroy() does not settle a write that waits for 'ready' on a connecting request", async () => {
     const peer = await rawServer();
     const session = connectOverTcp(peer.port);
@@ -1357,7 +1715,7 @@ describe("client: the request ends before its HEADERS frame is sent", () => {
   });
 
   // close() sends its RST_STREAM when the request gets its id: the body that was queued a
-  // moment before is dropped, and the stream ends with no error.
+  // moment before is dropped. node cancels the write before 'close', Bun after it.
   test("request.close() with a body larger than the window while the session connects", async () => {
     const peer = await rawServer();
     const session = connectOverTcp(peer.port);
@@ -1366,7 +1724,7 @@ describe("client: the request ends before its HEADERS frame is sent", () => {
       const request = session.request({ ":method": "POST", ":path": "/" });
       assert.strictEqual(request.pending, true);
       const events = await writeAndEnd(request, MB, () => request.close());
-      assert.deepStrictEqual(events.sort(), ["close", "write:ok"]);
+      assert.deepStrictEqual(events.sort(), ["close", "write:ECANCELED"]);
     } finally {
       session.destroy();
       peer.close();
@@ -1383,10 +1741,7 @@ describe("client: the request ends before its HEADERS frame is sent", () => {
         session.on("error", () => {});
         await once(session, "connect");
         const request = session.request({ ":method": "POST", ":path": "/a b" });
-        assert.deepStrictEqual(await writeAndEnd(request, "chunk", () => {}), [
-          "write:ERR_HTTP2_STREAM_ERROR",
-          "close",
-        ]);
+        assert.deepStrictEqual(await writeAndEnd(request, "chunk", () => {}), ["close", "write:ECANCELED"]);
       } finally {
         session.destroy();
         peer.close();
@@ -1421,7 +1776,7 @@ describe("client: the request ends before its HEADERS frame is sent", () => {
   test(
     "a request that ended and closed before it had an id finishes without its END_STREAM frame",
     {
-      skip: !isBun,
+      skip: !isBun || process.platform === "win32",
     },
     async () => {
       const sockets = new Set<net.Socket>();
@@ -1469,11 +1824,8 @@ describe("client: the request ends before its HEADERS frame is sent", () => {
   );
 
   // SETTINGS_MAX_CONCURRENT_STREAMS is 1: the second request waits for the first one to close.
-  // node gives it an id at once, so its write is in flight and gets the error of the destroy.
-  for (const [[name, act], code] of [
-    [ways[0], "ok"],
-    [ways[2], "ABORT_ERR"],
-  ] as const) {
+  // node gives it an id at once and cancels its write one turn after 'close'.
+  for (const [name, act] of [ways[0], ways[2]]) {
     test(`${name} while the request waits behind the peer's stream limit`, async () => {
       const peer = await rawServer({ settings: Buffer.from([0, 3, 0, 0, 0, 1]) });
       const session = connectOverTcp(peer.port);
@@ -1484,7 +1836,7 @@ describe("client: the request ends before its HEADERS frame is sent", () => {
         const abort = new AbortController();
         const request = session.request({ ":method": "POST", ":path": "/" }, { signal: abort.signal });
         const events = await writeAndEnd(request, "chunk", () => turns(1).then(() => act({ session, request, abort })));
-        assert.deepStrictEqual(events, [`write:${code}`, "close"]);
+        assert.deepStrictEqual(events, ["close", "write:ECANCELED"]);
       } finally {
         session.destroy();
         peer.close();

@@ -132,7 +132,7 @@ impl Linker {
     /// (set via `addr_of_mut!` in `configure_linker*`). The `Transpiler`
     /// outlives all `Linker` method calls, and `options` is not mutated for
     /// the duration of any borrow returned here (callers only read scalar
-    /// config like `target` / `preserve_extensions`). Never null once
+    /// config like `target` / `rewrite_jest_for_tests`). Never null once
     /// `configure_linker` has run.
     #[inline]
     pub(crate) fn options(&self) -> &BundleOptions<'static> {

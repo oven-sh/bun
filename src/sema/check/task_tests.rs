@@ -164,12 +164,7 @@ fn begin<'s>(session: &'s Session, types: &TypeStore<'s>, index: u32) -> Task<'s
     task
 }
 
-fn begin_in<'s>(
-    session: &'s Session,
-    types: &TypeStore<'s>,
-    index: u32,
-    file: FileId,
-) -> Task<'s> {
+fn begin_in<'s>(session: &'s Session, types: &TypeStore<'s>, index: u32, file: FileId) -> Task<'s> {
     let mut task = begin(session, types, index);
     task.begin_file(file, true);
     task
@@ -200,7 +195,10 @@ fn diagnostic(code: u32) -> Reported {
 fn a_task_reads_the_published_state_and_its_own_buffer_and_nothing_else() {
     let session = Session::new();
     let tables = Tables::new(&session);
-    let (mut first, second) = (begin_in(&session, &tables.types, 0, A), begin_in(&session, &tables.types, 1, B));
+    let (mut first, second) = (
+        begin_in(&session, &tables.types, 0, A),
+        begin_in(&session, &tables.types, 1, B),
+    );
     let own = tables.keyof(&first, TypeId::STRING);
     assert!(own.is_local());
     // A node of the task's file, a node of another file, a published id, a task-local id, a key of
@@ -330,7 +328,9 @@ fn a_published_entry_stays_what_it_is() {
     let published = tables.barrier(&mut [tables.finish(&mut later)], &forwards);
     assert_eq!(counts(&published), (1, 0, 1));
     assert_eq!(
-        tables.by_node.get(&Task::new_in(session.arena(), &tables.types), &(A, 1)),
+        tables
+            .by_node
+            .get(&Task::new_in(session.arena(), &tables.types), &(A, 1)),
         Some(TypeId::STRING)
     );
 }
@@ -348,7 +348,9 @@ fn what_a_task_outside_the_plan_writes_is_dropped_with_it() {
     assert_eq!(tables.by_node.get(&task, &(A, 1)), Some(TypeId::STRING));
     drop(task);
     assert_eq!(
-        tables.by_node.get(&Task::new_in(session.arena(), &tables.types), &(A, 1)),
+        tables
+            .by_node
+            .get(&Task::new_in(session.arena(), &tables.types), &(A, 1)),
         None
     );
 }
@@ -414,7 +416,9 @@ fn a_task_that_goes_through_several_files_has_one_entry_for_each_key() {
     let published = tables.barrier(&mut [tables.finish(&mut task)], &forwards);
     assert_eq!(counts(&published), (5, 5, 0));
     assert_eq!(
-        tables.by_node.get(&Task::new_in(session.arena(), &tables.types), &(B, 1)),
+        tables
+            .by_node
+            .get(&Task::new_in(session.arena(), &tables.types), &(B, 1)),
         Some(two)
     );
 }
@@ -581,7 +585,8 @@ fn the_entry_of_the_lowest_task_stays_however_the_pool_runs() {
         let values = [TypeId::STRING, TypeId::NUMBER, TypeId::BIGINT];
         let mut finished: Vec<Finished> = (values.iter().enumerate())
             .map(|(index, &value)| {
-                let mut task = begin_in(&session, &tables.types, index as u32, FileId(index as u32));
+                let mut task =
+                    begin_in(&session, &tables.types, index as u32, FileId(index as u32));
                 // Every task has (C, 9) and the like. Only the last two have (C, 8).
                 tables.by_node.insert(&task, (C, 9), value, stored());
                 tables.by_id.insert(&task, TypeId::ANY, value, stored());
@@ -651,7 +656,10 @@ fn a_task_that_is_not_read_later_hands_over_nothing_but_its_diagnostics() {
     assert_eq!(counts(&published), (0, 0, 0));
     assert!(
         tables
-            .keyof(&Task::new_in(session.arena(), &tables.types), TypeId::STRING)
+            .keyof(
+                &Task::new_in(session.arena(), &tables.types),
+                TypeId::STRING
+            )
             .is_local()
     );
 }
@@ -936,9 +944,10 @@ fn a_published_handle_in_a_value_stays() {
         .insert(&second, TypeId::STRING, held, stored());
     tables.barrier(&mut [tables.finish(&mut second)], &forwards);
     assert_eq!(
-        tables
-            .members
-            .get(&Task::new_in(session.arena(), &tables.types), &TypeId::STRING),
+        tables.members.get(
+            &Task::new_in(session.arena(), &tables.types),
+            &TypeId::STRING
+        ),
         Some(held)
     );
 }

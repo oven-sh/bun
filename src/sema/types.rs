@@ -10,8 +10,8 @@ use crate::local::{Found, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
 use crate::session::{Arena, ArenaVec, Session};
 use crate::table::{ById, Frozen};
-use crate::util::memory::{Fill, Flat, Length, OWN, Placeholder, Placeholders, Room};
 use crate::util::memory::Taken as TakenBlock;
+use crate::util::memory::{Fill, Flat, Length, OWN, Placeholder, Placeholders, Room};
 use crate::util::{
     FxHashMap, FxHasher, GrowingPlaces, InParallel, LocalVec, SharedSort, for_each_mut,
     shard_among, spread_hash,

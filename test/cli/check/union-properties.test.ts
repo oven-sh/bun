@@ -4529,20 +4529,23 @@ const e: never = null! as Swap<${each(count, i => `${i}`, ", ")}>["k0"];
 export {};
 `;
 
-test.concurrent.skipIf(!tsc)("2 to 21 type parameters that are not created in their order, as in TypeScript", async () => {
-  const sizes = [2, 3, 4, 8, 9, 21];
-  using dir = tempDir("bun-check-mappers", {
-    "tsconfig.json": tsconfig,
-    ...Object.fromEntries(sizes.map(size => [`params${size}.ts`, parametersOutOfOrder(size)])),
-  });
-  const root = String(dir);
-  const [theirs, ...ours] = await Promise.all([
-    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
-    ...[1, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
-  ]);
-  expect(Object.keys(byFile(theirs)).length).toBe(sizes.length);
-  for (const lines of ours) expect(byFile(lines)).toEqual(byFile(theirs));
-});
+test.concurrent.skipIf(!tsc)(
+  "2 to 21 type parameters that are not created in their order, as in TypeScript",
+  async () => {
+    const sizes = [2, 3, 4, 8, 9, 21];
+    using dir = tempDir("bun-check-mappers", {
+      "tsconfig.json": tsconfig,
+      ...Object.fromEntries(sizes.map(size => [`params${size}.ts`, parametersOutOfOrder(size)])),
+    });
+    const root = String(dir);
+    const [theirs, ...ours] = await Promise.all([
+      linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+      ...[1, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+    ]);
+    expect(Object.keys(byFile(theirs)).length).toBe(sizes.length);
+    for (const lines of ours) expect(byFile(lines)).toEqual(byFile(theirs));
+  },
+);
 
 // The style rules of a theme: an indexed access into an interface of `count` props types, each an intersection, by a type
 // parameter, intersected with `Record<string, unknown>` and with object types that share none, one or all of their names.

@@ -1198,13 +1198,19 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     lockfile.tag_workspace_links(manager.options.link_workspace_packages);
     lockfile.resolve(log)?;
 
+    update_package_json_after_migration(Some(&mut *lockfile), manager, log, &found_patches)?;
+
+    // Parse the `packageExtensions` that were just copied into package.json. Warnings are dropped
+    // here because the install that follows reports them.
+    if let Some(root) = root_package_json(manager, log) {
+        let extensions = &mut lockfile.package_extensions;
+        extensions.parse(&mut bun_ast::Log::init(), &root.source, &root.root);
+    }
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
         manager, false, // update_os_cpu
         false, // fill_integrity
         None,
     )?;
-
-    update_package_json_after_migration(Some(&mut *lockfile), manager, log, &found_patches)?;
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile,

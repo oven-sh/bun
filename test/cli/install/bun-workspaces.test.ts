@@ -649,6 +649,40 @@ describe.concurrent("dist-tag on the name of a workspace that the registry does 
 });
 
 // What the command installs and locks is what a clean install of the package.json it wrote gives.
+// The installed registry package has the same name and version as the new workspace.
+test.concurrent.each(["hoisted", "isolated"])(
+  "links a new workspace that has the same name and version as an installed package (%s)",
+  async linker => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const app = join(packageDir, "packages", "app");
+    const appJson = (range: string) =>
+      JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": range } });
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: { cache: join(packageDir, ".bun-cache"), registry: verdaccio.registryUrl(), linker },
+        }),
+      ),
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["packages/*"] })),
+      write(join(app, "package.json"), appJson("1.0.0")),
+    ]);
+    await runBunInstall(env, packageDir);
+
+    const workspace = { name: "no-deps", version: "1.0.0", description: "the workspace" };
+    await Promise.all([
+      write(join(packageDir, "packages", "no-deps", "package.json"), JSON.stringify(workspace)),
+      write(join(app, "package.json"), appJson("workspace:*")),
+    ]);
+    await runBunInstall(env, packageDir);
+
+    const nested = join(app, "node_modules", "no-deps", "package.json");
+    const loaded = existsSync(nested) ? nested : join(packageDir, "node_modules", "no-deps", "package.json");
+    expect(await file(loaded).json()).toEqual(workspace);
+  },
+);
+
 describe.each(["hoisted", "isolated"] as const)("a member asks for a workspace that is also published (%s)", linker => {
   const registry = { name: "no-deps", version: "2.0.0" };
   test.concurrent.each([

@@ -92,6 +92,9 @@ pub struct PackageInstaller<'a> {
     //
     /// set of completed tree ids
     pub(crate) completed_trees: Bitset,
+    /// Number of entries across every tree's `pending_installs`. When it's zero, which is always
+    /// the case if nothing had to be downloaded, `install_available_packages` returns early.
+    pub(crate) pending_install_count: usize,
     /// the tree ids a tree depends on before it can run the lifecycle scripts of it's immediate dependencies
     pub(crate) tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub(crate) pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
@@ -1081,11 +1084,17 @@ impl<'a> PackageInstaller<'a> {
         &mut self,
         log_level: Options::LogLevel,
     ) {
+        if self.pending_install_count == 0 {
+            return;
+        }
         let prev_node_modules = core::mem::take(&mut self.node_modules);
         let prev_tree_id = self.current_tree_id;
 
         let trees_len = self.trees.len();
         for i in 0..trees_len {
+            if self.trees[i].pending_installs.is_empty() {
+                continue;
+            }
             if FORCE
                 || Self::can_install_package_for_tree(
                     &self.completed_trees,
@@ -1098,7 +1107,9 @@ impl<'a> PackageInstaller<'a> {
                 // going up ensures we will reach any trees that will be able to install
                 // packages upon completing the current tree
                 let resolutions = self.resolutions;
-                for context in core::mem::take(&mut self.trees[i].pending_installs) {
+                let pending = core::mem::take(&mut self.trees[i].pending_installs);
+                self.pending_install_count -= pending.len();
+                for context in pending {
                     let package_id = self.lockfile().buffers.resolutions.as_slice()
                         [context.dependency_id as usize];
                     let name = self.names[package_id as usize];
@@ -2124,6 +2135,7 @@ impl<'a> PackageInstaller<'a> {
                         tree_id: self.current_tree_id,
                         path: self.node_modules.path.clone(),
                     });
+                self.pending_install_count += 1;
                 return;
             }
 

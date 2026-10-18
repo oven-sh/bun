@@ -1204,6 +1204,7 @@ private:
                 // propagates out of postMessage/structuredClone (Node parity).
                 String message, sourceURL, stack;
                 unsigned line = 0, column = 0;
+                bool hasPosition = false;
                 {
                     // .message is ToString'd rather than gated on isString (node clones
                     // `e.message = 42` as "42"). Reading it before .line also keeps a
@@ -1225,6 +1226,7 @@ private:
                     JSC::PropertyDescriptor d;
                     bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, d);
                     RETURN_IF_EXCEPTION(scope, false);
+                    hasPosition |= found;
                     if (found && d.isDataDescriptor() && d.value().isNumber())
                         line = d.value().toNumber(m_lexicalGlobalObject);
                     RETURN_IF_EXCEPTION(scope, false);
@@ -1233,6 +1235,7 @@ private:
                     JSC::PropertyDescriptor d;
                     bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, d);
                     RETURN_IF_EXCEPTION(scope, false);
+                    hasPosition |= found;
                     if (found && d.isDataDescriptor() && d.value().isNumber())
                         column = d.value().toNumber(m_lexicalGlobalObject);
                     RETURN_IF_EXCEPTION(scope, false);
@@ -1241,6 +1244,7 @@ private:
                     JSC::PropertyDescriptor d;
                     bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, d);
                     RETURN_IF_EXCEPTION(scope, false);
+                    hasPosition |= found;
                     if (found && d.isDataDescriptor() && d.value().isString())
                         sourceURL = d.value().toWTFString(m_lexicalGlobalObject);
                     RETURN_IF_EXCEPTION(scope, false);
@@ -1252,6 +1256,10 @@ private:
                         stack = v.toWTFString(m_lexicalGlobalObject);
                     RETURN_IF_EXCEPTION(scope, false);
                 }
+
+                // 0 is also what a missing `line` is written as, so a null sourceURL is what says that the error has no position.
+                if (hasPosition && sourceURL.isNull())
+                    sourceURL = emptyString();
 
                 write(ErrorInstanceTag);
                 write(errorNameToSerializableErrorType(errorTypeString));
@@ -3735,7 +3743,13 @@ private:
                 fail();
                 return JSValue();
             }
-            auto* obj = ErrorInstance::create(m_lexicalGlobalObject, WTF::move(message), toErrorType(serializedErrorType), { line, column }, WTF::move(sourceURL), WTF::move(stackString));
+            // An ErrorInstance made with a stack always gets a `line` and a `column`, so one whose original had no position gets its stack afterwards.
+            bool hasPosition = line || column || !sourceURL.isNull();
+            auto* obj = ErrorInstance::create(m_lexicalGlobalObject, WTF::move(message), toErrorType(serializedErrorType), { line, column }, WTF::move(sourceURL), hasPosition ? WTF::move(stackString) : String());
+            if (!hasPosition && !stackString.isNull()) {
+                VM& vm = m_lexicalGlobalObject->vm();
+                obj->putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stackString)), static_cast<unsigned>(PropertyAttribute::DontEnum));
+            }
             addTerminalToObjectPool(obj);
             return obj;
         }

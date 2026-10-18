@@ -190,6 +190,17 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
       });
     }
 
+    test("the clone of an error has a position only if the error has one", async () => {
+      const own = (error: Error) => Object.getOwnPropertyNames(error).sort();
+      const error = new Error("message");
+      expect(own(await structuredCloneFn(error))).toEqual(["column", "line", "message", "sourceURL", "stack"]);
+
+      for (const name of ["line", "column", "sourceURL"]) delete error[name];
+      const cloned = await structuredCloneFn(error);
+      expect(own(cloned)).toEqual(["message", "stack"]);
+      expect(Object.getOwnPropertyDescriptor(cloned, "stack")).toEqual(Object.getOwnPropertyDescriptor(error, "stack"));
+    });
+
     test("Array with primitives", async () => {
       const input = [
         undefined,

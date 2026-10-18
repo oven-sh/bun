@@ -940,7 +940,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 NodeData::Member(m) => Some(self.c.enclosing_scope_of_member(node.file, m)),
                 NodeData::Prop(p) => Some(self.c.enclosing_scope_of_property(node.file, p)),
                 NodeData::Type(t) => bound.type_scope.get(t.idx()).copied(),
-                NodeData::Stmt(s) => bound.stmt_scope.get(s.idx()).copied(),
+                NodeData::Stmt(s) => bound.scope_of_stmt(s).some(),
                 _ => None,
             };
             if let Some(scope) = scope.filter(|scope| scope.is_some()) {

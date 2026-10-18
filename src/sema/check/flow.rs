@@ -2076,7 +2076,7 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => None,
             };
         }
-        if !bound.symbols[symbol.idx()].flags.contains(SymFlags::CONST)
+        if !bound.symbol(symbol).flags.contains(SymFlags::CONST)
             || !self.is_constant_name(file, symbol)
         {
             return None;
@@ -2303,7 +2303,7 @@ impl<'p, 's> Checker<'p, 's> {
                 VarKind::Const | VarKind::Using | VarKind::AwaitUsing
             ),
             _ => matches!(
-                self.bound(file).symbols[symbol.idx()].decls.first(),
+                self.bound(file).symbol(symbol).decls.first(),
                 Some(&Decl::Fn(f)) if hir[f].kind == FnKind::Expr
             ),
         }
@@ -2764,7 +2764,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Ident(_) if level < 5 => {
                 let symbol = bound.symbol_of_expr(e);
                 if symbol.is_some()
-                    && bound.symbols[symbol.idx()].flags.contains(SymFlags::CONST)
+                    && bound.symbol(symbol).flags.contains(SymFlags::CONST)
                     && let Some(pat) = self.name_of_value_declaration(file, symbol)
                     && let PatParent::Var(d) = bound.pat_parent[pat.idx()]
                     && hir[d].ty.is_none()
@@ -2863,7 +2863,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if symbol.is_none() {
                     return true;
                 }
-                let symbol = &bound.symbols[symbol.idx()];
+                let symbol = bound.symbol(symbol);
                 if !symbol.flags.intersects(SymFlags::VARIABLE) {
                     return true;
                 }
@@ -2884,7 +2884,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `x.kind` of `const k = x.kind`, the `x` of `const { kind: k } = x`.
     fn initializer_of_discriminant_alias(&self, file: FileId, symbol: SymbolId) -> Option<ExprId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !bound.symbols[symbol.idx()].flags.contains(SymFlags::CONST) {
+        if !bound.symbol(symbol).flags.contains(SymFlags::CONST) {
             return None;
         }
         let pat = self.name_of_value_declaration(file, symbol)?;
@@ -3030,7 +3030,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let bound = self.bound(file);
                     let symbol = bound.symbol_of_expr(e);
                     if symbol.is_some()
-                        && bound.symbols[symbol.idx()].flags.contains(SymFlags::CONST)
+                        && bound.symbol(symbol).flags.contains(SymFlags::CONST)
                         && self.is_constant_name(file, symbol)
                         && let Some(pat) = self.name_of_value_declaration(file, symbol)
                         && let PatParent::Var(d) = bound.pat_parent[pat.idx()]
@@ -5553,7 +5553,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(&first_about) = memo.first_narrowing_node.get(s.idx()) else {
             return false;
         };
-        let symbol = &bound.symbols[s.idx()];
+        let symbol = bound.symbol(s);
         // `let`, `const` or `using` with an initializer, in a statement list, and `e` comes after
         // it: every backward path from `e` reaches the declaration. (Not in a `case`, nor `if (a)
         // const b = 1`, which is an error but parses.)
@@ -5675,7 +5675,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return Crossing::No;
         }
-        let flags = bound.symbols[s.idx()].flags;
+        let flags = bound.symbol(s).flags;
         if flags.contains(SymFlags::CONST) && declared != self.auto_array_type {
             Crossing::UpToDeclaration(s, e)
         } else if !flags.intersects(SymFlags::VARIABLE) {
@@ -5705,7 +5705,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> u32 {
         self.ensure_assignments_marked(declaring, symbol);
         let (hir, bound) = (self.hir(declaring), self.bound(declaring));
-        let name = bound.symbols[symbol.idx()].name;
+        let name = bound.symbol(symbol).name;
         if referencing != declaring {
             let (hir, bound) = (self.hir(referencing), self.bound(referencing));
             let is_marked = bound.free_idents.iter().any(|&(target, _)| {
@@ -5781,7 +5781,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.p.files.options.strict_null_checks
             && reference.path.is_empty()
             && let Root::Symbol(s) = reference.root
-            && bound.symbols[s.idx()].flags.contains(SymFlags::PARAMETER)
+            && bound.symbol(s).flags.contains(SymFlags::PARAMETER)
             && let Some(pat) = self.name_of_value_declaration(file, s)
             && let PatParent::Param(p) = bound.pat_parent[pat.idx()]
             && self.hir(file)[p].default.is_some()
@@ -6230,7 +6230,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// as far as this file can tell.
     fn is_marked_by_export_specifier(&self, file: FileId, symbol: SymbolId, pat: PatId) -> bool {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        let name = bound.symbols[symbol.idx()].name;
+        let name = bound.symbol(symbol).name;
         let is_marked = |specifier: ExportSpecId| {
             let declaring_function = function_or_source_file_of(hir, hir.node(pat));
             let node = hir.node(specifier);
@@ -6272,10 +6272,7 @@ impl<'p, 's> Checker<'p, 's> {
             return (u32::MAX, true);
         }
         let mut is_final = hir.exports.is_empty();
-        if !bound.symbols[symbol.idx()]
-            .flags
-            .contains(SymFlags::ASSIGNED)
-        {
+        if !bound.symbol(symbol).flags.contains(SymFlags::ASSIGNED) {
             return (0, is_final);
         }
         let declaring_function = function_or_source_file_of(hir, hir.node(pat));
@@ -8548,7 +8545,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if is_on_its_own {
                         FlowId::NONE
                     } else {
-                        bound.stmt_flow[only.idx()]
+                        bound.flow_of_stmt(only)
                     },
                 )
             }

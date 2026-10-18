@@ -286,7 +286,7 @@ impl Checker<'_, '_> {
         if symbol.is_none() {
             return None;
         }
-        let Some(&Decl::Param(pat)) = bound.symbols[symbol.idx()].decls.first() else {
+        let Some(&Decl::Param(pat)) = bound.symbol(symbol).decls.first() else {
             return None;
         };
         let PatParent::Param(p) = bound.pat_parent[pat.idx()] else {
@@ -841,7 +841,7 @@ impl Checker<'_, '_> {
         let Some(id) = bound.lookup(bound.scopes[0].locals, name) else {
             return;
         };
-        let import = bound.symbols[id.idx()].decls.iter().copied().find(|d| {
+        let import = bound.symbol(id).decls.iter().copied().find(|d| {
             matches!(
                 d,
                 Decl::ImportDefault(_)

@@ -10,7 +10,9 @@ pub use parents::{bind_for_format_in, try_bind_for_format_in};
 
 use crate::atom::{Atom, known};
 use crate::hir::*;
-use crate::session::{Arena, ArenaHashMap, ArenaHashSet, ArenaVec, vec_from_iter_in};
+use crate::session::{
+    Arena, ArenaHashMap, ArenaHashSet, ArenaVec, transfer_arena, vec_from_iter_in,
+};
 use crate::util::{FxBuild, FxHashMap, FxHashSet, SharedSort};
 use smallvec::SmallVec;
 
@@ -354,11 +356,13 @@ pub fn required_specifier(hir: &File, e: ExprId) -> Option<Atom> {
     Some(require_call_argument(hir, e)?.1)
 }
 
-pub struct SymbolIn<S: Storage> {
+/// A symbol of a file.
+#[derive(Copy, Clone)]
+pub struct Symbol<'a> {
     pub name: Atom,
     pub flags: SymFlags,
     /// `Declarations`, in the order they are bound.
-    pub decls: DeclsIn<S>,
+    pub decls: &'a [Decl],
     /// `ValueDeclaration`: an index into `Declarations`, which for a symbol merged by `mergeSymbol`
     /// are the declarations of all its parts. `u32::MAX`: none.
     pub value_declaration: u32,
@@ -373,17 +377,74 @@ pub struct SymbolIn<S: Storage> {
     pub export_symbol: SymbolId,
 }
 
-/// A symbol of a file that has been loaded.
-pub type Symbol<'s> = SymbolIn<InArena<'s>>;
+/// A `Symbol` while the file is bound.
+pub struct GrowingSymbol {
+    pub name: Atom,
+    pub flags: SymFlags,
+    pub decls: GrowingDecls,
+    pub value_declaration: u32,
+    pub parent: SymbolId,
+    pub exports: TableId,
+    pub members: TableId,
+    pub export_symbol: SymbolId,
+}
 
-const _: () = assert!(size_of::<Symbol<'static>>() <= 48);
+/// The declarations of a symbol. Nearly every symbol has one, which needs no separate allocation.
+#[derive(Default)]
+pub enum GrowingDecls {
+    #[default]
+    None,
+    One(Decl),
+    Many(Vec<Decl>),
+}
 
-impl SymbolIn<Growable> {
-    fn into_arena(self, arena: &Arena) -> Symbol<'_> {
-        SymbolIn {
+impl GrowingDecls {
+    fn push(&mut self, decl: Decl) {
+        match self {
+            GrowingDecls::None => *self = GrowingDecls::One(decl),
+            GrowingDecls::One(first) => *self = GrowingDecls::Many(vec![*first, decl]),
+            GrowingDecls::Many(all) => all.push(decl),
+        }
+    }
+}
+
+impl std::ops::Deref for GrowingDecls {
+    type Target = [Decl];
+    #[inline]
+    fn deref(&self) -> &[Decl] {
+        match self {
+            GrowingDecls::None => &[],
+            GrowingDecls::One(decl) => std::slice::from_ref(decl),
+            GrowingDecls::Many(decls) => &decls[..],
+        }
+    }
+}
+
+/// See [`Storage::Symbols`].
+pub trait SymbolList {
+    fn len(&self) -> usize;
+    fn get(&self, index: usize) -> Option<Symbol<'_>>;
+}
+
+impl SymbolList for Vec<GrowingSymbol> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    #[inline]
+    fn get(&self, index: usize) -> Option<Symbol<'_>> {
+        self[..].get(index).map(GrowingSymbol::get)
+    }
+}
+
+impl GrowingSymbol {
+    #[inline]
+    fn get(&self) -> Symbol<'_> {
+        Symbol {
             name: self.name,
             flags: self.flags,
-            decls: self.decls.into_arena(arena),
+            decls: &self.decls,
             value_declaration: self.value_declaration,
             parent: self.parent,
             exports: self.exports,
@@ -393,54 +454,208 @@ impl SymbolIn<Growable> {
     }
 }
 
-/// The declarations of a symbol. Nearly every symbol has one, which needs no separate allocation.
-#[derive(Default)]
-pub enum DeclsIn<S: Storage> {
-    #[default]
+/// What every symbol has.
+#[derive(Copy, Clone)]
+struct StoredSymbol {
+    name: Atom,
+    flags: SymFlags,
+    decls: StoredDecls,
+    parent: SymbolId,
+    /// Where the rest is in `Symbols::rest`, or one of the two below.
+    rest: u32,
+}
+
+/// `StoredSymbol::rest` of a symbol without tables and without an `export_symbol`, whose `value_declaration` is its first
+/// declaration.
+const FIRST_IS_VALUE: u32 = u32::MAX;
+/// The same without a `value_declaration`.
+const NO_VALUE: u32 = u32::MAX - 1;
+
+#[derive(Copy, Clone)]
+enum StoredDecls {
     None,
     One(Decl),
-    Many(S::Few<Decl>),
+    /// Where they are in `Symbols::many`.
+    Many(u32),
 }
 
-/// Those of a symbol of a file that has been loaded.
-pub type Decls<'s> = DeclsIn<InArena<'s>>;
+const _: () = assert!(size_of::<StoredSymbol>() == 24);
 
-impl<S: Storage> DeclsIn<S> {
+/// What few symbols have.
+#[derive(Copy, Clone)]
+struct RestOfSymbol {
+    value_declaration: u32,
+    exports: TableId,
+    members: TableId,
+    export_symbol: SymbolId,
+}
+
+/// The symbols of a file that has been loaded. The program adds to them.
+pub struct Symbols<'s> {
+    list: ArenaVec<'s, StoredSymbol>,
+    rest: ArenaVec<'s, RestOfSymbol>,
+    many: ArenaVec<'s, &'s [Decl]>,
+}
+
+impl SymbolList for Symbols<'_> {
     #[inline]
-    pub fn as_slice(&self) -> &[Decl] {
-        match self {
-            DeclsIn::None => &[],
-            DeclsIn::One(decl) => std::slice::from_ref(decl),
-            DeclsIn::Many(decls) => &decls[..],
-        }
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    #[inline]
+    fn get(&self, index: usize) -> Option<Symbol<'_>> {
+        self.get(index)
     }
 }
 
-impl DeclsIn<Growable> {
-    fn push(&mut self, decl: Decl) {
-        match self {
-            DeclsIn::None => *self = DeclsIn::One(decl),
-            DeclsIn::One(first) => *self = DeclsIn::Many(vec![*first, decl]),
-            DeclsIn::Many(all) => all.push(decl),
+impl<'s> Symbols<'s> {
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.list.len()
+    }
+
+    /// Nothing in here can fail but the first step, so what a caller does not read is not computed.
+    #[inline]
+    pub fn get(&self, index: usize) -> Option<Symbol<'_>> {
+        let symbol = self.list.get(index)?;
+        // `FIRST_IS_VALUE` and `NO_VALUE` are the index of nothing.
+        let rest = self.rest.get(symbol.rest as usize).copied();
+        let rest = rest.unwrap_or(RestOfSymbol {
+            value_declaration: if symbol.rest == NO_VALUE { u32::MAX } else { 0 },
+            exports: TableId::NONE,
+            members: TableId::NONE,
+            export_symbol: SymbolId::NONE,
+        });
+        Some(Symbol {
+            name: symbol.name,
+            flags: symbol.flags,
+            decls: match &symbol.decls {
+                StoredDecls::None => &[],
+                StoredDecls::One(decl) => std::slice::from_ref(decl),
+                StoredDecls::Many(at) => self.many.get(*at as usize).copied().unwrap_or_default(),
+            },
+            value_declaration: rest.value_declaration,
+            parent: symbol.parent,
+            exports: rest.exports,
+            members: rest.members,
+            export_symbol: rest.export_symbol,
+        })
+    }
+
+    /// Those of `symbols`, each list at its final size.
+    fn of(symbols: &[GrowingSymbol], arena: &'s Arena) -> Symbols<'s> {
+        let is_plain = |it: &&GrowingSymbol| {
+            it.exports.is_none()
+                && it.members.is_none()
+                && it.export_symbol.is_none()
+                && matches!(it.value_declaration, 0 | u32::MAX)
+        };
+        let plain = symbols.iter().filter(is_plain).count();
+        let many = symbols.iter().filter(|it| it.decls.len() > 1).count();
+        let mut all = Symbols {
+            list: ArenaVec::new_in(arena),
+            rest: ArenaVec::new_in(arena),
+            many: ArenaVec::new_in(arena),
+        };
+        all.list.reserve_exact(symbols.len());
+        all.rest.reserve_exact(symbols.len() - plain);
+        all.many.reserve_exact(many);
+        for symbol in symbols {
+            all.push(symbol.get(), arena);
+        }
+        all
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = Symbol<'_>> {
+        (0..self.list.len()).map(|at| self.at(at))
+    }
+
+    #[inline]
+    fn at(&self, index: usize) -> Symbol<'_> {
+        self.get(index).expect("the symbol is of this file")
+    }
+
+    pub fn reserve_exact(&mut self, additional: usize) {
+        self.list.reserve_exact(additional);
+    }
+
+    /// `arena`: for several declarations.
+    pub fn push(&mut self, symbol: Symbol<'_>, arena: &'s Arena) {
+        let decls = match *symbol.decls {
+            [] => StoredDecls::None,
+            [decl] => StoredDecls::One(decl),
+            ref all => {
+                self.many.push(arena.alloc_slice_copy(all));
+                StoredDecls::Many(self.many.len() as u32 - 1)
+            }
+        };
+        self.list.push(StoredSymbol {
+            name: symbol.name,
+            flags: symbol.flags,
+            decls,
+            parent: symbol.parent,
+            rest: NO_VALUE,
+        });
+        self.set_rest(
+            self.list.len() - 1,
+            RestOfSymbol {
+                value_declaration: symbol.value_declaration,
+                exports: symbol.exports,
+                members: symbol.members,
+                export_symbol: symbol.export_symbol,
+            },
+        );
+    }
+
+    fn set_rest(&mut self, index: usize, rest: RestOfSymbol) {
+        let place = &mut self.list[index].rest;
+        let is_plain =
+            rest.exports.is_none() && rest.members.is_none() && rest.export_symbol.is_none();
+        match (*place, rest.value_declaration) {
+            (FIRST_IS_VALUE | NO_VALUE, 0) if is_plain => *place = FIRST_IS_VALUE,
+            (FIRST_IS_VALUE | NO_VALUE, u32::MAX) if is_plain => *place = NO_VALUE,
+            (FIRST_IS_VALUE | NO_VALUE, _) => {
+                *place = self.rest.len() as u32;
+                self.rest.push(rest);
+            }
+            (at, _) => self.rest[at as usize] = rest,
         }
     }
 
-    fn into_arena(self, arena: &Arena) -> Decls<'_> {
-        match self {
-            DeclsIn::None => DeclsIn::None,
-            DeclsIn::One(decl) => DeclsIn::One(decl),
-            DeclsIn::Many(all) => DeclsIn::Many(few_to_arena(all, arena)),
-        }
+    #[inline]
+    pub fn flags_mut(&mut self, id: SymbolId) -> &mut SymFlags {
+        &mut self.list[id.idx()].flags
     }
-}
 
-impl Decls<'_> {
-    /// `arena`: of any session.
-    pub fn clone_in<'s>(&self, arena: &'s Arena) -> Decls<'s> {
-        match self {
-            DeclsIn::None => DeclsIn::None,
-            DeclsIn::One(decl) => DeclsIn::One(*decl),
-            DeclsIn::Many(all) => DeclsIn::Many(ArenaFew::from_iter_in(all.iter().copied(), arena)),
+    pub fn set_parent(&mut self, id: SymbolId, parent: SymbolId) {
+        self.list[id.idx()].parent = parent;
+    }
+
+    pub fn set_value_declaration(&mut self, id: SymbolId, value_declaration: u32) {
+        let symbol = self.at(id.idx());
+        let rest = RestOfSymbol {
+            value_declaration,
+            exports: symbol.exports,
+            members: symbol.members,
+            export_symbol: symbol.export_symbol,
+        };
+        self.set_rest(id.idx(), rest);
+    }
+
+    /// From now on the thread that `arena` is of adds to them.
+    pub fn transfer_to(&mut self, arena: &'s Arena) {
+        transfer_arena(&mut self.list, arena);
+        transfer_arena(&mut self.rest, arena);
+        transfer_arena(&mut self.many, arena);
+    }
+
+    /// A copy in `arena`, for a program that has the file in common with others.
+    fn copy_in<'a>(&'a self, arena: &'a Arena) -> Symbols<'a> {
+        Symbols {
+            list: vec_from_iter_in(self.list.iter().copied(), arena),
+            rest: vec_from_iter_in(self.rest.iter().copied(), arena),
+            many: vec_from_iter_in(self.many.iter().copied(), arena),
         }
     }
 }
@@ -463,23 +678,6 @@ pub fn takes_over_as_value_declaration(value_declaration: Option<Decl>, node: De
         is_assignment(it) && !is_assignment(node)
             || matches!(it, Decl::Module(_)) && !matches!(node, Decl::Module(_))
     })
-}
-
-impl<S: Storage> std::ops::Deref for DeclsIn<S> {
-    type Target = [Decl];
-    #[inline]
-    fn deref(&self) -> &[Decl] {
-        self.as_slice()
-    }
-}
-
-impl<'a, S: Storage> IntoIterator for &'a DeclsIn<S> {
-    type Item = &'a Decl;
-    type IntoIter = std::slice::Iter<'a, Decl>;
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.as_slice().iter()
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1210,7 +1408,7 @@ pub struct Redeclaration {
 pub struct BoundIn<S: Storage> {
     /// The HIR was too deep to bind. No other field is filled in.
     pub ran_out_of_stack: bool,
-    pub symbols: S::Growing<SymbolIn<S>>,
+    pub symbols: S::Symbols,
     pub scopes: S::List<Scope>,
     /// Each table is a contiguous range of `entries`, in symbol creation order.
     pub tables: S::List<(u32, u32)>,
@@ -1260,15 +1458,15 @@ pub struct BoundIn<S: Storage> {
     /// `getResolvedSymbol` of an identifier. `NONE`: nothing in this file declares it.
     /// `node.Symbol` of a `Decl::Expando` and of an object literal, where `NONE` means that it has
     /// not been created: see `symbol_of_expando_initializer`.
-    pub expr_symbol: S::List<SymbolId>,
+    pub expr_symbol: S::Ids<SymbolId>,
     pub expr_parent: S::List<PackedParent>,
     /// The flow node at a name, a `this`, a `super`, and a narrowable `a.b` or `a[b]`
     /// (`isNarrowableReference`).
     /// `UNREACHABLE` for everything else.
-    pub expr_flow: S::List<FlowId>,
+    pub expr_flow: S::Ids<FlowId>,
     pub stmt_parent: S::List<PackedParent>,
     /// The enclosing scope of a statement.
-    pub stmt_scope: S::List<ScopeId>,
+    pub stmt_scope: S::Ids<ScopeId>,
     /// The enclosing scope of a type.
     pub type_scope: S::List<ScopeId>,
     /// `isResolvedByTypeAlias`: between the type node and a type alias there are only nodes that
@@ -1346,7 +1544,7 @@ pub struct BoundIn<S: Storage> {
     pub computed_symbols: S::Few<(TableId, SymbolId)>,
     pub case_stmt: S::List<StmtId>,
     /// The flow node at the start of each statement.
-    pub stmt_flow: S::List<FlowId>,
+    pub stmt_flow: S::Ids<FlowId>,
     /// The flow node at the end of a `case` that is followed by another, if that end is reachable.
     /// `NONE` otherwise.
     pub case_fallthrough: S::List<FlowId>,
@@ -1493,6 +1691,12 @@ impl<S: Storage> BoundIn<S> {
         }
     }
 
+    #[inline]
+    pub fn symbol(&self, id: SymbolId) -> Symbol<'_> {
+        let symbol = self.symbols.get(id.idx());
+        symbol.expect("the symbol is of this file")
+    }
+
     /// `Parent::None` for what is not an expression of the file.
     #[inline]
     pub fn parent_of_expr(&self, e: ExprId) -> Parent {
@@ -1510,14 +1714,25 @@ impl<S: Storage> BoundIn<S> {
     /// See `expr_symbol`. `NONE` for what is not an expression of the file.
     #[inline]
     pub fn symbol_of_expr(&self, e: ExprId) -> SymbolId {
-        self.expr_symbol.get(e.idx()).copied().unwrap_or_default()
+        self.expr_symbol.id_at(e.idx()).unwrap_or_default()
     }
 
     /// See `expr_flow`. `UNREACHABLE` for what is not an expression of the file.
     #[inline]
     pub fn flow_of_expr(&self, e: ExprId) -> FlowId {
-        let flow = self.expr_flow.get(e.idx()).copied();
-        flow.unwrap_or(UNREACHABLE)
+        self.expr_flow.id_at(e.idx()).unwrap_or(UNREACHABLE)
+    }
+
+    /// See `stmt_flow`. `UNREACHABLE` for what is not a statement of the file.
+    #[inline]
+    pub fn flow_of_stmt(&self, s: StmtId) -> FlowId {
+        self.stmt_flow.id_at(s.idx()).unwrap_or(UNREACHABLE)
+    }
+
+    /// The enclosing scope of a statement. `NONE` for what is not a statement of the file.
+    #[inline]
+    pub fn scope_of_stmt(&self, s: StmtId) -> ScopeId {
+        self.stmt_scope.id_at(s.idx()).unwrap_or_default()
     }
 
     /// The class at whose position the decorator with this parent is evaluated.
@@ -1645,7 +1860,7 @@ impl<S: Storage> BoundIn<S> {
 
     /// `getExportSymbolOfValueSymbolIfExported`, before `getMergedSymbol`.
     pub fn export_symbol_of_value_symbol_if_exported(&self, symbol: SymbolId) -> SymbolId {
-        let local = &self.symbols[symbol.idx()];
+        let local = self.symbol(symbol);
         if local.flags.contains(SymFlags::EXPORT_VALUE) && local.export_symbol.is_some() {
             local.export_symbol
         } else {
@@ -1815,7 +2030,7 @@ impl Bound<'_> {
         let Some(symbol) = self.property_symbol.get(&Decl::Property(p)) else {
             return smallvec::smallvec![p];
         };
-        let declarations = self.symbols[symbol.idx()].decls.iter();
+        let declarations = self.symbol(*symbol).decls.iter();
         declarations
             .filter_map(|declaration| match *declaration {
                 Decl::Property(p) => Some(p),
@@ -1829,7 +2044,7 @@ impl Bound<'_> {
         let Some(symbol) = self.symbols.get(self.member_symbol[m.idx()].idx()) else {
             return false;
         };
-        let container = &self.symbols[symbol.parent.idx()];
+        let container = self.symbol(symbol.parent);
         symbol.name != known::computed
             && [container.members, container.exports]
                 .iter()
@@ -2043,11 +2258,7 @@ impl Bound<'_> {
             let created = self.scopes.get(created.idx());
             created.map_or(ScopeId::NONE, |scope| scope.parent)
         };
-        let of_statement = |it: StmtId| {
-            self.stmt_scope
-                .get(it.idx())
-                .map_or(ScopeId::NONE, |&it| it)
-        };
+        let of_statement = |it: StmtId| self.scope_of_stmt(it);
         match decl {
             Decl::File | Decl::CommonJsVariable => ScopeId(0),
             Decl::Module(it) => self.module_scope[it.idx()],
@@ -2095,7 +2306,7 @@ impl Bound<'_> {
     /// `ExportSymbol` of the local symbol named `name` in `scope`.
     pub fn export_symbol_of_local(&self, scope: ScopeId, name: Atom) -> SymbolId {
         match self.lookup(self.scopes[scope.idx()].locals, name) {
-            Some(local) => self.symbols[local.idx()].export_symbol,
+            Some(local) => self.symbol(local).export_symbol,
             None => SymbolId::NONE,
         }
     }
@@ -2192,7 +2403,7 @@ impl Bound<'_> {
         };
         let locals = self.scopes[self.fns[constructor.idx()].scope.idx()].locals;
         let local = self.lookup(locals, name)?;
-        (meaning & self.symbols[local.idx()].flags)
+        (meaning & self.symbol(local).flags)
             .intersects(SymFlags::VALUE)
             .then_some((code, property))
     }
@@ -2433,13 +2644,8 @@ impl BoundBuilder {
         Bound {
             ran_out_of_stack: self.ran_out_of_stack,
             symbols: {
-                let mut exact = ArenaVec::new_in(arena);
-                exact.reserve_exact(self.symbols.len());
-                exact.extend(
-                    self.symbols
-                        .drain(..)
-                        .map(|symbol| symbol.into_arena(arena)),
-                );
+                let exact = Symbols::of(&self.symbols, arena);
+                self.symbols.clear();
                 exact
             },
             scopes: copy_to_arena(&mut self.scopes, arena),
@@ -2469,11 +2675,11 @@ impl BoundBuilder {
             ambient_specifiers: few_to_arena(std::mem::take(&mut self.ambient_specifiers), arena),
             commonjs_indicator: self.commonjs_indicator,
             module_exports_property: self.module_exports_property,
-            expr_symbol: copy_to_arena(&mut self.expr_symbol, arena),
+            expr_symbol: Narrow::moved_in(arena, &mut self.expr_symbol),
             expr_parent: copy_to_arena(&mut self.expr_parent, arena),
-            expr_flow: copy_to_arena(&mut self.expr_flow, arena),
+            expr_flow: Narrow::moved_in(arena, &mut self.expr_flow),
             stmt_parent: copy_to_arena(&mut self.stmt_parent, arena),
-            stmt_scope: copy_to_arena(&mut self.stmt_scope, arena),
+            stmt_scope: Narrow::moved_in(arena, &mut self.stmt_scope),
             type_scope: copy_to_arena(&mut self.type_scope, arena),
             type_by_alias: copy_to_arena(&mut self.type_by_alias, arena),
             this_in_type_literal: set_to_arena(
@@ -2527,7 +2733,7 @@ impl BoundBuilder {
             ),
             computed_symbols: few_to_arena(std::mem::take(&mut self.computed_symbols), arena),
             case_stmt: copy_to_arena(&mut self.case_stmt, arena),
-            stmt_flow: copy_to_arena(&mut self.stmt_flow, arena),
+            stmt_flow: Narrow::moved_in(arena, &mut self.stmt_flow),
             case_fallthrough: copy_to_arena(&mut self.case_fallthrough, arena),
             hoisted_vars: few_to_arena(std::mem::take(&mut self.hoisted_vars), arena),
             refused_decorators: few_to_arena(std::mem::take(&mut self.refused_decorators), arena),
@@ -2575,19 +2781,7 @@ impl Bound<'_> {
     pub fn share<'s>(&'s self, arena: &'s Arena) -> Bound<'s> {
         Bound {
             ran_out_of_stack: self.ran_out_of_stack,
-            symbols: {
-                let copy = |symbol: &Symbol<'_>| Symbol {
-                    name: symbol.name,
-                    flags: symbol.flags,
-                    decls: symbol.decls.clone_in(arena),
-                    value_declaration: symbol.value_declaration,
-                    parent: symbol.parent,
-                    exports: symbol.exports,
-                    members: symbol.members,
-                    export_symbol: symbol.export_symbol,
-                };
-                vec_from_iter_in(self.symbols.iter().map(copy), arena)
-            },
+            symbols: self.symbols.copy_in(arena),
             scopes: Fixed::shared(&self.scopes),
             tables: Fixed::shared(&self.tables),
             entries: Fixed::shared(&self.entries),
@@ -2618,11 +2812,11 @@ impl Bound<'_> {
             ),
             commonjs_indicator: self.commonjs_indicator,
             module_exports_property: self.module_exports_property,
-            expr_symbol: Fixed::shared(&self.expr_symbol),
+            expr_symbol: self.expr_symbol.shared(),
             expr_parent: Fixed::shared(&self.expr_parent),
-            expr_flow: Fixed::shared(&self.expr_flow),
+            expr_flow: self.expr_flow.shared(),
             stmt_parent: Fixed::shared(&self.stmt_parent),
-            stmt_scope: Fixed::shared(&self.stmt_scope),
+            stmt_scope: self.stmt_scope.shared(),
             type_scope: Fixed::shared(&self.type_scope),
             type_by_alias: Fixed::shared(&self.type_by_alias),
             this_in_type_literal: copy_of_set(&self.this_in_type_literal, arena),
@@ -2682,7 +2876,7 @@ impl Bound<'_> {
             ),
             computed_symbols: ArenaFew::from_iter_in(self.computed_symbols.iter().cloned(), arena),
             case_stmt: Fixed::shared(&self.case_stmt),
-            stmt_flow: Fixed::shared(&self.stmt_flow),
+            stmt_flow: self.stmt_flow.shared(),
             case_fallthrough: Fixed::shared(&self.case_fallthrough),
             hoisted_vars: ArenaFew::from_iter_in(self.hoisted_vars.iter().cloned(), arena),
             refused_decorators: ArenaFew::from_iter_in(

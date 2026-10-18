@@ -665,7 +665,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             if matches!(s.kind, ScopeKind::File | ScopeKind::Module(_))
                 && let Some(local) = bound.lookup(s.locals, name)
             {
-                let leads_there = bound.symbols[local.idx()].export_symbol.is_some()
+                let leads_there = bound.symbol(local).export_symbol.is_some()
                     && files.export_symbol_of_value_symbol_if_exported(files.sym(file, local))
                         == exported;
                 return if leads_there {
@@ -1168,7 +1168,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             // `getCombinedLocalAndExportSymbolFlags`
             let own = files.symbol(symbol);
             let exported = match own.export_symbol.is_some() {
-                true => bound.symbols[own.export_symbol.idx()].flags,
+                true => bound.symbol(own.export_symbol).flags,
                 false => SymFlags::empty(),
             };
             let text = files.atoms.bytes(name);

@@ -38,7 +38,7 @@ impl Checker<'_, '_> {
     /// `isSourceElementUnreachable` for a potentially executable node.
     fn is_source_element_unreachable(&mut self, file: FileId, s: StmtId) -> bool {
         let hir = self.hir(file);
-        let flow = self.bound(file).stmt_flow[s.idx()];
+        let flow = self.bound(file).flow_of_stmt(s);
         // `ShouldPreserveConstEnums`
         let preserves_const_enums =
             self.p.files.options.preserve_const_enums || self.p.files.options.isolated_modules;

@@ -68,10 +68,10 @@ impl<'p> Checker<'p, '_> {
             {
                 let found = bound
                     .lookup(bound.scopes[scope.idx()].locals, name)
-                    .filter(|&s| bound.symbols[s.idx()].flags.intersects(SymFlags::VARIABLE));
+                    .filter(|&s| bound.symbol(s).flags.intersects(SymFlags::VARIABLE));
                 if let Some(found) = found {
                     let is_lexical = found != own
-                        && bound.symbols[found.idx()].decls.iter().any(|&d| {
+                        && bound.symbol(found).decls.iter().any(|&d| {
                             let Decl::Var(mut root) = d else { return false };
                             loop {
                                 match bound.pat_parent[root.idx()] {

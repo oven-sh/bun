@@ -1344,8 +1344,8 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         };
         let own = bound.member_symbol[first.idx()];
-        if own.is_some() && bound.symbols[own.idx()].parent.is_some() {
-            let container = self.files().sym(file, bound.symbols[own.idx()].parent);
+        if own.is_some() && bound.symbol(own).parent.is_some() {
+            let container = self.files().sym(file, bound.symbol(own).parent);
             self.late_bound_members(container, false);
         }
     }
@@ -2244,7 +2244,7 @@ impl<'p, 's> Checker<'p, 's> {
                     None => {
                         let bound = self.bound(file);
                         let own = bound.symbol_of_declaration(Decl::Member(first));
-                        let parent = bound.symbols[own.idx()].parent;
+                        let parent = bound.symbol(own).parent;
                         let known = parent.is_some()
                             && (self.late_bound_members(self.files().sym(file, parent), is_static))
                                 .is_some();
@@ -4521,7 +4521,7 @@ impl<'p, 's> Checker<'p, 's> {
         owner: SymbolId,
     ) -> Shape<'s> {
         // Every function expression and every object literal reaches this point.
-        if owner.is_none() || self.bound(file).symbols[owner.idx()].exports.is_none() {
+        if owner.is_none() || self.bound(file).symbol(owner).exports.is_none() {
             return shape;
         }
         let mut b = Builder::of(shape, self.arena);
@@ -4549,7 +4549,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let (bound, files) = (self.bound(file), self.files());
-        let of = &bound.symbols[bound.class_symbol[class.idx()].idx()];
+        let of = bound.symbol(bound.class_symbol[class.idx()]);
         for &(name, symbol) in bound.table(if is_static { of.exports } else { of.members }) {
             let sym = files.sym(file, symbol);
             if let Some((of, Decl::ThisProperty(first))) = files.value_declaration(sym)

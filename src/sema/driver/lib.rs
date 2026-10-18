@@ -4077,6 +4077,10 @@ fn check_named_files(
     let written = std::mem::take(&mut project.raw_compiler_options);
     let is_true = |name: &[u8]| written.contains(&(name.to_vec(), Json::Bool(true)));
     project.options.drops_unreferenced = !request.retains_everything;
+    project.options.keeps_comments = request.retains_everything
+        || request.loaded.is_some()
+        || request.checked.is_some()
+        || request.after_file.is_some();
     project.options.orders_types_by_content = request.plan_options.orders_types_by_content;
     project.options.shares_at_once =
         request.plan_options.shares_at_once && request.plan_options.checkers == 0;

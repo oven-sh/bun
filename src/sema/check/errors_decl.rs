@@ -99,7 +99,7 @@ impl Checker<'_, '_> {
     fn check_merged_declarations(&mut self, file: FileId) {
         let bound = self.bound(file);
         for i in 0..bound.symbols.len() {
-            let symbol = &bound.symbols[i];
+            let symbol = bound.symbol(SymbolId(i as u32));
             if symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED)
                 || !symbol
                     .flags
@@ -213,7 +213,7 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            for &node in &symbol.decls {
+            for &node in symbol.decls {
                 let is_checked = match node {
                     Decl::Var(_) | Decl::ParameterProperty(_) => true,
                     // `bindParameter` declares the property last, so that is the symbol of the node.

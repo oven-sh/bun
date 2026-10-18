@@ -391,6 +391,7 @@ impl Options {
             skip_default_lib_check,
             no_check,
             drops_unreferenced,
+            keeps_comments,
             captures_suggestions,
             emits_first,
             orders_types_by_content,
@@ -485,7 +486,7 @@ impl Options {
         } = self;
         let _ = write!(
             key,
-            "{skip_lib_check:?} {skip_default_lib_check:?} {no_check:?} {drops_unreferenced:?} {captures_suggestions:?} {emits_first:?} {orders_types_by_content:?} {shares_at_once:?} {current_directory:?} {lib_dir:?} "
+            "{skip_lib_check:?} {skip_default_lib_check:?} {no_check:?} {drops_unreferenced:?} {keeps_comments:?} {captures_suggestions:?} {emits_first:?} {orders_types_by_content:?} {shares_at_once:?} {current_directory:?} {lib_dir:?} "
         );
         let _ = write!(
             key,
@@ -760,6 +761,8 @@ pub struct ParseOptions {
     /// The source text of TypeScript's own libraries is only consulted where they are checked. With `libReplacement` a
     /// library can be any file.
     pub keeps_the_text_of_libraries: bool,
+    /// `Options::keeps_comments`
+    pub keeps_comments: bool,
     pub bind: crate::bind::BindOptions,
 }
 
@@ -782,6 +785,9 @@ pub struct Options {
     /// everything computed about it. Not a TypeScript option. A caller that wants to query such a
     /// file afterwards leaves it off.
     pub drops_unreferenced: bool,
+    /// `hir::FileIn::comments` are kept, which the checker does not read. Not a TypeScript option. For a caller that goes on
+    /// to read the files of the program.
+    pub keeps_comments: bool,
     /// `GetSuggestionDiagnostics` are reported as well. Not a TypeScript option: its tests use
     /// `@captureSuggestions`.
     pub captures_suggestions: bool,
@@ -1017,6 +1023,7 @@ impl Options {
             jsx_imports_its_factory: matches!(self.jsx, JsxEmit::ReactJsx | JsxEmit::ReactJsxDev),
             keeps_the_text_of_libraries: self.lib_replacement
                 || !(self.skip_lib_check || self.skip_default_lib_check),
+            keeps_comments: self.keeps_comments,
             bind: crate::bind::BindOptions {
                 emit_standard_class_fields: self.emit_standard_class_fields,
                 before_es2020: is_before(ScriptTarget::ES2020),

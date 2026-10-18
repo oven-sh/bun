@@ -812,7 +812,7 @@ impl Checker<'_, '_> {
         let files = self.files();
         for part in files.parts(module) {
             let hir = self.hir(part.file);
-            for &decl in &files.symbol(part).decls {
+            for &decl in files.symbol(part).decls {
                 let body = match decl {
                     Decl::File => hir.body,
                     Decl::Module(m) => hir[m].body,
@@ -2340,9 +2340,9 @@ impl Files<'_> {
                     // tsgo does not put the name of a function or class expression in any symbol
                     // table: `Resolve` compares it directly.
                     let is_in_table = |&&(_, id): &&(Atom, crate::bind::SymbolId)| match bound
-                        .symbols[id.idx()]
-                    .decls
-                    .first()
+                        .symbol(id)
+                        .decls
+                        .first()
                     {
                         Some(&Decl::Fn(f)) => hir[f].kind != FnKind::Expr,
                         Some(&Decl::Class(c)) => {

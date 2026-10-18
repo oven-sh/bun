@@ -453,7 +453,7 @@ impl Checker<'_, '_> {
                 let bound = self.bound(*file);
                 let member = bound.symbol_of_declaration(Decl::Property(*written));
                 let flags = match member.is_some() {
-                    true => bound.symbols[member.idx()].flags & SymFlags::CLASS_MEMBER,
+                    true => bound.symbol(member).flags & SymFlags::CLASS_MEMBER,
                     false => SymFlags::empty(),
                 };
                 match flags.intersects(SymFlags::ACCESSOR) {

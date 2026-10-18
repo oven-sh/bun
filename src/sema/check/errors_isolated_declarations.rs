@@ -1281,7 +1281,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let symbol = bound.pat_symbol[decl.pat.idx()];
                 let is_declared_once = symbol.is_none()
                     || {
-                        let decls = bound.symbols[symbol.idx()].decls.as_slice();
+                        let decls = bound.symbol(symbol).decls;
                         decls.len() == 1
                         || decls
                             .iter()

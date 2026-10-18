@@ -296,7 +296,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Some(&(crate::bind::Decl::Var(declared) | crate::bind::Decl::Param(declared))) =
-            bound.symbols[sym.id.idx()].decls.first()
+            bound.symbol(sym.id).decls.first()
         else {
             return false;
         };
@@ -2044,13 +2044,10 @@ impl<'p, 's> Checker<'p, 's> {
                         let symbol = bound.symbol_of_expr(obj);
                         if symbol.is_some()
                             && let Some(pat) =
-                                bound.symbols[symbol.idx()]
-                                    .decls
-                                    .iter()
-                                    .find_map(|&d| match d {
-                                        crate::bind::Decl::Var(pat) => Some(pat),
-                                        _ => None,
-                                    })
+                                bound.symbol(symbol).decls.iter().find_map(|&d| match d {
+                                    crate::bind::Decl::Var(pat) => Some(pat),
+                                    _ => None,
+                                })
                             && let PatParent::Var(d) = bound.pat_parent[pat.idx()]
                             && hir[d].ty.is_some()
                         {

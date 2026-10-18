@@ -312,10 +312,12 @@ impl<T: std::fmt::Debug> std::fmt::Debug for ArenaFew<'_, T> {
 /// Where the lists of a `FileIn` or a `BoundIn` are stored.
 pub trait Storage {
     type List<T: 'static>: DerefMut<Target = [T]>;
-    /// A list that a program adds to when the file is loaded.
-    type Growing<T>: DerefMut<Target = [T]>;
+    /// `BoundIn::symbols`
+    type Symbols: crate::bind::SymbolList;
     /// A list of nodes of a `FileIn`.
     type Nodes<T: 'static>: DerefMut<Target = [T]>;
+    /// A list of ids of a `BoundIn`, read one at a time.
+    type Ids<T: Id>: Ids<T> + Default;
     /// A list that is empty in most files.
     type Few<T: 'static>: DerefMut<Target = [T]>;
     type Map<K, V>;
@@ -334,8 +336,9 @@ pub struct Growable;
 
 impl Storage for Growable {
     type List<T: 'static> = Vec<T>;
-    type Growing<T> = Vec<T>;
+    type Symbols = Vec<crate::bind::GrowingSymbol>;
     type Nodes<T: 'static> = Vec<T>;
+    type Ids<T: Id> = Vec<T>;
     type Few<T: 'static> = Vec<T>;
     type Map<K, V> = FxHashMap<K, V>;
     type Set<K> = FxHashSet<K>;
@@ -350,8 +353,9 @@ pub struct InArena<'s>(PhantomData<&'s Arena>);
 
 impl<'s> Storage for InArena<'s> {
     type List<T: 'static> = Fixed<'s, T>;
-    type Growing<T> = ArenaVec<'s, T>;
+    type Symbols = crate::bind::Symbols<'s>;
     type Nodes<T: 'static> = Fixed<'s, T>;
+    type Ids<T: Id> = Narrow<'s, T>;
     type Few<T: 'static> = ArenaFew<'s, T>;
     type Map<K, V> = ArenaHashMap<'s, K, V>;
     type Set<K> = ArenaHashSet<'s, K>;
@@ -433,6 +437,86 @@ impl<'a, T> IntoIterator for &'a Fixed<'_, T> {
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+/// What `define_id` declares.
+pub trait Id: Copy + From<u32> + Into<u32> + 'static {}
+
+impl<T: Copy + From<u32> + Into<u32> + 'static> Id for T {}
+
+/// See [`Storage::Ids`].
+pub trait Ids<T> {
+    /// `None`: the list is shorter.
+    fn id_at(&self, index: usize) -> Option<T>;
+}
+
+impl<T: Copy> Ids<T> for Vec<T> {
+    #[inline]
+    fn id_at(&self, index: usize) -> Option<T> {
+        self.get(index).copied()
+    }
+}
+
+/// A list of ids that neither grows nor shrinks. An id takes two bytes if all of them fit, as in nearly every file:
+/// `NONE` is then `u16::MAX`.
+pub enum Narrow<'s, T> {
+    Short(Fixed<'s, u16>),
+    Long(Fixed<'s, T>),
+}
+
+impl<T> Default for Narrow<'_, T> {
+    fn default() -> Self {
+        Narrow::Short(Fixed::default())
+    }
+}
+
+impl<T: Id> Ids<T> for Narrow<'_, T> {
+    #[inline]
+    fn id_at(&self, index: usize) -> Option<T> {
+        match self {
+            Narrow::Short(list) => Some(T::from(match *list.get(index)? {
+                u16::MAX => u32::MAX,
+                id => u32::from(id),
+            })),
+            Narrow::Long(list) => list.get(index).copied(),
+        }
+    }
+}
+
+impl<'s, T: Id> Narrow<'s, T> {
+    /// Copies `list` to `arena`, and empties it. It retains its capacity.
+    pub(crate) fn moved_in(arena: &'s Arena, list: &mut Vec<T>) -> Self {
+        let fits =
+            |found: bool, &id: &T| found & (id.into().wrapping_add(1) <= u32::from(u16::MAX));
+        if !list.iter().fold(true, fits) {
+            return Narrow::Long(copy_to_arena(list, arena));
+        }
+        let short = list.iter().map(|&id| id.into() as u16);
+        let short = Fixed(FixedIn::Arena(ArenaBox::from_iter_in(short, arena)));
+        list.clear();
+        Narrow::Short(short)
+    }
+
+    pub(crate) fn shared(&'s self) -> Self {
+        match self {
+            Narrow::Short(list) => Narrow::Short(Fixed::shared(list)),
+            Narrow::Long(list) => Narrow::Long(Fixed::shared(list)),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Narrow::Short(list) => list.len(),
+            Narrow::Long(list) => list.len(),
+        }
+    }
+
+    /// Passes each id to `change`. The list is then this program's own, in `arena`.
+    pub(crate) fn change_each_in(&mut self, arena: &'s Arena, change: impl FnMut(&mut T)) {
+        let mut all: Vec<T> = (0..self.len()).filter_map(|at| self.id_at(at)).collect();
+        all.iter_mut().for_each(change);
+        *self = Narrow::moved_in(arena, &mut all);
     }
 }
 

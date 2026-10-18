@@ -1580,7 +1580,7 @@ impl<'p, 's> Checker<'p, 's> {
         // the table of a merged module, which holds the merged symbols themselves.
         let bound = self.bound(file);
         bound
-            .table(bound.symbols[bound.file_symbol.idx()].exports)
+            .table(bound.symbol(bound.file_symbol).exports)
             .iter()
             .any(|&(_, id)| {
                 let merged = files.sym(file, id);
@@ -1629,7 +1629,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `bindFunctionExpression`: the name of a function expression is in no table. Here it
             // is alone in a scope around that of the function.
             let only = match bound.table(s.locals) {
-                &[(_, only)] => bound.symbols[only.idx()].decls.first(),
+                &[(_, only)] => bound.symbol(only).decls.first(),
                 _ => None,
             };
             let holds_function_name =

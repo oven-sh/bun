@@ -1553,6 +1553,20 @@ impl TypeKey<'_> {
         }
     }
 
+    /// `Follow::is_bound` of the `TypeData`.
+    fn is_bound(self, own: &OwnStore) -> bool {
+        match self {
+            TypeKey::Data(data) => data.is_bound(own),
+            TypeKey::Union(types)
+            | TypeKey::Intersection(types)
+            | TypeKey::Tuple { elems: types, .. } => types.is_bound(own),
+            TypeKey::Ref { target, args } => target.is_bound(own) || args.is_bound(own),
+            TypeKey::Fns { decls, mapper } => {
+                decls.iter().any(|decl| decl.0.is_bound(own)) || mapper.is_bound(own)
+            }
+        }
+    }
+
     /// `Follow::mentions_own` of the `TypeData`. The label of an element of a tuple is a declared
     /// name.
     fn mentions_own(self) -> bool {
@@ -1630,6 +1644,18 @@ impl ProvenanceKey<'_> {
             && self.is_array_literal == provenance.is_array_literal
             && self.is_array_pattern == provenance.is_array_pattern
             && self.has_other_instantiation == provenance.has_other_instantiation
+    }
+
+    /// `Follow::is_bound` of the `Provenance`.
+    fn is_bound(self, own: &OwnStore) -> bool {
+        (self.alias)
+            .is_some_and(|(alias, arguments)| alias.is_bound(own) || arguments.is_bound(own))
+            || match self.origin {
+                OriginKey::None => false,
+                OriginKey::Union(types) | OriginKey::Intersection(types) => types.is_bound(own),
+                OriginKey::Keyof(ty) => ty.is_bound(own),
+            }
+            || self.stored_under.is_bound(own)
     }
 
     /// `Follow::mentions_own` of the `Provenance`.
@@ -2409,26 +2435,34 @@ type Of<'s, V> = for<'a> fn(&'a OwnStore<'s>) -> &'a Own<'s, V>;
 /// Looks up `key` among the task-local records and the published ones, or else creates a new
 /// record.
 /// `is_it`: whether a record matches `key`. `make`: builds the record for `key`, given the id that it
-/// has if it is task-local, and returns where it goes (`Types::home_of`). `mentions_own`: whether
-/// `key` is known to reference a task-local record, which no published record does. It is asked once
-/// the task-local records have been searched.
+/// has if it is task-local, and returns where it goes (`Types::home_of`). `is_bound`:
+/// `Follow::is_bound` of the record for `key`. `mentions_own`: whether `key` is known to reference a
+/// task-local record, which no published record does.
+///
+/// A bound record is never published. And a task that publishes what it creates keeps nothing else. So there the key says
+/// which of the two indexes can have it, and only that one is searched.
 #[inline]
 fn intern_record<'s, V: Record, K>(
     (published, own, kind): (&Interned<'s, V>, &OwnStore<'s>, Kind),
     of: Of<'s, V>,
     (spread, key): (u64, K),
+    is_bound: impl FnOnce(&K) -> bool,
     mentions_own: impl FnOnce(&K) -> bool,
     is_it: impl Fn(&V, &K) -> bool,
     make: impl FnOnce(K, u32) -> (V, Home<'s>),
 ) -> u32 {
     let mine = of(own);
-    let is_record = |id: u32| is_it(mine.records.of_either(id), &key);
-    let vacancy = match mine.found.find_or_vacancy(spread, is_record) {
-        Ok(id) => return id,
-        Err(vacancy) => vacancy,
-    };
+    let (key_is_bound, keeps_all) = (is_bound(&key), own.sharing != Sharing::Publishes);
+    let mut vacancy = None;
+    if key_is_bound || keeps_all {
+        let is_record = |id: u32| is_it(mine.records.of_either(id), &key);
+        match mine.found.find_or_vacancy(spread, is_record) {
+            Ok(id) => return id,
+            Err(free) => vacancy = Some(free),
+        }
+    }
     let find_published = || published.find(spread, |record| is_it(record, &key));
-    let known = if mentions_own(&key) {
+    let known = if key_is_bound || keeps_all && mentions_own(&key) {
         assert!(
             !CHECKS_THE_LOOKUPS_IT_SKIPS || find_published().is_none(),
             "a published record equals a key that references a task-local record"
@@ -2443,12 +2477,17 @@ fn intern_record<'s, V: Record, K>(
     let index = mine.records.len();
     match make(key, index | LOCAL) {
         (record, Home::Own { is_bound }) => {
+            debug_assert_eq!(is_bound, key_is_bound);
             own.log(kind, index);
             mine.push(record, is_bound);
-            mine.found.fill(vacancy, spread, index | LOCAL);
+            match vacancy {
+                Some(vacancy) => mine.found.fill(vacancy, spread, index | LOCAL),
+                None => mine.found.add(spread, index | LOCAL),
+            }
             index | LOCAL
         }
         (record, Home::Published(id)) => {
+            debug_assert!(!key_is_bound);
             let id = published.place(spread, id, record);
             own.wait_at(Place::RecordPublished);
             id
@@ -3845,6 +3884,9 @@ impl<'p, 's> Types<'p, 's> {
             |own| &own.types,
             (spread, key),
             |(data, provenance)| {
+                data.is_bound(self.own) || provenance.is_some_and(|it| it.is_bound(self.own))
+            },
+            |(data, provenance)| {
                 SKIPS_LOOKUPS_OF_OWN_KEYS
                     && (data.mentions_own() || provenance.is_some_and(|it| it.mentions_own()))
             },
@@ -3891,6 +3933,7 @@ impl<'p, 's> Types<'p, 's> {
             (&self.published.types, self.own, Kind::Type),
             |own| &own.types,
             (spread_hash(&created), created),
+            |created| created.is_bound(self.own),
             |created| SKIPS_LOOKUPS_OF_OWN_KEYS && created.mentions_own(),
             |record, created| record.created == *created,
             |created, id| self.new_record_of_task(created, id),
@@ -3988,6 +4031,7 @@ impl<'p, 's> Types<'p, 's> {
             (&self.published.sigs, self.own, Kind::Sig),
             |own| &own.sigs,
             (spread_hash(&data), data),
+            |data| data.is_bound(self.own),
             |data| SKIPS_LOOKUPS_OF_OWN_KEYS && data.mentions_own(),
             |record, data| record == data,
             |data, _| {
@@ -4011,6 +4055,7 @@ impl<'p, 's> Types<'p, 's> {
             (&self.published.components, self.own, Kind::Components),
             |own| &own.components,
             (spread_hash(list), list),
+            |list| list.is_bound(self.own),
             |_| false,
             |record, list| **record == **list,
             |list, _| {
@@ -4053,6 +4098,7 @@ impl<'p, 's> Types<'p, 's> {
             (&self.published.mappers, self.own, Kind::Mapper),
             |own| &own.mappers,
             (spread_hash(&Pairs(pairs)), pairs),
+            |pairs| pairs.is_bound(self.own),
             |pairs| pairs.iter().any(MaybeLocal::is_local),
             |record, pairs| *record.0 == **pairs,
             |pairs, _| {

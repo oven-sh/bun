@@ -137,7 +137,9 @@ impl Checker<'_, '_> {
         // `getTypeOfNode` of its name is the type of the alias target.
         let required = self.bound(file).pat_symbol[pat.idx()];
         if required.is_some()
-            && self.bound(file).symbols[required.idx()]
+            && self
+                .bound(file)
+                .symbol(required)
                 .flags
                 .contains(SymFlags::ALIAS)
         {

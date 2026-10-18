@@ -65,7 +65,7 @@ impl Checker<'_, '_> {
     /// enum. 0: the tables do not determine it.
     fn end_of_declaring_statement(&self, file: FileId, local: SymbolId) -> u32 {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let symbol = &bound.symbols[local.idx()];
+        let symbol = bound.symbol(local);
         let is_block_scoped = SymFlags::BLOCK_SCOPED_VARIABLE | SymFlags::CLASS | SymFlags::ENUM;
         if !symbol.flags.intersects(is_block_scoped) {
             return 1;

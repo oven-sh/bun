@@ -27,7 +27,7 @@ impl Checker<'_, '_> {
             return;
         }
         for i in 0..bound.symbols.len() {
-            let (id, symbol) = (SymbolId(i as u32), &bound.symbols[i]);
+            let (id, symbol) = (SymbolId(i as u32), bound.symbol(SymbolId(i as u32)));
             // "If localSymbol is defined on node then node itself is exported", or else "symbol might contain other declarations that
             // are exported".
             if symbol.export_symbol.is_some() && symbol.decls.len() > 1 {
@@ -48,10 +48,10 @@ impl Checker<'_, '_> {
             return;
         }
         if let Decl::Fn(function) = decl
-            && bound.symbols[symbol.idx()].parent.is_some()
+            && bound.symbol(symbol).parent.is_some()
             && let Some(scope) = bound.scope_of_declaration(hir, decl).some()
             && let Some(local) = bound.lookup(bound.scopes[scope.idx()].locals, hir[function].name)
-            && bound.symbols[local.idx()].export_symbol == symbol
+            && bound.symbol(local).export_symbol == symbol
         {
             self.check_function_or_constructor_symbol_at(file, local, Some(decl));
         }
@@ -68,7 +68,7 @@ impl Checker<'_, '_> {
         at: Option<Decl>,
     ) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        let symbol = &bound.symbols[id.idx()];
+        let symbol = bound.symbol(id);
         let first = symbol.decls.iter().find_map(|&decl| {
             let function = self.function_of_declaration((file, decl))?;
             Some((decl, function))
@@ -435,7 +435,7 @@ impl Checker<'_, '_> {
             let container = match (decl, statement) {
                 // The type literal, which is no export context.
                 (Decl::Member(_), _) => None,
-                (_, Some(s)) => bound.stmt_scope[s.idx()].some(),
+                (_, Some(s)) => bound.scope_of_stmt(s).some(),
                 _ => bound.scope_of_declaration(hir, decl).some(),
             };
             if container
@@ -587,10 +587,7 @@ impl Checker<'_, '_> {
     /// `checkExportsOnMergedDeclarations` for the local symbol `symbol` of `file`, which has an
     /// `ExportSymbol`.
     fn check_exports_on_merged_declarations(&mut self, file: FileId, symbol: SymbolId) {
-        let (hir, declarations) = (
-            self.hir(file),
-            &self.bound(file).symbols[symbol.idx()].decls,
-        );
+        let (hir, declarations) = (self.hir(file), self.bound(file).symbol(symbol).decls);
         // The declaration kinds that run this check: a class, an interface, an enum, a namespace, a
         // variable, a type alias. Not a function or an import.
         let asks = |decl: &Decl| {

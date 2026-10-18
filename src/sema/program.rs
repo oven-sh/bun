@@ -80,11 +80,15 @@ enum TransientCandidate<'s> {
     Unresolved(SymbolId),
 }
 
-fn add_transient_symbols<'s>(module: &mut Module<'s>, created: Vec<(TransientSymbol, Symbol<'s>)>) {
+fn add_transient_symbols<'s>(
+    module: &mut Module<'s>,
+    created: Vec<(TransientSymbol, Symbol<'s>)>,
+    arena: &'s Arena,
+) {
     module.bound.symbols.reserve_exact(created.len());
     for (mut links, symbol) in created {
         links.symbol = SymbolId(module.bound.symbols.len() as u32);
-        module.bound.symbols.push(symbol);
+        module.bound.symbols.push(symbol, arena);
         module.transient_symbols.push(links);
     }
 }
@@ -2994,7 +2998,7 @@ fn module_augmentations(hir: &hir::File, atoms: &Interner) -> Vec<ModuleId> {
 /// `collected`, the `module_augmentations` of the file.
 fn merges_module_augmentation(bound: &Bound, collected: &[ModuleId], symbol: SymbolId) -> bool {
     matches!(
-        bound.symbols[symbol.idx()].decls.first(),
+        bound.symbol(symbol).decls.first(),
         Some(Decl::Module(first)) if collected.contains(first)
     )
 }
@@ -5594,7 +5598,7 @@ impl<'s> Files<'s> {
             keep_list(session, &mut module.hir.jsdoc_member_comments);
             keep_list(session, &mut module.hir.jsdoc_param_errors);
             // The merge adds symbols, on the thread that loads. No other list of a module grows from here on.
-            transfer_arena(&mut module.bound.symbols, arena);
+            module.bound.symbols.transfer_to(arena);
             transfer_arena(&mut module.transient_symbols, arena);
             let (hir, bound) = (&module.hir, &module.bound);
             let targets: Vec<FileId> =
@@ -6218,6 +6222,9 @@ impl<'s> Files<'s> {
         text: Cow<'static, [u8]>,
     ) -> (hir::File<'s>, Bound<'s>) {
         let mut hir = host.parse(arena, path, &text, atoms, options);
+        if !options.keeps_comments {
+            hir.comments = Default::default();
+        }
         if !is_lib || options.keeps_the_text_of_libraries {
             hir.text = text;
         }
@@ -7102,7 +7109,7 @@ impl<'s> Files<'s> {
                     if !merges_module_augmentation(&module.bound, &collected, augmentation) {
                         continue;
                     }
-                    let exports = module.bound.symbols[augmentation.idx()].exports;
+                    let exports = module.bound.symbol(augmentation).exports;
                     additions.extend(
                         module
                             .bound
@@ -7267,9 +7274,8 @@ impl<'s> Files<'s> {
                 }
             };
             let bound = &mut self.modules[of_file[0].0.file.idx()].bound;
-            bound.expr_symbol.make_own_in(self.arena);
             bound.entries.make_own_in(self.arena);
-            bound.expr_symbol.iter_mut().for_each(is_placeholder);
+            (bound.expr_symbol).change_each_in(self.arena, is_placeholder);
             bound
                 .entries
                 .iter_mut()
@@ -7330,23 +7336,25 @@ impl<'s> Files<'s> {
         links
     }
 
-    fn symbol_mut(&mut self, sym: Sym) -> &mut Symbol<'s> {
-        &mut self.modules[sym.file.idx()].bound.symbols[sym.id.idx()]
+    fn symbols_mut(&mut self, file: FileId) -> &mut bind::Symbols<'s> {
+        &mut self.modules[file.idx()].bound.symbols
     }
 
     /// `newSymbol`: a symbol of the first file.
     fn new_symbol(&mut self, flags: SymFlags, name: Atom) -> Sym {
+        let arena = self.arena;
         let symbols = &mut self.modules[0].bound.symbols;
-        symbols.push(Symbol {
+        let symbol = Symbol {
             name,
             flags: flags | SymFlags::TRANSIENT,
-            decls: bind::Decls::None,
+            decls: &[],
             value_declaration: u32::MAX,
             parent: SymbolId::NONE,
             exports: bind::TableId::NONE,
             members: bind::TableId::NONE,
             export_symbol: SymbolId::NONE,
-        });
+        };
+        symbols.push(symbol, arena);
         Sym {
             file: FileId(0),
             id: SymbolId(symbols.len() as u32 - 1),
@@ -7397,7 +7405,7 @@ impl<'s> Files<'s> {
 
     /// `recordMergedSymbol`
     fn record_merged_symbol(&mut self, target: Sym, source: Sym) {
-        self.symbol_mut(source).flags |= SymFlags::MERGED;
+        *self.symbols_mut(source.file).flags_mut(source.id) |= SymFlags::MERGED;
         self.merged_symbols.insert(source, target);
     }
 
@@ -7422,7 +7430,7 @@ impl<'s> Files<'s> {
         let symbol = Symbol {
             name: self.symbol(target).name,
             flags,
-            decls: bind::Decls::None,
+            decls: &[],
             value_declaration: self.symbol(target).value_declaration,
             parent: SymbolId::NONE,
             exports: bind::TableId::NONE,
@@ -7438,7 +7446,7 @@ impl<'s> Files<'s> {
     fn clone_type_as_module_type(&mut self, symbol: Sym, originating_import: Sym) -> Sym {
         let created = vec![self.transient_symbol_for(originating_import.id, symbol, false)];
         let module = &mut self.modules[originating_import.file.idx()];
-        add_transient_symbols(module, created);
+        add_transient_symbols(module, created, self.arena);
         let clone = Sym {
             file: originating_import.file,
             id: SymbolId(module.bound.symbols.len() as u32 - 1),
@@ -7658,7 +7666,7 @@ impl<'s> Files<'s> {
             }
             self.has_symbols_to_combine |= created.iter().any(|it| it.0.is_combined);
             counts[file.idx()] = counts[file.idx()].saturating_add(created.len());
-            add_transient_symbols(&mut self.modules[file.idx()], created);
+            add_transient_symbols(&mut self.modules[file.idx()], created, self.arena);
         }
         for (count, module) in counts.iter_mut().zip(self.modules.iter()) {
             if *count == NOT_COUNTED {
@@ -7675,24 +7683,19 @@ impl<'s> Files<'s> {
         let parts = self.merged_parts.remove(&symbol);
         let exports = self.merged_exports.remove(&symbol);
         let members = self.merged_members.remove(&symbol);
-        let symbols = &mut self.modules[symbol.file.idx()].bound.symbols;
-        let cloned = &symbols[symbol.id.idx()];
+        let arena = self.arena;
+        let cloned = self.symbol(symbol);
         let clone = Symbol {
-            name: cloned.name,
             flags: cloned.flags | SymFlags::MERGED | SymFlags::TRANSIENT,
-            decls: cloned.decls.clone_in(self.arena),
-            value_declaration: cloned.value_declaration,
-            parent: cloned.parent,
-            exports: cloned.exports,
-            members: cloned.members,
-            export_symbol: cloned.export_symbol,
+            decls: slice_in(cloned.decls, arena),
+            ..cloned
         };
+        let symbols = self.symbols_mut(symbol.file);
         let result = Sym {
             file: symbol.file,
             id: SymbolId(symbols.len() as u32),
         };
-        symbols.push(clone);
-        let arena = self.arena;
+        symbols.push(clone, arena);
         let parts = parts.unwrap_or_else(|| vec_from_iter_in([symbol], arena));
         self.merged_parts.insert(result, parts);
         if let Some(exports) = exports {
@@ -7712,7 +7715,8 @@ impl<'s> Files<'s> {
     fn set_parent(&mut self, merged: Sym, parent: Sym) {
         if merged.file == parent.file {
             self.parents_in_other_files.remove(&merged);
-            self.symbol_mut(merged).parent = parent.id;
+            self.symbols_mut(merged.file)
+                .set_parent(merged.id, parent.id);
         } else {
             self.parents_in_other_files.insert(merged, parent);
         }
@@ -7725,7 +7729,7 @@ impl<'s> Files<'s> {
             None => {
                 let (file, bound) = (sym.file, self.bound(sym.file));
                 bound
-                    .table(bound.symbols[sym.id.idx()].members)
+                    .table(bound.symbol(sym.id).members)
                     .iter()
                     .map(|&(n, id)| (n, Sym { file, id }))
                     .collect()
@@ -7739,7 +7743,7 @@ impl<'s> Files<'s> {
             Some(table) => table.get(name).map(|&member| self.canonical(member)),
             None => {
                 let bound = self.bound(sym.file);
-                let member = bound.lookup(bound.symbols[sym.id.idx()].members, name)?;
+                let member = bound.lookup(bound.symbol(sym.id).members, name)?;
                 Some(self.sym(sym.file, member))
             }
         }
@@ -7779,7 +7783,7 @@ impl<'s> Files<'s> {
             None => {
                 let (file, bound) = (sym.file, self.bound(sym.file));
                 bound
-                    .table(bound.symbols[sym.id.idx()].exports)
+                    .table(bound.symbol(sym.id).exports)
                     .iter()
                     .map(|&(n, id)| (n, Sym { file, id }))
                     .collect()
@@ -7851,7 +7855,7 @@ impl<'s> Files<'s> {
         }
         // The name resolver hides an export only if `moduleExport.Flags == SymbolFlagsAlias`, and
         // `target` has `SymbolFlagsTransient`.
-        let flags = &mut self.symbol_mut(target).flags;
+        let flags = self.symbols_mut(target.file).flags_mut(target.id);
         *flags = (*flags | source_flags).difference(SymFlags::EXPORT_ONLY);
         // `SetValueDeclaration(target, source.ValueDeclaration)`
         let own = self.value_declaration(target).map(|it| it.1);
@@ -7861,7 +7865,7 @@ impl<'s> Files<'s> {
             let parts = self.parts(target);
             let before: usize = parts.iter().map(|&it| self.symbol(it).decls.len()).sum();
             let index = before as u32 + self.symbol(source).value_declaration;
-            self.symbol_mut(target).value_declaration = index;
+            (self.symbols_mut(target.file)).set_value_declaration(target.id, index);
         }
         let parts = self.parts(source).into_vec();
         let arena = self.arena;
@@ -7920,22 +7924,24 @@ impl<'s> Files<'s> {
     /// The binder resolved the names in the file of `refused` to `refused`. Those names get a
     /// placeholder symbol for `target` there, and the declarations of `refused` keep their symbol.
     fn redirect_name_to(&mut self, refused: Sym, target: Sym) {
+        let arena = self.arena;
         let bound = &mut self.modules[refused.file.idx()].bound;
         let placeholder = SymbolId(bound.symbols.len() as u32);
         let (name, parent) = {
-            let symbol = &bound.symbols[refused.id.idx()];
+            let symbol = bound.symbol(refused.id);
             (symbol.name, symbol.parent)
         };
-        bound.symbols.push(Symbol {
+        let symbol = Symbol {
             name,
             flags: SymFlags::MERGED,
-            decls: bind::Decls::None,
+            decls: &[],
             value_declaration: u32::MAX,
             parent,
             exports: bind::TableId::NONE,
             members: bind::TableId::NONE,
             export_symbol: SymbolId::NONE,
-        });
+        };
+        bound.symbols.push(symbol, arena);
         self.stand_ins.push((refused, placeholder));
         self.merged_symbols.insert(
             Sym {
@@ -8023,8 +8029,8 @@ impl<'s> Files<'s> {
     }
 
     #[inline]
-    pub fn symbol(&self, sym: Sym) -> &Symbol<'s> {
-        &self.modules[sym.file.idx()].bound.symbols[sym.id.idx()]
+    pub fn symbol(&self, sym: Sym) -> Symbol<'_> {
+        self.modules[sym.file.idx()].bound.symbol(sym.id)
     }
 
     #[inline]
@@ -8074,7 +8080,7 @@ impl<'s> Files<'s> {
     pub fn decls_of(&self, sym: Sym) -> List<'_, (FileId, Decl)> {
         let symbol = self.symbol(sym);
         if !symbol.flags.contains(SymFlags::MERGED) {
-            match symbol.decls.as_slice() {
+            match symbol.decls {
                 [] => return List::Kept(&[]),
                 [decl] => return List::One((sym.file, *decl)),
                 _ => {}
@@ -8197,7 +8203,7 @@ impl<'s> Files<'s> {
     #[inline(never)]
     fn value_declaration_of_merged(&self, sym: Sym, mut index: usize) -> Option<(FileId, Decl)> {
         for &part in self.parts(sym).iter() {
-            let decls = &self.symbol(part).decls;
+            let decls = self.symbol(part).decls;
             match decls.get(index) {
                 Some(&decl) => return Some((part.file, decl)),
                 None => index -= decls.len(),
@@ -9173,7 +9179,7 @@ impl<'s> Files<'s> {
             }
             // Where the walk comes to an `ExportAssignment`, which declares one of these names.
             if symbol.name == known::default || symbol.name == known::export_equals {
-                for &decl in &symbol.decls {
+                for &decl in symbol.decls {
                     if let Decl::ExportExpr(stmt) = decl {
                         resolver.check_export_assignment(sym.file, stmt);
                     }

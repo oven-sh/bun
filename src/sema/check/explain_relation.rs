@@ -937,7 +937,8 @@ impl<'p, 's> Checker<'p, 's> {
         // Two occurrences of `infer U` declare one type parameter.
         let symbol = bound.type_param_symbol[tp.idx()];
         let first = if symbol.is_some() {
-            bound.symbols[symbol.idx()]
+            bound
+                .symbol(symbol)
                 .decls
                 .iter()
                 .find_map(|&decl| match decl {

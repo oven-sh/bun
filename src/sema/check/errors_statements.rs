@@ -661,17 +661,14 @@ impl Checker<'_, '_> {
         let Some(first) = hir.ids(list).next() else {
             return;
         };
-        let (clause, block) = (
-            bound.stmt_scope[handler.idx()],
-            bound.stmt_scope[first.idx()],
-        );
+        let (clause, block) = (bound.scope_of_stmt(handler), bound.scope_of_stmt(first));
         if clause.is_none() || block.is_none() {
             return;
         }
         let block_locals = bound.scopes[block.idx()].locals;
         for &(caught_name, _) in bound.table(bound.scopes[clause.idx()].locals) {
             if let Some(block_local) = bound.lookup(block_locals, caught_name)
-                && let symbol = &bound.symbols[block_local.idx()]
+                && let symbol = bound.symbol(block_local)
                 && symbol.flags.intersects(SymFlags::BLOCK_SCOPED_VARIABLE)
                 && let Some(&declaration) = symbol.decls.get(symbol.value_declaration as usize)
             {

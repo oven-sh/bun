@@ -276,7 +276,7 @@ impl Checker<'_, '_> {
             if local.is_none() || bound.is_unchecked(e.idx()) {
                 continue;
             }
-            let symbol = &bound.symbols[local.idx()];
+            let symbol = bound.symbol(local);
             if inspected.is_empty() {
                 inspected.resize(bound.symbols.len(), 0);
             }

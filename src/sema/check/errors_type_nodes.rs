@@ -262,7 +262,7 @@ impl Checker<'_, '_> {
             return;
         }
         // The type of an index signature is bound twice, so a declaration in it is listed twice.
-        let decls = &bound.symbols[symbol.idx()].decls;
+        let decls = bound.symbol(symbol).decls;
         if decls.first() != Some(&Decl::TypeParam(param)) || decls.iter().all(|d| *d == decls[0]) {
             return;
         }

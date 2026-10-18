@@ -842,11 +842,11 @@ impl<'p, 's> Checker<'p, 's> {
                 | ScopeKind::TypeParams
         ) {
             for &(_, symbol) in bound.table(s.locals) {
-                let symbol = &bound.symbols[symbol.idx()];
+                let symbol = bound.symbol(symbol);
                 if !symbol.flags.contains(SymFlags::TYPE_PARAMETER) {
                     continue;
                 }
-                for decl in &symbol.decls {
+                for decl in symbol.decls {
                     if let Decl::TypeParam(tp) = *decl {
                         own.push((tp.0, self.type_param(file, tp)));
                     }
@@ -1570,7 +1570,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if symbol.is_none() {
                     return;
                 }
-                let decls = &bound.symbols[symbol.idx()].decls;
+                let decls = bound.symbol(symbol).decls;
                 let mut scope = bound.type_scope[node.idx()];
                 while scope.is_some() {
                     let s = &bound.scopes[scope.idx()];
@@ -1918,8 +1918,8 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `infer U` occurring twice is one type parameter.
         let symbol = bound.type_param_symbol[tp.idx()];
-        if symbol.is_some() && bound.symbols[symbol.idx()].decls.len() > 1 {
-            for &decl in &bound.symbols[symbol.idx()].decls {
+        if symbol.is_some() && bound.symbol(symbol).decls.len() > 1 {
+            for &decl in bound.symbol(symbol).decls {
                 if let Decl::TypeParam(p) = decl
                     && part(&hir[p]).is_some()
                 {
@@ -1939,7 +1939,7 @@ impl<'p, 's> Checker<'p, 's> {
         if owner.is_none() {
             return (file, tp, None);
         }
-        let declared = &bound.symbols[owner.idx()];
+        let declared = bound.symbol(owner);
         if declared.decls.len() < 2 && !declared.flags.contains(SymFlags::MERGED) {
             return (file, tp, None);
         }
@@ -2058,7 +2058,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .ok()
                 .map(|i| bound.infer_positions[i].1)
         };
-        let decls = &bound.symbols[symbol.idx()].decls;
+        let decls = bound.symbol(symbol).decls;
         if !decls
             .iter()
             .any(|d| matches!(*d, Decl::TypeParam(p) if position_of(p).is_some()))
@@ -4884,7 +4884,7 @@ impl<'p, 's> Checker<'p, 's> {
             && let PatKind::Ident(name) = hir[hir[param].pat].kind
             && let locals = bound.scopes[bound.fns[func.idx()].scope.idx()].locals
             && let Some(resolved) = bound.lookup(locals, name)
-            && let resolved = &bound.symbols[resolved.idx()]
+            && let resolved = bound.symbol(resolved)
             && let Some(&Decl::Param(pat)) = resolved.decls.get(resolved.value_declaration as usize)
             && let PatParent::Param(declaration) = bound.pat_parent[pat.idx()]
         {

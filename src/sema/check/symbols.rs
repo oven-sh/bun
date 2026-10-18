@@ -1721,7 +1721,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn imported_from_export_equals(&self, sym: Sym) -> Option<(Sym, Atom)> {
         let file = sym.file;
         let files = self.files();
-        for &decl in &files.symbol(sym).decls {
+        for &decl in files.symbol(sym).decls {
             let Some((spec, mode, name)) = files.external_module_member_of(file, decl) else {
                 continue;
             };

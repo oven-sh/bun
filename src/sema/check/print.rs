@@ -3375,11 +3375,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 };
                 let bound = self.c.bound(file);
                 let symbol = bound.type_param_symbol[tp.idx()];
-                if symbol.is_some()
-                    && bound.symbols[symbol.idx()]
-                        .flags
-                        .contains(SymFlags::PARAMETER)
-                {
+                if symbol.is_some() && bound.symbol(symbol).flags.contains(SymFlags::PARAMETER) {
                     let name = self.text(self.c.hir(file)[tp].name);
                     self.fake_scope_type_parameters
                         .push((name, (!is_instantiated).then_some(type_parameter)));

@@ -1414,7 +1414,8 @@ impl<'p, 's> Checker<'p, 's> {
         let scope = bound.scopes[own.idx()].parent;
         for &(_, symbol) in bound.table(bound.scopes[scope.idx()].locals) {
             out.extend(
-                bound.symbols[symbol.idx()]
+                bound
+                    .symbol(symbol)
                     .decls
                     .iter()
                     .find_map(|decl| match *decl {

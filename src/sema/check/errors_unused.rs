@@ -262,10 +262,7 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            if bound.symbols[symbol.idx()]
-                .flags
-                .intersects(SymFlags::VALUE)
-            {
+            if bound.symbol(symbol).flags.intersects(SymFlags::VALUE) {
                 u.referenced[symbol.idx()] |= VALUE;
                 continue;
             }
@@ -1169,7 +1166,7 @@ impl Checker<'_, '_> {
             && self.files().sym(file, symbol) == class
             // The name of a declaration with an `export` modifier resolves to the local symbol,
             // while the type has the export symbol.
-            && !bound.symbols[symbol.idx()].decls.iter().any(|d| matches!(*d, Decl::Class(c) if hir[c].flags.contains(Flags::EXPORT)))
+            && !bound.symbol(symbol).decls.iter().any(|d| matches!(*d, Decl::Class(c) if hir[c].flags.contains(Flags::EXPORT)))
     }
 
     /// Whether the property that `members` declare is the declared symbol in every type it is found
@@ -1559,7 +1556,7 @@ impl Unused<'_, '_> {
         if s.is_none() || !matches!(hir[s].kind, StmtKind::Var(_)) {
             return None;
         }
-        host(d.loc, hir[d.pat].pos, bound.stmt_scope[s.idx()], true)
+        host(d.loc, hir[d.pat].pos, bound.scope_of_stmt(s), true)
     }
 
     /// `Resolve` from a child of `s` that is not a statement: the scope that `s` creates, or else
@@ -1584,7 +1581,7 @@ impl Unused<'_, '_> {
             StmtKind::Block(list) => hir.ids(list).next().unwrap_or(s),
             _ => s,
         };
-        bound.stmt_scope[inside.idx()]
+        bound.scope_of_stmt(inside)
     }
 
     /// `reparseJSDocComment`: in JavaScript the comment of a `@param`, `@property` or `@this` tag
@@ -1771,10 +1768,11 @@ impl Unused<'_, '_> {
     /// `isSelfReferenceLocation`.
     fn is_inside_declaration_of(&self, e: ExprId, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
-        bound.symbols[symbol.idx()]
+        bound
+            .symbol(symbol)
             .flags
             .intersects(SymFlags::FUNCTION | SymFlags::CLASS | SymFlags::ENUM | SymFlags::MODULE)
-            && bound.symbols[symbol.idx()].decls.iter().any(|&d| {
+            && bound.symbol(symbol).decls.iter().any(|&d| {
                 // The span of the declaration contains `e`: a position test instead of an ancestor walk.
                 matches!(
                     d,
@@ -1817,8 +1815,7 @@ impl Unused<'_, '_> {
         }
         let (hir, bound) = (self.hir, self.bound);
         let first = bound.table(bound.scopes[scope.idx()].locals).first();
-        let Some(&declaration) = first.and_then(|it| bound.symbols[it.1.idx()].decls.first())
-        else {
+        let Some(&declaration) = first.and_then(|it| bound.symbol(it.1).decls.first()) else {
             return true;
         };
         let container = hir.get_enclosing_block_scope_container(hir.node(declaration));
@@ -2179,7 +2176,7 @@ impl Checker<'_, '_> {
             if name == known::empty || name.is_none() {
                 continue;
             }
-            let symbol = &bound.symbols[local.idx()];
+            let symbol = bound.symbol(local);
             let kinds = u.referenced[local.idx()];
             if if symbol.flags.contains(SymFlags::TYPE_PARAMETER) {
                 !symbol.flags.intersects(SymFlags::VARIABLE) || kinds & VALUE != 0
@@ -2190,7 +2187,7 @@ impl Checker<'_, '_> {
             } {
                 continue;
             }
-            for &decl in &symbol.decls {
+            for &decl in symbol.decls {
                 let declaration = hir.node(decl);
                 match hir.kind(declaration) {
                     Kind::VariableDeclaration | Kind::Parameter | Kind::BindingElement => {

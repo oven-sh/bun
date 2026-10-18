@@ -93,7 +93,7 @@ impl Checker<'_, '_> {
             }
             _ => s,
         };
-        or_file_scope(self.bound(file).stmt_scope[inside.idx()])
+        or_file_scope(self.bound(file).scope_of_stmt(inside))
     }
 
     fn enclosing_scope_of_variable(&self, file: FileId, d: VarDeclId) -> ScopeId {
@@ -105,9 +105,9 @@ impl Checker<'_, '_> {
         or_file_scope(match self.hir(file)[s].kind {
             // The variable of a `catch` clause is in the scope the clause creates, like its block.
             StmtKind::Try { param, handler, .. } if param == d && handler.is_some() => {
-                bound.stmt_scope[handler.idx()]
+                bound.scope_of_stmt(handler)
             }
-            _ => bound.stmt_scope[s.idx()],
+            _ => bound.scope_of_stmt(s),
         })
     }
 
@@ -197,9 +197,9 @@ impl Checker<'_, '_> {
                 if let StmtKind::Switch { cases, .. } = hir[s].kind
                     && let Some(first) = cases.iter().find_map(|c| hir.ids(hir[c].body).next())
                 {
-                    return Ok(or_file_scope(bound.stmt_scope[first.idx()]));
+                    return Ok(or_file_scope(bound.scope_of_stmt(first)));
                 }
-                or_file_scope(bound.stmt_scope[s.idx()])
+                or_file_scope(bound.scope_of_stmt(s))
             }
             // `node.Parent` of the expression itself is the `ExpressionWithTypeArguments`, which is not in the expression.
             Parent::ClassExtends(c) => or_file_scope(match bound.expr_scope.get(&at) {
@@ -278,7 +278,7 @@ impl Checker<'_, '_> {
             Decl::ImportEquals(i) => bound.import_equals_scope[i.idx()],
             Decl::ExportSpec(spec) => bound.export_scope[hir[spec].export.idx()],
             Decl::ExportStarAs(s) | Decl::ExportExpr(s) | Decl::UmdGlobal(s) => {
-                bound.stmt_scope[s.idx()]
+                bound.scope_of_stmt(s)
             }
             Decl::ImportDefault(i) | Decl::ImportNamespace(i) => bound.import_scope[i.idx()],
             Decl::ImportSpec(spec) => bound.import_scope[hir[spec].import.idx()],

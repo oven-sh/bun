@@ -3613,7 +3613,7 @@ impl<'p, 's> Checker<'p, 's> {
         let symbol = bound.symbol_of_expr(literal);
         if symbol.is_some()
             && matches!(hir[literal].kind, ExprKind::Object(props) if props.is_empty())
-            && !bound.table(bound.symbols[symbol.idx()].exports).is_empty()
+            && !bound.table(bound.symbol(symbol).exports).is_empty()
         {
             return true;
         }
@@ -3946,7 +3946,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getExportsOfSymbol`, which binds the names of `f[key] = value`, so under whatever is
         // resolving the type of this expression.
         let symbol = bound.symbol_of_function(hir, func);
-        if symbol.is_some() && bound.symbols[symbol.idx()].exports.is_some() {
+        if symbol.is_some() && bound.symbol(symbol).exports.is_some() {
             self.late_bound_members(self.files().sym(file, symbol), true);
         }
         // It creates the signature.
@@ -4656,7 +4656,7 @@ impl<'p, 's> Checker<'p, 's> {
         for &(_, declaration) in self.declarations_of_member(file, Decl::Property(p)).iter() {
             let symbol = bound.symbol_of_declaration(declaration);
             if symbol.is_some() {
-                flags |= bound.symbols[symbol.idx()].flags;
+                flags |= bound.symbol(symbol).flags;
             } else if let Decl::Property(q) = declaration
                 && let Some((includes, _)) = crate::bind::flags_of_property(hir[q].kind)
             {

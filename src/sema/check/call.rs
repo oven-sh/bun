@@ -1626,7 +1626,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Ident(_) => {
                 let symbol = bound.symbol_of_expr(e);
                 symbol.is_some() && self.target_kind(file, e).definite && {
-                    let declarations = &bound.symbols[symbol.idx()].decls;
+                    let declarations = bound.symbol(symbol).decls;
                     !declarations.is_empty()
                         && declarations.iter().all(|&declaration| {
                             matches!(declaration, Decl::Var(name) | Decl::Param(name)
@@ -1852,7 +1852,7 @@ impl<'p, 's> Checker<'p, 's> {
             FnOwner::Member(member) => bound.member_symbol[member.idx()],
             _ => bound.fn_symbol[func.idx()],
         };
-        let declarations = &bound.symbols.get(symbol.idx())?.decls;
+        let declarations = bound.symbols.get(symbol.idx())?.decls;
         if declarations.len() < 2 {
             return None;
         }

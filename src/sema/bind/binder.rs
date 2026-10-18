@@ -462,10 +462,10 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// `newSymbol`
     fn new_symbol(&mut self, flags: SymFlags, name: Atom) -> SymbolId {
-        self.b.symbols.push(SymbolIn {
+        self.b.symbols.push(GrowingSymbol {
             name,
             flags,
-            decls: DeclsIn::None,
+            decls: GrowingDecls::None,
             value_declaration: u32::MAX,
             parent: SymbolId::NONE,
             exports: TableId::NONE,
@@ -505,7 +505,7 @@ impl<'f, 's> Binder<'f, 's> {
     }
 
     /// `SetValueDeclaration(symbol, node)` for the declaration that was just added.
-    fn set_value_declaration(symbol: &mut SymbolIn<Growable>) {
+    fn set_value_declaration(symbol: &mut GrowingSymbol) {
         let last = symbol.decls.len() - 1;
         let value_declaration = symbol.decls.get(symbol.value_declaration as usize);
         if takes_over_as_value_declaration(value_declaration.copied(), symbol.decls[last]) {

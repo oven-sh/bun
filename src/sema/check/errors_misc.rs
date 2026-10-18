@@ -115,7 +115,7 @@ impl Checker<'_, '_> {
         let bound = self.bound(file);
         bound
             .ids(bound.fns[f.idx()].returns)
-            .any(|s| bound.stmt_flow[s.idx()] != UNREACHABLE)
+            .any(|s| bound.flow_of_stmt(s) != UNREACHABLE)
     }
 
     /// `SkipOuterExpressions`

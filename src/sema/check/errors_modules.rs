@@ -446,7 +446,7 @@ impl Checker<'_, '_> {
         // "do the work only for first declaration"
         if symbol.is_none()
             || !files.merges_module_augmentation(cx.file, symbol)
-            || bound.symbols[symbol.idx()].decls.first() != Some(&Decl::Module(m))
+            || bound.symbol(symbol).decls.first() != Some(&Decl::Module(m))
         {
             return;
         }
@@ -1227,7 +1227,8 @@ impl Checker<'_, '_> {
             || bound.alias_idents.iter().any(|&(e, _)| {
                 !bound.is_unchecked(e.idx())
                     && !bound.is_in_type_query(e)
-                    && bound.symbols[bound.symbol_of_expr(e).idx()]
+                    && bound
+                        .symbol(bound.symbol_of_expr(e))
                         .decls
                         .contains(&Decl::ImportEquals(i))
             });

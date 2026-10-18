@@ -237,7 +237,7 @@ impl Checker<'_, '_> {
 
     /// `symbol.ValueDeclaration` of the CommonJS export `symbol`: the assignment. `None` if it is
     /// not an assignment.
-    pub(super) fn commonjs_value_declaration(&self, symbol: &Symbol) -> Option<ExprId> {
+    pub(super) fn commonjs_value_declaration(&self, symbol: Symbol) -> Option<ExprId> {
         match *symbol.decls.get(symbol.value_declaration as usize)? {
             Decl::ModuleExports(assignment) | Decl::ExportsProperty(assignment) => Some(assignment),
             _ => None,
@@ -270,8 +270,8 @@ impl Checker<'_, '_> {
         if !hir.is_js {
             return;
         }
-        let of_this_or_exports = (bound.symbols.iter().flat_map(|symbol| &symbol.decls))
-            .filter_map(|decl| match decl {
+        let of_this_or_exports =
+            (bound.symbols.iter().flat_map(|symbol| symbol.decls)).filter_map(|decl| match decl {
                 Decl::ThisProperty(e) | Decl::ExportsProperty(e) => Some(e),
                 _ => None,
             });

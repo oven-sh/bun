@@ -37,7 +37,7 @@ impl Checker<'_, '_> {
     pub(super) fn check_duplicates(&mut self, file: FileId) {
         let bound = self.bound(file);
         for i in 0..bound.symbols.len() {
-            let symbol = &bound.symbols[i];
+            let symbol = bound.symbol(SymbolId(i as u32));
             let is_merged = symbol.flags.contains(SymFlags::MERGED);
             let is_class_or_function = |d: &Decl| matches!(d, Decl::Class(_) | Decl::Fn(_));
             if !is_merged
@@ -123,7 +123,7 @@ impl Checker<'_, '_> {
             let did_you_mean = self.did_you_mean_export_type_with_braces(file, refusal.decl);
             diag.related_information.extend(did_you_mean);
             let multiple_default_exports = message == 2528;
-            let declarations = &bound.symbols[refusal.symbol.idx()].decls[..refusal.count as usize];
+            let declarations = &bound.symbol(refusal.symbol).decls[..refusal.count as usize];
             for (index, &declaration) in declarations.iter().enumerate() {
                 let Some(mut d) =
                     self.new_diagnostic_for_declaration_name(file, declaration, message)
@@ -425,7 +425,7 @@ impl Checker<'_, '_> {
                 .enumerate()
                 .any(|(j, other)| j != i && other.0 == name)
             {
-                self.report_on_declaration_name(file, bound.symbols[symbol.idx()].decls[0], 2300);
+                self.report_on_declaration_name(file, bound.symbol(symbol).decls[0], 2300);
             }
         }
     }
@@ -436,7 +436,7 @@ impl Checker<'_, '_> {
         let files = self.files();
         let mut decls: Vec<Declaration> = Vec::new();
         for &part in files.parts(sym).iter() {
-            for &decl in &files.symbol(part).decls {
+            for &decl in files.symbol(part).decls {
                 let own = files.bound(part.file).symbol_of_declaration(decl);
                 decls.push((part.file, decl, own.is_none() || own == part.id));
             }

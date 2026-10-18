@@ -138,7 +138,20 @@ impl PropertyRule {
                 };
                 let mut i = ParserInput::new(val, bump);
                 let mut p2 = css::Parser::new(&mut i, None, ParserOpts::default(), None);
-                Some(syntax.parse_value(&mut p2)?)
+                match syntax.parse_value(&mut p2) {
+                    Ok(value) => Some(value),
+                    // A value that folds only with `MUST_FOLD` is one that this parser leaves for the browser. It is valid, and it is kept as tokens.
+                    Err(e) => {
+                        let mut i = ParserInput::new(val, bump);
+                        let mut p2 = css::Parser::new(&mut i, None, ParserOpts::MUST_FOLD, None);
+                        if syntax.parse_value(&mut p2).is_err() {
+                            return Err(e);
+                        }
+                        let mut i = ParserInput::new(val, bump);
+                        let mut p2 = css::Parser::new(&mut i, None, ParserOpts::default(), None);
+                        Some(SyntaxString::Universal.parse_value(&mut p2)?)
+                    }
+                }
             }
         };
 

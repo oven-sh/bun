@@ -8005,6 +8005,45 @@ describe("css tests", () => {
     );
   });
 
+  describe("@property initial-value", () => {
+    const property = (syntax: string, value: string) =>
+      cssInternals.minifyTest(`@property --p { syntax: '${syntax}'; inherits: false; initial-value: ${value}; }`, "");
+    const rule = (syntax: string, value: string) =>
+      `@property --p{syntax:"${syntax}";inherits:false;initial-value:${value}}`;
+
+    // A typed value has no unparsed form. A relative color that is left for the browser is valid, so it is kept as tokens.
+    test("a relative color that is left for the browser is kept as written", () => {
+      expect([
+        property("<color>", "rgb(from color(display-p3 0 1 0) r g b)"),
+        property("<color>", "rgb(from #336699 300 g b)"),
+        property("<color>#", "red, hsl(from color(display-p3 0 1 0) h s l)"),
+        property("<color>+", "rgb(from color(display-p3 0 1 0) r g b) red"),
+        property("<color> | <length>", "rgb(from #336699 300 g b)"),
+        property("<color> | <color>#", "rgb(from #336699 300 g b), red"),
+      ]).toEqual([
+        rule("<color>", "rgb(from color(display-p3 0 1 0) r g b)"),
+        rule("<color>", "rgb(from #369 300 g b)"),
+        rule("<color>#", "red,hsl(from color(display-p3 0 1 0) h s l)"),
+        rule("<color>+", "rgb(from color(display-p3 0 1 0) r g b)red"),
+        rule("<color>|<length>", "rgb(from #369 300 g b)"),
+        rule("<color>|<color>#", "rgb(from #369 300 g b),red"),
+      ]);
+    });
+
+    test("a value that is not valid is an error, as before", () => {
+      expect(() => property("<color>", "10px")).toThrow("Unexpected token: 10px");
+      expect(() => property("<length>", "red")).toThrow("Unexpected token: red");
+      expect(property("<color>", "rgb(255 0 0)")).toBe(rule("<color>", "red"));
+    });
+
+    test("such a relative color does not hide another error in the value", () => {
+      const relative = "rgb(from color(display-p3 0 1 0) r g b)";
+      expect(() => property("<color>+", `${relative} 10px`)).toThrow("Unexpected token: rgb(");
+      expect(() => property("<color>#", `${relative}, 10px`)).toThrow("Unexpected token: rgb(");
+      expect(() => property("<length>", relative)).toThrow("Unexpected token: rgb(");
+    });
+  });
+
   describe("font-palette-values", () => {
     minify_test(
       "@font-palette-values --x{font-family:Foo;base-palette:2}",

@@ -739,7 +739,7 @@ const idleInjections: [label: string, bytes: string][] = [
 // checkout, which no client can tell from an answer: there only the
 // unix-socket pool is checked. fetch() does not pool unix sockets on Windows.
 // Both pools check a socket out through the same code.
-const lateLoopback = isMacOS || (isWindows && Number(release().split(".")[2]) < 26100);
+const lateLoopback = isMacOS || (isWindows && release() === "10.0.17763");
 const idleTransports = [...(lateLoopback ? [] : ["tcp"]), ...(isWindows ? [] : ["unix"])];
 
 test.concurrent.each(

@@ -3,7 +3,7 @@ import { expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
-it("should log to console correctly", async () => {
+it.concurrent("should log to console correctly", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), join(import.meta.dir, "console-log.js")],
     stdin: "inherit",
@@ -37,7 +37,7 @@ it("should log to console correctly", async () => {
   expect(exitCode).toBe(0);
 });
 
-it("a format specifier right after %% is filled in", async () => {
+it.concurrent("a format specifier right after %% is filled in", async () => {
   const src = `
     console.log("%d%%%s", 50, "!");
     console.log("%%%s", "a");

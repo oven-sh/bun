@@ -49,7 +49,7 @@
          LSQ_DEBUG("recv_off has not changed, still at %"PRIu64,
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
-@@ -1524,6 +1524,23 @@
+@@ -1524,6 +1524,20 @@
  }
  
  
@@ -60,11 +60,8 @@
 +    if (stream->fc.sf_hold == (unsigned) !!hold)
 +        return;
 +    stream->fc.sf_hold = !!hold;
-+    /* Not on a stream that is reset or read to its end.  A reset moves
-+     * sf_read_off to the final size and credits the connection for what
-+     * was not read.  stream_consumed_bytes() would set it back to
-+     * read_offset and take that credit away until the stream is destroyed.
-+     */
++    /* After a reset sf_read_off is the final size, not read_offset: an
++     * update would take the unread bytes' credit from the connection. */
 +    if (!hold && !(stream->stream_flags & (STREAM_RST_RECVD|STREAM_U_READ_DONE)))
 +        stream_consumed_bytes(stream);
 +}

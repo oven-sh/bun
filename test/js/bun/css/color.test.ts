@@ -686,6 +686,16 @@ describe("rgb() channel order and legacy syntax", () => {
   });
 });
 
+// A calculation that adds a <number> to a <percentage> has no value. It was folded to NaN, which
+// gave the wrong colors "#000", "#000" and "oklch(none .152244 34.675)". The two relative colors
+// are valid CSS: a channel keyword is a <number> there, and the parser reads it as a <percentage>.
+test.each(["rgb(calc(10 + 10%) 0 0)", "hsl(from blue h s calc(l + 20))", "oklch(from #ff876a calc(l - .08) c h)"])(
+  "%s has a calculation that is not reduced and is null",
+  input => {
+    expect(color(input, "css")).toBeNull();
+  },
+);
+
 describe("conversions between color spaces", () => {
   // Each case converts a color whose channels all differ, so a channel landing
   // in another channel's place shows up in the output. Mixing a color with

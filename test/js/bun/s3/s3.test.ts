@@ -1668,26 +1668,44 @@ describe("s3-server", () => {
       });
       const client = S3({ ...options, endpoint: server.url.href });
       // An empty bucket is the root of the endpoint, not a bucket.
-      expect(await code(client.bucketExists(""))).toBe("ERR_S3_INVALID_PATH");
-      expect(await code(client.createBucket(""))).toBe("ERR_S3_INVALID_PATH");
-      expect(await code(client.deleteBucket(""))).toBe("ERR_S3_INVALID_PATH");
+      for (const name of ["", "/", "\\"]) {
+        expect(await code(client.bucketExists(name))).toBe("ERR_S3_INVALID_PATH");
+        expect(await code(client.createBucket(name))).toBe("ERR_S3_INVALID_PATH");
+        expect(await code(client.deleteBucket(name))).toBe("ERR_S3_INVALID_PATH");
+      }
       expect(await code(S3({ ...options, bucket: undefined, endpoint: server.url.href }).bucketExists())).toBe(
         "ERR_S3_INVALID_PATH",
       );
       expect(await code(client.list(null, { bucket: "/" }))).toBe("ERR_S3_INVALID_PATH");
       // A separator would address an object, not a bucket.
-      for (const name of ["/", "\\", "a/b", "a\\b"]) {
+      for (const name of ["a/b", "a\\b", "/a/b/"]) {
         expect(() => client.bucketExists(name)).toThrow(/must not contain a slash/);
         expect(() => client.createBucket(name)).toThrow(/must not contain a slash/);
         expect(() => client.deleteBucket(name)).toThrow(/must not contain a slash/);
       }
+      // A bucket of the options with a separator is refused too. At the ends, a separator is accepted.
+      expect(() => client.bucketExists(undefined, { bucket: "a/b" })).toThrow(/must not contain a slash/);
+      expect(() => S3Client.createBucket(undefined, { ...options, bucket: "a\\b" })).toThrow(
+        /must not contain a slash/,
+      );
+      expect(await code(S3({ ...options, bucket: "/buntest/" }).bucketExists())).toBe("resolved");
       // The host of a virtual hosted style endpoint is the bucket.
       const hosted = S3({ ...options, virtualHostedStyle: true, endpoint: `http://buntest.localhost:${server.port}` });
       expect(() => hosted.deleteBucket("other")).toThrow(/virtualHostedStyle/);
+      const hostedKnown = S3({ ...options, bucket: "buntest", virtualHostedStyle: true, endpoint: server.url.href });
+      expect(() => hostedKnown.deleteBucket("other")).toThrow(/virtualHostedStyle/);
+      expect(requests).toBe(0);
+      expect(await code(hostedKnown.bucketExists("buntest"))).toBe("resolved");
+      expect(requests).toBe(1);
+      const r2 = S3({
+        ...options,
+        virtualHostedStyle: true,
+        endpoint: "https://buntest.account.r2.cloudflarestorage.com",
+      });
+      expect(() => r2.deleteBucket("other")).toThrow(/virtualHostedStyle/);
       expect(() => client.bucketExists(5 as any)).toThrow(TypeError);
       expect(() => client.createBucket("x", { acl: "nope" as any })).toThrow(/acl must be one of/);
       expect(() => client.createBucket("x", { objectLockEnabled: "yes" as any })).toThrow(TypeError);
-      expect(requests).toBe(0);
     });
   });
 });

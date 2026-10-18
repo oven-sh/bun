@@ -267,7 +267,7 @@ impl S3HttpSimpleTask {
                     match metadata.response.status_code {
                         301 => {
                             code = b"PermanentRedirect";
-                            message = b"The bucket you are attempting to access must be addressed using the specified endpoint. Please send all future requests to this endpoint.";
+                            message = b"The bucket is served by the endpoint of another region";
                         }
                         403 => {
                             code = b"AccessDenied";

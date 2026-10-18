@@ -791,23 +791,28 @@ impl BucketRequest {
                 return Err(global.throw_invalid_argument_type_value(b"name", b"string", name));
             }
             let name = name.to_utf8(global)?;
-            // A separator would make the request an object request on the bucket before it.
-            if bun_core::strings::index_of_any(&name, b"/\\").is_some() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "The bucket name must not contain a slash"
-                )));
-            }
             let credentials = &aws_options.credentials;
             // The host is the bucket here, so a name could not reach the wire.
-            if credentials.virtual_hosted_style
-                && !credentials.endpoint.is_empty()
-                && *name != *credentials.bucket
-            {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "A virtualHostedStyle endpoint names its bucket. Pass no name, or a client for that bucket"
-                )));
+            if credentials.virtual_hosted_style && !credentials.endpoint.is_empty() {
+                let known: Option<&[u8]> = if credentials.bucket.is_empty() {
+                    <S3Credentials as S3CredentialsExt>::guess_bucket(&credentials.endpoint)
+                } else {
+                    Some(&credentials.bucket)
+                };
+                if known != Some(&*name) {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "A virtualHostedStyle endpoint names its bucket. Pass no name, or a client for that bucket"
+                    )));
+                }
             }
             aws_options.credentials.bucket = name.into_vec().into_boxed_slice();
+        }
+        // A separator inside the bucket would make the request an object request on the bucket before it.
+        let bucket = bun_core::strings::trim(&aws_options.credentials.bucket, b"/\\");
+        if bun_core::strings::index_of_any(bucket, b"/\\").is_some() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "The bucket name must not contain a slash"
+            )));
         }
         let object_lock_enabled = match options {
             Some(opts) if opts.is_object() => opts

@@ -1004,6 +1004,40 @@ let x: Intl.DateTimeFormatPart['type'];
     expect(exitCode).toBe(1);
   });
 
+  test("accepts a cycle through a member of the default library that `skipLibCheck` hides", async () => {
+    using dir = project({
+      "global.d.ts": `interface ArrayBufferTypes { mine: typeof Uint8Array.prototype }\n`,
+      "a.ts": `export function f(b: Uint8Array) { return b.length; }\n`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // The message names the member as its first declaration writes it, and that one is in the default library.
+  test.each([
+    [`interface Error { cause?: unknown; cause?: unknown }`, "cause", [19, 36]],
+    [`interface Error { "cause"?: unknown; cause?: unknown }`, "cause", [19, 38]],
+    [`interface Array<T> { length: number; length: number }`, "length", [22, 38]],
+    [`declare global { interface Error { cause?: unknown; cause?: unknown } } export {};`, "cause", [36, 53]],
+    [
+      `interface Array<T> { readonly [Symbol.unscopables]: {}; readonly [Symbol.unscopables]: {} }`,
+      "[Symbol.unscopables]",
+      [31, 66],
+    ],
+  ] as const)(
+    "reports a member of the default library that one declaration repeats: %s",
+    async (text, name, columns) => {
+      using dir = project({ "a.ts": text + "\n" });
+      const { stdout, exitCode } = await check(dir);
+      const duplicates = stdout.split("\n").filter(line => line.includes("error TS2300"));
+      expect(duplicates).toEqual(
+        columns.map(column => `a.ts(1,${column}): error TS2300: Duplicate identifier '${name}'.`),
+      );
+      expect(exitCode).toBe(1);
+    },
+  );
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

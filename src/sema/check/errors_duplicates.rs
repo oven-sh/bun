@@ -742,11 +742,11 @@ impl Checker<'_, '_> {
                     else {
                         continue;
                     };
-                    // `name := memberName`, `DeclarationNameToString(declName)` for a unique symbol.
-                    let name = if self.atoms().is_symbol_name(*name) {
-                        Arg::Bytes(&self.hir(of).text[from as usize..to as usize])
-                    } else {
-                        Arg::Atom(*name)
+                    // `name := memberName`, `DeclarationNameToString(declName)` for a unique symbol. The default library's
+                    // text isn't stored.
+                    let name = match self.hir(of).text.get(from as usize..to as usize) {
+                        Some(written) if self.atoms().is_symbol_name(*name) => Arg::Bytes(written),
+                        _ => Arg::Atom(*name),
                     };
                     for at in earlier.iter().chain(std::iter::once(refused)) {
                         if at.0 == file
@@ -891,11 +891,17 @@ impl Checker<'_, '_> {
                 // `symbolToString(symbol)`: the source text of the name in its first declaration.
                 let declarations = self.declarations_of_member(file, declaration);
                 let first = declarations.first().copied();
+                // The default library's text isn't stored. It writes a name without quotes, and `[Symbol.x]` as anyone does.
+                let is_stored = first.is_none_or(|(of, _)| !self.hir(of).text.is_empty());
+                let first = first.filter(|_| is_stored);
                 let first = first.and_then(|(of, first)| self.place_of_declaration(of, first));
                 let (of, from, to) = first.unwrap_or(place);
                 // `GetTextOfNode` does not skip the `*` before the name.
                 let from = super::spans::start_of_error_range(self.hir(of), from, to);
-                let text = Arg::Bytes(&self.hir(of).text[from as usize..to as usize]);
+                let text = match is_stored || self.atoms().is_symbol_name(name) {
+                    true => Arg::Bytes(&self.hir(of).text[from as usize..to as usize]),
+                    false => Arg::Atom(name),
+                };
                 self.error_at(place, code, &[text]);
             }
         }

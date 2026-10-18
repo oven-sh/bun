@@ -12,7 +12,7 @@
  *   node --test test/js/node/http2/node-http2-client-close.test.ts
  */
 import assert from "node:assert";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -453,17 +453,26 @@ class RawPeer {
 }
 
 describe("frames on a stream that the client closed get no reply", () => {
-  type Ctx = { peer: RawPeer; client: http2.ClientHttp2Session; req: http2.ClientHttp2Stream; events: string[] };
+  type Ctx = {
+    peer: RawPeer;
+    client: http2.ClientHttp2Session;
+    req: http2.ClientHttp2Stream;
+    /** Resolves at the 'close' event of `req`. */
+    reqClosed: Promise<void>;
+    events: string[];
+  };
   const ignoreErrors = (stream: http2.ClientHttp2Stream) => stream.on("error", () => {});
   const closed = (emitter: http2.ClientHttp2Stream | http2.ClientHttp2Session) =>
     new Promise<void>(resolve => emitter.once("close", () => resolve()));
-  const cancel = async ({ req, peer }: Ctx) => {
-    req.close(NGHTTP2_CANCEL);
-    // The peer writes nothing until it has the reset. A client that reads from the socket before it
-    // destroys the stream sends the reset a second time.
+  // Until the stream emits 'close' the client can write its reset a second time. That frame is
+  // not a reply to a late frame, so the peer waits for 'close' before it sends one.
+  const reset = async ({ req, peer, reqClosed }: Ctx, code = NGHTTP2_CANCEL) => {
+    req.close(code);
     await peer.untilReset(1);
+    await reqClosed;
   };
   const lateBody = [data(1, "late "), data(1, "body", END_STREAM)];
+  const lateResponse = [responseHeaders(1), ...lateBody];
   const trailers = wire(T.HEADERS, END_HEADERS | END_STREAM, 1, indexedLiteral("x-trailer", "1"));
   // An uppercase field name makes the block malformed (RFC 9113 8.2.1).
   const malformed = Buffer.concat([
@@ -474,153 +483,144 @@ describe("frames on a stream that the client closed get no reply", () => {
     Buffer.from("y"),
   ]);
   const altSvc = (id: number) => wire(0xa, 0, id, Buffer.concat([Buffer.from([0, 0]), Buffer.from('h2=":443"')]));
+  const chunk = data(1, Buffer.alloc(16_384));
+  const finished = responseHeaders(1, END_HEADERS | END_STREAM);
+  const aborter = new AbortController();
 
-  const cases: { name: string; sent: string[]; events?: string[]; run: (ctx: Ctx) => Promise<void> }[] = [
-    {
-      name: "close(NGHTTP2_CANCEL), then the whole response",
-      sent: ["RST_STREAM 1 code=8"],
-      async run(ctx) {
-        await cancel(ctx);
-        ctx.peer.write(responseHeaders(1), ...lateBody);
-      },
-    },
+  type Case = {
+    name: string;
+    options?: http2.ClientSessionRequestOptions;
+    /** Closes stream 1. The default is close(NGHTTP2_CANCEL). */
+    close?: (ctx: Ctx) => Promise<void> | void;
+    /** What the peer sends after that, in one write. */
+    late: Buffer[];
+    /** The RST_STREAM, GOAWAY and WINDOW_UPDATE frames that the client sends after the late frames. */
+    reply?: string[];
+    events?: string[];
+  };
+  const cases: Case[] = [
+    { name: "close(NGHTTP2_CANCEL), then the whole response", late: lateResponse },
     {
       name: "close(NGHTTP2_CANCEL) after 'response', then the body",
-      sent: ["RST_STREAM 1 code=8"],
-      events: ["response"],
-      async run(ctx) {
+      async close(ctx) {
         ctx.peer.write(responseHeaders(1));
         await new Promise(resolve => ctx.req.once("response", resolve));
-        await cancel(ctx);
-        ctx.peer.write(...lateBody);
+        await reset(ctx);
       },
+      late: lateBody,
+      events: ["response"],
     },
     {
       name: "close(NGHTTP2_CANCEL), then the response and its trailers",
-      sent: ["RST_STREAM 1 code=8"],
-      async run(ctx) {
-        await cancel(ctx);
-        ctx.peer.write(responseHeaders(1), data(1, "late "), data(1, "body"), trailers);
-      },
+      late: [responseHeaders(1), data(1, "late "), data(1, "body"), trailers],
     },
     {
       name: "close(NGHTTP2_CANCEL), then a response split over CONTINUATION",
-      sent: ["RST_STREAM 1 code=8"],
-      async run(ctx) {
-        await cancel(ctx);
-        const rest = wire(T.CONTINUATION, END_HEADERS, 1, indexedLiteral("x-late", "1"));
-        ctx.peer.write(responseHeaders(1, 0), rest, data(1, "late", END_STREAM));
-      },
+      late: [
+        responseHeaders(1, 0),
+        wire(T.CONTINUATION, END_HEADERS, 1, indexedLiteral("x-late", "1")),
+        data(1, "late", END_STREAM),
+      ],
     },
     {
       name: "close(NGHTTP2_CANCEL), then 48 KiB of DATA",
-      sent: ["RST_STREAM 1 code=8", "WINDOW_UPDATE 0"],
-      async run(ctx) {
-        await cancel(ctx);
-        const chunk = data(1, Buffer.alloc(16_384));
-        ctx.peer.write(responseHeaders(1), chunk, chunk, chunk);
-      },
+      late: [responseHeaders(1), chunk, chunk, chunk],
+      reply: ["WINDOW_UPDATE 0"],
     },
     {
       name: "close(NGHTTP2_CANCEL), then WINDOW_UPDATE and RST_STREAM",
-      sent: ["RST_STREAM 1 code=8"],
-      async run(ctx) {
-        await cancel(ctx);
-        ctx.peer.write(
-          windowUpdate(1, 0),
-          windowUpdate(1, 100),
-          rstStream(1, NGHTTP2_NO_ERROR),
-          rstStream(1, NGHTTP2_CANCEL),
-        );
-      },
+      late: [windowUpdate(1, 0), windowUpdate(1, 100), rstStream(1, NGHTTP2_NO_ERROR), rstStream(1, NGHTTP2_CANCEL)],
     },
     {
       name: "close(NGHTTP2_NO_ERROR), then the whole response",
-      sent: ["RST_STREAM 1 code=0"],
-      async run(ctx) {
-        ctx.req.close(NGHTTP2_NO_ERROR);
-        await ctx.peer.untilReset(1);
-        ctx.peer.write(responseHeaders(1), ...lateBody);
-      },
+      close: ctx => reset(ctx, NGHTTP2_NO_ERROR),
+      late: lateResponse,
     },
     {
       name: "destroy(), then the whole response",
-      sent: ["RST_STREAM 1 code=0"],
-      async run(ctx) {
+      async close(ctx) {
         ctx.req.destroy();
         await ctx.peer.untilReset(1);
-        ctx.peer.write(responseHeaders(1), ...lateBody);
+        await ctx.reqClosed;
       },
+      late: lateResponse,
+    },
+    {
+      name: "an aborted signal, then the whole response",
+      options: { signal: aborter.signal },
+      async close(ctx) {
+        aborter.abort();
+        await ctx.peer.untilReset(1);
+        await ctx.reqClosed;
+      },
+      late: lateResponse,
+      events: ["error:ABORT_ERR"],
+    },
+    {
+      name: "setNextStreamID() with a lower id, close(NGHTTP2_CANCEL), then the whole response",
+      close(ctx) {
+        // @types/node does not declare setNextStreamID().
+        (ctx.client as http2.ClientHttp2Session & { setNextStreamID(id: number): void }).setNextStreamID(1);
+        return reset(ctx);
+      },
+      late: lateResponse,
     },
     {
       name: "a second response after the stream finished",
-      sent: [],
-      events: ["response"],
-      async run(ctx) {
-        ctx.peer.write(responseHeaders(1, END_HEADERS | END_STREAM));
-        await closed(ctx.req);
-        await ctx.peer.settle();
-        ctx.peer.write(responseHeaders(1), ...lateBody);
+      async close(ctx) {
+        ctx.peer.write(finished);
+        await ctx.reqClosed;
       },
+      late: lateResponse,
+      events: ["response"],
     },
+    // In the next three, the late frame is in the read that finishes the stream.
     {
       name: "a second response in the read that finished the stream",
-      sent: [],
+      close() {},
+      late: [finished, responseHeaders(1)],
       events: ["response"],
-      async run(ctx) {
-        ctx.peer.write(responseHeaders(1, END_HEADERS | END_STREAM), responseHeaders(1));
-        await closed(ctx.req);
-      },
     },
     {
       name: "DATA in the read that finished the stream",
-      sent: [],
+      close() {},
+      late: [finished, data(1, "late")],
       events: ["response"],
-      async run(ctx) {
-        ctx.peer.write(responseHeaders(1, END_HEADERS | END_STREAM), data(1, "late"));
-        await closed(ctx.req);
-      },
     },
     {
       name: "WINDOW_UPDATE with a 0 increment in the read that finished the stream",
-      sent: [],
+      close() {},
+      late: [finished, windowUpdate(1, 0)],
       events: ["response"],
-      async run(ctx) {
-        ctx.peer.write(responseHeaders(1, END_HEADERS | END_STREAM), windowUpdate(1, 0));
-        await closed(ctx.req);
-      },
     },
     {
       name: "a response after the server's RST_STREAM",
-      sent: [],
-      async run(ctx) {
+      async close(ctx) {
         ctx.peer.write(rstStream(1, NGHTTP2_CANCEL));
-        await closed(ctx.req);
-        await ctx.peer.settle();
-        ctx.peer.write(responseHeaders(1), ...lateBody);
+        await ctx.reqClosed;
       },
+      late: lateResponse,
     },
     {
       name: "a malformed response, then its body and trailers",
-      sent: ["RST_STREAM 1 code=1"],
-      events: ["error:ERR_HTTP2_STREAM_ERROR"],
-      async run(ctx) {
+      async close(ctx) {
         ctx.peer.write(wire(T.HEADERS, END_HEADERS, 1, malformed));
         await ctx.peer.untilReset(1);
-        ctx.peer.write(data(1, "late "), data(1, "body"), trailers);
+        await ctx.reqClosed;
       },
+      late: [data(1, "late "), data(1, "body"), trailers],
+      events: ["error:ERR_HTTP2_STREAM_ERROR"],
     },
     {
       name: "ALTSVC before and after close(NGHTTP2_CANCEL)",
-      sent: ["RST_STREAM 1 code=8"],
-      events: ["altsvc:1"],
-      async run(ctx) {
+      async close(ctx) {
         ctx.client.on("altsvc", (_alt, _origin, id) => ctx.events.push("altsvc:" + id));
         ctx.peer.write(altSvc(1));
         await ctx.peer.settle();
-        await cancel(ctx);
-        ctx.peer.write(altSvc(1));
+        await reset(ctx);
       },
+      late: [altSvc(1)],
+      events: ["altsvc:1"],
     },
   ];
 
@@ -630,13 +630,14 @@ describe("frames on a stream that the client closed get no reply", () => {
     client.on("error", () => {});
     const events: string[] = [];
     const req = client.request({ ":path": "/" }, options);
+    const reqClosed = closed(req);
     req.on("response", () => events.push("response"));
     req.on("data", () => events.push("data"));
     req.on("error", e => events.push("error:" + (e as NodeJS.ErrnoException).code));
     await peer.until(f => f.type === T.HEADERS && f.id === 1);
     peer.write(wire(T.SETTINGS, 0, 0), wire(T.SETTINGS, ACK, 0));
     await peer.settle();
-    return { peer, client, req, events };
+    return { peer, client, req, reqClosed, events };
   }
 
   /** The late frames did not count as an open stream if close() completes. */
@@ -650,13 +651,17 @@ describe("frames on a stream that the client closed get no reply", () => {
     peer.close();
   }
 
-  for (const { name, sent, events = [], run } of cases) {
+  for (const { name, options, close = reset, late, reply = [], events = [] } of cases) {
     test(name, async () => {
-      const ctx = await openRequest();
+      const ctx = await openRequest(options);
       try {
-        await run(ctx);
+        await close(ctx);
         await ctx.peer.settle();
-        assert.deepStrictEqual({ sent: ctx.peer.sent(), events: ctx.events }, { sent, events });
+        const before = ctx.peer.sent().length;
+        ctx.peer.write(...late);
+        await ctx.reqClosed;
+        await ctx.peer.settle();
+        assert.deepStrictEqual({ reply: ctx.peer.sent().slice(before), events: ctx.events }, { reply, events });
         await closeSession(ctx.client);
       } finally {
         cleanUp(ctx);
@@ -664,28 +669,12 @@ describe("frames on a stream that the client closed get no reply", () => {
     });
   }
 
-  test("an aborted signal, then the whole response", async () => {
-    const controller = new AbortController();
-    const ctx = await openRequest({ signal: controller.signal });
-    try {
-      controller.abort();
-      await ctx.peer.untilReset(1);
-      ctx.peer.write(responseHeaders(1), ...lateBody);
-      await ctx.peer.settle();
-      assert.deepStrictEqual(
-        { sent: ctx.peer.sent(), events: ctx.events },
-        { sent: ["RST_STREAM 1 code=8"], events: ["error:ABORT_ERR"] },
-      );
-      await closeSession(ctx.client);
-    } finally {
-      cleanUp(ctx);
-    }
-  });
-
   test("the client decodes a header block that it drops", async () => {
     const ctx = await openRequest();
     try {
-      await cancel(ctx);
+      await reset(ctx);
+      await ctx.peer.settle();
+      const before = ctx.peer.sent().length;
       const block = Buffer.concat([STATUS_200, indexedLiteral("x-late", "1")]);
       ctx.peer.write(wire(T.HEADERS, END_HEADERS | END_STREAM, 1, block));
       await ctx.peer.settle();
@@ -697,22 +686,7 @@ describe("frames on a stream that the client closed get no reply", () => {
       assert.strictEqual((await response)["x-late"], "1");
       next.resume();
       await closed(next);
-      assert.deepStrictEqual(ctx.peer.sent(), ["RST_STREAM 1 code=8"]);
-      await closeSession(ctx.client);
-    } finally {
-      cleanUp(ctx);
-    }
-  });
-
-  test("setNextStreamID() with a lower id, close(NGHTTP2_CANCEL), then the whole response", async () => {
-    const ctx = await openRequest();
-    try {
-      // @types/node does not declare setNextStreamID().
-      (ctx.client as http2.ClientHttp2Session & { setNextStreamID(id: number): void }).setNextStreamID(1);
-      await cancel(ctx);
-      ctx.peer.write(responseHeaders(1), ...lateBody);
-      await ctx.peer.settle();
-      assert.deepStrictEqual(ctx.peer.sent(), ["RST_STREAM 1 code=8"]);
+      assert.deepStrictEqual(ctx.peer.sent().slice(before), []);
       await closeSession(ctx.client);
     } finally {
       cleanUp(ctx);
@@ -783,13 +757,16 @@ describe("frames on a stream that the client closed get no reply", () => {
     client.on("error", () => {});
     try {
       const req = ignoreErrors(client.request({ ":path": "/" }));
+      const reqClosed = closed(req);
       await peer.until(f => f.type === T.HEADERS && f.id === 1);
       req.close(NGHTTP2_CANCEL);
       await peer.untilReset(1);
+      await reqClosed;
       // The first bytes that the client reads carry the response to the stream it already reset.
-      peer.write(wire(T.SETTINGS, 0, 0), wire(T.SETTINGS, ACK, 0), responseHeaders(1), ...lateBody);
+      peer.write(wire(T.SETTINGS, 0, 0), wire(T.SETTINGS, ACK, 0), ...lateResponse);
       await peer.settle();
-      assert.deepStrictEqual(peer.sent(), ["RST_STREAM 1 code=8"]);
+      // The client's own reset, which it can write twice.
+      assert.deepStrictEqual([...new Set(peer.sent())], ["RST_STREAM 1 code=8"]);
       await closeSession(client);
     } finally {
       cleanUp({ peer, client });
@@ -820,7 +797,8 @@ server.on("stream", (stream, headers) => {
   };
   next();
 });
-server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+// console.log colors a number when FORCE_COLOR is set.
+server.listen(0, "127.0.0.1", () => console.log(String(server.address().port)));
 `;
 
 /** Calls onFrame for each whole frame of a byte stream, after `preface` bytes that pass as one piece. */
@@ -898,15 +876,28 @@ function lateDataRelay(serverPort: number, streams: number, late: number) {
   return { relay, resets };
 }
 
+/** The port that the spawned server printed. Rejects when the server exits first. */
+function listeningPort(server: ChildProcess): Promise<number> {
+  const { promise, resolve, reject } = Promise.withResolvers<number>();
+  let output = "";
+  server.stdout!.setEncoding("utf8").on("data", (text: string) => {
+    output += text;
+    const port = /^\d+$/m.exec(output);
+    if (port) resolve(Number(port[0]));
+  });
+  server.once("error", reject);
+  server.once("exit", (code, signal) => reject(new Error(`the server exited: code ${code}, signal ${signal}`)));
+  return promise;
+}
+
 // nghttp2 ends a session after 1,000 RST_STREAM frames (and 33 more per second). A client that
 // answers each late DATA frame with RST_STREAM uses that up in a few cancelled responses.
 test("a node server keeps the session after cancelled streaming responses", { skip: !node || isMusl }, async () => {
   const cancels = 4;
   const server = spawn(node as string, ["-e", streamingServer], { stdio: ["ignore", "pipe", "inherit"] });
   try {
-    const [line] = await once(server.stdout, "data");
     // 500 late DATA frames for each cancelled stream.
-    const { relay, resets } = lateDataRelay(Number(String(line)), cancels, 500);
+    const { relay, resets } = lateDataRelay(await listeningPort(server), cancels, 500);
     relay.listen(0, "127.0.0.1");
     await once(relay, "listening");
     const client = http2.connect(`http://127.0.0.1:${(relay.address() as net.AddressInfo).port}`);

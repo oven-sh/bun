@@ -679,7 +679,7 @@ impl Connection {
         }
         self.replenish_buf = buf;
         // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
-        // A late frame for an evicted id is `NoEntry::Closed` and is dropped.
+        // A late frame for an evicted id is dropped (`NoEntry::Closed`), except HEADERS on a server.
         let mut evict = std::mem::take(&mut self.evict_buf);
         evict.clear();
         for (id, s) in self.streams.iter() {
@@ -1698,6 +1698,22 @@ impl Connection {
             return true;
         }
 
+        // An empty DATA frame that does not end the stream carries no information and is only
+        // useful for flooding: count it against the session's invalid-frame allowance (node's
+        // maxSessionInvalidFrames; same post-increment comparison as node).
+        if payload.is_empty()
+            && !wire::flags::has(hdr.flags, wire::flags::END_STREAM)
+            && !self.is_closed_stream(sink, hdr.stream_id)
+        {
+            let count = self.invalid_frame_count;
+            self.invalid_frame_count = count.saturating_add(1);
+            if count > self.max_invalid_frames {
+                self.terminated = true;
+                sink.on_too_many_invalid_frames();
+                return true;
+            }
+        }
+
         // Per-stream flow control + state check, decided under a scoped borrow so the self.* calls
         // below don't alias the streams map.
         enum DataDecision {
@@ -1746,17 +1762,6 @@ impl Connection {
             DataDecision::Deliver(inc) => inc,
         };
         let _ = stream_inc;
-
-        // An empty DATA frame with no END_STREAM on a live stream counts as an invalid frame (node).
-        if payload.is_empty() && !wire::flags::has(hdr.flags, wire::flags::END_STREAM) {
-            let count = self.invalid_frame_count;
-            self.invalid_frame_count = count.saturating_add(1);
-            if count > self.max_invalid_frames {
-                self.terminated = true;
-                sink.on_too_many_invalid_frames();
-                return true;
-            }
-        }
 
         let end_stream = wire::flags::has(hdr.flags, wire::flags::END_STREAM);
         if end != off {
@@ -2122,7 +2127,7 @@ impl Connection {
     /// completed request's entry would linger as HalfClosedRemote forever — the map (and
     /// the per-batch replenish/evict scans) would grow by one entry per request. Removal
     /// has the same observable behavior as scan-eviction of a Closed stream: late frames
-    /// for the id are dropped (`NoEntry::Closed`).
+    /// for the id are dropped (`NoEntry::Closed`), except HEADERS on a server.
     pub(crate) fn close_stream(&mut self, stream_id: u32) {
         self.streams.remove(&stream_id);
     }

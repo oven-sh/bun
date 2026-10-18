@@ -2208,6 +2208,25 @@ describe("frames on a closed stream (RFC 9113 §5.1)", () => {
     }
   });
 
+  // Only a closed stream is exempt from maxSessionInvalidFrames (1,000 by default).
+  test("server: empty DATA on a stream id that was never opened ends the session", async () => {
+    const server = http2.createServer();
+    const sessionError = once(server, "sessionError").then(([err]) => err.code as string);
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.send(Buffer.concat([...Array(1100).fill(EMPTY), PING]));
+      const pingAck = c.waitFor(isPingAck).then(() => "PING ACK");
+      expect(await Promise.race([sessionError, pingAck])).toBe("ERR_HTTP2_TOO_MANY_INVALID_FRAMES");
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
   test("server: HEADERS behind the client's RST_STREAM in the same read get no RST_STREAM", async () => {
     const seen: number[] = [];
     const server = http2.createServer();
@@ -2285,7 +2304,8 @@ describe("frames on a closed stream (RFC 9113 §5.1)", () => {
       await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 2);
       c.send(Buffer.concat([encodeFrame(FrameType.DATA, 0, 2, Buffer.from("x")), windowUpdate(2, 0), PING]));
       await c.waitFor(isPingAck);
-      expect(fatalFrames(c)).toEqual(["RST_STREAM 2 code=8"]);
+      // The server can write its own RST_STREAM(CANCEL) twice. It answers the late frames with nothing.
+      expect(fatalFrames(c).filter(f => f !== "RST_STREAM 2 code=8")).toEqual([]);
     } finally {
       c.destroy();
       server.close();

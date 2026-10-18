@@ -165,9 +165,6 @@ pub(super) struct Binder<'f, 's> {
     referenced: Vec<u64>,
     /// The start flow node of the functions without a body in which no outer narrowing holds.
     start_of_signatures: FlowId,
-    /// Number of flow nodes that were not created because that one node serves all of those
-    /// functions.
-    spared: u32,
     break_target: FlowId,
     continue_target: FlowId,
     return_target: FlowId,
@@ -367,7 +364,6 @@ impl<'f, 's> Binder<'f, 's> {
             referenced: Vec::new(),
 
             start_of_signatures: FlowId::NONE,
-            spared: 0,
             break_target: FlowId::NONE,
             continue_target: FlowId::NONE,
             return_target: FlowId::NONE,
@@ -1000,8 +996,6 @@ impl<'f, 's> Binder<'f, 's> {
                 outer: FlowId::NONE,
                 arrow: false,
             });
-        } else {
-            self.spared += 1;
         }
         self.start_of_signatures
     }
@@ -2180,15 +2174,8 @@ impl<'f, 's> Binder<'f, 's> {
         self.b.large_tables.extend(places);
         self.b.nested_names = nested_names_of(&self.b.scopes, &self.b.tables, &self.b.entries);
         // Labels.
-        let (mut kept, mut not_cached) = (0, 0);
-        for label in &self.label_edges {
-            if label.node.is_some() {
-                kept += label.edges.len();
-            } else {
-                not_cached += 1;
-            }
-        }
-        self.b.flow_places = self.b.flow.len() as u32 + self.spared + not_cached;
+        let kept = self.label_edges.iter().filter(|it| it.node.is_some());
+        let kept = kept.map(|it| it.edges.len()).sum();
         self.b.flow_edges.reserve_exact(kept);
         for node in &mut self.b.flow {
             let (Flow::Label { start, len } | Flow::Loop { start, len }) = node else {
@@ -2198,6 +2185,10 @@ impl<'f, 's> Binder<'f, 's> {
             (*start, *len) = (self.b.flow_edges.len() as u32, edges.len() as u32);
             self.b.flow_edges.extend_from_slice(&edges[..]);
         }
+        (
+            self.b.flow_depth,
+            self.b.has_loop_types_that_depend_on_order,
+        ) = measure_flow(&self.b.flow, &self.b.flow_edges, &self.b.flow_shared);
         // `collectExternalModuleReferences`
         let uses = self.f.specifier_uses.iter();
         let dynamic = uses.filter(|u| u.kind.is_dynamic() && u.spec.is_some());

@@ -742,7 +742,8 @@ impl<'a> ZlibCompressorArrayList<'a> {
                     drop(zlib_reader);
                     return Err(ZlibError::OutOfMemory);
                 }
-                zlib_reader.zlib.avail_out = zlib_reader.list_ptr.capacity() as uInt;
+                zlib_reader.zlib.avail_out =
+                    zlib_reader.list_ptr.capacity().min(u32::MAX as usize) as uInt;
                 zlib_reader.zlib.next_out = zlib_reader.list_ptr.as_mut_ptr();
 
                 Ok(zlib_reader)
@@ -815,7 +816,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
                     // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
                     let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(0) };
                     self.zlib.next_out = next_out;
-                    self.zlib.avail_out = avail_out as uInt;
+                    self.zlib.avail_out = avail_out.min(u32::MAX as usize) as uInt;
                 }
 
                 if self.zlib.avail_out == 0 {

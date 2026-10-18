@@ -3971,9 +3971,10 @@ fn existing_peer_target(
     .then_some(highest)
 }
 
-/// A peer shares `copy` if the root, or a package that depends on the peer's declaring package, has
-/// a dependency of its own with the peer's name, or if `copy` was itself installed for a peer. A
-/// copy that is only there as the dependency of unrelated packages is not meant for it.
+/// A peer shares `copy` if a package above the peer's declaring package has a dependency of its own
+/// with the peer's name: `react@17` in a workspace serves every library below that workspace. It
+/// also shares a `copy` that was itself installed for a peer. A copy that is only there as the
+/// dependency of unrelated packages is not meant for it.
 fn may_use_copy_out_of_range(
     lockfile: &Lockfile::Lockfile,
     name_hash: PackageNameHash,
@@ -3986,17 +3987,19 @@ fn may_use_copy_out_of_range(
         return true;
     };
     let mut is_a_dependency = false;
-    for (dependent, list) in lockfile.packages.items_dependencies().iter().enumerate() {
+    let mut have_the_name: Vec<PackageID> = Vec::new();
+    for (owner, list) in lockfile.packages.items_dependencies().iter().enumerate() {
         let mut own =
             (list.begin() as usize..list.end() as usize).filter(|&id| !deps[id].behavior.is_peer());
-        if own.clone().any(|id| deps[id].name_hash == name_hash)
-            && (dependent == 0 || own.clone().any(|id| resolutions[id] == package))
-        {
-            return true;
+        if own.clone().any(|id| deps[id].name_hash == name_hash) {
+            have_the_name.push(owner as PackageID);
         }
         is_a_dependency |= own.any(|id| resolutions[id] == copy);
     }
+    let all = reachable::Options::all(0);
     !is_a_dependency
+        || reachable::packages_from(lockfile, resolutions, &have_the_name, true, all)
+            .is_set(package as usize)
 }
 
 /// By a `file:`, `link:`, tarball or git row: the tree builder binds the peer to the nearest copy.

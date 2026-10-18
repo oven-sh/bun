@@ -7343,6 +7343,23 @@ describe.concurrent("hoisting", async () => {
       });
     });
 
+    test("a workspace shares its copy with a package two levels below it", async () => {
+      // dedupe-divergent-peers depends on dedupe-divergent-strict, which needs no-deps@^2.0.0.
+      const dir = await project({
+        "package.json": { name: "mono", workspaces: ["packages/*"] },
+        "packages/a/package.json": {
+          name: "a",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0", "dedupe-divergent-peers": "1.0.0" },
+        },
+      });
+      expect(await peerWarnings(dir)).toEqual([
+        'warn: incorrect peer dependency "no-deps@1.0.0": "dedupe-divergent-strict@1.0.0" requires "no-deps@^2.0.0"',
+      ]);
+      const below = ["dedupe-divergent-peers", "dedupe-divergent-strict"];
+      expect(await versionSeenFrom(join(dir, "packages", "a"), below, "no-deps")).toBe("1.0.0");
+    });
+
     test("a workspace that depends on both shares its copy", async () => {
       const dir = await project({
         "package.json": { name: "mono", workspaces: ["packages/*"] },

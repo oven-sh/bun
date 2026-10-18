@@ -446,8 +446,8 @@ pub fn decode_entity_to_utf8<'a>(entity_text: &[u8], out: &'a mut [u8; 8]) -> Op
 fn is_slug_char(codepoint: u32) -> bool {
     bun_core::identifier::is_identifier_part(codepoint as i32)
         && !is_unicode_punctuation_extended(codepoint)
-        // An identifier takes the joiners and the variation selectors too. They have no glyph.
-        && !matches!(codepoint, 0x200C | 0x200D | 0xFE00..=0xFE0F | 0xE0100..=0xE01EF)
+        // An identifier takes the joiners, the variation selectors and the emoji U+2139 too.
+        && !matches!(codepoint, 0x200C | 0x200D | 0x2139 | 0xFE00..=0xFE0F | 0xE0100..=0xE01EF)
 }
 
 /// Appends the slug of `text` to `slug`, the slug of the heading text before it.
@@ -510,10 +510,6 @@ fn unique_heading_id<'a>(
     slug: &'a mut Vec<u8>,
     slug_counts: &mut bun_collections::StringHashMap<u32>,
 ) -> &'a [u8] {
-    // No hyphen ends a slug.
-    if slug.last() == Some(&b'-') {
-        slug.pop();
-    }
     let slug_len = slug.len();
 
     let repeat_id = is_repeat_id(slug, slug_counts);
@@ -600,6 +596,10 @@ impl HeadingIdTracker {
             return None;
         }
         self.in_heading = false;
+        // No hyphen ends a slug.
+        if self.slug.last() == Some(&b'-') {
+            self.slug.pop();
+        }
         Some(unique_heading_id(&mut self.slug, &mut self.slug_counts))
     }
 

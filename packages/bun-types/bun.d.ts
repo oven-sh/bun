@@ -1651,6 +1651,10 @@ declare module "bun" {
        * unique in its document: when an ID is taken, the heading gets `-1` after
        * it, or the next number that gives a free ID.
        *
+       * These IDs are Bun's own. GitHub's anchors differ for some headings:
+       * GitHub keeps `_`, writes one hyphen for each space, and keeps a hyphen
+       * at the start or the end (`## A & B` is `a-b` here and `a--b` on GitHub).
+       *
        * @example
        * ```ts
        * // Enable both heading IDs and autolink headings

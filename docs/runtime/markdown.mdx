@@ -112,6 +112,8 @@ Bun.markdown.html("## Foo\n\n## Foo\n\n## Foo 1", { headings: { ids: true } });
 // '<h2 id="foo">Foo</h2>\n<h2 id="foo-1">Foo</h2>\n<h2 id="foo-1-1">Foo 1</h2>\n'
 ```
 
+These IDs are Bun's own, and some differ from the anchors that GitHub gives. GitHub keeps `_`, writes one hyphen for each space, and keeps a hyphen at the start or the end. `## A & B` gets `a-b` from Bun and `a--b` from GitHub. The [`markdown/no-missing-link-fragments`](/lint/rules/markdown/no-missing-link-fragments) rule of `bun lint` checks links against GitHub's anchors. To use other IDs, build them in the `heading` callback of `Bun.markdown.render()` or in a heading component of `Bun.markdown.react()`.
+
 ---
 
 ## `Bun.markdown.render()`

@@ -140,7 +140,25 @@ describe("headingIds option", () => {
       "Col·lecció": "collecció",
       "snake\uFF3Fcase ＡＢ": "snakecase-ａｂ",
       "Démarrage rapide 🚀": "démarrage-rapide",
+      "\u2139\uFE0F Info": "info",
+      "\u845B\u{E0100}\u57CE": "\u845B\u57CE",
+      "x\u{E01EF}y": "xy",
     });
+  });
+
+  test("letters outside the BMP stay in the id", () => {
+    expectIds({
+      "\u{20BB7}野家": "\u{20BB7}野家",
+      "\u{10400}\u{10401} Deseret": "\u{10428}\u{10429}-deseret",
+      "\u{1E900}\u{1E901} Adlam": "\u{1E922}\u{1E923}-adlam",
+      "\u{1D7D8}\u{1D7D9} \u{1D4B3}": "\u{1D7D8}\u{1D7D9}-\u{1D4B3}",
+      "\u{11013}\u{11038}": "\u{11013}\u{11038}",
+      "&#x20BB7; &Aopf;": "\u{20BB7}-\u{1D538}",
+    });
+  });
+
+  test("a letter written as an entity stays in the id", () => {
+    expectIds({ "Caf&eacute; &Uuml;ber": "café-über", "&#233;t&#xE9;": "été", "AT&amp;T": "att" });
   });
 
   test("bytes that are not UTF-8 are stripped from slug", () => {
@@ -171,6 +189,39 @@ describe("headingIds option", () => {
       "a-3",
       "a-3-1",
     ]);
+    expect(headingIds("# Foo\n\n# Foo\n\n# Foo\n\n# Foo 1\n")).toEqual(["foo", "foo-1", "foo-2", "foo-1-1"]);
+    expect(headingIds(Buffer.alloc(11 * 5, "# a\n\n").toString() + "# a 10\n").slice(-2)).toEqual(["a-10", "a-10-1"]);
+    // No repeat has a number of 20 digits.
+    expect(headingIds("# a\n\n# a\n\n# a 18446744073709551617\n")).toEqual(["a", "a-1", "a-18446744073709551617"]);
+  });
+
+  test("a repeat gets the number that the loop of github-slugger gives it", () => {
+    let seed = 1;
+    const next = (n: number) => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n;
+    const words = ["a", "a", "b", "1", "1", "2", "3", "01", "10", "0", "日本", "é", "4294967296", "99999999999"];
+
+    const wrong: string[][] = [];
+    for (let doc = 0; doc < 300; doc++) {
+      const headings = Array.from({ length: 2 + next(30) }, () =>
+        Array.from({ length: 1 + next(4) }, () => words[next(words.length)]).join(next(2) ? " " : "-"),
+      );
+      // The reference: `slugger.slug()` of github-slugger, on the id that each heading gets when it is alone.
+      const occurrences = new Map<string, number>();
+      const expected = headings.map(heading => {
+        const slug = headingIds(`# ${heading}\n`)[0];
+        let id = slug;
+        while (occurrences.has(id)) {
+          occurrences.set(slug, occurrences.get(slug)! + 1);
+          id = `${slug}-${occurrences.get(slug)}`;
+        }
+        occurrences.set(id, 0);
+        return id;
+      });
+      if (!Bun.deepEquals(headingIds(headings.map(heading => `# ${heading}\n`).join("\n")), expected)) {
+        wrong.push(headings);
+      }
+    }
+    expect(wrong).toEqual([]);
   });
 
   test("headings with no letter and no digit get different ids", () => {

@@ -405,12 +405,14 @@ describe.concurrent("bun pm ls lists what is on disk", () => {
         listed("<dir> node_modules", ...(isolated ? ["├── a-dep@1.0.1"] : []), "└── one-fixed-dep@1.0.0"),
       );
 
+      // Without node_modules, what bun.lock has is listed.
       await rm(join(packageDir, "node_modules"), { recursive: true });
-      expect(await bun("pm", "ls")).toEqual({
-        stdout: "",
-        stderr: "error: node_modules not found, nothing to list\nnote: run 'bun install' first\n",
-        exitCode: 1,
-      });
+      expect(await bun("pm", "ls")).toEqual(
+        listed("<dir> node_modules (3 installed)", "├── a-dep@1.0.1", "└── one-fixed-dep@1.0.0"),
+      );
+      expect(await bun("pm", "ls", "--all")).toEqual(
+        listed("<dir> node_modules", "├── a-dep@1.0.1", "├── no-deps@1.0.0", "└── one-fixed-dep@1.0.0"),
+      );
     },
   );
 

@@ -622,12 +622,11 @@ impl PackageManagerCommand {
             Output::disable_buffering();
             let lockfile: &Lockfile = &pm.lockfile;
 
-            let Some(mut installed) = InstalledFilter::init() else {
-                if log_level != LogLevel::Silent {
-                    Output::err_generic("node_modules not found, nothing to list", ());
-                    bun_core::note!("run 'bun install' first");
-                }
-                Global::exit(1);
+            // Without a `node_modules`, everything in the lockfile is listed.
+            let mut on_disk = InstalledFilter::init();
+            let mut is_installed = |dir: &[u8], dep_id: DependencyID, or_in_store: bool| {
+                (on_disk.as_mut())
+                    .is_none_or(|on_disk| on_disk.is_installed(lockfile, dir, dep_id, or_in_store))
             };
 
             let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -664,7 +663,7 @@ impl PackageManagerCommand {
                 let mut dependencies = node_modules.dependencies.to_vec();
                 dependencies.retain(|&dep_id| {
                     wanted.is_set_allow_out_of_bound(resolutions[dep_id as usize] as usize, false)
-                        && installed.is_installed(lockfile, dir, dep_id, true)
+                        && is_installed(dir, dep_id, true)
                 });
                 installed_count += dependencies.len();
                 max_depth = max_depth.max(node_modules.depth + 1);
@@ -741,8 +740,7 @@ impl PackageManagerCommand {
                 });
 
                 sorted_dependencies.retain(|&dep_id| {
-                    installed.is_installed(lockfile, b"node_modules", dep_id, false)
-                        && selected(dep_id)
+                    is_installed(b"node_modules", dep_id, false) && selected(dep_id)
                 });
                 print_flat_list(lockfile, &sorted_dependencies);
                 !sorted_dependencies.is_empty()

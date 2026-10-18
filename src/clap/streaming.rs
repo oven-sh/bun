@@ -166,9 +166,10 @@ where
                         || name.strip_prefix(b"no-").is_some_and(|positive| {
                             ignored.flags.contains(&positive)
                                 || ignored.options.contains(&positive)
-                                || params
-                                    .iter()
-                                    .any(|param| param.names.matches_long(positive))
+                                || (!ignored.flags.is_empty()
+                                    && params
+                                        .iter()
+                                        .any(|param| param.names.matches_long(positive)))
                         })
                     {
                         next == b"true" || next == b"false"

@@ -338,6 +338,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     },
     flushed,
     abort() {
+      // Like the native handle: nothing to abort once the response is out. destroy() of a finished response gets here.
+      if (this.finished) return;
       this.aborted = true;
       if (!socket.destroyed) socket.destroy();
     },

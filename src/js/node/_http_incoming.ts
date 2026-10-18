@@ -391,7 +391,12 @@ IncomingMessage.prototype._destroy = function _destroy(err, cb) {
       socket.destroy(err);
     }
     if ($isCallable(cb)) {
-      emitErrorNextTickIfErrorListenerNT(this, err, cb);
+      if (err == null && !this[abortedSymbol]) {
+        // A clean destroy of a complete message calls back at once, as below.
+        cb();
+      } else {
+        emitErrorNextTickIfErrorListenerNT(this, err, cb);
+      }
     }
     return;
   }
@@ -406,6 +411,11 @@ IncomingMessage.prototype._destroy = function _destroy(err, cb) {
     socket.destroy(err);
     const state = { cleanup: undefined as undefined | (() => void) };
     state.cleanup = finished(socket, onFinishedAfterDestroy.bind(this, state, err, cb));
+  } else if (err == null && !this.aborted) {
+    // The tick below is for an 'error' listener that comes right after destroy(err). With no error there
+    // is nothing to wait for. 'close' is still a tick later, from the stream.
+    // https://github.com/nodejs/node/blob/v26.11.1/lib/_http_incoming.js#L294-L300
+    cb();
   } else {
     process.nextTick(onError, this, err, cb);
   }

@@ -66,13 +66,17 @@ test("node:dgram close() inside 'message' handler stops remaining batch datagram
   expect(exitCode).toBe(0);
 });
 
-test("node:dgram connect() takes a port that the engine holds as a double", async () => {
+test.each([
+  ["that the engine holds as a double", port => new Float64Array([port])[0]],
+  ["that is a string", port => String(port)],
+  ["that is a string in hexadecimal", port => "0x" + port.toString(16)],
+])("node:dgram connect() takes a port %s", async (_, spell) => {
   await using server = dgram.createSocket("udp4");
   await using client = dgram.createSocket("udp4");
   await new Promise(resolve => server.bind(0, "127.0.0.1", resolve));
   const { port } = server.address();
   const { promise, resolve, reject } = Promise.withResolvers();
-  client.connect(new Float64Array([port])[0], "127.0.0.1", error => (error ? reject(error) : resolve()));
+  client.connect(spell(port), "127.0.0.1", error => (error ? reject(error) : resolve()));
   await promise;
   expect(client.remoteAddress().port).toBe(port);
 });

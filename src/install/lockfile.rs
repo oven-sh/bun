@@ -187,6 +187,11 @@ pub struct Lockfile {
     /// Packages that a row other than a weak peer (`is_weak_peer`) resolved to at load.
     pub(crate) held_at_load: DynamicBitSet,
 
+    /// A loaded optional (non-peer) row has no package: the install that wrote the lockfile could
+    /// not resolve it (`bun_lock::may_stay_unresolved`). Set by `mark_loaded_packages`; read once
+    /// by the install, which retries those rows. Runtime-only.
+    pub(crate) has_unresolved_optional_rows: bool,
+
     /// Packages that were appended for a dependency on one exact version. A wider range may share
     /// such a package even when the range would pick a higher major version on its own.
     /// Runtime-only, sized lazily.
@@ -2283,6 +2288,7 @@ impl Lockfile {
             saved_config_version: None,
             loaded_package_count: 0,
             held_at_load: DynamicBitSet::default(),
+            has_unresolved_optional_rows: false,
             exact_pinned: DynamicBitSet::default(),
             only_bundled: DynamicBitSet::default(),
         }
@@ -2293,15 +2299,19 @@ impl Lockfile {
         let packages_len = self.packages.len();
         self.loaded_package_count = packages_len as PackageID;
         let mut held = DynamicBitSet::init_empty(packages_len)?;
+        let mut unresolved_optional = false;
         let rows = self.buffers.dependencies.len();
         for (id, &package_id) in self.buffers.resolutions.iter().enumerate().take(rows) {
-            if (package_id as usize) < packages_len
-                && !self.is_weak_peer(id as DependencyID, package_id)
-            {
-                held.set(package_id as usize);
+            if (package_id as usize) < packages_len {
+                if !self.is_weak_peer(id as DependencyID, package_id) {
+                    held.set(package_id as usize);
+                }
+            } else if package_id == invalid_package_id {
+                unresolved_optional |= self.buffers.dependencies[id].behavior.is_optional();
             }
         }
         self.held_at_load = held;
+        self.has_unresolved_optional_rows = unresolved_optional;
         Ok(())
     }
 

@@ -56,6 +56,7 @@ public:
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
+    // With `listenerThrew`, the listeners after one that throws are not called, as in Node.
     WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&, bool* listenerThrew = nullptr);
 
     WEBCORE_EXPORT Vector<Identifier> getEventNames();

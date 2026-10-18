@@ -584,15 +584,21 @@ test.concurrent("bun --watch bake fails, as bun bake reloads on its own", async 
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("bun bake asks for a restart when bake.config.ts changes", async () => {
+test.concurrent("bun bake asks for a restart when bake.config.ts changes, and only then", async () => {
   using dir = tempDir("bake-command-config-change", {
     "bake.config.ts": `export default { plugins: [] };`,
     "app/pages/index.html": page,
+    "app/server.ts": `export default { fetch: () => new Response("v1") };`,
   });
 
   await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
   const output = collectOutput(proc);
   await output.waitFor(/url: /);
+
+  // A reload for another file evaluates bake.config.ts again, but it did not change.
+  await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("v2") };`);
+  await output.waitFor(/url: [\s\S]*url: /);
+  expect(output.text).not.toContain("changed");
 
   await Bun.write(join(String(dir), "bake.config.ts"), `export default { plugins: [] }; // changed`);
   const [line] = await output.waitFor(/"bake\.config\.ts" changed\..*/);

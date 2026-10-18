@@ -106,26 +106,27 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
   return pages;
 }
 
-/** The default export of `bake.config.ts` that the server has the plugins of, after the first load. */
-let configInUse: unknown;
+/**
+ * The `key` of the `bake.config.ts` that the server loaded its plugins from, once it started. The
+ * server loads plugins once, and each reload evaluates the file again, so the text tells a change.
+ */
+let configKeyInServer: string | undefined;
+
+type Config = { plugins: unknown[]; names: string[]; name: string; key: string };
 
 /** The plugins of `bake.config.ts`: its default export is a config, or a function that returns one. */
-async function loadConfig(cwd: string): Promise<{ plugins: unknown[]; names: string[] }> {
+async function loadConfig(cwd: string): Promise<Config> {
   let file: string;
   try {
     file = Bun.resolveSync("./bake.config", cwd);
   } catch (error: any) {
-    if (error?.code === "ERR_MODULE_NOT_FOUND") return { plugins: [], names: [] };
+    if (error?.code === "ERR_MODULE_NOT_FOUND") return { plugins: [], names: [], name: "bake.config.ts", key: "" };
     throw error;
   }
 
   const name = display(file);
+  const key = file + "\0" + Bun.hash(await Bun.file(file).bytes());
   let config = (await import(file)).default;
-  // A reload imports the file again only when it changed. The server loads plugins once.
-  if (configInUse !== undefined && config !== configInUse) {
-    console.warn(`"${name}" changed. Restart "bun bake" to use the new plugins.`);
-  }
-  configInUse ??= config;
   if ($isCallable(config)) config = await config({ mode: "development" });
   if (config === null || typeof config !== "object") {
     throw new TypeError(`"${name}" must have a default export: a config object, or a function that returns one.`);
@@ -137,7 +138,7 @@ async function loadConfig(cwd: string): Promise<{ plugins: unknown[]; names: str
     }
   }
   const list = config.plugins;
-  if (list === undefined) return { plugins: [], names: [] };
+  if (list === undefined) return { plugins: [], names: [], name, key };
   if (!$isArray(list)) throw $ERR_INVALID_ARG_TYPE("plugins", "array", list);
 
   const plugins: unknown[] = [];
@@ -160,7 +161,7 @@ async function loadConfig(cwd: string): Promise<{ plugins: unknown[]; names: str
     plugins.push(plugin);
     names.push(pluginName);
   }
-  return { plugins, names };
+  return { plugins, names, name, key };
 }
 
 async function loadAppServer(
@@ -230,6 +231,9 @@ async function start() {
 
   const cwd = process.cwd();
   const config = await loadConfig(cwd);
+  if (configKeyInServer !== undefined && config.key !== configKeyInServer) {
+    console.warn(`"${config.name}" changed. Restart "bun bake" to use the new plugins.`);
+  }
   // Before `Bun.serve()`: the server loads them with the plugins of bunfig.toml.
   setConfigPlugins(config.plugins, config.names);
   const pages = await loadPages(path.join(cwd, "app", "pages")).catch(exitWith);
@@ -293,6 +297,7 @@ async function start() {
     },
     useUnix ? undefined : (flags.port ?? exportedPort),
   );
+  configKeyInServer ??= config.key;
   const elapsed = (performance.now() - initial).toFixed(2);
 
   const listed: { route: string; file: string }[] = [];

@@ -43,13 +43,9 @@ OrdinalNumber clampOffsetForSource(OrdinalNumber offset, unsigned sourceLength);
 TextPosition providerStartPosition(OrdinalNumber lineOffset, OrdinalNumber columnOffset);
 // `codeGenerationKey`: optionNames(vm).codeGeneration(vm) or optionNames(vm).contextCodeGeneration(vm).
 void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, const JSC::Identifier& codeGenerationKey, JSValue* importer);
-// The NodeVMGlobalObject behind a context value: a contextified sandbox, a NodeVMSpecialSandbox, or
-// the global proxy of a DONT_CONTEXTIFY context. Null for anything else.
+// Null when `contextValue` is not a vm context.
 NodeVMGlobalObject* findGlobalObjectFromContext(JSGlobalObject* globalObject, JSValue contextValue);
 NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSValue contextValue, bool canThrow);
-// Creates the global of a new context and installs its sandbox. `contextifiedObject()` on the
-// result is the value createContext() returns to JS.
-NodeVMGlobalObject* createContext(JSGlobalObject* globalObject, JSObject* sandbox, NodeVMContextOptions options, JSValue importer);
 JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value);
 // For vm.compileFunction we need to return an anonymous function expression. This code is adapted from/inspired by JSC::constructFunction, which is used for function declarations.
 JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope);

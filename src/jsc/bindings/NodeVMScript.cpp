@@ -524,46 +524,6 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
     RELEASE_AND_RETURN(scope, runInContext(nodeVmGlobalObject, script, args.at(1)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = JSC::getVM(globalObject);
-    NodeVMScript* script = dynamicDowncast<NodeVMScript>(callFrame->thisValue());
-    JSValue contextObjectValue = callFrame->argument(0);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (!script) {
-        throwTypeError(globalObject, scope, "this.runInContext is not a function"_s);
-        return {};
-    }
-
-    bool notContextified = NodeVM::getContextArg(globalObject, contextObjectValue);
-
-    if (!contextObjectValue || !contextObjectValue.isObject()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "Context must be an object"_s);
-        return {};
-    }
-
-    JSValue contextOptionsArg = callFrame->argument(1);
-    NodeVMContextOptions contextOptions {};
-    JSValue importer;
-
-    getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, optionNames(vm).contextCodeGeneration(vm), &importer);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    contextOptions.notContextified = notContextified;
-
-    // Node's Script#runInNewContext is createContext() followed by runInContext(), so an object
-    // that is a context already runs in its existing global.
-    if (auto* existing = findGlobalObjectFromContext(globalObject, contextObjectValue)) {
-        RELEASE_AND_RETURN(scope, runInContext(existing, script, callFrame->argument(1)));
-    }
-
-    auto* targetContext = createContext(globalObject, asObject(contextObjectValue), contextOptions, importer);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    RELEASE_AND_RETURN(scope, runInContext(targetContext, script, callFrame->argument(1)));
-}
-
 class NodeVMScriptPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -600,7 +560,6 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMScriptPrototype, NodeVMScriptPrototype
 static const struct HashTableValue scriptPrototypeTableValues[] = {
     { "createCachedData"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptCreateCachedData, 1 } },
     { "runInContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInContext, 2 } },
-    { "runInNewContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInNewContext, 2 } },
     { "runInThisContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInThisContext, 2 } },
     { "sourceMapURL"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetSourceMapURL, nullptr } },
     { "cachedData"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetCachedData, nullptr } },

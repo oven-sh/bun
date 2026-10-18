@@ -800,10 +800,8 @@ NodeVMGlobalObject* findGlobalObjectFromContext(JSGlobalObject* globalObject, JS
         return specialSandbox->parentGlobal();
     }
 
-    // Node's createContext(DONT_CONTEXTIFY) returns the context's global proxy, so `this` inside
-    // such a context is the context. Bun returns a NodeVMSpecialSandbox instead, but `this` is
-    // still the proxy, so the proxy must count too. The proxy of a contextified global is not a
-    // context: its sandbox is a separate object, and Node rejects it.
+    // `this` inside a DONT_CONTEXTIFY context is its global proxy, and Node hands out that proxy
+    // as the context. The proxy of a contextified global is not a context: its sandbox is.
     if (auto* proxy = dynamicDowncast<JSGlobalProxy>(context)) {
         if (auto* nodeVmGlobalObject = dynamicDowncast<NodeVMGlobalObject>(proxy->target()); nodeVmGlobalObject && nodeVmGlobalObject->isNotContextified()) {
             return nodeVmGlobalObject;
@@ -830,7 +828,7 @@ NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSV
     return nullptr;
 }
 
-NodeVMGlobalObject* createContext(JSGlobalObject* globalObject, JSObject* sandbox, NodeVMContextOptions options, JSValue importer)
+static NodeVMGlobalObject* createContext(JSGlobalObject* globalObject, JSObject* sandbox, NodeVMContextOptions options, JSValue importer)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

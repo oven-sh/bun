@@ -235,6 +235,8 @@ With an oxlint config, `--tsconfig` does what it does in oxlint. It sets the `ts
 bun lint --staged --fix
 ```
 
+If a file has both staged and unstaged changes, Bun lints the staged version, which is what the commit gets. `--fix` doesn't write such a file, because staging it again would commit the rest. If it has something to fix, Bun names the file and exits with code `2`.
+
 `--changed` lints the files that differ from your default branch. Pass a ref to compare with something else.
 
 ```bash terminal icon="terminal"

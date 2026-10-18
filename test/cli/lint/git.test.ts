@@ -1,6 +1,6 @@
 // Tests for `--staged` and `--changed` in `bun lint` and `bun fmt`.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import {
   chmodSync,
   existsSync,
@@ -409,6 +409,41 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect(three.exitCode).toBe(1);
   });
 
+  test("a file with both staged and unstaged changes is read as it's staged", async () => {
+    const odd = isWindows ? "ünï côde.js" : 'ünï "cô\n\tde".js';
+    using repo = await repository({ "good.js": tidy, "sub/bad.js": tidy, [odd]: tidy });
+    const { root } = repo;
+    // The commit gets `before` from these two. The copies on disk have nothing to report.
+    for (const name of ["sub/bad.js", odd]) write(root, name, "\n" + before);
+    write(root, "good.js", tidy + tidy.replace("a", "b"));
+    await git(root, "add", "-A");
+    for (const name of ["sub/bad.js", odd]) write(root, name, tidy);
+    // And the other way around.
+    write(root, "good.js", before);
+
+    const looking = command === "lint" ? ["lint", "--rule", "prefer-const: error", "-f", "unix"] : ["fmt", "--check"];
+    for (const cwd of [root, join(root, "sub")]) {
+      const { stdout, stderr, exitCode } = await bun(cwd, [...looking, "--staged", root]);
+      const printed = stdout + stderr;
+      expect(printed).toContain("bad.js");
+      expect(printed).toMatch(command === "lint" ? /^2 problems$/m : /\b2 files\b/);
+      expect(printed).not.toContain("good.js");
+      // The place in the staged text.
+      if (command === "lint") expect(stdout).toContain("bad.js:2:5: ");
+      expect(exitCode).toBe(1);
+    }
+
+    const written = await bun(root, [...writing[command], "--staged"]);
+    expect(written.stderr).toContain(
+      `2 files have both staged and unstaged changes, so they were not ${done[command]}`,
+    );
+    expect(written.stderr).not.toContain("good.js");
+    expect(written.exitCode).toBe(2);
+    expect(read(root, "sub/bad.js")).toBe(tidy);
+    expect(read(root, "good.js")).toBe(before);
+    expect(await git(root, "show", ":sub/bad.js")).toBe("\n" + before);
+  });
+
   test.skipIf(isWindows)("works in a pre-commit hook, on the index of that commit", async () => {
     using repo = await repository({ "a.js": tidy, "b.js": tidy });
     const { root } = repo;
@@ -551,6 +586,261 @@ describe.concurrent("bun lint --staged --fix still reports the problems in a par
     expect(read(repo.root, "partly.js")).toBe(left);
   });
 });
+
+describe.concurrent("bun lint --staged reads a partly staged file as it's staged", () => {
+  const unix = ["-f", "unix"];
+
+  describe("with types", () => {
+    const flags = ["--type-aware", "--type-check", "--rule", "@typescript-eslint/await-thenable: error", ...unix];
+    // Fewer declarations to load.
+    const tsconfig = JSON.stringify({ compilerOptions: { lib: ["es2015"], types: [] } });
+    const takesNumber = "export async function f(a: number) {\n  await a;\n}\n";
+    const takesString = "export async function f(a: string) {\n  return a;\n}\n";
+    const calls = 'import { f } from "../lib/f";\nlet x = "";\nexport const g = () => {\n  f(x);\n};\n';
+
+    test("the file itself and the file that imports it, in every pass of --fix", async () => {
+      using repo = await repository({ "tsconfig.json": tsconfig, "lib/f.ts": tidy, "src/whole.ts": tidy });
+      write(repo.root, "lib/f.ts", takesNumber);
+      write(repo.root, "src/whole.ts", calls);
+      await git(repo.root, "add", "-A");
+      write(repo.root, "lib/f.ts", takesString);
+      // whole.ts is checked again after `let` is fixed.
+      const fix = ["--fix", "--rule", "prefer-const: error"];
+      const { stdout, exitCode } = await bun(repo.root, ["lint", "--staged", ...flags, ...fix]);
+      expect(stdout).toContain("f.ts:2:3: ");
+      expect(stdout).toContain("await-thenable");
+      expect(stdout).toMatch(/whole\.ts:4:5: .*TS2345/);
+      expect(exitCode).toBe(1);
+      expect(read(repo.root, "src/whole.ts")).toBe(calls.replace("let", "const"));
+    });
+
+    test.each([
+      ["is staged too, but isn't linted", true],
+      ["only has unstaged changes", false],
+    ])("a file that %s", async (_, isStaged) => {
+      using repo = await repository({ "tsconfig.json": tsconfig, "lib/f.ts": takesNumber, "src/whole.ts": tidy });
+      if (isStaged) write(repo.root, "lib/f.ts", takesNumber + "\n");
+      write(repo.root, "src/whole.ts", calls);
+      await git(repo.root, "add", "-A");
+      write(repo.root, "lib/f.ts", takesString);
+      const { stdout, exitCode } = await bun(repo.root, ["lint", "--staged", ...flags, "src"]);
+      expect(stdout).not.toContain("f.ts");
+      expect(stdout).toMatch(/whole\.ts:4:5: .*TS2345/);
+      expect(exitCode).toBe(1);
+    });
+
+    test.skipIf(isWindows)(
+      "a file that is named through a link, and a package.json with a byte order mark",
+      async () => {
+        const module = {
+          "package.json": '\uFEFF{ "type": "module" }',
+          "tsconfig.json": '{ "compilerOptions": { "module": "nodenext", "lib": ["es2015"], "types": [] } }',
+        };
+        using repo = await repository({ ...module, "a.ts": tidy });
+        const { root } = repo;
+        write(root, "a.ts", "export async function f(a: number) {\n  await a;\n  return import.meta;\n}\n");
+        write(root, "package.json", module["package.json"] + "\n");
+        await git(root, "add", "-A");
+        write(root, "a.ts", tidy);
+        write(root, "package.json", module["package.json"]);
+        using links = tempDir("bun-lint-git-link", {});
+        symlinkSync(root, join(String(links), "link"));
+        const { stdout, exitCode } = await bun(root, [
+          "lint",
+          "--staged",
+          ...flags,
+          join(String(links), "link", "a.ts"),
+        ]);
+        expect(stdout).toContain("a.ts:2:3: ");
+        expect(stdout).toMatch(/^1 problem$/m);
+        expect(exitCode).toBe(1);
+      },
+    );
+  });
+
+  test("in a program of no tsconfig.json, like any other file", async () => {
+    const code = "export function f() {\n  let a = 1;\n  a = 2;\n  return a;\n}\n";
+    using repo = await repository({ "tsconfig.json": "{}", "partly.js": tidy, "whole.js": tidy });
+    for (const name of ["partly.js", "whole.js"]) write(repo.root, name, code);
+    await git(repo.root, "add", "-A");
+    write(repo.root, "partly.js", tidy);
+    const rules = ["--rule", "@typescript-eslint/await-thenable: error", "--rule", "no-useless-assignment: error"];
+    const { stdout, exitCode } = await bun(repo.root, ["lint", "--staged", "--type-aware", ...rules]);
+    expect(stdout.match(/It is overwritten on line 3 before it is read\./g)).toHaveLength(2);
+    expect(exitCode).toBe(1);
+  });
+
+  test("for a rule that follows imports", async () => {
+    using repo = await repository({ "partly.js": tidy, "whole.js": tidy });
+    write(repo.root, "partly.js", tidy + "\n");
+    write(repo.root, "whole.js", 'import { b } from "./partly.js";\nexport { b };\n');
+    await git(repo.root, "add", "-A");
+    write(repo.root, "partly.js", tidy + tidy.replace("a", "b"));
+    const { stdout, exitCode } = await bun(repo.root, ["lint", "--staged", "--rule", "import/named: error", ...unix]);
+    expect(stdout).toContain("whole.js:1:10: b not found in './partly.js'");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--fix-dry-run fixes it, since nothing is written", async () => {
+    using repo = await repository({ "partly.js": tidy, "whole.js": tidy });
+    for (const name of ["partly.js", "whole.js"]) write(repo.root, name, before);
+    await git(repo.root, "add", "-A");
+    write(repo.root, "partly.js", tidy);
+    const flags = ["--fix-dry-run", "--rule", "prefer-const: error", "-f", "json"];
+    const { stdout, exitCode } = await bun(repo.root, ["lint", "--staged", ...flags]);
+    const outputs = JSON.parse(stdout).map(it => [basename(it.filePath), it.output]);
+    expect(outputs.sort()).toEqual([
+      ["partly.js", after.lint],
+      ["whole.js", after.lint],
+    ]);
+    expect(exitCode).toBe(0);
+    expect(read(repo.root, "partly.js")).toBe(tidy);
+  });
+});
+
+describe.concurrent("bun fmt --staged reads a partly staged file with the line endings of a checkout", () => {
+  const crlf = (text: string) => text.replaceAll("\n", "\r\n");
+  const two = tidy + tidy.replace("a", "b");
+
+  test("git stores LF and checks out CRLF", async () => {
+    using repo = await repository({ ".gitattributes": "*.js text eol=crlf\n", "partly.js": tidy, "whole.js": tidy });
+    const { root } = repo;
+    for (const name of ["partly.js", "whole.js"]) write(root, name, crlf(two));
+    await git(root, "add", "-A");
+    write(root, "partly.js", crlf(tidy));
+    expect(await git(root, "show", ":partly.js")).toBe(two);
+    for (const flags of [["--check"], []]) {
+      const { stderr, exitCode } = await bun(root, ["fmt", "--staged", "--end-of-line", "crlf", ...flags]);
+      expect(stderr).not.toContain("partly.js");
+      expect(exitCode).toBe(0);
+    }
+    // Like whole.js, which is read from the disk.
+    const { stdout, stderr, exitCode } = await bun(root, ["fmt", "--staged", "--check", "--end-of-line", "lf"]);
+    expect(stdout + stderr).toMatch(/\b2 files\b/);
+    expect(exitCode).toBe(1);
+  });
+
+  test(
+    "in a language that only a plugin of Prettier reads",
+    async () => {
+      // Stand-ins. This Prettier takes blanks away, and ends lines as it is told.
+      using repo = await repository({
+        ".gitattributes": "*.astro text eol=crlf\n",
+        ".gitignore": "node_modules\n",
+        ".prettierrc": '{ "plugins": ["prettier-plugin-astro"], "endOfLine": "crlf" }\n',
+        "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
+        "node_modules/prettier/index.cjs": `const fs = require("node:fs");
+exports.resolveConfig = async (file, { config }) => JSON.parse(fs.readFileSync(config, "utf8"));
+exports.format = async (text, { endOfLine }) =>
+  text.replace(/ +/g, " ").replace(/\\r?\\n/g, endOfLine === "crlf" ? "\\r\\n" : "\\n");
+`,
+        "node_modules/prettier-plugin-astro/package.json": '{ "name": "prettier-plugin-astro", "version": "4.0.0" }',
+        "tidy.astro": "<p>a</p>\r\n",
+        "messy.astro": "<p>a</p>\r\n",
+      });
+      const { root } = repo;
+      write(root, "tidy.astro", "<p >b</p>\r\n");
+      write(root, "messy.astro", "<p   >b</p>\r\n");
+      await git(root, "add", "-A");
+      // On disk it's the other way round.
+      write(root, "tidy.astro", "<p   >c</p>\r\n");
+      write(root, "messy.astro", "<p >c</p>\r\n");
+      expect(await git(root, "show", ":tidy.astro")).toBe("<p >b</p>\n");
+      const { stdout, stderr, exitCode } = await bun(root, ["fmt", "--staged", "--check"]);
+      expect(stdout + stderr).toContain("messy.astro");
+      expect(stdout + stderr).not.toContain("tidy.astro");
+      expect(exitCode).toBe(1);
+    },
+    // A run starts a VM, and the search for leaks at its end takes seconds with the threads of one. Without that search it
+    // still takes over 5 seconds on Windows, next to the other tests and their calls of git.
+    isDebug || isASAN ? 120_000 : 30_000,
+  );
+
+  test("git converts nothing", async () => {
+    using repo = await repository({ "partly.js": tidy });
+    const { root } = repo;
+    write(root, "partly.js", crlf(two));
+    await git(root, "add", "-A");
+    write(root, "partly.js", crlf(tidy));
+    expect(await git(root, "show", ":partly.js")).toBe(crlf(two));
+    const { stdout, stderr, exitCode } = await bun(root, ["fmt", "--staged", "--check", "--end-of-line", "lf"]);
+    expect(stdout + stderr).toContain("partly.js");
+    expect(exitCode).toBe(1);
+  });
+});
+
+test.concurrent.each(commands)("bun %s --staged only reads from the index what it has a use for", async command => {
+  using repo = await repository({ "asset.bin": "1", "other.js": tidy, "whole.js": tidy });
+  const { root } = repo;
+  write(root, "whole.js", tidy + tidy.replace("a", "b"));
+  await git(root, "add", "-A");
+  const looking = command === "lint" ? ["lint"] : ["fmt", "--check"];
+  async function reads() {
+    using trace = tempDir("bun-lint-git-trace", {});
+    const { exitCode } = await bun(root, [...looking, "--staged"], { GIT_TRACE: join(String(trace), "trace") });
+    expect(exitCode).toBe(0);
+    return read(String(trace), "trace").includes("cat-file");
+  }
+  expect(await reads()).toBe(false);
+  // Not staged, and nothing can import it.
+  write(root, "asset.bin", "2");
+  expect(await reads()).toBe(false);
+  write(root, "other.js", tidy + "\n");
+  expect(await reads()).toBe(true);
+});
+
+test.concurrent.each(commands)(
+  "bun %s --staged names a file whose staged version isn't in the clone",
+  async command => {
+    using repo = await repository({ "sub/partly.js": tidy });
+    const { root } = repo;
+    write(root, "sub/partly.js", before);
+    await git(root, "add", "-A");
+    write(root, "sub/partly.js", tidy);
+    // Otherwise `git diff` looks for the blob too, and fails first.
+    await git(root, "config", "diff.autoRefreshIndex", "false");
+    const id = (await git(root, "rev-parse", ":sub/partly.js")).trim();
+    rmSync(join(root, ".git/objects", id.slice(0, 2), id.slice(2)), { force: true });
+    const { stderr, exitCode } = await bun(join(root, "sub"), [command, "--staged"]);
+    expect(stderr).toContain(`--staged cannot read what is staged of partly.js (blob ${id})\n`);
+    expect(exitCode).toBe(2);
+  },
+);
+
+test.concurrent("bun lint --staged reads a file with a conflict from the disk", async () => {
+  using repo = await repository({ "conflict.js": tidy, "whole.js": tidy });
+  const { root } = repo;
+  await git(root, "checkout", "-q", "-b", "other");
+  write(root, "conflict.js", "export const theirs = 1;\n");
+  write(root, "whole.js", 'import { both } from "./conflict.js";\nexport { both };\n');
+  await commit(root);
+  await git(root, "checkout", "-q", "main");
+  write(root, "conflict.js", "export const ours = 1;\n");
+  await commit(root);
+  await run(["git", "merge", "other"], root);
+  expect(await git(root, "status", "--porcelain")).toBe("UU conflict.js\nM  whole.js\n");
+  // Resolved, but not staged yet.
+  write(root, "conflict.js", "export const both = 1;\n");
+  expect(await selected(root, root, ["lint", "--staged"])).toEqual(["whole.js"]);
+  const { stdout, exitCode } = await bun(root, ["lint", "--staged", "--rule", "import/named: error", "-f", "unix"]);
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows).concurrent.each(commands)(
+  "bun %s --staged skips a file that is staged as a symlink",
+  async command => {
+    using repo = await repository({ "target.js": tidy, "a.js": tidy, "b.js": tidy });
+    const { root } = repo;
+    rmSync(join(root, "a.js"));
+    symlinkSync("target.js", join(root, "a.js"));
+    write(root, "b.js", before);
+    await git(root, "add", "-A");
+    rmSync(join(root, "a.js"));
+    write(root, "a.js", tidy);
+    expect(await selected(root, root, [command, "--staged"])).toEqual(["b.js"]);
+  },
+);
 
 test.concurrent("bun fmt --staged doesn't count a file it skips", async () => {
   using repo = await repository({ "partly.js": tidy, "whole.js": tidy, "tidy.js": tidy });

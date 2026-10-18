@@ -1604,8 +1604,7 @@ impl Run<'_> {
         let asks_for_different = (options.check || options.list_different) && !options.write;
         let only_looks = asks_for_different || options.debug_check;
         let is_oxfmt = configs.flavor == Flavor::Oxfmt;
-        let only =
-            (options.only.as_ref()).map(|it| git::Files::read(it, !only_looks, self.environment));
+        let only = (options.only.as_ref()).map(|it| git::Files::read(it, self.environment));
         let only = match only.transpose() {
             Ok(only) => only,
             Err(Fatal(error)) => return self.fail(&error),
@@ -1794,7 +1793,7 @@ impl Run<'_> {
                 if leaves_classes.load(Ordering::Relaxed) {
                     options.options.tailwind = None;
                 }
-                let text = fs::read(&target.path).map_err(|error| {
+                let text = git::read(only.as_ref(), &target.path).map_err(|error| {
                     [
                         b"Unable to read file \"",
                         &shown[..],
@@ -1881,7 +1880,8 @@ impl Run<'_> {
                 let config = configs.path_of_config(&target.scope);
                 let file = (&target.path[..], &shown[..]);
                 let writes = !only_looks && !is_partly_staged(target);
-                results.lock()[index] = Some(match bridge.format_file(file, config, writes) {
+                let formatted = bridge.format_file(file, config, writes, only.as_ref());
+                results.lock()[index] = Some(match formatted {
                     Ok(true) if !only_looks && !writes => Done::PartlyStaged,
                     Ok(true) => Done::Different(began.elapsed()),
                     Ok(false) => Done::Unchanged,

@@ -204,7 +204,8 @@ impl Context<'_, '_> {
     /// Whether fixes are applied to the file at `path`. A partly staged file won't be written, so its problems are reported
     /// unfixed.
     pub(crate) fn fixes_file(&self, path: &[u8]) -> bool {
-        self.fixes() && !self.only.is_some_and(|it| it.is_partly_staged(path))
+        let is_written = self.options.fix;
+        self.fixes() && !(is_written && self.only.is_some_and(|it| it.is_partly_staged(path)))
     }
 
     /// oxlint's `--fix-suggestions` and `--fix-dangerously`: a suggestion of a kind that they allow is as good as a fix.
@@ -445,7 +446,7 @@ impl Context<'_, '_> {
         let path = paths::from_native(&result.path);
         let text = match result.text.take() {
             Some(text) => text,
-            None => fs::read(&path).map_err(|error| {
+            None => git::read(self.only, &path).map_err(|error| {
                 Fatal([b"Cannot read ", &path[..], b": ", &fs::describe(&error)].concat())
             })?,
         };
@@ -801,7 +802,7 @@ impl Context<'_, '_> {
             return Ok(warns.then(|| self.ignored(&target.path, &target.status, flavor)));
         };
         let started = self.timing.now();
-        let text = match fs::read(&target.path) {
+        let text = match git::read(self.only, &target.path) {
             Ok(text) => text,
             Err(error) if matches!(target.loaded.flavor, Flavor::Oxlint | Flavor::BuiltIn) => {
                 // It is gone since it was found. oxlint passes over what is not there.

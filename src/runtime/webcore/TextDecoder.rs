@@ -534,7 +534,7 @@ pub(crate) extern "C" fn TextDecoder__encodingToJS(
     global: &JSGlobalObject,
     encoding: EncodingLabel,
 ) -> JSValue {
-    // SAFETY: the getter of a stream called this with no `JsScope` borrowed.
+    // SAFETY: a host function of a stream called this with no `JsScope` borrowed.
     unsafe { JsScope::with(global.as_mut_ptr(), |cx| encoding.to_js(&cx.heap).to_js()) }
 }
 

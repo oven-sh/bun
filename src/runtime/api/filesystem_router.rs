@@ -3,12 +3,11 @@
 use bun_paths::strings;
 
 use bun_ast as Log;
-use bun_core::{EncodedSlice, Utf8Bytes};
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
-use bun_jsc::js_object::ObjectInitializer;
+use bun_core::Utf8Bytes;
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, to_js};
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsCell, JsError, JsResult, LogJsc};
+use bun_jsc::{JSGlobalObject, JsCell, JsResult, LogJsc};
 use bun_paths::{self as path, MAX_PATH_BYTES};
 use bun_ptr::BackRef;
 
@@ -452,39 +451,28 @@ impl MatchedRoute {
         strings::trim_left(self.pathname.slice(), b"/")
     }
 
-    fn create_query_object(ctx: &JSGlobalObject, map: &QueryStringMap) -> JsResult<JSValue> {
-        struct QueryObjectCreator<'a> {
-            query: &'a QueryStringMap,
-        }
-        impl<'a> ObjectInitializer for QueryObjectCreator<'a> {
-            fn create(&mut self, obj: &mut JSObject, global: &JSGlobalObject) -> JsResult<()> {
-                let mut values_buf: [&[u8]; 256] = [b""; 256];
-                let mut refs_buf: [EncodedSlice; 256] = [EncodedSlice::EMPTY; 256];
-
-                let mut iter = self.query.iter();
-                while let Some(entry) = iter.next(&mut values_buf) {
-                    let mut name = EncodedSlice::from_bytes(entry.name);
-
-                    debug_assert!(!entry.values.is_empty());
-                    let values = &mut refs_buf[..entry.values.len()];
-                    for (slot, value) in values.iter_mut().zip(entry.values) {
-                        *slot = EncodedSlice::from_bytes(value);
-                    }
-                    obj.put_record(global, &mut name, values)?;
-                }
-                Ok(())
-            }
-        }
-
-        let count = map.get_name_count();
-        let mut creator = QueryObjectCreator { query: map };
-
-        JSObject::create_with_initializer(&mut creator, ctx, count)
+    /// A name that comes once has a string, and one that comes again has an array of them.
+    fn query_object<'a>(
+        heap: &JsHeap<'a>,
+        map: Option<&QueryStringMap>,
+    ) -> bindgen::Result<'a, JsLocal<'a>> {
+        let mut values: [&[u8]; 256] = [b""; 256];
+        let mut names = map.map(QueryStringMap::iter);
+        let entries = core::iter::from_fn(|| {
+            let entry = names.as_mut()?.next(&mut values)?;
+            let value = match &*entry.values {
+                [value] => to_js::utf8(heap, value),
+                values => to_js::array(heap, values, |heap, value| to_js::utf8(heap, value)),
+            };
+            Some((entry.name, value))
+        });
+        let count = map.map_or(0, QueryStringMap::get_name_count);
+        to_js::record(heap, entries.take(count), |_, value| value)
     }
 }
 
 impl MatchedRouteClass for MatchedRoute {
-    type Error<'a> = JsError;
+    type Error<'a> = bindgen::Error<'a>;
 
     fn file_path(&self) -> impl AsRef<[u8]> {
         self.file_path
@@ -507,11 +495,9 @@ impl MatchedRouteClass for MatchedRoute {
         self.name
     }
 
-    fn params<'a>(&self, heap: &JsHeap<'a>) -> JsResult<JsLocal<'a>> {
-        // SAFETY: the object is new and plain, and its properties are defined and not set.
-        let global = unsafe { heap.global() };
+    fn params<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         if self.params_list.is_empty() {
-            return Ok(JsLocal::new(heap, JSValue::create_empty_object(global, 0)));
+            return Self::query_object(heap, None);
         }
 
         if self.param_map.get().is_none() {
@@ -525,17 +511,14 @@ impl MatchedRouteClass for MatchedRoute {
                 .set(QueryStringMap::init_with_scanner(scanner)?);
         }
 
-        let params = Self::create_query_object(global, self.param_map.get().as_ref().unwrap())?;
-        Ok(JsLocal::new(heap, params))
+        Self::query_object(heap, self.param_map.get().as_ref())
     }
 
     fn pathname(&self) -> impl AsRef<[u8]> {
         self.pathname.slice()
     }
 
-    fn query<'a>(&self, heap: &JsHeap<'a>) -> JsResult<JsLocal<'a>> {
-        // SAFETY: the object is new and plain, and its properties are defined and not set.
-        let global = unsafe { heap.global() };
+    fn query<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let query_string = &self.pathname.slice()[self.query_start..];
         if query_string.is_empty() {
             return self.params(heap);
@@ -551,11 +534,7 @@ impl MatchedRouteClass for MatchedRoute {
                 &self.params_list,
             ))?
         };
-        let query = match &map {
-            Some(map) => Self::create_query_object(global, map)?,
-            None => JSValue::create_empty_object(global, 0),
-        };
-        Ok(JsLocal::new(heap, query))
+        Self::query_object(heap, map.as_ref())
     }
 
     fn script_src(&self) -> impl AsRef<[u8]> {

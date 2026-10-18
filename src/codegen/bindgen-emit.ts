@@ -68,20 +68,11 @@ function walk(type: Type, visit: (type: Type) => void, seen = new Set<Type>()): 
   for (const dependency of type.dependencies) walk(dependency, visit, seen);
 }
 
-/** Marks which direction each dictionary travels and gives every table entry its index. */
+/** Marks which direction each named type travels and gives every table entry its index. */
 export function analyze(files: readonly SchemaFile[]): Tables {
   const tables: Tables = { memberNames: [], enumerationValues: [], classes: [] };
-  const markAccepted = (type: Type) =>
-    walk(type, t => void ((t instanceof DictionaryType || t instanceof UnionType) && (t.accepted = true)));
-  const markReturned = (type: Type) =>
-    walk(
-      type,
-      t =>
-        void (
-          (t instanceof DictionaryType || t instanceof UnionType || t instanceof EnumerationType) &&
-          (t.returned = true)
-        ),
-    );
+  const markAccepted = (type: Type) => walk(type, t => void (t instanceof NamedType && (t.accepted = true)));
+  const markReturned = (type: Type) => walk(type, t => void (t instanceof NamedType && (t.returned = true)));
   for (const file of files) {
     for (const type of file.types) {
       if (type instanceof DictionaryType && type.fromJS) markAccepted(type);
@@ -132,14 +123,6 @@ export function analyze(files: readonly SchemaFile[]): Tables {
               `${type.name}.${member.name}: ${member.type.tsType} has different Rust types as an argument and as a result; split the dictionary`,
             );
           }
-        }
-      } else if (type instanceof UnionType && type.accepted && type.returned) {
-        const scope = type.origin!;
-        for (const { name, type: alternative } of type.alternatives) {
-          assert(
-            alternative.rustType(scope) === alternative.rustResultFieldType(scope),
-            `${type.name}.${name}: ${alternative.tsType} has different Rust types as an argument and as a result; split the union`,
-          );
         }
       }
     }
@@ -1134,12 +1117,16 @@ ${
 }`;
 }
 
+/** One that is only returned owns what it holds. */
+function rustFieldType(owner: DictionaryType | UnionType, type: Type, scope: RustScope): string {
+  return owner.accepted ? type.rustType(scope) : type.rustResultFieldType(scope);
+}
+
 function rustForUnion(type: UnionType, scope: RustScope): string {
   const lifetime = type.needsLifetime ? "<'a>" : "";
-  const held = (t: Type) => (type.accepted ? t.rustType(scope) : t.rustResultFieldType(scope));
   let text = `
 ${type.accepted && type.rustIsCopy ? "#[derive(Clone, Copy)]\n" : ""}pub enum ${type.name}${lifetime} {
-${type.alternatives.map(a => (a.type instanceof UnitType ? `    ${a.variant},` : `    ${a.variant}(${held(a.type)}),`)).join("\n")}
+${type.alternatives.map(a => (a.type instanceof UnitType ? `    ${a.variant},` : `    ${a.variant}(${rustFieldType(type, a.type, scope)}),`)).join("\n")}
 }
 `;
   if (type.accepted) {
@@ -1198,10 +1185,9 @@ ${type.alternatives
 
 function rustForDictionary(type: DictionaryType, scope: RustScope): string {
   const lifetime = type.needsLifetime ? "<'a>" : "";
-  const fieldType = (t: Type) => (type.accepted ? t.rustType(scope) : t.rustResultFieldType(scope));
   let text = `
 pub struct ${type.name}${lifetime} {
-${type.members.map(member => `    pub ${member.rustName}: ${fieldType(member.type)},`).join("\n")}
+${type.members.map(member => `    pub ${member.rustName}: ${rustFieldType(type, member.type, scope)},`).join("\n")}
 }
 `;
   if (type.accepted && type.hasDefault) {

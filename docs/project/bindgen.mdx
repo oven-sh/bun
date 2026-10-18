@@ -225,8 +225,7 @@ These come last, in this order (`b.any` already takes `undefined` and `null`, so
 - `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
 
 As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` anything that
-is `IntoIterator`. The body of a `b.fn` or of a namespace's function whose bytes do not outlive
-it returns the string itself, from `heap.create_utf8_string(bytes)`. `b.bufferSource` as a result is what
+is `IntoIterator`. `b.bufferSource` as a result is what
 `heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array(bytes)`,
 `heap.create_buffer(bytes)`, `heap.create_uint8_array_from_box(bytes)` or
 `heap.create_buffer_from_box(bytes)` made. The last two take over the allocation, and the two
@@ -239,10 +238,7 @@ These are results only:
 | `b.u64.asBigInt` | `u64`                                         | always a BigInt                                                                                                                                                                      |
 | `b.f64.asDate`   | `f64`                                         | a `Date` with that time value                                                                                                                                                        |
 | `b.string.local` | `JsLocal<'a, JSString>`                       | the string the body made: `heap.create_latin1_string(bytes)`, `heap.create_utf16_string_from_vec(units)`, `heap.create_utf8_string(bytes)` or `heap.common_string(CommonString::..)` |
-| `b.record(T)`    | anything that is `IntoIterator` of `(key, T)` | an object with an own property for each pair, in order; a key is UTF-8                                                                                                               |
-
-A union is returned as the alternative it holds. Like a dictionary, one that is only returned owns
-its strings, and one that is both taken and returned has alternatives with the same Rust type both ways.
+| `b.record(T)`    | anything that is `IntoIterator` of `(key, T)` | an object with an own property for each pair; a key is UTF-8, and `T` holds no JS value                                                                                              |
 
 ### Numbers
 
@@ -353,6 +349,9 @@ kind goes last. An alternative that can never be chosen is an error when the sch
 loaded. Choosing tests whether the value is a cell once, loads the type byte once and
 repeats no test. Strings as UTF-8, dictionaries and unions are then converted in the
 place they end up in.
+
+A union is returned as what the alternative it holds is. Like a dictionary, one that is only
+returned owns its strings.
 
 ### Buffers
 

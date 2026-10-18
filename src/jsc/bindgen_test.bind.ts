@@ -87,7 +87,7 @@ export const textOrBytes = b.fn({
   capability: "heap",
   throws: true,
 });
-export const lengths = b.fn({ args: { text: b.string.utf8 }, returns: b.record(b.usize) });
+export const positions = b.fn({ args: { text: b.string.utf8 }, returns: b.record(b.usize) });
 
 export const TestValue = b.union({
   number: b.f64,

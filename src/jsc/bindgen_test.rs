@@ -227,8 +227,8 @@ pub(crate) fn text_or_bytes<'a>(
     })
 }
 
-pub(crate) fn lengths(text: &[u8]) -> impl Iterator<Item = (&[u8], usize)> {
-    words(text).map(|word| (word, word.len()))
+pub(crate) fn positions(text: &[u8]) -> impl Iterator<Item = (&[u8], usize)> {
+    words(text).zip(0..)
 }
 
 pub(crate) fn words(text: &[u8]) -> impl Iterator<Item = &[u8]> {

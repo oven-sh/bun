@@ -12,7 +12,7 @@ export const FileSystemRouterOptions = b.dictionary(
 );
 
 const text = { getter: b.string.utf8, cache: true } as const;
-const record = { getter: b.any, cache: true, capability: "heap", throws: true } as const;
+const queryObject = { getter: b.any, cache: true, capability: "heap", throws: true } as const;
 
 export const RouteKind = b.enumeration(["exact", "catch-all", "optional-catch-all", "dynamic"]);
 
@@ -23,9 +23,9 @@ export const MatchedRoute = b.class({
     filePath: text,
     kind: { getter: RouteKind, cache: true },
     name: text,
-    params: record,
+    params: queryObject,
     pathname: text,
-    query: record,
+    query: queryObject,
     /** `src`, for old versions of bun-framework-next. */
     scriptSrc: text,
     src: { ...text, cache: "scriptSrc" },

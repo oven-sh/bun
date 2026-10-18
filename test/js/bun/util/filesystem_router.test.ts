@@ -422,6 +422,21 @@ it(".query skips empty-key pairs instead of terminating the parse", () => {
   }
 });
 
+it(".query and .params with a name that is an index can be written and deleted", () => {
+  const { dir } = make(["posts.tsx", "[0].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  for (const read of [() => router.match("/posts?0=a&x=y")!.query, () => router.match("/a")!.params]) {
+    expect(read()[0]).toBe("a");
+    const written = read();
+    written[0] = "b";
+    expect(Object.entries(written)[0]).toEqual(["0", "b"]);
+    const deleted = read();
+    expect(delete deleted[0]).toBe(true);
+    expect(Object.keys(deleted)).not.toContain("0");
+  }
+});
+
 it("reload() works", () => {
   // set up the test
   const { dir } = make(["posts.tsx"]);

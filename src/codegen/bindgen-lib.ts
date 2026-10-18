@@ -70,7 +70,7 @@ const null_ = new UnitType("null");
 
 export const array = (element: Type) => new ArrayType(element);
 
-/** A result only: an object with a property for each `(key, value)` the body gives, in order. */
+/** A result only: an object with a property for each `(key, value)` the body gives. */
 export const record = (value: Type) => new RecordResultType(value);
 
 // A named type is called what it is exported as: `export const Formatter = b.enumeration([..])`.

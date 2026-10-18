@@ -269,7 +269,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   dateOf: $bindgen("bindgen_test.bind.ts", "dateOf"),
   latin1: $bindgen("bindgen_test.bind.ts", "latin1"),
   textOrBytes: $bindgen("bindgen_test.bind.ts", "textOrBytes"),
-  lengths: $bindgen("bindgen_test.bind.ts", "lengths"),
+  positions: $bindgen("bindgen_test.bind.ts", "positions"),
   sumArray: $bindgen("bindgen_test.bind.ts", "sumArray"),
   range: $bindgen("bindgen_test.bind.ts", "range"),
   words: $bindgen("bindgen_test.bind.ts", "words"),

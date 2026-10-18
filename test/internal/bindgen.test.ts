@@ -168,6 +168,15 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   ]) {
     expect(() => b.fn({ args: { value } })).toThrow("value: .asBigInt is a result; an argument is b.u64.allowBigInt");
   }
+  expect(() => b.f64.loose.asDate).toThrow(".asDate follows b.f64");
+  expect(() => b.string.loose.local).toThrow(".local follows b.string");
+  expect(() => b.fn({ args: { value: b.f64.asDate.optional } })).toThrow("value: .asDate is a result");
+  expect(() => b.fn({ args: { value: b.array(b.string.local) } })).toThrow("an array is a Vec");
+  expect(() => b.fn({ args: { value: b.string.local } })).toThrow("value: .local is a result");
+  expect(() => b.fn({ args: { value: b.record(b.bool) } })).toThrow("value: b.record is a result");
+  for (const value of [b.any, b.string.local, b.bufferSource]) {
+    expect(() => b.record(value)).toThrow("the pairs of a record can be a Vec, where the GC does not see JS values");
+  }
   expect(() => b.namespace({ f: {} }, { call: "g" })).toThrow("call: g is not one of its functions");
   for (const element of [b.any, b.bufferSource, b.dictionary({ value: b.any }), b.class({ rustPath: "T" })]) {
     expect(() => b.array(element)).toThrow("an array is a Vec, where the GC does not see JS values");
@@ -1012,6 +1021,12 @@ describe("unions", () => {
     expect(() => b.union({ none: b.null, flag: b.bool }).nullable).toThrow("already takes undefined");
     b.union({ text: b.string, boxed: b.string.utf8 });
   });
+
+  it("is returned as what its alternative is", () => {
+    expect(bindgen.textOrBytes("h\u00e9", 0)).toBe("h\u00e9");
+    expect(bindgen.textOrBytes("hi", 1)).toEqual(new Uint8Array([0x68, 0x69]));
+    expect(bindgen.textOrBytes("hi", 2)).toBeNull();
+  });
 });
 
 describe("overloads", () => {
@@ -1078,41 +1093,37 @@ describe("what is only a result", () => {
     expect(bindgen.latin1(new Uint8Array())).toBe("");
   });
 
-  it("a union is what its alternative is", () => {
-    expect(bindgen.textOrBytes("h\u00e9", 0)).toBe("h\u00e9");
-    expect(bindgen.textOrBytes("hi", 1)).toEqual(new Uint8Array([0x68, 0x69]));
-    expect(bindgen.textOrBytes("hi", 2)).toBeNull();
-  });
-
-  it("b.record has a property for each pair, in order", () => {
-    const lengths = bindgen.lengths("bb a \u00e9 ccc");
-    expect(Object.getPrototypeOf(lengths)).toBe(Object.prototype);
-    expect(Object.entries(lengths)).toEqual([
-      ["bb", 2],
+  it("b.record has a property for each pair", () => {
+    const positions = bindgen.positions("bb a \u00e9 ccc");
+    expect(Object.getPrototypeOf(positions)).toBe(Object.prototype);
+    expect(Object.entries(positions)).toEqual([
+      ["bb", 0],
       ["a", 1],
       ["\u00e9", 2],
       ["ccc", 3],
     ]);
-    expect(Object.getOwnPropertyDescriptor(lengths, "a")).toEqual({
+    expect(Object.getOwnPropertyDescriptor(positions, "a")).toEqual({
       value: 1,
       writable: true,
       enumerable: true,
       configurable: true,
     });
-    expect(bindgen.lengths("")).toStrictEqual({});
+    expect(bindgen.positions("")).toStrictEqual({});
   });
 
   it("b.record takes any key as an own property", () => {
-    const lengths = bindgen.lengths("__proto__ 10 constructor 2");
-    expect(Object.getPrototypeOf(lengths)).toBe(Object.prototype);
-    expect(Reflect.ownKeys(lengths)).toEqual(["2", "10", "__proto__", "constructor"]);
-    expect(Object.getOwnPropertyDescriptor(lengths, "__proto__")!.value).toBe(9);
-    expect(lengths[10]).toBe(2);
+    const positions = bindgen.positions("__proto__ 10 constructor 2");
+    expect(Object.getPrototypeOf(positions)).toBe(Object.prototype);
+    expect(Reflect.ownKeys(positions)).toEqual(["2", "10", "__proto__", "constructor"]);
+    expect(Object.getOwnPropertyDescriptor(positions, "__proto__")!.value).toBe(0);
+    expect(positions[10]).toBe(1);
+    expect(delete positions[10]).toBe(true);
+    expect(Reflect.ownKeys(positions)).toEqual(["2", "__proto__", "constructor"]);
   });
 
-  it("b.record keeps the last value of a key", () => {
-    expect(Object.entries(bindgen.lengths("a b a"))).toEqual([
-      ["a", 1],
+  it("b.record keeps the last value of a key, where the key first came", () => {
+    expect(Object.entries(bindgen.positions("a b a"))).toEqual([
+      ["a", 2],
       ["b", 1],
     ]);
   });

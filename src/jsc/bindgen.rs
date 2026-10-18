@@ -69,13 +69,13 @@ impl<'a> JsHeap<'a> {
         ))
     }
 
-    /// A string with a copy of `latin1`.
+    /// A string with a copy of `latin1`, or the empty string when that is longer than a string can be.
     #[inline]
     pub fn create_latin1_string(&self, latin1: &[u8]) -> JsLocal<'a, JSString> {
         JsLocal::from_raw(EncodedSlice::latin1(latin1).to_js(self.global_object()))
     }
 
-    /// A string that takes over the allocation.
+    /// A string that takes over the allocation of `utf16`.
     #[inline]
     pub fn create_utf16_string_from_vec(
         &self,
@@ -783,7 +783,7 @@ pub mod to_js {
 
     #[inline]
     pub fn date<'a>(heap: &JsHeap<'a>, time_value: f64) -> Result<'a, JsLocal<'a>> {
-        let date = JSValue::from_date_number(heap.global_object(), time_value);
+        let date = JSValue::from_date_number(heap.global_object(), JSValue::purify_nan(time_value));
         Ok(JsLocal::from_raw(date))
     }
 
@@ -814,26 +814,10 @@ pub mod to_js {
         Ok(value.into_value(heap))
     }
 
-    /// A body whose bytes do not outlive it returns the string, from [`JsHeap::create_utf8_string`].
-    pub trait Utf8<'a> {
-        fn into_string(self, heap: &JsHeap<'a>) -> Result<'a, JsLocal<'a, JSString>>;
-    }
-    impl<'a, T: AsRef<[u8]>> Utf8<'a> for T {
-        #[inline]
-        fn into_string(self, heap: &JsHeap<'a>) -> Result<'a, JsLocal<'a, JSString>> {
-            heap.create_utf8_string(self.as_ref())
-        }
-    }
-    impl<'a> Utf8<'a> for JsLocal<'a, JSString> {
-        #[inline(always)]
-        fn into_string(self, _: &JsHeap<'a>) -> Result<'a, JsLocal<'a, JSString>> {
-            Ok(self)
-        }
-    }
-
     #[inline(always)]
-    pub fn utf8<'a>(heap: &JsHeap<'a>, value: impl Utf8<'a>) -> Result<'a, JsLocal<'a>> {
-        value.into_string(heap).map(JsLocal::as_value)
+    pub fn utf8<'a>(heap: &JsHeap<'a>, value: impl AsRef<[u8]>) -> Result<'a, JsLocal<'a>> {
+        heap.create_utf8_string(value.as_ref())
+            .map(JsLocal::as_value)
     }
 
     #[inline]
@@ -872,7 +856,7 @@ pub mod to_js {
         Ok(JsLocal::from_raw(array))
     }
 
-    /// The value of a key that comes again replaces the one before.
+    /// The value of a key that comes again replaces the one before. The object has inline room for the most pairs `entries` says it has.
     #[inline]
     pub fn record<'a, K: AsRef<[u8]>, V>(
         heap: &JsHeap<'a>,
@@ -881,7 +865,8 @@ pub mod to_js {
     ) -> Result<'a, JsLocal<'a>> {
         let global = heap.global_object();
         let entries = entries.into_iter();
-        let record = extern_types::Bun__Bindgen__createRecord(global, entries.size_hint().0);
+        let (at_least, at_most) = entries.size_hint();
+        let record = extern_types::Bun__Bindgen__createRecord(global, at_most.unwrap_or(at_least));
         for (key, value) in entries {
             let (key, value) = (key.as_ref(), convert(heap, value)?);
             // SAFETY: `record` is the object made above, and the key is read before this returns.

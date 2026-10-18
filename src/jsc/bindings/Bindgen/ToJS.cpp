@@ -1,5 +1,6 @@
 #include "root.h"
 #include "Bindgen/SchemaStrings.h"
+#include "ErrorCode.h"
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -32,18 +33,22 @@ extern "C" EncodedJSValue Bun__Bindgen__createNullPrototypeObject(JSGlobalObject
     return putMembers(vm, object, firstMemberNameIndex, values, count);
 }
 
-// No count says nothing about how many entries come, so that is an object as `{}` makes it.
-extern "C" EncodedJSValue Bun__Bindgen__createRecord(JSGlobalObject* globalObject, size_t atLeast)
+// 0 is also what an iterator of unknown length reports, so it gets the inline room of `{}`.
+extern "C" EncodedJSValue Bun__Bindgen__createRecord(JSGlobalObject* globalObject, size_t capacity)
 {
-    if (!atLeast)
+    if (!capacity)
         return JSValue::encode(constructEmptyObject(globalObject));
-    return JSValue::encode(constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min<unsigned>(atLeast, JSFinalObject::maxInlineCapacity)));
+    return JSValue::encode(constructEmptyObject(globalObject, globalObject->objectPrototype(), static_cast<unsigned>(std::min<size_t>(capacity, JSFinalObject::maxInlineCapacity))));
 }
 
 extern "C" bool Bun__Bindgen__putRecordEntry(JSGlobalObject* globalObject, EncodedJSValue record, const uint8_t* key, size_t keyLength, EncodedJSValue value)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (keyLength > WTF::String::MaxLength) [[unlikely]] {
+        Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+        return false;
+    }
     auto name = Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(std::span { key, keyLength }));
     asObject(JSValue::decode(record))->putDirectMayBeIndex(globalObject, name, JSValue::decode(value));
     RETURN_IF_EXCEPTION(scope, false);

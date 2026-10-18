@@ -278,7 +278,7 @@ export abstract class Type {
     return expr;
   }
 
-  /** The type of a field of a returned dictionary. */
+  /** The type of a member of a returned dictionary, and of an alternative of a returned union. */
   rustResultFieldType(scope: RustScope): string {
     return this.rustType(scope);
   }
@@ -437,15 +437,22 @@ export class IntegerType extends PrimitiveType {
   }
 }
 
-export class BigIntResultType extends Type {
+/** What a body returns and nothing takes, so it has no C++ type. */
+export abstract class ResultType extends Type {
   readonly idlType = "";
+  /** What a schema that takes one is told. */
+  abstract readonly refusal: string;
+  layout(): never {
+    throw new TypeError(this.refusal);
+  }
+  rustExternType(): never {
+    return this.layout();
+  }
+}
+
+export class BigIntResultType extends ResultType {
   readonly tsType = "bigint";
-  layout(): Layout {
-    return { size: 8, align: 8 };
-  }
-  rustExternType(): string {
-    return "u64";
-  }
+  readonly refusal = ".asBigInt is a result; an argument is b.u64.allowBigInt";
   rustType(): string {
     return "u64";
   }
@@ -525,15 +532,9 @@ export class LooseDoubleType extends DoubleType {
   }
 }
 
-export class DateResultType extends Type {
-  readonly idlType = "";
+export class DateResultType extends ResultType {
   readonly tsType = "Date";
-  layout(): Layout {
-    return { size: 8, align: 8 };
-  }
-  rustExternType(): string {
-    return "f64";
-  }
+  readonly refusal = ".asDate is a result";
   rustType(): string {
     return "f64";
   }
@@ -647,17 +648,11 @@ export class StringType extends Type {
   }
 }
 
-export class LocalStringResultType extends Type {
-  readonly idlType = "";
+export class LocalStringResultType extends ResultType {
   readonly tsType = "string";
+  readonly refusal = ".local is a result";
   get holdsJSValue(): boolean {
     return true;
-  }
-  layout(): Layout {
-    return { size: 8, align: 8 };
-  }
-  rustExternType(): string {
-    return "JSValue";
   }
   rustType(): string {
     return "bindgen::JsLocal<'a, bun_jsc::JSString>";
@@ -1339,12 +1334,13 @@ export class ArrayType extends Type {
   }
 }
 
-/** As a result: an object with a property for each pair of a key, in UTF-8, and a value. */
-export class RecordResultType extends Type {
-  readonly idlType = "";
+/** An object with a property for each pair of a key, in UTF-8, and a value. */
+export class RecordResultType extends ResultType {
+  readonly refusal = "b.record is a result";
   readonly value: Type;
   constructor(value: Type) {
     super();
+    assert(!value.holdsJSValue, "the pairs of a record can be a Vec, where the GC does not see JS values");
     this.value = value;
   }
   get tsType(): string {
@@ -1356,14 +1352,8 @@ export class RecordResultType extends Type {
   get dependencies(): readonly Type[] {
     return [this.value];
   }
-  layout(): Layout {
-    return { size: 16, align: 8 };
-  }
-  rustExternType(): never {
-    throw new TypeError("b.record is a result");
-  }
-  rustType(scope: RustScope): string {
-    return `Vec<(Vec<u8>, ${this.value.rustResultFieldType(scope)})>`;
+  rustType(): never {
+    throw new TypeError("b.record is a result as it is: not a member, an alternative or an element");
   }
   rustReturnType(scope: RustScope): string {
     return `impl IntoIterator<Item = (impl AsRef<[u8]>, ${this.value.rustReturnType(scope)})>`;
@@ -1379,6 +1369,9 @@ export abstract class NamedType extends Type {
   /** The name it is exported under, and where. Set when the generator finds it among a file's exports. */
   name = "";
   origin: Origin | null = null;
+  /** Reachable from an argument or `fromJS` / from a return type. Set by the generator. */
+  accepted = false;
+  returned = false;
   get cpp(): string {
     return `Bun::Bindgen::Generated::${this.name}`;
   }
@@ -1408,8 +1401,6 @@ export class EnumerationType extends NamedType {
   readonly spellings: readonly (readonly string[])[];
   /** Index of the first canonical spelling in `Tables::enumerationValues`. Set by the generator. */
   firstEnumerationValueIndex = -1;
-  /** Reachable from a return type. Set by the generator. */
-  returned = false;
   constructor(values: readonly (string | readonly string[])[]) {
     super();
     assert(values.length > 0, "an enumeration needs at least one value");
@@ -1508,9 +1499,6 @@ export class DictionaryType extends NamedType {
   /** Index in `Tables::memberNames` of the first name read, and of the first name written. Set by the generator. */
   firstMemberNameIndex = -1;
   firstReturnedMemberNameIndex = -1;
-  /** Reachable from an argument or `fromJS` / from a return type. Set by the generator. */
-  accepted = false;
-  returned = false;
   /** An element of an array: everywhere else it is converted in place. */
   convertedByValue = false;
   constructor(members: Record<string, Type | MemberOptions>, options: DictionaryOptions = {}) {
@@ -1622,9 +1610,6 @@ export class DictionaryType extends NamedType {
 /** A value goes to the first alternative, in written order, that takes its kind. */
 export class UnionType extends NamedType {
   readonly alternatives: readonly { name: string; variant: string; type: Type }[];
-  /** Reachable from an argument / from a return type. Set by the generator. */
-  accepted = false;
-  returned = false;
   constructor(alternatives: Record<string, Type>) {
     super();
     this.alternatives = Object.entries(alternatives).map(([name, type]) => ({ name, variant: pascalCase(name), type }));
@@ -1771,9 +1756,7 @@ export class Signature {
       `length: ${this.length} is not a count`,
     );
     for (const { name, type } of this.args) {
-      assert(!isMadeOf(type, BigIntResultType), `${name}: .asBigInt is a result; an argument is b.u64.allowBigInt`);
-      for (const kind of [DateResultType, LocalStringResultType, RecordResultType])
-        assert(!isMadeOf(type, kind), `${name}: ${type.tsType} is written as a result is`);
+      assert(!resultTypeIn(type), `${name}: ${resultTypeIn(type)?.refusal}`);
       assert(
         !type.borrowsHeap || this.capability !== "js",
         `${name}: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read`,
@@ -1797,9 +1780,13 @@ export class Signature {
   }
 }
 
-/** `type` is a `kind`, or something it is made of is. */
-function isMadeOf(type: Type, kind: new (...args: never[]) => Type): boolean {
-  return type.dependencies.some(dependency => isMadeOf(dependency, kind)) || type instanceof kind;
+/** The first `ResultType` that `type` is or is made of. */
+function resultTypeIn(type: Type): ResultType | undefined {
+  if (type instanceof ResultType) return type;
+  for (const dependency of type.dependencies) {
+    const found = resultTypeIn(dependency);
+    if (found) return found;
+  }
 }
 
 /** Call a signature, or look at the kind of one more argument. */

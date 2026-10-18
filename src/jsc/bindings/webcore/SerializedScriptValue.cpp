@@ -1257,9 +1257,11 @@ private:
                     RETURN_IF_EXCEPTION(scope, false);
                 }
 
-                // 0 is also what a missing `line` is written as, so a null sourceURL is what says that the error has no position.
-                if (hasPosition && sourceURL.isNull())
+                // 0 is also what a missing `line` is written as, so an empty sourceURL is what says that the error has no position.
+                if (!hasPosition)
                     sourceURL = emptyString();
+                else if (sourceURL.isEmpty())
+                    sourceURL = String();
 
                 write(ErrorInstanceTag);
                 write(errorNameToSerializableErrorType(errorTypeString));
@@ -3743,12 +3745,14 @@ private:
                 fail();
                 return JSValue();
             }
-            // An ErrorInstance made with a stack always gets a `line` and a `column`, so one whose original had no position gets its stack afterwards.
-            bool hasPosition = line || column || !sourceURL.isNull();
-            auto* obj = ErrorInstance::create(m_lexicalGlobalObject, WTF::move(message), toErrorType(serializedErrorType), { line, column }, WTF::move(sourceURL), hasPosition ? WTF::move(stackString) : String());
-            if (!hasPosition && !stackString.isNull()) {
+            bool hasPosition = line || column || sourceURL.isNull() || !sourceURL.isEmpty();
+            auto* obj = ErrorInstance::create(m_lexicalGlobalObject, WTF::move(message), toErrorType(serializedErrorType), { line, column }, WTF::move(sourceURL), WTF::move(stackString));
+            // An ErrorInstance made with a stack always gets a `line` and a `column`.
+            if (!hasPosition) {
                 VM& vm = m_lexicalGlobalObject->vm();
-                obj->putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stackString)), static_cast<unsigned>(PropertyAttribute::DontEnum));
+                DeletePropertySlot slot;
+                obj->methodTable()->deleteProperty(obj, m_lexicalGlobalObject, vm.propertyNames->line, slot);
+                obj->methodTable()->deleteProperty(obj, m_lexicalGlobalObject, vm.propertyNames->column, slot);
             }
             addTerminalToObjectPool(obj);
             return obj;

@@ -285,8 +285,8 @@ describe("bun:jsc", () => {
     // On a busy machine the sampler thread may still not get to run in that
     // window, so profile again until it has. A profiler that no longer samples
     // uses up the time limit, which has to be here: this never yields.
+    const deadline = performance.now() + 5000;
     const profileUntilSampled = () => {
-      const deadline = performance.now() + 5000;
       let result;
       do {
         result = profile(work, sampleInterval);

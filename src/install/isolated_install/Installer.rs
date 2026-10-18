@@ -1585,7 +1585,7 @@ impl<'a> Installer<'a> {
             sys::set_file_offset(folder_dir, 0)?;
 
             #[cfg(windows)]
-            let src_path = OsAbsPathBuf::from_os_in(Pooled::new(), |room| {
+            let final_path = |room: &mut [core::mem::MaybeUninit<u16>]| {
                 // SAFETY: FFI — `folder_dir` is an open handle; `room` is writable for its length.
                 let len = unsafe {
                     bun_sys::windows::GetFinalPathNameByHandleW(
@@ -1602,7 +1602,10 @@ impl<'a> Installer<'a> {
                     ));
                 }
                 Ok(len as usize)
-            })?;
+            };
+            // SAFETY: the OS wrote `len` units, unless `len` is the larger room it asks for.
+            #[cfg(windows)]
+            let src_path = unsafe { OsAbsPathBuf::from_os_in(Pooled::new(), final_path) }?;
 
             let mut dest = OsPathBuf::new_in(Pooled::new());
             self.append_store_path(&mut dest, entry_id);

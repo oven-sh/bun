@@ -6397,13 +6397,8 @@ function serveFixtures() {
   return server;
 }
 
-// When an auto-installed peer dependency has its OWN peer deps, those
-// transitive peers get re-queued during peer processing. If all manifest
-// loads are synchronous (cached with valid max-age) AND the transitive peer's
-// version constraint doesn't match what's already in the lockfile,
-// pendingTaskCount() stays at 0 and waitForPeers was skipped — leaving
-// the transitive peer's resolution unset (= invalid_package_id → filtered
-// from the install).
+// Every manifest is in the cache, so no task is ever pending. The package that is installed for a
+// peer has a peer of its own, and bun.lock has no version in that peer's range.
 test.concurrent("transitive peer deps are resolved when resolution is fully synchronous", async () => {
   using server = serveFixtures();
 

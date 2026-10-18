@@ -2821,7 +2821,8 @@ it("an optional peer is rebound when another version of its package takes the sl
 type Manifests = Record<string, Record<string, Record<string, unknown>>>;
 
 // A registry serving exactly `manifests`, each version as a tarball holding just its package.json.
-async function serveRegistry(manifests: Manifests) {
+// It refuses to serve the manifests of the packages in `forbidden`.
+async function serveRegistry(manifests: Manifests, forbidden: string[] = []) {
   const tarballs = new Map<string, Uint8Array>();
   for (const [name, versions] of Object.entries(manifests)) {
     for (const [version, extra] of Object.entries(versions)) {
@@ -2841,6 +2842,7 @@ async function serveRegistry(manifests: Manifests) {
       const tarball = tarballs.get(pathname);
       if (tarball) return new Response(tarball);
       const name = pathname.slice(1);
+      if (forbidden.includes(name)) return new Response("forbidden", { status: 403 });
       const entry = manifests[name];
       if (!entry) return new Response("not found", { status: 404 });
       const versions: Record<string, unknown> = {};
@@ -2865,9 +2867,9 @@ async function serveRegistry(manifests: Manifests) {
   };
 }
 
-async function installWithOwnCache(cwd: string, ...args: string[]) {
+async function runWithOwnCache(cwd: string, ...args: string[]) {
   await using proc = spawn({
-    cmd: [bunExe(), "install", ...args],
+    cmd: [bunExe(), ...args],
     cwd,
     // Request assertions need a cache of their own per project: the environment's
     // cache dir takes precedence over bunfig, and a package extracted there by one
@@ -2879,8 +2881,26 @@ async function installWithOwnCache(cwd: string, ...args: string[]) {
     timeout: 30_000,
   });
   const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { out, err, code };
+}
+
+async function installWithOwnCache(cwd: string, ...args: string[]) {
+  const { out, err, code } = await runWithOwnCache(cwd, "install", ...args);
   expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
   return { out, err };
+}
+
+// bun then has to ask the registry for the manifest again. Returns how many files it removed.
+async function removeCachedManifest(cwd: string, tarball: string) {
+  const cache = join(cwd, ".bun-cache");
+  let removed = 0;
+  for (const entry of await readdirSorted(cache)) {
+    if (entry.endsWith(".npm") && (await file(join(cache, entry)).text()).includes(tarball)) {
+      await rm(join(cache, entry));
+      removed++;
+    }
+  }
+  return removed;
 }
 
 // https://github.com/oven-sh/bun/issues/26046
@@ -4881,12 +4901,7 @@ it.each(["the registry no longer has the package", "--offline has no manifest of
     await write(join(cwd, "w", "package.json"), w({ z: "1.0.0" }));
     await installWithOwnCache(cwd);
 
-    const cache = join(cwd, ".bun-cache");
-    for (const entry of await readdirSorted(cache)) {
-      if (entry.endsWith(".npm") && (await file(join(cache, entry)).text()).includes("/z-1.0.0.tgz")) {
-        await rm(join(cache, entry));
-      }
-    }
+    expect(await removeCachedManifest(cwd, "/z-1.0.0.tgz")).toBe(1);
     delete manifests.z;
     await write(join(cwd, "w", "package.json"), w({ a: "1.0.0", z: "1.0.0" }));
     await installWithOwnCache(cwd, ...(reason.startsWith("--offline") ? ["--offline"] : []));
@@ -4894,6 +4909,178 @@ it.each(["the registry no longer has the package", "--offline has no manifest of
     expect({ ...instancesOf(lock, "a"), ...instancesOf(lock, "z") }).toEqual({ "a": "a@1.0.0", "z": "z@1.0.0" });
   },
 );
+
+// o's z is o's own. a needs one from the registry, so an install that goes on would save an unmet peer.
+it("a peer fails the install if the registry no longer has the package and only an unrelated package has a version", async () => {
+  const manifests: Manifests = {
+    a: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+    o: { "1.0.0": { dependencies: { z: "1.0.0" } } },
+    z: zVersions,
+  };
+  using registry = await serveRegistry(manifests);
+  using dir = projectOnRegistry(registry, { "package.json": { name: "foo", dependencies: { o: "1.0.0" } } });
+  const cwd = String(dir);
+  await installWithOwnCache(cwd);
+  const lock = await file(join(cwd, "bun.lock")).text();
+
+  expect(await removeCachedManifest(cwd, "/z-1.0.0.tgz")).toBe(1);
+  delete manifests.z;
+  await write(join(cwd, "package.json"), JSON.stringify({ name: "foo", dependencies: { a: "1.0.0", o: "1.0.0" } }));
+  const { err, code } = await runWithOwnCache(cwd, "install");
+  expect(err).toContain(`error: GET ${registry.origin}/z - 404`);
+  expect(await file(join(cwd, "bun.lock")).text()).toBe(lock);
+  expect(code).toBe(1);
+});
+
+it("a peer shares the `npm:` alias that the project depends on if the registry refuses the manifest", async () => {
+  const forbidden: string[] = [];
+  using registry = await serveRegistry(
+    { a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } }, z: zVersions, zz: { "1.0.0": {}, "1.2.0": {} } },
+    forbidden,
+  );
+  using dir = projectOnRegistry(registry, { "package.json": { name: "foo", dependencies: { z: "npm:zz@1.0.0" } } });
+  const cwd = String(dir);
+  await installWithOwnCache(cwd);
+
+  expect(await removeCachedManifest(cwd, "/zz-1.0.0.tgz")).toBe(1);
+  forbidden.push("z", "zz");
+  await write(
+    join(cwd, "package.json"),
+    JSON.stringify({ name: "foo", dependencies: { a: "1.0.0", z: "npm:zz@1.0.0" } }),
+  );
+  await installWithOwnCache(cwd);
+  expect(instancesOf(await file(join(cwd, "bun.lock")).text(), "z")).toEqual({ "z": "zz@1.0.0" });
+});
+
+// a's peer shares w's z@1.0.0, so z@2.0.0 and its `y` are not installed.
+const peerSharesOlderZ: Manifests = {
+  a: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+  y: { "1.0.0": {} },
+  z: { "1.0.0": {}, "2.0.0": { dependencies: { y: "^1.0.0" } } },
+};
+const workspaceWithOlderZ = {
+  "package.json": { name: "foo", workspaces: ["w"] },
+  "w/package.json": { name: "w", dependencies: { a: "1.0.0", z: "1.0.0" } },
+};
+
+it("what a version in a peer's range depends on does not fail the install if the peer shares another version", async () => {
+  using registry = await serveRegistry(peerSharesOlderZ, ["y"]);
+  using dir = projectOnRegistry(registry, workspaceWithOlderZ);
+  const { err } = await installWithOwnCache(String(dir));
+  expect(err).not.toContain("403");
+  const lock = await file(join(String(dir), "bun.lock")).text();
+  expect({ ...instancesOf(lock, "y"), ...instancesOf(lock, "z") }).toEqual({ "z": "z@1.0.0" });
+});
+
+it("what a version in a peer's range depends on is not missed by --offline if the peer shares another version", async () => {
+  using registry = await serveRegistry(peerSharesOlderZ);
+  using dir = projectOnRegistry(registry, workspaceWithOlderZ);
+  const cwd = String(dir);
+  await installWithOwnCache(cwd);
+  await removeCachedManifest(cwd, "/y-1.0.0.tgz");
+  await rm(join(cwd, "bun.lock"));
+
+  await installWithOwnCache(cwd, "--offline");
+  const lock = await file(join(cwd, "bun.lock")).text();
+  expect({ ...instancesOf(lock, "y"), ...instancesOf(lock, "z") }).toEqual({ "z": "z@1.0.0" });
+});
+
+it("what the version that a peer gets depends on fails the install", async () => {
+  using registry = await serveRegistry(peerSharesOlderZ, ["y"]);
+  using dir = projectOnRegistry(registry, { "package.json": { name: "foo", dependencies: { a: "1.0.0" } } });
+  const { err, code } = await runWithOwnCache(String(dir), "install");
+  expect(err).toContain(`error: GET ${registry.origin}/y - 403`);
+  expect(code).toBe(1);
+});
+
+it("a peer of the version that an edited override asks for shares the version above it", async () => {
+  using registry = await serveRegistry({
+    p: { "1.0.0": {}, "1.0.1": { peerDependencies: { z: "^2.0.0" } } },
+    q: { "1.0.0": { dependencies: { p: "^1.0.0", z: "1.0.0" } } },
+    z: { "1.0.0": {}, "2.0.0": { dependencies: { gone: "1.0.0" } } },
+  });
+  using dir = projectOnRegistry(registry, {
+    "package.json": { name: "foo", dependencies: { q: "1.0.0" }, overrides: { p: "1.0.0" } },
+  });
+  const cwd = String(dir);
+  await installWithOwnCache(cwd);
+
+  // bun.lock has the new override and the old version, as after a merge.
+  for (const name of ["bun.lock", "package.json"]) {
+    const text = await file(join(cwd, name)).text();
+    const edited = text.replace(/("overrides":\s*\{\s*"p":\s*)"1.0.0"/, '$1"1.0.1"');
+    expect(edited).not.toBe(text);
+    await write(join(cwd, name), edited);
+  }
+  await installWithOwnCache(cwd);
+  const lock = await file(join(cwd, "bun.lock")).text();
+  expect({ ...instancesOf(lock, "p"), ...instancesOf(lock, "z") }).toEqual({ "p": "p@1.0.1", "z": "z@1.0.0" });
+});
+
+it("a peer is resolved from the cached manifest if --offline does not have the optional tarball that provides it", async () => {
+  using registry = await serveRegistry({ a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } }, z: zVersions });
+  using dir = projectOnRegistry(registry, { "package.json": { name: "foo", dependencies: { a: "1.0.0" } } });
+  const cwd = String(dir);
+  await installWithOwnCache(cwd);
+
+  await rm(join(cwd, "bun.lock"));
+  await write(
+    join(cwd, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: { a: "1.0.0" },
+      optionalDependencies: { z: `${registry.origin}/z-2.0.0.tgz` },
+    }),
+  );
+  await installWithOwnCache(cwd, "--offline");
+  expect(instancesOf(await file(join(cwd, "bun.lock")).text(), "z")).toEqual({ "z": "z@1.1.0" });
+});
+
+it("`bun update <name>` gives a peer that shares a version outside its range a version of its own", async () => {
+  using registry = await serveRegistry({
+    a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+    b: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+    z: zVersions,
+  });
+  using dir = projectOnRegistry(registry, {
+    "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } },
+  });
+  const cwd = String(dir);
+  await installWithOwnCache(cwd);
+  expect(Object.keys(instancesOf(await file(join(cwd, "bun.lock")).text(), "z"))).toEqual(["z"]);
+
+  const { err, code } = await runWithOwnCache(cwd, "update", "z");
+  expect(err).not.toContain("error:");
+  expect(instancesOf(await file(join(cwd, "bun.lock")).text(), "z")).toEqual({ "z": "z@1.1.0", "b/z": "z@2.0.0" });
+  expect(code).toBe(0);
+});
+
+it("`bun update` moves a peer dependency of the project next to a package that pins the older version", async () => {
+  using registry = await serveRegistry({
+    kept: { "1.0.0": {}, "1.1.0": {} },
+    narrow: { "1.0.0": { dependencies: { kept: "1.0.0" } } },
+    wide: { "1.0.0": { optionalDependencies: { kept: "1.x" } } },
+  });
+  using dir = projectOnRegistry(registry, {
+    "package.json": {
+      name: "foo",
+      dependencies: { narrow: "1.0.0", wide: "1.0.0" },
+      peerDependencies: { kept: "^1.0.0" },
+    },
+  });
+  const cwd = String(dir);
+  await installWithOwnCache(cwd);
+  expect(instancesOf(await file(join(cwd, "bun.lock")).text(), "kept")).toEqual({ "kept": "kept@1.0.0" });
+
+  const { out, err, code } = await runWithOwnCache(cwd, "update");
+  expect(err).not.toContain("error:");
+  expect(out).toContain("^ kept 1.0.0 -> 1.1.0");
+  expect(instancesOf(await file(join(cwd, "bun.lock")).text(), "kept")).toEqual({
+    "kept": "kept@1.1.0",
+    "narrow/kept": "kept@1.0.0",
+  });
+  expect(code).toBe(0);
+});
 
 it("a peer on an `npm:` alias gets a version in its range next to another version of the package", async () => {
   using registry = await serveRegistry({

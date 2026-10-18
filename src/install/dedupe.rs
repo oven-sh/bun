@@ -257,8 +257,10 @@ impl<'a> Pass<'a> {
                 self.cur_c[e] = cur_c;
                 let row = e * n;
 
+                // Of these rows, only a peer that got a version of its own moves.
                 let frozen = self.frozen_below.is_some_and(|below| {
-                    ((self.is_direct(owner) || self.moves_only_peers) && !dep.behavior.is_peer())
+                    ((self.is_direct(owner) || self.moves_only_peers)
+                        && !(dep.behavior.is_peer() && lockfile.is_only_for_peers(target)))
                         || target < below
                 });
                 let range = if pinned.is_set(target as usize) || frozen || dep.behavior.is_bundled()
@@ -421,17 +423,16 @@ impl<'a> Pass<'a> {
 
     /// `collapse_appended`. The peers of one name share a version, in range or not, because a second
     /// copy would split a package from its plugins: `@octokit/rest` and its plugins share one
-    /// `@octokit/core`. This marks in `spare` the versions that only peers resolve to and that go:
+    /// `@octokit/core`. This marks in `spare` the `Lockfile::only_peers` versions to remove:
     /// - all of them, if the highest of the other versions satisfies a peer;
     /// - else the ones that satisfy no peer. A peer does not count if a package above it depends on
     ///   the name: `react@17` in a workspace is used by every library under that workspace.
     /// - If there are no other versions, all but one: peers that nothing provides share a version.
-    ///   It is the one that satisfies the most peers, and the highest of several. The peers of the
-    ///   packages that are not `Lockfile::only_peers` count first. A version could otherwise stay
+    ///   It is the one that satisfies the most peers of the project, then of the packages that are
+    ///   not `only_peers`, then of all, and the highest of several. A version could otherwise stay
     ///   for a package below itself.
     ///
-    /// An `only_peers` package is not one of the other versions, has no peer that the highest
-    /// satisfies, and is not above anything.
+    /// If only peers hold the versions of bun.lock, a peer of the project keeps the version it got.
     fn find_spare(&mut self, cur: &[PackageID], live: &DynamicBitSet) {
         let Some(below) = self.frozen_below else {
             return;
@@ -464,7 +465,7 @@ impl<'a> Pass<'a> {
         let n = candidates.len();
 
         let mut spare: Vec<bool> = (candidates.iter())
-            .map(|&id| id >= below && !self.pinned.is_set(id as usize))
+            .map(|&id| lockfile.is_only_for_peers(id) && !self.pinned.is_set(id as usize))
             .collect();
         // Only peers of packages other than the root resolve to the versions of bun.lock, usually
         // because an earlier install added them for the same peers.

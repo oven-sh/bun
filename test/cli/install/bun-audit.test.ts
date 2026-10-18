@@ -2148,6 +2148,22 @@ describe("`bun audit fix`", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("a peer stays on the fixed version next to a package that pins the vulnerable one", async () => {
+    await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
+    using dir = await setup(server, {
+      name: "foo",
+      dependencies: { "peer-deps-fixed": "1.0.0", "pins": "npm:one-fixed-dep@1.0.0" },
+    });
+    const noDeps = (lockfile: string) => lockfile.match(/"no-deps@[^"]+"/g)?.sort();
+    expect(noDeps(await lock(dir))).toEqual(['"no-deps@1.0.0"']);
+
+    const { stdout, exitCode } = await auditFix(dir);
+    expect(stdout).toContain("^ no-deps 1.0.0 -> 1.0.1");
+    expect(noDeps(await lock(dir))).toEqual(['"no-deps@1.0.0"', '"no-deps@1.0.1"']);
+    // `pins` cannot be fixed.
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent("peer dependency edges constrain the fix and are re-pointed", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", dependencies: { "peer-deps-fixed": "1.0.0", "no-deps": "1.0.0" } });

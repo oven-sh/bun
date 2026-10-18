@@ -4026,19 +4026,16 @@ test.concurrent(
   },
 );
 
-// Without a lockfile the no-deps the first peer row installs is all the second one can bind to; that still dedupes onto it
-// and warns. Which row goes first follows the order the two manifests arrive in, so only the single copy is pinned down.
+// The two ranges have no version in common. The higher of the two versions is shared, and the other peer warns.
 test.concurrent("on a fresh install two peer entries nothing provides still share one no-deps", async () => {
   const { packageDir: dir } = await registry.createTestDir({
     bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
     files: { "package.json": stringify(pkgJson({ "peer-deps-fixed": "1.0.0", "strict-peer-dep": "1.0.0" })) },
   });
   const stderr = await install(dir, "--verbose", ...linkerArgs({}));
-  const [version] = await lockedVersions(dir, "no-deps");
-  expect(["1.1.0", "2.0.0"]).toContain(version);
-  expect(stderr).toContain(`warn: incorrect peer dependency "no-deps@${version}"`);
-  expect(await lockedVersions(dir, "no-deps")).toStrictEqual([version]);
-  expect(await installedVersion(dir, "no-deps")).toBe(version);
+  expect(stderr).toContain('warn: incorrect peer dependency "no-deps@2.0.0"');
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
   await frozen(dir);
 });
 

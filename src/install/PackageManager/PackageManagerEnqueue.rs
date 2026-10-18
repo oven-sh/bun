@@ -53,10 +53,11 @@ const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
 fn bind_existing(
     this: &mut PackageManager,
     dependency_id: DependencyID,
+    is_peer: bool,
     package_id: PackageID,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
-    if !this.lockfile.is_row_only_for_peers(dependency_id) {
+    if !(this.lockfile).is_row_only_for_peers(dependency_id, is_peer) {
         this.lockfile.unmark_only_peers(package_id);
     }
     success_fn(this, dependency_id, package_id);
@@ -184,9 +185,13 @@ pub(crate) fn advance(this: &mut PackageManager) {
 
     loop {
         while let Some(head) = this.lockfile.scratch.dependency_list_queue.head() {
+            // `dedupe::collapse_appended` may drop the package, and what its rows lack with it.
+            let may_be_dropped = head.rows.len > 0
+                && (this.lockfile).is_row_only_for_peers(head.rows.begin(), false);
             for id in head.rows.begin()..head.rows.end() {
                 let dependency = queued_row(this, id, head).clone();
                 let resolution = this.lockfile.buffers.resolutions[id as usize];
+                let log_mark = this.log_mut().msgs.len();
                 match bind_row(
                     this,
                     id,
@@ -206,6 +211,9 @@ pub(crate) fn advance(this: &mut PackageManager) {
                     Err(err) if head.from_command => add_dependency_error(this, &dependency, err),
                     // It stays unresolved, which `verify_resolutions` reports if it matters.
                     Err(_) => {}
+                }
+                if may_be_dropped {
+                    this.hold_log_since(log_mark, id);
                 }
             }
             (this.lockfile.scratch.dependency_list_queue).finish_rows_before(head, head.rows.end());
@@ -1867,17 +1875,29 @@ pub(crate) fn bind_row(
 
                     debug_assert!(task_id.get() != 0);
 
-                    // The registry has no answer: a peer takes what there is.
-                    let installed = (dependency.behavior.is_peer())
-                        .then(|| highest_peer_candidate(&this.lockfile, name_hash, version))
-                        .flatten();
+                    // What a peer takes if the registry has no answer.
+                    let installed = |this: &PackageManager| {
+                        if !dependency.behavior.is_peer() {
+                            return None;
+                        }
+                        highest_peer_candidate(&this.lockfile, name_hash, version).filter(
+                            |&highest| {
+                                can_share_out_of_range_peer(
+                                    &this.lockfile,
+                                    dependency.name_hash,
+                                    id,
+                                    highest,
+                                )
+                            },
+                        )
+                    };
                     if this.has_created_network_task(task_id, dependency.behavior.is_required()) {
                         let has_failure = this.manifest_failures.contains_key(&task_id);
                         if !has_failure && !this.network_task_has_failed(task_id) {
                             return Ok(wait_for(this, task_id));
                         }
-                        if let Some(installed) = installed {
-                            bind_existing(this, id, installed, success_fn)?;
+                        if let Some(installed) = installed(this) {
+                            bind_existing(this, id, true, installed, success_fn)?;
                         } else if has_failure {
                             // Whoever else marked the task as failed reported why, as `--offline` does.
                             report_manifest_failure(this, task_id, id, dependency, &name_str);
@@ -1980,9 +2000,14 @@ pub(crate) fn bind_row(
                     }
 
                     if this.options.offline == OfflineMode::Offline {
+                        let installed = installed(this);
                         // Any other releases the reservation: a later required edge still reports.
                         if dependency.behavior.is_required() && installed.is_none() {
-                            this.mark_network_task_failed(task_id);
+                            if this.lockfile.is_row_only_for_peers(id, false) {
+                                let _ = this.network_dedupe_map.remove(&task_id);
+                            } else {
+                                this.mark_network_task_failed(task_id);
+                            }
                             this.log_mut().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
@@ -1995,7 +2020,7 @@ pub(crate) fn bind_row(
                             let _ = this.network_dedupe_map.remove(&task_id);
                         }
                         if let Some(installed) = installed {
-                            bind_existing(this, id, installed, success_fn)?;
+                            bind_existing(this, id, true, installed, success_fn)?;
                         }
                         return Ok(Row::Done);
                     }
@@ -2344,6 +2369,7 @@ fn report_manifest_failure(
     // `log_held` and `fail_update_requests` read this list to see who needs the manifest.
     task_callback_list(this, task_id).push(TaskCallbackContext::Dependency(id));
     let is_of_project = this.lockfile.is_workspace_dependency(id);
+    let may_be_dropped = this.lockfile.is_row_only_for_peers(id, false);
     let can_hold = this.held_messages.is_some();
     let Some(failure) = this.manifest_failures.get_mut(&task_id) else {
         return;
@@ -2355,8 +2381,10 @@ fn report_manifest_failure(
     let kind = if fails_install { Kind::Err } else { Kind::Warn };
     let is_unanswered = failure.is_unanswered && fails_install;
     // Dedupe may still drop a dependency of a package, but never one of the project. Only "there is
-    // no such package" is held back for that: a request that got no answer says nothing.
-    let holds = failure.is_missing && can_hold && !(fails_install && is_of_project);
+    // no such package" is held back for that: a request that got no answer says nothing. Below an
+    // `only_peers` package, every failure is.
+    let holds =
+        (failure.is_missing || may_be_dropped) && can_hold && !(fails_install && is_of_project);
     let before = failure.reported;
     failure.reported = match (before, kind) {
         (Report::Errored, _) | (Report::Warned | Report::Held, Kind::Warn) => before,
@@ -3118,7 +3146,7 @@ fn get_or_put_resolved_package_with_find_result(
     if should_update && !latest_for_target && !behavior.is_peer() {
         if let Some(id) = this.lockfile.patched_package_satisfying(name_hash, version) {
             this.kept_patched.push(id);
-            return bind_existing(this, dependency_id, id, success_fn);
+            return bind_existing(this, dependency_id, behavior.is_peer(), id, success_fn);
         }
     }
     let patched = if latest_for_target || behavior.is_peer() || !has_patched_versions(this) {
@@ -3164,7 +3192,7 @@ fn get_or_put_resolved_package_with_find_result(
                 meta.libc = find_result.package.libc;
             }
         }
-        return bind_existing(this, dependency_id, id, success_fn);
+        return bind_existing(this, dependency_id, behavior.is_peer(), id, success_fn);
     }
 
     // A damaged file in the cache is fetched again.
@@ -3192,7 +3220,8 @@ fn get_or_put_resolved_package_with_find_result(
     if version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact() {
         this.lockfile.mark_exact_pin(package_id);
     }
-    let only_for_peers = this.lockfile.is_row_only_for_peers(dependency_id);
+    let only_for_peers = (this.lockfile)
+        .is_row_only_for_peers(dependency_id, behavior.is_peer() && !latest_for_target);
     if only_for_peers {
         this.lockfile.mark_only_peers(package_id);
     }
@@ -3411,6 +3440,7 @@ fn get_or_put_resolved_package(
     resolution: PackageID,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
+    let is_peer = dependency.behavior.is_peer();
     let latest_for_target = picks_latest_tag(
         this,
         dependency,
@@ -3431,7 +3461,9 @@ fn get_or_put_resolved_package(
         latest_for_target,
     ) {
         // make sure verifyResolutions sees this resolution as a valid package id
-        Some(Settled::Package(id)) => return bind_existing(this, dependency_id, id, success_fn),
+        Some(Settled::Package(id)) => {
+            return bind_existing(this, dependency_id, is_peer, id, success_fn);
+        }
         Some(Settled::Resolved) => {
             return Ok(Some(ResolvedPackageResult {
                 package: *this.lockfile.packages.get(resolution as usize),
@@ -3477,7 +3509,7 @@ fn get_or_put_resolved_package(
                     && this.network_task_has_failed(Task::Id::for_manifest(name_str))
                     && let Some(id) = root_workspace_package_id(&this.lockfile, name_hash)
                 {
-                    return bind_existing(this, dependency_id, id, success_fn);
+                    return bind_existing(this, dependency_id, is_peer, id, success_fn);
                 }
                 return Ok(None); // manifest might still be downloading. This feels unreliable.
             };
@@ -3536,7 +3568,7 @@ fn get_or_put_resolved_package(
                     if behavior.is_peer() {
                         if let Some(id) = highest_peer_candidate(&this.lockfile, name_hash, version)
                         {
-                            return bind_existing(this, dependency_id, id, success_fn);
+                            return bind_existing(this, dependency_id, is_peer, id, success_fn);
                         }
                     }
                     match err_type {
@@ -3569,7 +3601,7 @@ fn get_or_put_resolved_package(
                     if version.tag == dependency::version::Tag::DistTag
                         && let Some(id) = root_workspace_package_id(&this.lockfile, name_hash)
                     {
-                        return bind_existing(this, dependency_id, id, success_fn);
+                        return bind_existing(this, dependency_id, is_peer, id, success_fn);
                     }
 
                     // A mirror that lags behind its own dist-tags, or a registry that serves none.
@@ -3742,7 +3774,7 @@ fn get_or_put_resolved_package(
                 ) {
                     let workspace_id = root_workspace_package_id(&this.lockfile, name_hash)
                         .ok_or(crate::Error::MissingPackageJSON)?;
-                    return bind_existing(this, dependency_id, workspace_id, success_fn);
+                    return bind_existing(this, dependency_id, is_peer, workspace_id, success_fn);
                 }
             }
             // package name hash should be used to find workspace path from map
@@ -3931,6 +3963,57 @@ fn locked_version_in_lockfile<'a>(
         .then(|| (res.npm().version, lockfile.buffers.string_bytes.as_slice()))
 }
 
+/// Decides whether a peer dependency can fall back to `candidate`, an installed version that's
+/// outside its range. Returns false only if `candidate` is a private dependency of unrelated
+/// packages. In that case the peer gets its own version from the registry.
+///
+/// The peer shares `candidate` if any of these is true:
+/// - A package above it in the dependency graph depends on that name. For example, `react@17` in a
+///   workspace is used by every library under that workspace.
+/// - `candidate` satisfies another package's peer range. For example, `@octokit/rest` and its
+///   plugins share one `@octokit/core`, and hoisting a second copy above it would split them up.
+/// - No regular dependency resolves to `candidate`, so it was installed for a peer to begin with.
+fn can_share_out_of_range_peer(
+    lockfile: &Lockfile::Lockfile,
+    name_hash: PackageNameHash,
+    row: DependencyID,
+    candidate: PackageID,
+) -> bool {
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let Some(peer_owner) = lockfile.get_parent_pkg_of_dependency(row) else {
+        return true;
+    };
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let resolution = &lockfile.packages.items_resolution()[candidate as usize];
+    let accepts_candidate = |id: DependencyID, dep: &Dependency| {
+        resolution.tag == ResolutionTag::Npm
+            && crate::dedupe::effective_npm_range(lockfile, id, dep).is_some_and(|range| {
+                (range.npm().version).satisfies(resolution.npm().version, buf, buf)
+            })
+    };
+    let mut is_regular_dependency = false;
+    let mut dependents: Vec<PackageID> = Vec::new();
+    for (owner, list) in lockfile.packages.items_dependencies().iter().enumerate() {
+        for id in list.begin()..list.end() {
+            let dep = &deps[id as usize];
+            if dep.name_hash == name_hash && id != row {
+                if !dep.behavior.is_peer() {
+                    dependents.push(owner as PackageID);
+                } else if accepts_candidate(id, dep) {
+                    return true;
+                }
+            }
+            is_regular_dependency |=
+                !dep.behavior.is_peer() && resolutions[id as usize] == candidate;
+        }
+    }
+    let options = reachable::Options::all(0);
+    !is_regular_dependency
+        || reachable::packages_from(lockfile, resolutions, &dependents, true, options)
+            .is_set(peer_owner as usize)
+}
+
 /// `package_index` lists the highest version first.
 fn highest_peer_candidate(
     lockfile: &Lockfile::Lockfile,
@@ -4047,8 +4130,8 @@ impl PackageManager {
         }
     }
 
-    /// The manifest has no version for `row`. Keeps what was logged about that since `mark` out of
-    /// the log until `log_held` knows whether `row` is still in the tree.
+    /// Keeps what was logged about `row` since `mark` out of the log until `log_held` knows whether
+    /// `row` is still in the tree.
     #[cold]
     pub(crate) fn hold_log_since(&mut self, mark: usize, row: DependencyID) {
         // Dedupe never drops what a package.json of the project asks for. A peer waits anyway.

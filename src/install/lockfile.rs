@@ -1698,9 +1698,9 @@ impl Lockfile {
         packages_to_install: Option<&[PackageID]>,
         layout: tree::Layout,
     ) -> Result<tree::Hoisted, tree::SubtreeError> {
-        // Placing a peer resolves it, and the second attempt starts from what the first one did.
+        // Placing a peer resolves it. The second attempt must not start from what the first one did.
         let resolutions = self.buffers.resolutions.clone();
-        let (msgs, errors) = (log.msgs.len(), log.errors);
+        let (msgs, errors, warnings) = (log.msgs.len(), log.errors, log.warnings);
         for ends_cycles_at_peers in [false, true] {
             if let Some(hoisted) = self.try_hoist::<METHOD>(
                 log,
@@ -1715,7 +1715,7 @@ impl Lockfile {
             }
             self.buffers.resolutions.clone_from(&resolutions);
             log.msgs.truncate(msgs);
-            log.errors = errors;
+            (log.errors, log.warnings) = (errors, warnings);
         }
         unreachable!("`found_peer_cycle` is only set without `ends_cycles_at_peers`")
     }
@@ -2563,9 +2563,10 @@ impl Lockfile {
         (self.only_peers).is_set_allow_out_of_bound(id as usize, false)
     }
 
-    /// Is the row a peer dependency, or owned by an `only_peers` package?
-    pub(crate) fn is_row_only_for_peers(&self, id: DependencyID) -> bool {
-        self.buffers.dependencies[id as usize].behavior.is_peer()
+    /// Is the row resolved as a peer dependency, or owned by an `only_peers` package? `bun update`
+    /// and `bun audit fix` resolve a peer row as a regular one, so `is_peer` is not the row's own.
+    pub(crate) fn is_row_only_for_peers(&self, id: DependencyID, is_peer: bool) -> bool {
+        is_peer
             || (self.only_peers.bit_length() != 0
                 && (self.get_parent_pkg_of_dependency(id))
                     .is_some_and(|owner| self.is_only_for_peers(owner)))

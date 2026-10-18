@@ -2464,6 +2464,7 @@ fn reresolve_rows_outside_overrides(
     }
 
     manager.lockfile.mark_loaded_packages()?;
+    manager.held_messages = Some(Vec::new());
     let mut moved: Vec<(DependencyID, PackageID)> = Vec::new();
     let mut peer_rows: Vec<DependencyID> = Vec::new();
     for (row, package_id) in outside {
@@ -2483,11 +2484,12 @@ fn reresolve_rows_outside_overrides(
     if manager.pending_task_count() > 0 {
         resolve_pending_tasks(manager, root, log_level, &mut NamedUpdates::default())?;
     }
+    redirect_moved_edges(&mut manager.lockfile, &moved, false);
+    crate::dedupe::collapse_appended_peers(manager);
+    manager.log_held();
     if manager.log_mut().has_errors() {
         manager.crash();
     }
-    redirect_moved_edges(&mut manager.lockfile, &moved, false);
-    crate::dedupe::collapse_appended_peers(manager);
 
     let before_clean = clean_lockfile(manager, log_level)?;
     *root = *manager.lockfile.packages.get(0);

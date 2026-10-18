@@ -881,7 +881,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                                 package_json_edits::new_literal_for(&pin.old_literal, &to, exact);
                             edits.push(edit);
                         }
-                        // A rewritten peer row is deferred by the differ and rebinds to the old package unless the edge is pinned too.
+                        // A rewritten peer row takes the version in its range that bun.lock has, the old package, unless the edge is pinned too.
                         // A range resolves to the vulnerable release again: `^1.0.1` takes 1.1.0.
                         if edge.peer || candidate.downgrade {
                             edges.push(PlannedEdge {

@@ -874,9 +874,139 @@ for c in calls:
     edit(sp["file"], sp["lo"], sp["hi"], new, tag)
     stats[tag] += 1
 
+# ---- calls of our own generic functions whose signature changes ------------------------------------------
+# The `: Default` bound of these functions goes away. Each call then says what the value is.
+GOP = re.compile(r"(?:^|::)(ArrayHashMap|StringArrayHashMap|StringHashMap|HashMap|StaticHashMap)::<[^>]*>::(get_or_put|get_or_put_assume_capacity|get_or_put_adapted)$")
+FILL = re.compile(r"(?:^|::)MimallocArena::alloc_slice_fill_default$")
+JSCELL_TAKE = re.compile(r"(?:^|::)JsCell::<[^>]*>::take$")
+OUR_OR_DEFAULT = re.compile(r"(?:^|::)(MapEntry|IdEntry)::<[^>]*>::or_default$")
+
+ws_groups = collections.OrderedDict()
+for o in obligs:
+    if not o["callee_workspace"]:
+        continue
+    sp = o["span"]
+    key = (sp.get("file"), sp.get("lo"), sp.get("hi"), o["callee"])
+    g = ws_groups.setdefault(key, {"o": o, "params": {}})
+    g["params"][o.get("param", "?")] = o["init"]
+
+ws_handled = set()
+
+
+def closure_of(r):
+    return r.fnpath if r.fnpath else f"|| {r.text}"
+
+
+def append_arg(path, sp, arg):
+    b = buf(path)
+    close = sp["hi"] - 1
+    if b[close : close + 1] != b")":
+        raise Manual("call does not end with `)`")
+    k = close
+    while k > 0 and b[k - 1 : k] in (b" ", b"\n", b"\t", b"\r"):
+        k -= 1
+    if b[k - 1 : k] == b",":
+        ins = f" {arg}"
+    elif b[k - 1 : k] == b"(":
+        ins = arg
+    else:
+        ins = f", {arg}"
+    edit(path, k, k, ins, "ws-arg")
+
+
+for key, g in ws_groups.items():
+    o = g["o"]
+    sp = o["span"]
+    callee = o["callee"]
+    params = g["params"]
+    rule = None
+    if GOP.search(callee):
+        rule = "gop"
+    elif FILL.search(callee):
+        rule = "fill"
+    elif JSCELL_TAKE.search(callee):
+        rule = "jscell-take"
+    elif OUR_OR_DEFAULT.search(callee):
+        rule = "or-default"
+    if rule is None:
+        continue
+    ws_handled.add(key)
+    if not site_ok(sp):
+        cs = sp.get("callsite") or sp
+        note("oblig-in-macro", cs, f"`{callee}` inside a macro expansion: {sp.get('macro')}")
+        continue
+    _SITE["file"] = sp["file"]
+    unsure = []
+    try:
+        b = buf(sp["file"])
+        if rule == "gop":
+            if "V" not in params:
+                continue  # this instantiation only carries the context or allocator bound
+            rv = render(params["V"], unsure=unsure)
+            if callee.endswith("get_or_put_adapted"):
+                if "K" not in params:
+                    raise Manual("get_or_put_adapted without the key type")
+                rk = render(params["K"], unsure=unsure)
+                arg = f"|| ({rk.text}, {rv.text})"
+            else:
+                arg = closure_of(rv)
+            append_arg(sp["file"], sp, arg)
+            stats["ws-gop"] += 1
+        elif rule == "fill":
+            rt = render(params["T"], unsure=unsure)
+            msp = o["method"]["method_span"] if o["form"] == "method" else None
+            if msp is None or not site_ok(msp):
+                raise Manual("alloc_slice_fill_default is not called as a method here")
+            after = b[msp["hi"] : sp["hi"]].decode()
+            tt = params["T"]
+            prim_or_cheap = tt["k"] == "lit" and ("prim" in tt or tt["s"] in ("false", "'\\0'"))
+            if prim_or_cheap:
+                edit(sp["file"], msp["lo"], msp["hi"], "alloc_slice_fill_copy", "ws-method")
+                append_arg(sp["file"], sp, rt.text)
+            else:
+                edit(sp["file"], msp["lo"], msp["hi"], "alloc_slice_fill_with", "ws-method")
+                m = re.match(r"\s*::<", after)
+                if m:
+                    # one more generic parameter: the closure type
+                    depth = 0
+                    for idx in range(m.end() - 1, len(after)):
+                        if after[idx] == "<":
+                            depth += 1
+                        elif after[idx] == ">":
+                            depth -= 1
+                            if depth == 0:
+                                pos = msp["hi"] + idx
+                                edit(sp["file"], pos, pos, ", _", "ws-turbofish")
+                                break
+                append_arg(sp["file"], sp, f"|_| {rt.text}")
+            stats["ws-fill"] += 1
+        elif rule == "jscell-take":
+            rt = render(params["T"], unsure=unsure)
+            msp = o["method"]["method_span"]
+            tail = b[msp["hi"] : sp["hi"]]
+            if not re.fullmatch(rb"\s*\(\s*\)", tail):
+                raise Manual(f"unexpected call tail {tail!r}")
+            edit(sp["file"], msp["lo"], sp["hi"], f"replace({rt.text})", "ws-method")
+            stats["ws-jscell"] += 1
+        elif rule == "or-default":
+            rv = render(params["V"], unsure=unsure)
+            msp = o["method"]["method_span"]
+            tail = b[msp["hi"] : sp["hi"]]
+            if not re.fullmatch(rb"\s*\(\s*\)", tail):
+                raise Manual(f"unexpected call tail {tail!r}")
+            edit(sp["file"], msp["lo"], sp["hi"], f"or_insert_with({closure_of(rv)})", "ws-method")
+            stats["ws-or-default"] += 1
+    except Manual as e:
+        note("oblig-manual", sp, f"`{callee}`: {e}")
+        continue
+    if unsure:
+        note("path-unsure", sp, "a type is named by a path the tool could not confirm", paths=sorted(set(unsure)))
+
 for o in obligs:
     sp = o["span"]
     tree = o["init"]
+    if o["callee_workspace"] and (sp.get("file"), sp.get("lo"), sp.get("hi"), o["callee"]) in ws_handled:
+        continue
     keys = local_keys(tree)
     if not keys:
         if has_kind(tree, ("manual",)):

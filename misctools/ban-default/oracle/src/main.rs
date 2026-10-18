@@ -856,17 +856,28 @@ impl<'a, 'tcx> BodyVisitor<'a, 'tcx> {
         if tcx.generics_of(did).count() != args.len() {
             return;
         }
-        let inst = tcx.clauses_of(did).instantiate(tcx, args);
-        let mut selfs: Vec<Ty<'tcx>> = Vec::new();
-        for (clause, _) in inst {
-            if let Some(tp) = clause.skip_normalization().as_trait_clause() {
-                if tp.def_id() == self.cx.default_trait {
-                    selfs.push(tp.self_ty().skip_binder());
+        let mut selfs: Vec<(String, Ty<'tcx>)> = Vec::new();
+        let mut cur = Some(did);
+        while let Some(d) = cur {
+            let gc = tcx.clauses_of(d);
+            for (clause, _) in gc.clauses.iter().copied() {
+                if let Some(tp) = clause.as_trait_clause() {
+                    if tp.def_id() == self.cx.default_trait {
+                        let raw = tp.self_ty().skip_binder();
+                        let param = match raw.kind() {
+                            ty::Param(p) => p.name.to_string(),
+                            _ => self.cx.ty_str(raw),
+                        };
+                        let inst = ty::EarlyBinder::bind(tcx, raw).instantiate(tcx, args).skip_normalization();
+                        selfs.push((param, inst));
+                    }
                 }
             }
+            cur = gc.parent;
         }
-        for st in selfs {
+        for (param, st) in selfs {
             let mut rec = self.base_rec("oblig", ex.span);
+            rec.set("param", J::Str(param));
             rec.set("form", J::Str(form.into()));
             rec.set("callee", J::Str(with_no_trimmed_paths!(tcx.def_path_str(did))));
             rec.set("callee_name", J::Str(tcx.item_name(did).to_string()));

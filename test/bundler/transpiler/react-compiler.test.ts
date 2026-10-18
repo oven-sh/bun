@@ -4167,6 +4167,202 @@ describe("bundler", () => {
     });
   }
 
+  // Each component is in a place where no statement list holds it and what its callback reads:
+  // a default value, the head of an `if` or a `for`, beside a method or a second component
+  // in one expression. Its callback reads a binding of the function around it, so wherever the
+  // compiler declares that callback, the binding has to be in scope there.
+  itBundled("react-compiler/ACallbackOfANestedComponentReadsTheFunctionAroundIt", {
+    files: {
+      ...reactStub,
+      "/entry.js": /* js */ `
+        import { render } from "./reg";
+        import * as forms from "./placement.jsx";
+
+        const lines = [];
+        const run = (name, body) => {
+          const logs = [];
+          try {
+            body(line => logs.push(line), logs);
+            lines.push(name + ": " + logs);
+          } catch (error) {
+            lines.push(name + ": threw " + error.message);
+          }
+        };
+
+        run("a default value, of a declaration", log => void render(forms.defaultOfDeclaration(log), {}));
+        run("a default value, of an arrow", log => void render(forms.defaultOfArrow(log), {}));
+        run("a default value, of a function with no statement", log => {
+          const registry = { items: [], add(item) { this.items.push(item); return item; } };
+          forms.defaultOfEmptyBody(registry, log);
+          render(registry.items[0], {});
+        });
+        run("a default value, in a pattern", log => void render(forms.defaultInPattern({ log }), {}));
+        run("a default value, with 'use memo'", log => render(forms.defaultWithUseMemo(log))());
+        run("a default value, of a higher-order component", log => {
+          const element = render(forms.withFallback(() => null, log), { ready: false });
+          render(element.type, {}).props.onClick();
+        });
+        run("the body of an arrow", log => void render(forms.arrowBody(log), {}));
+        run("a loop without braces", (log, logs) => {
+          const [first, second] = forms.loopWithoutBraces([line => logs.push("1" + line), line => logs.push("2" + line)]);
+          render(first, {});
+          render(second, {});
+        });
+        run("the head of an if", log => void render(forms.ifHead(log), {}));
+        run("the head of a for", log => void render(forms.forHead(log), {}));
+        run("a declarator", log => void render(forms.declarator(log), {}));
+        run("beside a method", (log, logs) => {
+          const Widget = forms.besideAMethod(log);
+          render(Widget, {});
+          logs.push("preload " + Widget.preload());
+        });
+        run("two components in one object", log => {
+          const { A, B } = forms.twoInOneObject(log);
+          render(A, {});
+          render(B, {});
+        });
+        run("two declarators", (log, logs) => {
+          const [A, helper] = forms.twoDeclarators(log);
+          render(A, {});
+          logs.push("helper " + helper());
+        });
+
+        console.log(lines.join("\\n"));
+      `,
+      "/placement.jsx": /* jsx */ `
+        import { memo, useEffect } from "react";
+
+        export function defaultOfDeclaration(log, C = memo(() => {
+          useEffect(() => { log("mounted"); }, []);
+          return <p />;
+        })) {
+          return C;
+        }
+        export const defaultOfArrow = (log, C = memo(() => {
+          useEffect(() => { log("mounted"); }, []);
+          return <p />;
+        })) => C;
+        export function defaultOfEmptyBody(registry, log, C = registry.add(memo(() => {
+          useEffect(() => { log("mounted"); }, []);
+          return <p />;
+        }))) {}
+        export function defaultInPattern({ log, C = memo(() => {
+          useEffect(() => { log("mounted"); }, []);
+          return <p />;
+        }) }) {
+          return C;
+        }
+        export function defaultWithUseMemo(log, callback = () => {
+          "use memo";
+          const onClick = () => { log("clicked"); };
+          return onClick;
+        }) {
+          return callback;
+        }
+        export function withFallback(Component, log, Fallback = memo(() => {
+          const onClick = () => { log("retry"); };
+          return <button onClick={onClick}>retry</button>;
+        })) {
+          return function Wrapped(props) {
+            return props.ready ? <Component {...props} /> : <Fallback />;
+          };
+        }
+        export const arrowBody = log => memo(() => {
+          useEffect(() => { log("mounted"); }, []);
+          return <p />;
+        });
+        export function loopWithoutBraces(logs) {
+          const all = [];
+          for (const log of logs) all.push(memo(() => {
+            useEffect(() => { log(" mounted"); }, []);
+            return <p />;
+          }));
+          return all;
+        }
+        export function ifHead(log) {
+          let C;
+          if ((C = memo(() => {
+            useEffect(() => { log("mounted"); }, []);
+            return <p />;
+          }))) {
+            log("made");
+          }
+          return C;
+        }
+        export function forHead(log) {
+          const all = [];
+          for (let C = memo(() => {
+            useEffect(() => { log("mounted"); }, []);
+            return <p />;
+          }); all.length < 1; ) {
+            all.push(C);
+          }
+          return all[0];
+        }
+        export function declarator(log) {
+          const C = memo(() => {
+            useEffect(() => { log("mounted"); }, []);
+            return <p />;
+          });
+          return C;
+        }
+        export function besideAMethod(log) {
+          return Object.assign(memo(() => {
+            useEffect(() => { log("mounted"); }, []);
+            return <p />;
+          }), {
+            preload() {
+              return 1;
+            },
+          });
+        }
+        export function twoInOneObject(log) {
+          return {
+            A: memo(() => {
+              useEffect(() => { log("a mounted"); }, []);
+              return <p />;
+            }),
+            B: memo(() => {
+              useEffect(() => { log("b mounted"); }, []);
+              return <p />;
+            }),
+          };
+        }
+        export function twoDeclarators(log) {
+          const A = memo(() => {
+            useEffect(() => { log("mounted"); }, []);
+            return <p />;
+          }), helper = () => {
+            return 1;
+          };
+          return [A, helper];
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: `
+        a default value, of a declaration: mounted
+        a default value, of an arrow: mounted
+        a default value, of a function with no statement: mounted
+        a default value, in a pattern: mounted
+        a default value, with 'use memo': clicked
+        a default value, of a higher-order component: retry
+        the body of an arrow: mounted
+        a loop without braces: 1 mounted,2 mounted
+        the head of an if: made,mounted
+        the head of a for: mounted
+        a declarator: mounted
+        beside a method: mounted,preload 1
+        two components in one object: a mounted,b mounted
+        two declarators: mounted,helper 1
+      `,
+    },
+  });
+
   // A function with the name of a component that neither creates JSX nor calls a hook is no
   // React function. Its locals are not made new, so a local that holds an export of a
   // `require()` is bound to that export, and the module needs no namespace object.

@@ -556,6 +556,14 @@ pub unsafe trait JsPayload: Sized + 'static {
         // SAFETY: a null structure is always valid.
         unsafe { JsWrapper::create_with_structure(heap, core::ptr::null_mut(), self) }
     }
+
+    /// As [`into_js`](Self::into_js), for code that has the global object and no capability.
+    #[inline]
+    fn into_js_value(self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: a `JsHeap` is the global object, and the wrapper leaves as a `JSValue`.
+        let heap = unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() };
+        self.into_js(heap).as_value().to_js()
+    }
 }
 
 /// The JS object that wraps a `T`. The payload is reached only through [`JsPayloads`].
@@ -686,6 +694,24 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
                 (T::INTERNAL_FIELDS_OFFSET + index * size_of::<JSValue>()) as u32,
                 value.0,
             )
+        }
+    }
+}
+
+impl<'a, T: JsPayload> JsWrapper<'a, T> {
+    /// # Safety
+    /// `index` is the internal field of one of the class's cached getters, which reads an empty one as not computed.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn clear_internal_field(self, _: &JsHeap<'a>, index: usize) {
+        // SAFETY: generated offset inside the cell. Storing no cell takes no write barrier.
+        unsafe {
+            self.0
+                .as_ptr()
+                .byte_add(T::INTERNAL_FIELDS_OFFSET)
+                .cast::<JSValue>()
+                .add(index)
+                .write(JSValue::ZERO)
         }
     }
 }

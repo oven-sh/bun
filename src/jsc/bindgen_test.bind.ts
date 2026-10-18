@@ -34,6 +34,12 @@ export const expectedByNode = b.fn({
   expected: { text: ["string"], data: ["Buffer", "TypedArray", "DataView", "string"] },
   returns: b.usize,
 });
+export const TestFlag = b.dictionary({ flag: b.bool.loose.default(false) });
+export const expectedByNodeInCpp = b.fn({
+  args: { data: b.bytes({ from: ["buffer"] }), options: TestFlag.nullable.default({}), more: TestFlag.default({}) },
+  expected: { data: "data is not a buffer.", options: ["object"] },
+  returns: b.usize,
+});
 
 export const TestColor = b.enumeration(["red", ["green", "lime"], "blue"]);
 export const nextColor = b.fn({ args: { color: TestColor }, returns: TestColor });
@@ -185,6 +191,7 @@ export const TestCounter = b.class({
       { rustName: "add_length", args: { text: b.string.utf8, times: b.i32.default(1) }, returns: b.i32, mutates: true },
       { rustName: "add_number", args: { by: b.i32 }, returns: b.i32, mutates: true },
     ],
+    forgetTag: { capability: "heap", passThis: true },
     listen: { args: { listener: b.any }, capability: "heap", passThis: true },
     /** Calls the listener, which may call back into this object, then returns the count. */
     notify: { returns: b.i32, capability: "js", throws: true },

@@ -507,7 +507,7 @@ it("dir should be validated", async () => {
     new Bun.FileSystemRouter({
       style: "nextjs",
     });
-  }).toThrow("Expected dir to be a string");
+  }).toThrow("FileSystemRouterOptions.dir is required");
 
   expect(() => {
     new Bun.FileSystemRouter({
@@ -515,7 +515,7 @@ it("dir should be validated", async () => {
       dir: undefined,
       style: "nextjs",
     });
-  }).toThrow("Expected dir to be a string");
+  }).toThrow("FileSystemRouterOptions.dir is required");
 
   expect(() => {
     new Bun.FileSystemRouter({
@@ -523,7 +523,7 @@ it("dir should be validated", async () => {
       dir: 123,
       style: "nextjs",
     });
-  }).toThrow("Expected dir to be a string");
+  }).toThrow("FileSystemRouterOptions.dir must be a string");
 });
 
 it("origin should be validated", async () => {
@@ -536,7 +536,22 @@ it("origin should be validated", async () => {
       origin: 123,
       style: "nextjs",
     });
-  }).toThrow("Expected origin to be a string");
+  }).toThrow("FileSystemRouterOptions.origin must be a string");
+});
+
+it("assetPrefix and origin are what the router was given, or null", () => {
+  const { dir } = make(["posts.tsx"]);
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+    assetPrefix: "_next/static/",
+    origin: "https://a.test",
+  });
+  expect(router.assetPrefix).toBe("_next/static/");
+  expect(router.origin).toBe("https://a.test");
+  const bare = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  expect(bare.assetPrefix).toBeNull();
+  expect(bare.origin).toBeNull();
 });
 
 // POSIX allows arbitrary bytes (except '/' and NUL) in filenames, including 0xFF.

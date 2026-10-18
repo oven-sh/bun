@@ -409,6 +409,34 @@ describe("strings", () => {
     expect(thrownBy("abc", "de", 1)).toBe(`${invalid}flag must be a boolean`);
   });
 
+  it("expected: a string is the whole message, and a dictionary is reported as the argument", () => {
+    const f = bindgen.expectedByNodeInCpp;
+    expect(f(new Uint8Array(2))).toBe(2);
+    expect(f(new Uint8Array(2), null, { flag: 1 })).toBe(3);
+    expect(f(new Uint8Array(2), { flag: 1 }, { flag: 1 })).toBe(4);
+    const thrownBy = (...args: unknown[]) => {
+      try {
+        f(...args);
+      } catch (error: any) {
+        return `${error.name} ${error.code}: ${error.message}`;
+      }
+    };
+    const invalid = "TypeError ERR_INVALID_ARG_TYPE: ";
+    const trap = () => {
+      throw new Error("looked at");
+    };
+    for (const value of [undefined, "ab", {}, new Proxy({}, { get: trap, getOwnPropertyDescriptor: trap })]) {
+      expect(thrownBy(value)).toBe(`${invalid}data is not a buffer.`);
+    }
+    expect(thrownBy(new Uint8Array(2), 1)).toBe(
+      `${invalid}The "options" argument must be of type object. Received type number (1)`,
+    );
+    expect(thrownBy(new Uint8Array(2), "a\ud800")).toBe(
+      `${invalid}The "options" argument must be of type object. Received type string ('a\ud800')`,
+    );
+    expect(thrownBy(new Uint8Array(2), {}, 1)).toBe(`${invalid}TestFlag must be an object`);
+  });
+
   it.each(texts)("round trips %j", text => {
     expect(bindgen.stringLength(text)).toBe(text.length);
     expect(bindgen.utf8Echo(text)).toBe(text);
@@ -1567,6 +1595,7 @@ describe("classes", () => {
       "tag",
       "increment",
       "add",
+      "forgetTag",
       "listen",
       "notify",
       "plus",
@@ -1629,6 +1658,20 @@ describe("classes", () => {
     Bun.gc(true);
     expect(counter.tag).toBe(tag);
     expect(new TestCounter(3).tag).not.toBe(tag);
+  });
+
+  it("a cached getter that was forgotten is computed again", () => {
+    const counter = new TestCounter(3);
+    const tag = counter.tag;
+    counter.increment();
+    counter.forgetTag();
+    expect(counter.tag).toEqual([4]);
+    expect(counter.tag).toBe(counter.tag);
+    expect(tag).toEqual([3]);
+    const untouched = new TestCounter(5);
+    untouched.forgetTag();
+    Bun.gc(true);
+    expect(untouched.tag).toEqual([5]);
   });
 
   it("checks the receiver", () => {

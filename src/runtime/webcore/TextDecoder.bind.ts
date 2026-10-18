@@ -1,0 +1,39 @@
+import * as b from "../../codegen/bindgen-lib.ts";
+
+export const TextDecoderOptions = b.dictionary(
+  {
+    fatal: b.bool.loose.default(false),
+    ignoreBOM: b.bool.loose.default(false),
+  },
+  { allowArray: true },
+);
+
+export const TextDecodeOptions = b.dictionary({ stream: b.bool.loose.default(false) }, { allowArray: true });
+
+export const TextDecoder = b.class({
+  rustPath: "crate::webcore::TextDecoder",
+  configurable: false,
+  construct: {
+    args: { label: b.string.loose.utf8.default("utf-8"), options: TextDecoderOptions.nullable.default({}) },
+    expected: { options: ["object"] },
+    capability: "heap",
+    throws: true,
+  },
+  proto: {
+    decode: {
+      args: {
+        /** A decoder measures the bytes and then reads them again. */
+        input: b.bytes({ from: ["buffer"], shared: "copied" }).optional,
+        options: TextDecodeOptions.nullable.default({}),
+      },
+      expected: { input: "TextDecoder.decode expects an ArrayBuffer or TypedArray", options: ["object"] },
+      returns: b.any,
+      capability: "heap",
+      throws: true,
+      length: 1,
+    },
+    encoding: { getter: b.any, cache: true, capability: "heap" },
+    fatal: { getter: b.bool },
+    ignoreBOM: { getter: b.bool },
+  },
+});

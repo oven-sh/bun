@@ -1472,8 +1472,8 @@ export class DictionaryType extends NamedType {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string): string {
-    return `Bun::Bindgen::convertDictionaryInto(*globalObject, ${value}, ${target});`;
+  cppConvertInto(target: string, value: string, ctx: string): string {
+    return `Bun::Bindgen::convertDictionaryInto(*globalObject, ${value}, ${target}, ${ctx});`;
   }
   /** Every JS name read, in order. */
   get names(): string[] {
@@ -1636,12 +1636,12 @@ export interface SignatureOptions {
   rustPath?: string;
   /** The JS function's `length`. Defaults to the number of required arguments. */
   length?: number;
-  /** An argument named here throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)` for a value of the wrong type. */
-  expected?: Record<string, readonly string[]>;
+  /** Node's `ERR_INVALID_ARG_TYPE` for a wrong type: a list is its `(name, expected, actual)`, a string the whole message. */
+  expected?: Record<string, readonly string[] | string>;
 }
 
 export class Signature {
-  readonly args: readonly { name: string; type: Type; expected?: readonly string[] }[];
+  readonly args: readonly { name: string; type: Type; expected?: readonly string[] | string }[];
   readonly returns: Type;
   readonly capability: Capability;
   readonly throws: boolean;

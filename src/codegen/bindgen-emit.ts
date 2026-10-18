@@ -564,7 +564,11 @@ function cppCallBody(signature: Signature, symbol: string, leading: readonly str
   const readLast: string[] = [];
   signature.args.forEach(({ name, type, expected }, i) => {
     lines.push(`JSC::EnsureStillAliveScope argument${i} = callFrame->argument(${i});`);
-    if (expected) {
+    if (typeof expected === "string") {
+      lines.push(
+        `[[maybe_unused]] auto ctx${i} = Bun::Bindgen::NodeArgumentMessageContext { ${asciiLiteral(name)}, ${asciiLiteral(expected)} };`,
+      );
+    } else if (expected) {
       lines.push(`static constexpr WTF::ASCIILiteral expected${i}[] = { ${expected.map(asciiLiteral).join(", ")} };`);
       lines.push(
         `[[maybe_unused]] auto ctx${i} = Bun::Bindgen::NodeArgumentContext { ${asciiLiteral(name)}, expected${i}, argument${i}.value() };`,
@@ -1326,15 +1330,19 @@ ${rustTakeArguments([{ name: "value", type: getter.type }], scope)}let result = 
     );
   }
 
-  const fieldDeclarations = type.internalFields
-    .map(field => {
+  const fieldDeclarations = [
+    ...type.internalFields.map(field => {
       const id = snakeCase(field);
       return `    fn ${id}_field(self, heap: &bindgen::JsHeap<'a>) -> bindgen::JsLocal<'a>;
     fn set_${id}_field<T>(self, heap: &bindgen::JsHeap<'a>, value: bindgen::JsLocal<'a, T>);`;
-    })
-    .join("\n");
-  const fieldDefinitions = type.internalFields
-    .map((field, index) => {
+    }),
+    ...type.cachedGetters.map(
+      getter => `    /// The next read of \`${getter.name}\` computes it again.
+    fn forget_cached_${snakeCase(getter.name)}(self, heap: &bindgen::JsHeap<'a>);`,
+    ),
+  ].join("\n");
+  const fieldDefinitions = [
+    ...type.internalFields.map((field, index) => {
       const id = snakeCase(field);
       return `    #[inline(always)]
     fn ${id}_field(self, heap: &bindgen::JsHeap<'a>) -> bindgen::JsLocal<'a> {
@@ -1346,8 +1354,15 @@ ${rustTakeArguments([{ name: "value", type: getter.type }], scope)}let result = 
         // SAFETY: internal field ${index} of ${type.numberOfInternalFields}.
         unsafe { self.set_internal_field(heap, ${index}, value) }
     }`;
-    })
-    .join("\n");
+    }),
+    ...type.cachedGetters.map(
+      getter => `    #[inline(always)]
+    fn forget_cached_${snakeCase(getter.name)}(self, heap: &bindgen::JsHeap<'a>) {
+        // SAFETY: internal field ${getter.internalFieldIndex} of ${type.numberOfInternalFields}.
+        unsafe { self.clear_internal_field(heap, ${getter.internalFieldIndex}) }
+    }`,
+    ),
+  ].join("\n");
 
   return `
 /// What \`${rustPath}\` implements to be the JS class \`${name}\`.
@@ -1378,7 +1393,7 @@ pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${ru
     unsafe { core::ptr::drop_in_place(payload) }
 }
 ${
-  type.internalFields.length > 0
+  type.numberOfInternalFields > 0
     ? `/// The JS values a \`${name}\` holds.
 pub trait ${name}InternalFields<'a>: Copy {
 ${fieldDeclarations}
@@ -1474,7 +1489,7 @@ export function dts(files: readonly SchemaFile[]): string {
   const overloadsType = (fn: FunctionDefinition) => fn.signatures.map(s => `(${signatureType(s)})`).join(" & ");
   const functionMember = (fn: FunctionDefinition) => member(fn.name, false, overloadsType(fn));
   const getterMember = (getter: Getter) =>
-    `    ${getter.hasSetter ? "" : "readonly "}${JSON.stringify(getter.name)}: ${getter.type.tsType};`;
+    `    ${getter.hasSetter ? "" : "readonly "}${JSON.stringify(getter.name)}: ${getter.hasSetter ? getter.type.tsType : resultType(getter.type)};`;
   const declarations = files.flatMap(file =>
     file.types.map(type => {
       if (type instanceof DictionaryType) {

@@ -20,16 +20,14 @@ pub(crate) mod kind_enum {
 }
 
 use bun_paths::strings;
-use core::cell::UnsafeCell;
 
-use bun_alloc::Arena as ArenaAllocator;
 use bun_ast as Log;
 use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
-use bun_jsc::bun_string_jsc;
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc};
+use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsCell, JsError, JsResult, LogJsc};
 use bun_paths::{self as path, MAX_PATH_BYTES};
 use bun_ptr::BackRef;
 
@@ -40,7 +38,10 @@ use bun_router::{self as Router, Match as RouterMatch, RouteConfig};
 use bun_url::{CombinedScanner, QueryStringMap, URL, route_param};
 
 use crate::api::bun_object;
-use crate::webcore::{Request, Response};
+use crate::generated_bindgen::filesystem_router::{
+    FileSystemRouterClass, FileSystemRouterInternalFields as _, FileSystemRouterOptions,
+    MatchedRouteClass, Routable,
+};
 
 // Note: `FrameworkFileSystemRouter` is declared in this file's
 // `filesystem_router.classes.ts`, so codegen looks for the backing struct here
@@ -76,273 +77,83 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     }
 }
 
-// `js.routesSetCached` codegen accessor — emitted by the `.classes.ts`
-// generator as `FileSystemRouterPrototype__routesSetCachedValue`. The
-// `codegen_cached_accessors!` proc-macro wires the extern.
-bun_jsc::codegen_cached_accessors!("FileSystemRouter"; routes);
-
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `JsCell` for the two fields that `reload`/`match`
-// mutate. The codegen shim may still emit `this: &mut FileSystemRouter` —
-// `&mut T` reborrows to `&T` so the impls compile against either.
-#[bun_jsc::JsClass]
 pub(crate) struct FileSystemRouter {
     // BACKREF — interned `RefString`s live in the VM cache and outlive this
-    // router (we hold +1 via `claim` in `constructor`, released in `finalize`).
-    pub(crate) origin: Option<BackRef<RefString>>,
-    pub(crate) base_dir: Option<BackRef<RefString>>,
-    pub(crate) router: JsCell<Router::Router>,
-    // Router borrows slices from this arena across calls;
-    // kept as boxed arena per LIFETIMES.tsv (OWNED). `bun_alloc::Arena` (mimalloc heap) is
-    // the runtime-wide arena type, so allocations here are individually freeable too.
-    pub(crate) arena: JsCell<Box<ArenaAllocator>>,
-    pub(crate) asset_prefix: Option<BackRef<RefString>>,
+    // router (we hold +1 via `claim` in `constructor`, released in `drop`).
+    origin: Option<BackRef<RefString>>,
+    base_dir: BackRef<RefString>,
+    router: Router::Router,
+    asset_prefix: Option<BackRef<RefString>>,
+}
+
+enum LoadError {
+    NotFound,
+    ReadingRootDirectory,
+    LoadingRoutes,
+}
+
+impl LoadError {
+    fn throw(self, global: &JSGlobalObject, log: &Log::Log, dir: &[u8]) -> JsError {
+        let doing = match self {
+            LoadError::NotFound => {
+                return global.throw(format_args!(
+                    "Unable to find directory: {}",
+                    bstr::BStr::new(dir)
+                ));
+            }
+            LoadError::ReadingRootDirectory => format_args!("reading root directory"),
+            LoadError::LoadingRoutes => format_args!("loading routes"),
+        };
+        match log.to_js(global, doing) {
+            Ok(error) => global.throw_value(error),
+            Err(error) => error,
+        }
+    }
+}
+
+/// SAFETY: the resolver logs to `log` until what this returns is dropped, which is before `log` moves or drops.
+unsafe fn log_resolver_to(log: &mut Log::Log) -> impl Drop + use<> {
+    // Derived from the thread-local raw `*mut VirtualMachine` (via `get_mut_ptr`) so the stored
+    // slot pointer keeps valid provenance under Stacked Borrows across the callers'
+    // `&mut vm.transpiler.resolver` reborrows.
+    // SAFETY: the VM and its resolver outlive the caller's scope.
+    unsafe {
+        let vm_ptr = VirtualMachine::get_mut_ptr();
+        Resolver::scoped_log(
+            core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
+            core::ptr::NonNull::from(log),
+        )
+    }
+}
+
+fn load_router(
+    config: RouteConfig,
+    log: &mut Log::Log,
+) -> Result<(Router::Router, bun_resolver::DirInfoRef), LoadError> {
+    let resolver = &mut VirtualMachine::get().as_mut().transpiler.resolver;
+    let root_dir_info = match resolver.read_dir_info(&config.dir) {
+        Ok(Some(info)) => info,
+        Ok(None) => return Err(LoadError::NotFound),
+        Err(_) => return Err(LoadError::ReadingRootDirectory),
+    };
+
+    let mut router = Router::Router::init(config).expect("unreachable");
+    let config_dir = router.config.dir.clone();
+    router
+        .load_routes(
+            log,
+            &root_dir_info,
+            &mut RouterResolver(resolver),
+            &config_dir,
+        )
+        .map_err(|_| LoadError::LoadingRoutes)?;
+    Ok((router, root_dir_info))
 }
 
 impl FileSystemRouter {
-    // Note: `pub const js = jsc.Codegen.JSFileSystemRouter; toJS/fromJS/fromJSDirect`
-    // are wired by `#[bun_jsc::JsClass]` codegen — deleted per PORTING.md.
-
-    // Note: no `#[bun_jsc::host_fn]` here — the `Free` shim it emits calls
-    // a bare `constructor(...)` which cannot resolve inside an `impl`. The
-    // `#[bun_jsc::JsClass]` macro already emits the `<Self>::constructor` shim.
-    pub(crate) fn constructor(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<Box<FileSystemRouter>> {
-        let [argument] = callframe.arguments_as_array::<1>();
-        if callframe.arguments_count() == 0 {
-            return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
-        }
-
-        if argument.is_empty_or_undefined_or_null() || !argument.is_object() {
-            return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
-        }
-        let vm = global_this.bun_vm().as_mut();
-
-        let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
-        let mut root_dir_path = Utf8Bytes::Borrowed(vm.top_level_dir());
-        let mut origin_str = Utf8Bytes::EMPTY;
-        let mut asset_prefix_slice = Utf8Bytes::EMPTY;
-        if let Some(style_val) = argument.get(global_this, "style")? {
-            if !style_val
-                .to_js_string_view(global_this)?
-                .eq_ascii(b"nextjs")
-            {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Only 'nextjs' style is currently implemented"
-                )));
-            }
-        } else {
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "Expected 'style' option (ex: \"style\": \"nextjs\")"
-            )));
-        }
-
-        if let Some(dir) = argument.get(global_this, "dir")? {
-            if !dir.is_string() {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("Expected dir to be a string")));
-            }
-            let root_dir_path_ = dir.to_utf8(global_this)?;
-            if !(root_dir_path_.slice().is_empty() || root_dir_path_.slice() == b".") {
-                // An absolute path is normalized too: a route is named by what follows this
-                // path in the resolver's spelling of its directory, which is normalized.
-                let Some(joined) =
-                    path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                        Fs::FileSystem::instance().top_level_dir,
-                        &mut out_buf,
-                        &[root_dir_path_.slice()],
-                    )
-                else {
-                    return Err(global_this.throw(format_args!(
-                        "Unable to find directory: {}",
-                        bstr::BStr::new(root_dir_path_.slice())
-                    )));
-                };
-                root_dir_path = Utf8Bytes::Borrowed(joined);
-            }
-        } else {
-            // dir is not optional
-            return Err(
-                global_this.throw_invalid_arguments(format_args!("Expected dir to be a string"))
-            );
-        }
-        // extensions/asset_prefix/log are all allocated from this arena.
-        let arena = Box::new(ArenaAllocator::new());
-        let mut extensions: Vec<&[u8]> = Vec::new();
-        if let Some(file_extensions) = argument.get(global_this, "fileExtensions")? {
-            if !file_extensions.js_type().is_array() {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Expected fileExtensions to be an Array"
-                )));
-            }
-
-            let mut iter = file_extensions.array_iterator(global_this)?;
-            extensions.reserve_exact(iter.len as usize);
-            while let Some(val) = iter.next()? {
-                if !val.is_string() {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "Expected fileExtensions to be an Array of strings"
-                    )));
-                }
-                if val.get_length(global_this)? == 0 {
-                    continue;
-                }
-                let utf8 = val.to_utf8(global_this)?;
-                // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`, so the
-                // backing allocation outlives this slice. Cast through raw ptr to detach the
-                // borrow from `arena` so it can be moved below.
-                let leaked: &'static [u8] =
-                    unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(utf8.slice())) };
-                extensions.push(&leaked[1..]);
-            }
-        }
-
-        if let Some(asset_prefix) = argument.get_truthy(global_this, "assetPrefix")? {
-            if !asset_prefix.is_string() {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("Expected assetPrefix to be a string")));
-            }
-
-            asset_prefix_slice = asset_prefix.to_utf8(global_this)?;
-        }
-        let mut log = Log::Log::new();
-        // `defer vm.transpiler.resolver.log = orig_log` — RAII guard restores on
-        // every exit path. Derived from the thread-local raw `*mut VirtualMachine`
-        // (via `get_mut_ptr`) so the stored slot pointer keeps valid provenance
-        // under Stacked Borrows across the `&mut vm.transpiler.resolver`
-        // reborrows below (deriving from `vm: &mut _` would be invalidated by
-        // those reborrows before the guard's `Drop` runs).
-        // SAFETY: `vm` is the live VM for this global; resolver outlives this
-        // scope. Guard is declared after `log` so it drops (and restores) first.
-        let _restore_log = unsafe {
-            let vm_ptr = VirtualMachine::get_mut_ptr();
-            Resolver::scoped_log(
-                core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
-                core::ptr::NonNull::from(&mut log),
-            )
-        };
-
-        // `cloneWithTrailingSlash` → `strings.cloneNormalizingSeparators`: collapse duplicate
-        // separators and append the PLATFORM-NATIVE separator (`\` on Windows).
-        let path_to_use: Vec<u8> =
-            strings::paths::clone_normalizing_separators(root_dir_path.slice());
-
-        let root_dir_info = match vm.transpiler.resolver.read_dir_info(&path_to_use) {
-            Ok(Some(info)) => info,
-            Ok(None) => {
-                return Err(global_this.throw(format_args!(
-                    "Unable to find directory: {}",
-                    bstr::BStr::new(root_dir_path.slice())
-                )));
-            }
-            Err(_) => {
-                let err_value = log.to_js(global_this, format_args!("reading root directory"));
-                return Err(global_this.throw_value(err_value?));
-            }
-        };
-
-        let mut router = Router::Router::init(RouteConfig {
-            dir: Box::from(&path_to_use[..]),
-            extensions: if !extensions.is_empty() {
-                extensions.iter().map(|s| Box::<[u8]>::from(*s)).collect()
-            } else {
-                DEFAULT_EXTENSIONS
-                    .iter()
-                    .map(|s| Box::<[u8]>::from(*s))
-                    .collect()
-            },
-            asset_prefix_path: Box::from(asset_prefix_slice.slice()),
-            ..Default::default()
-        })
-        .expect("unreachable");
-
-        {
-            let config_dir = router.config.dir.clone();
-            if router
-                .load_routes(
-                    &mut log,
-                    &root_dir_info,
-                    &mut RouterResolver(&mut vm.transpiler.resolver),
-                    &config_dir,
-                )
-                .is_err()
-            {
-                let err_value = log.to_js(global_this, format_args!("loading routes"));
-                return Err(global_this.throw_value(err_value?));
-            }
-        }
-
-        if let Some(origin) = argument.get(global_this, "origin")? {
-            if !origin.is_string() {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("Expected origin to be a string")));
-            }
-            origin_str = origin.to_utf8(global_this)?;
-        }
-
-        if log.errors + log.warnings > 0 {
-            let err_value = log.to_js(global_this, format_args!("loading routes"));
-            return Err(global_this.throw_value(err_value?));
-        }
-
-        let base_dir_str = if !root_dir_info.abs_real_path.is_empty() {
-            root_dir_info.abs_real_path
-        } else {
-            root_dir_info.abs_path
-        };
-
-        // Note: `vm.refCountedString` is an interning cache — on a cache HIT it
-        // returns the existing `*mut RefString` WITHOUT bumping the refcount.
-        // `getScriptSrc`/`getOrigin` use `.leak()` (no ref), so without an
-        // explicit hold N routers sharing one interned RefString → N finalizers
-        // deref a single +1 → UAF on the second deref. Claim an explicit +1 here
-        // so each `FileSystemRouter` owns its hold; `finalize` releases it.
-        let claim = |p: *mut RefString| -> BackRef<RefString> {
-            // `ref_counted_string` returns a live interned `*mut RefString`; wrap as
-            // `BackRef` (owner-outlives-holder: VM intern cache + our +1).
-            let r = BackRef::from(core::ptr::NonNull::new(p).expect("ref_counted_string"));
-            r.ref_();
-            r
-        };
-        let fs_router = Box::new(FileSystemRouter {
-            origin: if !origin_str.slice().is_empty() {
-                Some(claim(
-                    vm.ref_counted_string::<true>(origin_str.slice(), None),
-                ))
-            } else {
-                None
-            },
-            base_dir: Some(claim(vm.ref_counted_string::<true>(base_dir_str, None))),
-            asset_prefix: if !asset_prefix_slice.slice().is_empty() {
-                Some(claim(vm.ref_counted_string::<true>(
-                    asset_prefix_slice.slice(),
-                    None,
-                )))
-            } else {
-                None
-            },
-            router: JsCell::new(router),
-            arena: JsCell::new(arena),
-        });
-
-        // RouteConfig::dir is an owned `Box<[u8]>`, so copy the bytes; the
-        // `claim` above already took our +1.
-        // `base_dir` was just set to Some above.
-        let base_dir = fs_router.base_dir.unwrap();
-        fs_router
-            .router
-            .with_mut(|r| r.config.dir = Box::from(base_dir.leak()));
-
-        Ok(fs_router)
-    }
-
-    pub(crate) fn bust_dir_cache_recursive(&self, global_this: &JSGlobalObject, input_path: &[u8]) {
-        // SAFETY: `bun_vm()` returns the live VM raw pointer for this global. Re-derive the
-        // `&mut` per use site so the recursive call (which does the same) doesn't pop our
-        // SB tag mid-loop.
-        let vm = global_this.bun_vm();
+    fn bust_dir_cache_recursive(input_path: &[u8]) {
+        // Re-derived per use site: the recursive call does the same, which pops this tag mid-loop.
+        let vm = VirtualMachine::get();
         #[cfg(not(windows))]
         let path = input_path;
         #[cfg(windows)]
@@ -410,7 +221,7 @@ impl FileSystemRouter {
                         let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(&full_path),
                         );
-                        self.bust_dir_cache_recursive(global_this, &full_path);
+                        Self::bust_dir_cache_recursive(&full_path);
                     }
                 }
             }
@@ -419,137 +230,129 @@ impl FileSystemRouter {
         let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
     }
 
-    pub(crate) fn bust_dir_cache(&self, global_this: &JSGlobalObject) {
-        let dir =
-            strings::paths::without_trailing_slash_windows_path(&self.router.get().config.dir);
-        // Note: reshaped for borrowck — `dir` borrows `self.router.config.dir`; the
-        // recursive walk re-derives the path from the resolver per-iteration so a one-time
-        // copy is sufficient.
-        let dir = dir.to_vec();
-        self.bust_dir_cache_recursive(global_this, &dir);
+    fn bust_dir_cache(&self) {
+        Self::bust_dir_cache_recursive(strings::paths::without_trailing_slash_windows_path(
+            &self.router.config.dir,
+        ));
     }
+}
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn reload(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let this_value = callframe.this();
+impl FileSystemRouterClass for FileSystemRouter {
+    type Error<'a> = bindgen::Error<'a>;
 
-        let arena = Box::new(ArenaAllocator::new());
-        // SAFETY: `bun_vm()` returns the live VM raw pointer for this global.
-        let vm_ptr = global_this.bun_vm_ptr();
+    fn constructor<'a>(
+        cx: &mut JsScope<'a>,
+        options: &FileSystemRouterOptions<'a>,
+    ) -> bindgen::Result<'a, Self> {
+        let global = cx.global();
+        match options.style {
+            Some(b"nextjs") => {}
+            Some(_) => {
+                return Err(global
+                    .throw_invalid_arguments(format_args!(
+                        "Only 'nextjs' style is currently implemented"
+                    ))
+                    .into());
+            }
+            None => {
+                return Err(global
+                    .throw_invalid_arguments(format_args!(
+                        "Expected 'style' option (ex: \"style\": \"nextjs\")"
+                    ))
+                    .into());
+            }
+        }
+        let vm = global.bun_vm().as_mut();
+
+        let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
+        let mut root_dir_path = vm.top_level_dir();
+        if !(options.dir.is_empty() || options.dir == b".") {
+            // An absolute path is joined too: a route's name is cut from the resolver's normalized spelling.
+            let Some(joined) =
+                path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                    Fs::FileSystem::instance().top_level_dir,
+                    &mut out_buf,
+                    &[options.dir],
+                )
+            else {
+                return Err(LoadError::NotFound
+                    .throw(global, &Log::Log::new(), options.dir)
+                    .into());
+            };
+            root_dir_path = joined;
+        }
+
+        let mut extensions: Vec<Box<[u8]>> = (options.file_extensions.iter().flatten())
+            .filter(|extension| !extension.is_empty())
+            .map(|extension| Box::from(&extension[1..]))
+            .collect();
+        if extensions.is_empty() {
+            extensions = DEFAULT_EXTENSIONS.iter().map(|s| Box::from(*s)).collect();
+        }
+        let asset_prefix = options.asset_prefix.unwrap_or_default();
 
         let mut log = Log::Log::new();
-        // SAFETY: `vm_ptr` is the live VM for this global; resolver outlives this
-        // scope. Guard declared after `log` so it drops (and restores) first.
-        let _restore_log = unsafe {
-            Resolver::scoped_log(
-                core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
-                core::ptr::NonNull::from(&mut log),
-            )
-        };
+        // SAFETY: declared after `log`, so it is dropped first.
+        let _restore_log = unsafe { log_resolver_to(&mut log) };
 
-        this.bust_dir_cache(global_this);
-        // Note: `bust_dir_cache` re-derives the VM borrow internally; rebind here so
-        // our `vm` borrow is fresh under Stacked Borrows.
-        let vm = global_this.bun_vm().as_mut();
-
-        // R-2: snapshot the config fields up front so the `JsCell::get()` borrow is
-        // released before `JsCell::set()` below installs the new router.
-        let (cfg_dir, cfg_extensions, cfg_asset_prefix_path) = {
-            let cfg = &this.router.get().config;
-            (
-                cfg.dir.clone(),
-                cfg.extensions.clone(),
-                cfg.asset_prefix_path.clone(),
-            )
-        };
-
-        let root_dir_info = match vm.transpiler.resolver.read_dir_info(&cfg_dir) {
-            Ok(Some(info)) => info,
-            Ok(None) => {
-                return Err(global_this.throw(format_args!(
-                    "Unable to find directory: {}",
-                    bstr::BStr::new(&*cfg_dir)
-                )));
-            }
-            Err(_) => {
-                let err_value = log.to_js(global_this, format_args!("reading root directory"));
-                return Err(global_this.throw_value(err_value?));
-            }
-        };
-
-        let mut router = Router::Router::init(RouteConfig {
-            dir: cfg_dir,
-            extensions: cfg_extensions,
-            asset_prefix_path: cfg_asset_prefix_path,
+        let config = RouteConfig {
+            // Ends with the native separator (`\` on Windows).
+            dir: strings::paths::clone_normalizing_separators(root_dir_path).into_boxed_slice(),
+            extensions: extensions.into(),
+            asset_prefix_path: Box::from(asset_prefix),
             ..Default::default()
-        })
-        .expect("unreachable");
-        {
-            let config_dir = router.config.dir.clone();
-            if router
-                .load_routes(
-                    &mut log,
-                    &root_dir_info,
-                    &mut RouterResolver(&mut vm.transpiler.resolver),
-                    &config_dir,
-                )
-                .is_err()
-            {
-                let err_value = log.to_js(global_this, format_args!("loading routes"));
-                return Err(global_this.throw_value(err_value?));
-            }
-        }
+        };
+        let (mut router, root_dir_info) = match load_router(config, &mut log) {
+            Ok(loaded) if log.errors + log.warnings == 0 => loaded,
+            Ok(_) => return Err(LoadError::LoadingRoutes.throw(global, &log, b"").into()),
+            Err(error) => return Err(error.throw(global, &log, root_dir_path).into()),
+        };
 
-        // `this.router.deinit(); this.arena.deinit(); destroy(this.arena)` — drop old values.
-        // Note: order matters — old router borrows slices from old arena, so it must drop
-        // first.
-        this.router.set(router);
-        this.arena.set(arena);
-        // `js.routesSetCached` — wired via `codegen_cached_accessors!` above.
-        routes_set_cached(this_value, global_this, JSValue::ZERO);
-        Ok(this_value)
+        let base_dir_str = if !root_dir_info.abs_real_path.is_empty() {
+            root_dir_info.abs_real_path
+        } else {
+            root_dir_info.abs_path
+        };
+
+        // The interning cache adds no ref on a hit, so each router takes its own. `drop` releases it.
+        let mut claim = |bytes: &[u8]| -> BackRef<RefString> {
+            let p = vm.ref_counted_string::<true>(bytes, None);
+            let r = BackRef::from(core::ptr::NonNull::new(p).expect("ref_counted_string"));
+            r.ref_();
+            r
+        };
+        let base_dir = claim(base_dir_str);
+        router.config.dir = Box::from(base_dir.leak());
+        Ok(FileSystemRouter {
+            origin: options
+                .origin
+                .filter(|origin| !origin.is_empty())
+                .map(&mut claim),
+            base_dir,
+            asset_prefix: Some(asset_prefix)
+                .filter(|prefix| !prefix.is_empty())
+                .map(&mut claim),
+            router,
+        })
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn r#match(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [argument] = callframe.arguments_as_array::<1>();
-        if callframe.arguments_count() == 0 {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
-        }
+    fn asset_prefix(&self) -> Option<impl AsRef<[u8]>> {
+        self.asset_prefix.as_ref().map(|prefix| prefix.leak())
+    }
 
-        if argument.is_empty_or_undefined_or_null() || !argument.is_cell() {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
-        }
-
-        let mut path: Utf8Bytes = 'brk: {
-            // `path` is moved into the `MatchedRoute`, so every arm must own its bytes.
-            if argument.is_string() {
-                break 'brk argument.to_utf8(global_this)?;
+    fn r#match<'a>(
+        &mut self,
+        heap: &JsHeap<'a>,
+        input: Routable<'a>,
+    ) -> bindgen::Result<'a, Option<JsWrapper<'a, MatchedRoute>>> {
+        // `path` is moved into the `MatchedRoute`, so every arm must own its bytes.
+        let mut path: Utf8Bytes<'static> = match input {
+            Routable::Path(path) => path.into_utf8(),
+            Routable::Request(req) => {
+                req.ensure_url().expect("unreachable");
+                req.url.get().clone().into_utf8()
             }
-
-            if argument.is_cell() {
-                if let Some(req) = argument.as_class_ref::<Request>() {
-                    req.ensure_url().expect("unreachable");
-                    break 'brk req.url.get().clone().into_utf8();
-                }
-
-                if let Some(resp) = argument.as_class_ref::<Response>() {
-                    break 'brk resp.url().clone().into_utf8();
-                }
-            }
-
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
+            Routable::Response(resp) => resp.url().clone().into_utf8(),
         };
 
         if path.slice().is_empty() || (path.slice().len() == 1 && path.slice()[0] == b'/') {
@@ -567,11 +370,11 @@ impl FileSystemRouter {
         // leading slash, so "Xtop" would match "/top". The URL branch above and
         // the empty-input normalisation both yield '/'-prefixed paths already.
         if path.slice().first() != Some(&b'/') {
-            return Ok(JSValue::NULL);
+            return Ok(None);
         }
 
         // SAFETY: self-ref construction prelude — `route` below borrows these bytes via
-        // `URLPath`, and `path` is then MOVED into the same `MatchedRoute` Box that stores
+        // `URLPath`, and `path` is then MOVED into the same `MatchedRoute` that stores
         // `route`. Borrowck can't see that the allocation travels with the borrow, so we
         // detach the slice from `path`'s ownership here. The bytes stay valid: `path` is
         // never dropped on any path between here and `MatchedRoute::init` taking ownership
@@ -582,7 +385,7 @@ impl FileSystemRouter {
         let mut url_path = match URLPath::parse(path_bytes) {
             Ok(v) => v,
             Err(err) => {
-                return Err(global_this.throw(format_args!(
+                return Err(heap.error(format_args!(
                     "{} parsing path: {}",
                     bun_url::Error::from(err).name(),
                     bstr::BStr::new(path.slice())
@@ -590,16 +393,10 @@ impl FileSystemRouter {
             }
         };
         let mut params = route_param::List::default();
-        // `defer params.deinit(allocator)` → Drop
-        // SAFETY: R-2 — short-lived `&mut Router` for the route lookup;
-        // `match_page_with_allocator` is pure (no JS re-entry), and the returned
-        // `Match<'p>` borrows `params`/`path_bytes`, not `*router`, so the
-        // exclusive borrow ends at the `;`.
-        let Some(route) = unsafe { this.router.get_mut() }
-            .routes
-            .match_page_with_allocator(b"", &url_path, &mut params)
+        let Some(route) =
+            (self.router.routes).match_page_with_allocator(b"", &url_path, &mut params)
         else {
-            return Ok(JSValue::NULL);
+            return Ok(None);
         };
 
         // If `URLPath::parse` had to percent-decode, `route.pathname`/`query_string` and
@@ -613,61 +410,66 @@ impl FileSystemRouter {
             path = Utf8Bytes::Owned(decoded.into_vec());
         }
 
-        // MOVE `path`
-        // into `MatchedRoute` so the bytes that `route.pathname`/`query_string`/param
-        // values borrow are owned by the same heap-stable Box and freed on finalize.
-        let result = MatchedRoute::init(
-            route,
-            path,
-            this.origin,
-            this.asset_prefix,
-            this.base_dir.unwrap(),
-        )
-        .expect("unreachable");
-
-        // Note: `result` is a self-referential `Box<MatchedRoute>` (`route` points
-        // at `route_holder` inside this very allocation). The trait `JsClass::to_js(self)`
-        // would deref-move the value OUT of the Box and re-box it at a new address,
-        // leaving the self-ref pointers dangling (ASAN use-after-poison). Hand the
-        // existing allocation straight to the C++ wrapper instead.
-        // Ownership transfers to the GC wrapper (freed via
-        // `MatchedRouteClass__finalize`); the leak lives once in `to_js_boxed`.
-        Ok(MatchedRoute::to_js_boxed(result, global_this))
+        let matched =
+            MatchedRoute::init(route, path, self.origin, self.asset_prefix, self.base_dir);
+        Ok(Some(matched.into_js(heap)))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_origin(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if let Some(ref origin) = this.origin {
-            return bun_string_jsc::create_utf8_for_js(global_this, origin.leak());
+    fn origin(&self) -> Option<impl AsRef<[u8]>> {
+        self.origin.as_ref().map(|origin| origin.leak())
+    }
+
+    fn reload<'a>(
+        this: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+    ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
+        let mut log = Log::Log::new();
+        // SAFETY: declared after `log`, so it is dropped first.
+        let _restore_log = unsafe { log_resolver_to(&mut log) };
+
+        let loaded = this.with_mut(&mut cx.payloads, |this| {
+            this.bust_dir_cache();
+            let config = &this.router.config;
+            let config = RouteConfig {
+                dir: config.dir.clone(),
+                extensions: config.extensions.clone(),
+                asset_prefix_path: config.asset_prefix_path.clone(),
+                ..Default::default()
+            };
+            let dir = config.dir.clone();
+            let (router, _) = load_router(config, &mut log).map_err(|error| (error, dir))?;
+            this.router = router;
+            Ok(())
+        });
+        if let Err((error, dir)) = loaded {
+            return Err(error.throw(cx.global(), &log, &dir).into());
         }
-
-        Ok(JSValue::NULL)
+        this.forget_cached_routes(&cx.heap);
+        Ok(this)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_routes(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let router = this.router.get();
-        let paths = router.get_entry_points();
-        let names = router.get_names();
+    fn routes<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+        let paths = self.router.get_entry_points();
+        let names = self.router.get_names();
         let mut name_strings: Vec<EncodedSlice> = vec![EncodedSlice::EMPTY; names.len() * 2];
         let (name_strings_slice, paths_strings) = name_strings.split_at_mut(names.len());
         for (i, name) in names.iter().enumerate() {
             name_strings_slice[i] = EncodedSlice::from_bytes(name);
             paths_strings[i] = EncodedSlice::from_bytes(paths[i]);
         }
-        JSValue::from_entries(global_this, name_strings_slice, paths_strings, true)
+        // SAFETY: makes an object of strings.
+        let global = unsafe { heap.global() };
+        let routes = JSValue::from_entries(global, name_strings_slice, paths_strings, true)?;
+        Ok(JsLocal::new(heap, routes))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_style(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_core::String::static_("nextjs").to_js(global_this)
+    fn style(&self) -> BunString {
+        BunString::static_("nextjs")
     }
+}
 
-    // Codegen's `host_fn_finalize` calls this via `|b| FileSystemRouter::finalize(b)`
-    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
-    // false positive on that contract.
-    #[allow(clippy::boxed_local)]
-    pub(crate) fn finalize(mut self: Box<Self>) {
+impl Drop for FileSystemRouter {
+    fn drop(&mut self) {
         // Note: `BackRef` Derefs to `&RefString`; use `.get()` to avoid
         // resolving to `<BackRef as Deref>::deref`.
         if let Some(p) = self.asset_prefix.take() {
@@ -676,114 +478,60 @@ impl FileSystemRouter {
         if let Some(p) = self.origin.take() {
             p.get().deref();
         }
-        if let Some(p) = self.base_dir.take() {
-            p.get().deref();
-        }
+        self.base_dir.get().deref();
     }
 }
 
-#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct MatchedRoute {
-    /// Self-referential: always points at `self.route_holder`. See `init`.
     // Note: `Match<'a>` borrows (a) the resolver's process-lifetime DirnameStore for
     // `name`/`file_path`/`basename`/`path` and (b) `self.pathname_backing` for
     // `pathname`/`query_string`/param values. Both are stable for `Self`'s lifetime, so
     // the stored `'static` is the standard self-referential erasure — see `init`.
-    pub(crate) route: *const RouterMatch<'static>,
-    // Note: `route_holder`/`params_list_holder` are wrapped in `UnsafeCell` because
-    // `route` (above) and `route_holder.params` hold raw self-referential pointers into
-    // them. Without `UnsafeCell`, taking `&mut MatchedRoute` (as `get_params`/`get_query`
-    // do) would assert unique access to these fields under Stacked Borrows and invalidate
-    // the stored pointers — UB on next deref.
-    pub(crate) route_holder: UnsafeCell<RouterMatch<'static>>,
-    // R-2: lazily populated by `get_query`/`get_params` (now `&self`).
-    pub(crate) query_string_map: JsCell<Option<QueryStringMap>>,
-    pub(crate) param_map: JsCell<Option<QueryStringMap>>,
-    pub(crate) params_list_holder: UnsafeCell<route_param::List<'static>>,
-    /// Owns the bytes that `route_holder.pathname`/`query_string` and the param values in
-    /// `params_list_holder` borrow. Freed by Drop on finalize.
-    pub(crate) pathname_backing: Utf8Bytes<'static>,
+    /// `params` is `self.params_list`.
+    route: RouterMatch<'static>,
+    // Lazily populated by `query`/`params`, which take `&self`.
+    query_string_map: JsCell<Option<QueryStringMap>>,
+    param_map: JsCell<Option<QueryStringMap>>,
+    /// Owned, and on the heap because `self` moves into its wrapper. Freed by `drop`.
+    params_list: *mut route_param::List<'static>,
+    /// What `route.pathname`, `route.query_string` and the values in `params_list` borrow.
+    #[expect(dead_code, reason = "held for what borrows it")]
+    pathname_backing: Utf8Bytes<'static>,
     // BACKREF — interned `RefString`s; we hold +1 (bumped in `init`, released in
-    // `deinit`). The interned allocation outlives every `MatchedRoute`.
-    pub(crate) origin: Option<BackRef<RefString>>,
-    pub(crate) asset_prefix: Option<BackRef<RefString>>,
-    pub(crate) needs_deinit: bool,
-    pub(crate) base_dir: Option<BackRef<RefString>>,
+    // `drop`). The interned allocation outlives every `MatchedRoute`.
+    origin: Option<BackRef<RefString>>,
+    asset_prefix: Option<BackRef<RefString>>,
+    base_dir: BackRef<RefString>,
 }
 
 impl MatchedRoute {
-    // Note: `pub const js = jsc.Codegen.JSMatchedRoute; toJS/fromJS/fromJSDirect`
-    // wired by `#[bun_jsc::JsClass]` — deleted.
-
     #[inline]
-    fn route(&self) -> &RouterMatch<'static> {
-        // SAFETY: `self.route` always points at `self.route_holder` (UnsafeCell, set in
-        // `init`); the Box is never moved after construction (heap-stable), and no `&mut`
-        // to `route_holder`'s contents is live concurrently with this read.
-        unsafe { &*self.route }
+    fn params_list(&self) -> &route_param::List<'static> {
+        // SAFETY: owned by `self` and written by nothing after `init`.
+        unsafe { &*self.params_list }
     }
 
-    #[inline]
-    fn params(&self) -> &route_param::List<'static> {
-        // SAFETY: `route().params` always points at `self.params_list_holder` (UnsafeCell,
-        // set in `init`); heap-stable Box, no concurrent `&mut` to its contents.
-        unsafe { &*self.route().params }
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_name(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global_this, this.route().name)
-    }
-
-    pub(crate) fn init(
+    fn init(
         match_: RouterMatch<'_>,
         pathname_backing: Utf8Bytes<'static>,
         origin: Option<BackRef<RefString>>,
         asset_prefix: Option<BackRef<RefString>>,
         base_dir: BackRef<RefString>,
-    ) -> Result<Box<MatchedRoute>, bun_alloc::AllocError> {
-        // SAFETY: `match_.params` points at the caller's stack `route_param::List`, which is
-        // live for this call. Clone its contents into our own holder before re-pointing.
+    ) -> MatchedRoute {
+        // SAFETY: `match_.params` is the caller's live list.
         let params_list = unsafe { (*match_.params).clone() };
 
-        // SAFETY: self-referential lifetime erasure — `RouterMatch<'_>` borrows two
-        // backing stores —
-        //   (a) `name`/`file_path`/`basename`/`path` slice the resolver's DirnameStore
-        //       (process-lifetime arena — `bun_router` paths are `Interned`), so are
-        //       genuinely `'static`;
-        //   (b) `pathname`/`query_string` and the param `value`s slice `pathname_backing`,
-        //       which we move into the same heap-stable Box below. The Box is never moved
-        //       after construction (JsClass m_ctx payload), so those bytes are valid for
-        //       `Self`'s lifetime.
-        // `params` is a raw `*mut`; re-pointed at `params_list_holder` below before any
-        // read through it. This is the standard Rust self-referential pattern (no
-        // `Pin`/ouroboros because JsClass codegen owns the Box<Self>); it does NOT extend
-        // a borrow past its allocation — ownership was transferred, not leaked.
-        let match_static: RouterMatch<'static> = unsafe { match_.detach_lifetime() };
-        // `route_param::List<'a>` = `Vec<Param<'a>>`; rebuild from raw parts to
-        // erase the element lifetime (identical layout, no realloc).
+        // SAFETY: what both borrow is the DirnameStore or `pathname_backing`, which is stored with them.
+        let mut route: RouterMatch<'static> = unsafe { match_.detach_lifetime() };
         let params_list: route_param::List<'static> = {
             let mut v = core::mem::ManuallyDrop::new(params_list);
             let (ptr, len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
-            // SAFETY: same allocation, same element layout; per the SAFETY note
-            // above, every `Param`'s borrowed bytes outlive `Self`.
+            // SAFETY: the same allocation, with the lifetime of its elements erased as above.
             unsafe { Vec::from_raw_parts(ptr.cast::<route_param::Param<'static>>(), len, cap) }
         };
+        let params_list = bun_core::heap::into_raw(Box::new(params_list));
+        route.params = params_list;
 
-        let mut route = Box::new(MatchedRoute {
-            route_holder: UnsafeCell::new(match_static),
-            route: core::ptr::null(),
-            asset_prefix,
-            origin,
-            base_dir: Some(base_dir),
-            query_string_map: JsCell::new(None),
-            param_map: JsCell::new(None),
-            params_list_holder: UnsafeCell::new(params_list),
-            pathname_backing,
-            needs_deinit: true,
-        });
-        // Note: `base_dir.ref()` / `o.ref()` / `prefix.ref()` — bump refcounts.
-        // Each is a live interned `RefString` (caller-provided BackRef).
         base_dir.ref_();
         if let Some(o) = origin {
             o.ref_();
@@ -791,67 +539,19 @@ impl MatchedRoute {
         if let Some(p) = asset_prefix {
             p.ref_();
         }
-        // Self-referential wiring: `route` → `route_holder`; `route_holder.params` →
-        // `params_list_holder`. Both targets are `UnsafeCell` so the raw pointers stay
-        // valid under Stacked Borrows across later `&mut MatchedRoute` accesses.
-        route.route = route.route_holder.get();
-        // SAFETY: sole access to `route_holder` contents at this point.
-        unsafe { (*route.route_holder.get()).params = route.params_list_holder.get() };
-
-        Ok(route)
-    }
-
-    // Note: `deinit` is called only from `finalize`; not exposed as `Drop` because
-    // `MatchedRoute` is a JsClass m_ctx payload (finalize owns teardown per PORTING.md).
-    #[allow(
-        clippy::boxed_local,
-        reason = "reclaim point for the allocation `finalize` owns"
-    )]
-    fn deinit(mut this: Box<MatchedRoute>) {
-        this.query_string_map.set(None);
-        this.param_map.set(None);
-        if this.needs_deinit {
-            // We own the `path` allocation from `match` as
-            // `pathname_backing`; dropping it (and `params_list_holder`) here releases the
-            // borrowed bytes BEFORE `route_holder`'s slices would dangle on Box drop.
-            this.pathname_backing = Utf8Bytes::EMPTY;
-            *this.params_list_holder.get_mut() = route_param::List::default();
-        }
-
-        if let Some(p) = this.origin.take() {
-            p.get().deref();
-        }
-        if let Some(p) = this.asset_prefix.take() {
-            p.get().deref();
-        }
-        if let Some(p) = this.base_dir.take() {
-            p.get().deref();
+        MatchedRoute {
+            route,
+            query_string_map: JsCell::new(None),
+            param_map: JsCell::new(None),
+            params_list,
+            pathname_backing,
+            origin,
+            asset_prefix,
+            base_dir,
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_file_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global_this, this.route().file_path)
-    }
-
-    pub(crate) fn finalize(self: Box<Self>) {
-        Self::deinit(self);
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_pathname(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global_this, this.route().pathname)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_kind(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        BunString::static_(kind_enum::classify(this.route().name)).to_js(global_this)
-    }
-
-    pub(crate) fn create_query_object(
-        ctx: &JSGlobalObject,
-        map: &mut QueryStringMap,
-    ) -> JsResult<JSValue> {
+    fn create_query_object(ctx: &JSGlobalObject, map: &mut QueryStringMap) -> JsResult<JSValue> {
         struct QueryObjectCreator<'a> {
             query: &'a mut QueryStringMap,
         }
@@ -894,24 +594,114 @@ impl MatchedRoute {
 
         JSObject::create_with_initializer(&mut creator, ctx, count)
     }
+}
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_script_src(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+impl Drop for MatchedRoute {
+    fn drop(&mut self) {
+        // SAFETY: made by `heap::into_raw` in `init`, and `route.params` is not read again.
+        unsafe { bun_core::heap::destroy(self.params_list) };
+        if let Some(p) = self.origin.take() {
+            p.get().deref();
+        }
+        if let Some(p) = self.asset_prefix.take() {
+            p.get().deref();
+        }
+        self.base_dir.get().deref();
+    }
+}
+
+impl MatchedRouteClass for MatchedRoute {
+    type Error<'a> = JsError;
+
+    fn file_path(&self) -> impl AsRef<[u8]> {
+        self.route.file_path
+    }
+
+    fn kind(&self) -> impl AsRef<[u8]> {
+        kind_enum::classify(self.route.name)
+    }
+
+    fn name(&self) -> impl AsRef<[u8]> {
+        self.route.name
+    }
+
+    fn params<'a>(&self, heap: &JsHeap<'a>) -> JsResult<JsLocal<'a>> {
+        // SAFETY: makes an object of strings.
+        let global = unsafe { heap.global() };
+        if self.params_list().is_empty() {
+            return Ok(JsLocal::new(heap, JSValue::create_empty_object(global, 0)));
+        }
+
+        if self.param_map.get().is_none() {
+            let scanner = CombinedScanner::init(
+                b"",
+                self.route.pathname_without_leading_slash(),
+                self.route.name,
+                self.params_list(),
+            );
+            self.param_map
+                .set(QueryStringMap::init_with_scanner(scanner)?);
+        }
+
+        let params = self
+            .param_map
+            .with_mut(|m| Self::create_query_object(global, m.as_mut().unwrap()))?;
+        Ok(JsLocal::new(heap, params))
+    }
+
+    fn pathname(&self) -> impl AsRef<[u8]> {
+        self.route.pathname
+    }
+
+    fn query<'a>(&self, heap: &JsHeap<'a>) -> JsResult<JsLocal<'a>> {
+        // SAFETY: makes an object of strings.
+        let global = unsafe { heap.global() };
+        let route = &self.route;
+        if route.query_string.is_empty() && self.params_list().is_empty() {
+            return Ok(JsLocal::new(heap, JSValue::create_empty_object(global, 0)));
+        } else if route.query_string.is_empty() {
+            return self.params(heap);
+        }
+
+        if self.query_string_map.get().is_none() {
+            if !self.params_list().is_empty() {
+                let scanner = CombinedScanner::init(
+                    route.query_string,
+                    route.pathname_without_leading_slash(),
+                    route.name,
+                    self.params_list(),
+                );
+                self.query_string_map
+                    .set(QueryStringMap::init_with_scanner(scanner)?);
+            } else {
+                self.query_string_map
+                    .set(QueryStringMap::init(route.query_string)?);
+            }
+        }
+
+        let query = self.query_string_map.with_mut(|m| match m {
+            Some(map) => Self::create_query_object(global, map),
+            None => Ok(JSValue::create_empty_object(global, 0)),
+        })?;
+        Ok(JsLocal::new(heap, query))
+    }
+
+    fn script_src(&self) -> impl AsRef<[u8]> {
+        self.src()
+    }
+
+    fn src(&self) -> impl AsRef<[u8]> {
         let mut src: Vec<u8> = Vec::new();
-        let origin_url = if let Some(ref origin) = this.origin {
+        let origin_url = if let Some(ref origin) = self.origin {
             URL::parse(origin.leak())
         } else {
             URL::default()
         };
         bun_object::get_public_path_with_asset_prefix(
-            this.route().file_path,
-            if let Some(ref base_dir) = this.base_dir {
-                base_dir.leak()
-            } else {
-                Fs::FileSystem::get().top_level_dir
-            },
+            self.route.file_path,
+            self.base_dir.leak(),
             &origin_url,
-            if let Some(ref prefix) = this.asset_prefix {
+            if let Some(ref prefix) = self.asset_prefix {
                 prefix.leak()
             } else {
                 b""
@@ -919,72 +709,10 @@ impl MatchedRoute {
             &mut src,
             path::Platform::Posix,
         );
-        bun_string_jsc::create_utf8_for_js(global_this, &src)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_params(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if this.params().is_empty() {
-            return Ok(JSValue::create_empty_object(global_this, 0));
-        }
-
-        if this.param_map.get().is_none() {
-            let route = this.route();
-            let scanner = CombinedScanner::init(
-                b"",
-                route.pathname_without_leading_slash(),
-                route.name,
-                this.params(),
-            );
-            this.param_map
-                .set(QueryStringMap::init_with_scanner(scanner)?);
-        }
-
-        // R-2: `create_query_object` writes only into a fresh plain JSObject (no
-        // user setters), so this `with_mut` borrow cannot be re-entered.
-        this.param_map
-            .with_mut(|m| Self::create_query_object(global_this, m.as_mut().unwrap()))
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_query(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let route = this.route();
-        if route.query_string.is_empty() && this.params().is_empty() {
-            return Ok(JSValue::create_empty_object(global_this, 0));
-        } else if route.query_string.is_empty() {
-            return Self::get_params(this, global_this);
-        }
-
-        if this.query_string_map.get().is_none() {
-            let route = this.route();
-            if !this.params().is_empty() {
-                let scanner = CombinedScanner::init(
-                    route.query_string,
-                    route.pathname_without_leading_slash(),
-                    route.name,
-                    this.params(),
-                );
-                this.query_string_map
-                    .set(QueryStringMap::init_with_scanner(scanner)?);
-            } else {
-                this.query_string_map
-                    .set(QueryStringMap::init(route.query_string)?);
-            }
-        }
-
-        // If it's still null, the query string has no names.
-        // R-2: see `get_params` re `with_mut` re-entry.
-        this.query_string_map.with_mut(|m| match m {
-            Some(map) => Self::create_query_object(global_this, map),
-            None => Ok(JSValue::create_empty_object(global_this, 0)),
-        })
+        src
     }
 }
 
-// Note: `bun.ThreadlocalBuffers(struct { buf: if (isWindows) [MAX_PATH_BYTES*2]u8 else void })`
-// Heap-backed so only a Box pointer lives in TLS — a `const { [0u8; MAX_PATH_BYTES*2] }`
-// initializer here would put ~192 KB of zeros directly into the PE `.tls` section
-// (PE/COFF has no TLS-BSS). See test/js/bun/binary/tls-segment-size.
 #[cfg(windows)]
 thread_local! {
     static WIN32_NORMALIZE_BUF: core::cell::RefCell<Box<[u8; MAX_PATH_BYTES * 2]>> =

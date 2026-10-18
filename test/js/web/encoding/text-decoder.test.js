@@ -366,6 +366,19 @@ describe("TextDecoder", () => {
       );
     });
 
+    it("shows a lone surrogate in refused options as it is", () => {
+      const message = `The "options" argument must be of type object. Received type string ('a\ud800')`;
+      const messageOf = fn => {
+        try {
+          fn();
+        } catch (error) {
+          return error.message;
+        }
+      };
+      expect(messageOf(() => new TextDecoder("utf-8", "a\ud800"))).toBe(message);
+      expect(messageOf(() => new TextDecoder().decode(new Uint8Array(), "a\ud800"))).toBe(message);
+    });
+
     it("constructor rejects symbol options", () => {
       expect(() => new TextDecoder("utf-8", Symbol())).toThrow(
         expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),

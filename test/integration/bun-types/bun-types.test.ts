@@ -310,7 +310,8 @@ function checkForEmptyInterfaces(program: ts.Program) {
 const PUBLISHED_AS: Record<string, string | null> = {
   "BunObject.bind.ts": "typeof Bun & { braces: typeof Bun.$.braces; shellEscape: typeof Bun.$.escape }",
   "BunObjectInternals.bind.ts": null,
-  "Crypto.bind.ts": "typeof Bun",
+  "Crypto.bind.ts":
+    'typeof Bun & { Crypto: Class<Omit<Crypto, "subtle">>; timingSafeEqual: typeof import("node:crypto").timingSafeEqual }',
   "CryptoHasher.bind.ts": "typeof Bun",
   "DevServer.bind.ts": null,
   "Glob.bind.ts": "typeof Bun",
@@ -320,10 +321,13 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "Listener.bind.ts": null,
   "NodeModuleModule.bind.ts": null,
   "PasswordObject.bind.ts": "typeof Bun.password",
+  "ResourceUsage.bind.ts": null,
+  "S3Stat.bind.ts": "{ S3Stat: Class<Bun.S3Stats> }",
   "SSLConfig.bind.ts": null,
   "SemverObject.bind.ts": "typeof Bun.semver",
   "SocketConfig.bind.ts": null,
   "TOMLObject.bind.ts": "typeof Bun.TOML",
+  "TextDecoder.bind.ts": "{ TextDecoder: typeof TextDecoder }",
   "Timer.bind.ts": null,
   "UnsafeObject.bind.ts": "typeof Bun.unsafe",
   "XMLObject.bind.ts": "typeof Bun.XML",
@@ -333,6 +337,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "csrf_jsc.bind.ts": "typeof Bun.CSRF",
   "dns.bind.ts": "typeof Bun.dns",
   "dns_internals.bind.ts": null,
+  "filesystem_router.bind.ts": "typeof Bun",
   "fmt_jsc.bind.ts": null,
   "jest.bind.ts": null,
   "jsc_hooks.bind.ts": null,
@@ -406,18 +411,17 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
   function compare(path: string, published: ts.Type, schema: ts.Type) {
     if (compared.get(published)?.has(schema)) return;
     compared.set(published, (compared.get(published) ?? new Set()).add(schema));
+    if (published.flags & ts.TypeFlags.Void) return;
     // The exports of a file are a few of the members of `typeof Bun`.
     const never = path ? membersTheSchemaLacks(published, schema) : [];
     if (never.length > 0) broken.push(`${path} has no ${never.join(", ")}`);
     const calls = schema.getCallSignatures();
     const constructs = schema.getConstructSignatures();
     if (calls.length === 0 && constructs.length === 0 && !isGenerated(schema)) {
-      const promisesNothing = published.flags & ts.TypeFlags.Void;
       const absent = parts(schema).filter(part => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined));
       if (
-        !promisesNothing &&
-        (!checker.isTypeAssignableTo(published, schema) ||
-          absent.some(part => !checker.isTypeAssignableTo(part, published)))
+        !checker.isTypeAssignableTo(published, schema) ||
+        absent.some(part => !checker.isTypeAssignableTo(part, published))
       ) {
         broken.push(`${path} is ${show(schema)}, not ${show(published)}`);
       }
@@ -482,7 +486,7 @@ describe("@types/bun integration test", () => {
       pairs,
       `export type Published = {\n${Object.entries(PUBLISHED_AS)
         .map(([file, type]) => `  ${JSON.stringify(file)}: ${type};\n`)
-        .join("")}};\nexport type Schemas = $Bindgen.Exports;\n`,
+        .join("")}};\nexport type Schemas = $Bindgen.Exports;\ntype Class<T> = { new (): T; prototype: T };\n`,
     );
     const program = ts.createProgram({
       rootNames: [join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "index.d.ts"), join(dir, "Bindgen.d.ts"), pairs],

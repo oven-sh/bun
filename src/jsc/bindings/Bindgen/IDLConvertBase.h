@@ -99,4 +99,30 @@ private:
     const JSC::JSValue m_actual;
 };
 
+// A value of the wrong type throws `ERR_INVALID_ARG_TYPE` with a message of its own, as Node's C++ does.
+struct NodeArgumentMessageContext : Detail::ContextBase<NodeArgumentMessageContext> {
+    using ElementContext = Detail::ElementOf<NodeArgumentMessageContext>;
+
+    consteval NodeArgumentMessageContext(WTF::ASCIILiteral name, WTF::ASCIILiteral message)
+        : m_name(name)
+        , m_message(message)
+    {
+    }
+
+    auto source()
+    {
+        return m_name;
+    }
+
+    template<typename String>
+    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&)
+    {
+        Bun::throwError(&global, scope, ErrorCode::ERR_INVALID_ARG_TYPE, m_message);
+    }
+
+private:
+    const WTF::ASCIILiteral m_name;
+    const WTF::ASCIILiteral m_message;
+};
+
 }

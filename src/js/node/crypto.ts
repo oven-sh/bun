@@ -52,7 +52,6 @@ const {
 const {
   pbkdf2,
   pbkdf2Sync,
-  timingSafeEqual,
   randomInt,
   randomUUID,
   randomUUIDv7,
@@ -157,7 +156,7 @@ crypto_exports.hkdfSync = hkdfSync;
 
 crypto_exports.getCurves = getCurves;
 crypto_exports.getCipherInfo = getCipherInfo;
-crypto_exports.timingSafeEqual = timingSafeEqual;
+crypto_exports.timingSafeEqual = $bindgen("Crypto.bind.ts", "timingSafeEqual");
 crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
 crypto_exports.X509Certificate = X509Certificate;

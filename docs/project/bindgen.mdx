@@ -66,7 +66,8 @@ A function of a `node:*` module names what Node's own source expects of an argum
 `expected: { data: ["Buffer", "TypedArray", "DataView", "string"] }`. A value the argument's type
 refuses then throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)`, "The "data" argument must
 be of type string or an instance of Buffer, TypedArray, or DataView. Received null", and not "data
-must be a string, ArrayBuffer or ArrayBufferView". What the type takes is the same.
+must be a string, ArrayBuffer or ArrayBufferView". What the type takes is the same. Node's C++ throws
+the same code with a message that it writes out, and a string in the place of the list is that message.
 
 Nothing else is written by hand, except once per crate: `src/<crate>/generated_bindgen.rs`
 includes the generated file, the crate root declares `mod generated_bindgen`, and a
@@ -508,6 +509,9 @@ outside the object: there is no `estimatedSize` yet.
 | `internalFields` | JS values the object holds                                                                     |
 | `configurable`   | `false` makes the native properties non-configurable                                           |
 
+Code that has the global object and no capability makes one with
+`payload.into_js_value(global)`, which returns a `JSValue`.
+
 A property of `proto` is one of:
 
 | Property                                    | What it is                                                                   |
@@ -566,6 +570,9 @@ allocating or viewing a buffer inside the closure is fine.
 `this.set_listener_field(heap, value)` on `JsWrapper<'a, T>`. A `&self` or
 `&mut self` method that needs them asks for the wrapper too, with `passThis: true`.
 The wrapper reaches the internal fields and not the payload.
+
+A getter with `cache: true` keeps its value in a field of its own. `this.forget_cached_routes(heap)`
+empties the one of `routes`, so the next read computes it again.
 
 ### Staying alive
 

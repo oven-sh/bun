@@ -9219,8 +9219,8 @@ declare module "bun" {
     // todo: URL
     match(input: string | Request | Response): MatchedRoute | null;
 
-    readonly assetPrefix: string;
-    readonly origin: string;
+    readonly assetPrefix: string | null;
+    readonly origin: string | null;
     readonly style: string;
     readonly routes: Record<string, string>;
 
@@ -9251,6 +9251,8 @@ declare module "bun" {
     readonly name: string;
     readonly kind: "exact" | "catch-all" | "optional-catch-all" | "dynamic";
     readonly src: string;
+    /** @deprecated Use {@link src} */
+    readonly scriptSrc: string;
   }
 
   /**

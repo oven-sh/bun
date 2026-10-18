@@ -1,25 +1,43 @@
 use crate::api::bun::Rusage;
-use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
+use crate::generated_bindgen::resource_usage::ResourceUsageClass;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
 use bun_spawn::RusageFields as _; // trait + impls now live in bun_spawn_sys::spawn_process
 
-// `#[repr(C)]` only to satisfy the `improper_ctypes` lint on the generated
-// `extern "C" fn(..., *mut ResourceUsage)` shims — C++ never reads this layout
-// (it round-trips `m_ctx` as `void*`).
-#[bun_jsc::JsClass(no_construct, no_constructor)]
-#[repr(C)]
 pub(crate) struct ResourceUsage {
     pub(crate) rusage: Rusage,
 }
 
-impl ResourceUsage {
-    pub(crate) fn create(rusage: &Rusage, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(Box::new(ResourceUsage { rusage: *rusage }).to_js(global))
+fn counts<'a>(
+    this: JsWrapper<'a, ResourceUsage>,
+    cx: &mut JsScope<'a>,
+    counts: impl FnOnce(&Rusage) -> [(&'static [u8], f64); 2],
+) -> JsLocal<'a> {
+    let counts = this.with(&cx.payloads, |usage| counts(&usage.rusage));
+    let global: &JSGlobalObject = cx.global();
+    let object = JSValue::create_empty_object_with_null_prototype(global);
+    for (name, count) in counts {
+        object.put(global, name, JSValue::js_number(count));
+    }
+    JsLocal::new(&cx.heap, object)
+}
+
+impl ResourceUsageClass for ResourceUsage {
+    type Error<'a> = JsError;
+
+    fn context_switches<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> JsLocal<'a> {
+        counts(this, cx, |rusage| {
+            [
+                (b"voluntary", rusage.nvcsw()),
+                (b"involuntary", rusage.nivcsw()),
+            ]
+        })
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_cpu_time(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    fn cpu_time<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> JsResult<JsLocal<'a>> {
+        let rusage = this.with(&cx.payloads, |usage| usage.rusage);
+        let global = cx.global();
         let cpu = JSValue::create_empty_object_with_null_prototype(global);
-        let rusage = &this.rusage;
 
         let usr_time =
             JSValue::from_timeval_no_truncate(global, rusage.utime_usec(), rusage.utime_sec())?;
@@ -34,62 +52,34 @@ impl ResourceUsage {
             JSValue::big_int_sum(global, usr_time, sys_time),
         );
 
-        Ok(cpu)
+        Ok(JsLocal::new(&cx.heap, cpu))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_max_rss(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.rusage.maxrss())
+    fn max_rss(&self) -> f64 {
+        self.rusage.maxrss()
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_shared_memory_size(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.rusage.ixrss())
+    fn messages<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> JsLocal<'a> {
+        counts(this, cx, |rusage| {
+            [(b"sent", rusage.msgsnd()), (b"received", rusage.msgrcv())]
+        })
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_swap_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.rusage.nswap())
+    fn ops<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> JsLocal<'a> {
+        counts(this, cx, |rusage| {
+            [(b"in", rusage.inblock()), (b"out", rusage.oublock())]
+        })
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_ops(this: &Self, global: &JSGlobalObject) -> JSValue {
-        let ops = JSValue::create_empty_object_with_null_prototype(global);
-        ops.put(global, b"in", JSValue::js_number(this.rusage.inblock()));
-        ops.put(global, b"out", JSValue::js_number(this.rusage.oublock()));
-        ops
+    fn shm_size(&self) -> f64 {
+        self.rusage.ixrss()
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_messages(this: &Self, global: &JSGlobalObject) -> JSValue {
-        let msgs = JSValue::create_empty_object_with_null_prototype(global);
-        msgs.put(global, b"sent", JSValue::js_number(this.rusage.msgsnd()));
-        msgs.put(
-            global,
-            b"received",
-            JSValue::js_number(this.rusage.msgrcv()),
-        );
-        msgs
+    fn signal_count(&self) -> f64 {
+        self.rusage.nsignals()
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_signal_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.rusage.nsignals())
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_context_switches(this: &Self, global: &JSGlobalObject) -> JSValue {
-        let ctx = JSValue::create_empty_object_with_null_prototype(global);
-        ctx.put(
-            global,
-            b"voluntary",
-            JSValue::js_number(this.rusage.nvcsw()),
-        );
-        ctx.put(
-            global,
-            b"involuntary",
-            JSValue::js_number(this.rusage.nivcsw()),
-        );
-        ctx
+    fn swap_count(&self) -> f64 {
+        self.rusage.nswap()
     }
 }

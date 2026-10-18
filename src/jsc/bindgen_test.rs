@@ -8,7 +8,7 @@ use crate::bindgen::{
 };
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
-    TestCounterInternalFields as _, TestFailure, TestHolderClass, TestNames, TestOptions,
+    TestCounterInternalFields as _, TestFailure, TestFlag, TestHolderClass, TestNames, TestOptions,
     TestOptionsEcho, TestOuter, TestTokenClass, TestValue,
 };
 
@@ -62,6 +62,10 @@ pub(crate) fn string_length(text: &bun_core::String) -> usize {
 
 pub(crate) fn expected_by_node(text: &bun_core::String, data: Option<&[u8]>, flag: bool) -> usize {
     text.length() + data.map_or(0, <[u8]>::len) + usize::from(flag)
+}
+
+pub(crate) fn expected_by_node_in_cpp(data: &[u8], options: &TestFlag, more: &TestFlag) -> usize {
+    data.len() + usize::from(options.flag) + usize::from(more.flag)
 }
 
 pub(crate) fn next_color(color: TestColor) -> TestColor {
@@ -391,6 +395,10 @@ impl TestCounterClass for TestCounter {
 
     fn add_number(&mut self, by: i32) -> i32 {
         self.increment(by)
+    }
+
+    fn forget_tag<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>) {
+        this.forget_cached_tag(heap);
     }
 
     fn listen<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>, listener: JsLocal<'a>) {

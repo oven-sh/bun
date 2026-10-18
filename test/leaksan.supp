@@ -149,3 +149,9 @@ leak:TemporalCore::withTimeZone
 # one of the op lambdas withCalendar runs would still be reported
 # (withTimeZone has no builder frame; its ucal_open is inline).
 leak:TemporalCore::buildCalendarTemplate
+# test/js/node/http/node-http-connection-listener-throw.test.ts
+# A Worker that starts a server never frees the request pool of its thread:
+# `ServerPools::request_pool` keeps the box behind a thread-local raw pointer.
+# Reported when the Worker exits before the process, with or without a request.
+# Delete once #37513 frees the pools at Worker teardown.
+leak:ServerPools<*>>::request_pool

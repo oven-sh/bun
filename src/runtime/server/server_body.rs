@@ -3310,6 +3310,24 @@ where
         Ok(())
     }
 
+    /// The landing frame of [`Self::on_connection_callback`]. When nothing handles what a
+    /// 'connection' or 'secureConnection' listener threw, Node.js exits inside the callback:
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.cc#L1369-L1375
+    /// Bun counts the error and ends the run when this turn of the loop is over, and uWS reads the
+    /// request of this connection before that. So the connection is destroyed here.
+    ///
+    /// Out of line: the filter thunk also runs for the accept and the close of every connection,
+    /// and returns at once there without this frame.
+    #[inline(never)]
+    pub(crate) fn on_connection(&self, socket: *mut c_void) {
+        let unhandled_errors = self.vm().unhandled_error_counter;
+        crate::dispatch::fold(self.on_connection_callback(socket));
+        if self.vm().unhandled_error_counter != unhandled_errors {
+            bun_core::hint::cold();
+            Bun__NodeHTTP__refuseConnection(c_int::from(SSL), socket);
+        }
+    }
+
     // `js_gc_route_list_set` / `ptr_to_js` live on the unbounded
     // `impl NewServer` in mod.rs; do not redefine them here.
 }
@@ -3459,7 +3477,7 @@ fn server_set_on_connection(
                         // socket is a live uWS socket for this server's group.
                         // Shared — the callback re-enters JS.
                         let this = unsafe { &*user_data.cast::<$T>() };
-                        crate::dispatch::fold(this.on_connection_callback(socket.cast::<c_void>()));
+                        this.on_connection(socket.cast::<c_void>());
                     }
                     if first {
                         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
@@ -3683,6 +3701,9 @@ unsafe extern "C" {
         socket: *mut c_void,
         global: &JSGlobalObject,
     ) -> JSValue;
+
+    // `socket` is the same live `uws::Socket*`: stops its HTTP parsing and closes it.
+    safe fn Bun__NodeHTTP__refuseConnection(ssl: c_int, socket: *mut c_void);
 
     // `&JSGlobalObject` / `&mut JSValue` discharge the deref'd-param
     // preconditions; `request_ptr`/`req` are opaque handles that C++ stores or

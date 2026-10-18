@@ -149,10 +149,9 @@ pub mod task_tag {
 
 #[derive(Copy, Clone)]
 pub struct Task {
-    pub tag: TaskTag,
     pub ptr: *mut (),
-    // [`Task::context`], in the padding `tag` leaves.
-    context: ContextId,
+    // [`Task::tag`] in the low byte, [`Task::context`] in the 56 bits above it.
+    tag_and_context: u64,
 }
 const _: () = assert!(core::mem::size_of::<Task>() == 2 * core::mem::size_of::<usize>());
 
@@ -161,7 +160,7 @@ const _: () = assert!(core::mem::size_of::<Task>() == 2 * core::mem::size_of::<u
 /// no live context has.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Default, Debug)]
-pub struct ContextId(u32);
+pub struct ContextId(u64);
 
 impl ContextId {
     /// No script's context. Never handed out to one.
@@ -172,15 +171,15 @@ impl ContextId {
 
     /// `VirtualMachine::dead_context`'s, in every VM. Never handed out to another: the
     /// identifiers contexts are given count up from 1.
-    pub const DEAD: ContextId = ContextId(u32::MAX);
+    pub const DEAD: ContextId = ContextId((1 << 56) - 1);
 
     #[inline]
-    pub const fn from_raw(raw: u32) -> ContextId {
+    pub const fn from_raw(raw: u64) -> ContextId {
         ContextId(raw)
     }
 
     #[inline]
-    pub const fn raw(self) -> u32 {
+    pub const fn raw(self) -> u64 {
         self.0
     }
 }
@@ -248,14 +247,22 @@ impl Task {
     /// everything else goes through [`init`](Self::init).
     #[inline]
     pub const fn new(tag: TaskTag, ptr: *mut (), context: ContextId) -> Task {
-        Task { tag, ptr, context }
+        Task {
+            ptr,
+            tag_and_context: (context.0 << 8) | tag.0 as u64,
+        }
+    }
+
+    #[inline]
+    pub const fn tag(&self) -> TaskTag {
+        TaskTag(self.tag_and_context as u8)
     }
 
     /// Whose script the task continues: what its type's [`Taskable::context`] said when the task
     /// was made. The event loop checks it before it runs the task.
     #[inline]
     pub const fn context(&self) -> ContextId {
-        self.context
+        ContextId(self.tag_and_context >> 8)
     }
 
     /// The type→tag table is the [`Taskable`] trait; the per-type impl
@@ -298,8 +305,8 @@ pub struct ConcurrentTask {
 impl Default for ConcurrentTask {
     fn default() -> Self {
         Self {
-            // SAFETY: all-zero is a valid bit pattern for `Task` (plain tag
-            // byte + raw pointer); caller must set a real task before use.
+            // SAFETY: all-zero is a valid bit pattern for `Task` (a raw pointer
+            // and an integer); caller must set a real task before use.
             task: unsafe { bun_core::ffi::zeroed_unchecked() },
             next: Link::new(),
             auto_delete: false,

@@ -649,8 +649,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ScriptExecutionContext* targetContext = ScriptExecutionContext::getScriptExecutionContext(ScriptExecutionContextIdentifier { callFrame->argument(0).toUInt32(globalObject) });
-    RETURN_IF_EXCEPTION(scope, {});
+    JSValue targetIdentifier = callFrame->argument(0);
+    ScriptExecutionContext* targetContext = targetIdentifier.isAnyInt() && targetIdentifier.asAnyInt() > 0 ? ScriptExecutionContext::getScriptExecutionContext(ScriptExecutionContextIdentifier { static_cast<uint64_t>(targetIdentifier.asAnyInt()) }) : nullptr;
     bool shouldRef = !callFrame->argument(1).toBoolean(globalObject);
     JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(callFrame->argument(2).toObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});

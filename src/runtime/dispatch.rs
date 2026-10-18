@@ -202,7 +202,7 @@ pub(crate) fn run_task(
     }
     // NB: `TaskTag` is `#[derive(PartialEq, Eq)]` over `u8` → structural-match
     // eligible, so const patterns work directly.
-    match task.tag {
+    match task.tag() {
         // ── erased-callback tasks (low-tier types — real) ────────────────
         task_tag::AnyTaskJob => {
             // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
@@ -365,7 +365,7 @@ pub(crate) fn run_task(
             // `ptr` packs the `ContextId`, not a pointer.
             bun_jsc::virtual_machine::GraphContextStopAgain::run(
                 vm,
-                bun_jsc::ContextId::from_raw(task.ptr as usize as u32),
+                bun_jsc::ContextId::from_raw(task.ptr as usize as u64),
             );
         }
         task_tag::DeadContextStopAgain => {
@@ -552,7 +552,7 @@ pub(crate) fn run_task(
         #[cfg(windows)]
         for_each_fs_uv_op!(__fs_pat) => {
             macro_rules! __fs_run {
-                ($($tag:ident $ty:ident;)*) => { match task.tag {
+                ($($tag:ident $ty:ident;)*) => { match task.tag() {
                     // SAFETY: §Dispatch — tag identifies pointee. The task frees itself, so it takes the raw pointer.
                     $(task_tag::$tag => unsafe { fs_async::$ty::run_from_js_thread(cast_ptr!(fs_async::$ty)) }?,)*
                     // SAFETY: outer arm guard proves one of the table tags matched.
@@ -623,7 +623,7 @@ pub(crate) fn run_task(
         _ => {
             // A value outside `task_tag::COUNT` is a producer bug, but it's
             // treated as a recoverable crash, not UB.
-            panic!("Unexpected Task tag: {}", task.tag.0);
+            panic!("Unexpected Task tag: {}", task.tag().0);
         }
     }
     Ok(RunTaskResult::Continue)
@@ -677,7 +677,7 @@ fn run_task_cold(task: Task) {
         }};
     }
 
-    match task.tag {
+    match task.tag() {
         // ── shell interpreter ────────────────────────────────────────────
         task_tag::ShellAsync => {
             // SAFETY: §Dispatch — tag identifies pointee.
@@ -720,7 +720,7 @@ fn run_task_cold(task: Task) {
         }
 
         // Any tag the hot path mis-routed: producer bug.
-        _ => panic!("Unexpected Task tag: {}", task.tag.0),
+        _ => panic!("Unexpected Task tag: {}", task.tag().0),
     }
 }
 
@@ -1377,7 +1377,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unsafe { <$ty as Taskable>::release_unrun(task.ptr.cast::<$ty>()) }
         }};
     }
-    match task.tag {
+    match task.tag() {
         task_tag::AnyTaskJob => {
             // The one erased tag: every payload is a `Job<C>` reached through its header.
             // SAFETY: as `release!`.
@@ -1525,7 +1525,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             #[cfg(windows)]
             {
                 macro_rules! __fs_release {
-                    ($($tag:ident $ty:ident;)*) => { match task.tag {
+                    ($($tag:ident $ty:ident;)*) => { match task.tag() {
                         $(task_tag::$tag => release!(fs_async::$ty),)*
                         // SAFETY: the outer arm proves one of the table tags matched.
                         _ => unsafe { core::hint::unreachable_unchecked() },
@@ -1538,6 +1538,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         // Every tag has an arm above (`task_tag::COUNT` is asserted); a value
         // outside the range is a producer bug.
-        _ => unreachable!("task tag out of range: {}", task.tag.0),
+        _ => unreachable!("task tag out of range: {}", task.tag().0),
     }
 }

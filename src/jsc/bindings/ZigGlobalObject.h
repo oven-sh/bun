@@ -22,7 +22,7 @@ enum class JSPromiseRejectionOperation : unsigned;
 namespace WebCore {
 class MessagePort;
 class ScriptExecutionContext;
-enum class ScriptExecutionContextIdentifier : uint32_t;
+enum class ScriptExecutionContextIdentifier : uint64_t;
 class DOMGuardedObject;
 class EventLoopTask;
 class DOMWrapperWorld;

@@ -598,7 +598,7 @@ mod test_gate {
         }
         park_until_draining(s);
         // SAFETY: handed over by the caller and not yet queued anywhere.
-        let tag = unsafe { task.as_ref() }.task.tag;
+        let tag = unsafe { task.as_ref() }.task.tag();
         let r = post(task);
         let outcome = match r {
             Posted::Queued => "released by the wait",

@@ -1057,7 +1057,6 @@ pub(crate) struct CopyFileWindows<'a> {
 
     pub(crate) io_request: libuv::fs_t,
     pub(crate) promise: jsc::JSPromiseStrong,
-    pub(crate) mkdirp_if_not_exists: bool,
     pub(crate) destination_mode: Option<Mode>,
     // per LIFETIMES.tsv: JSC_BORROW → &jsc::EventLoop
     // TODO(refactor): lifetime — heap-allocated and re-entered from libuv callbacks;
@@ -1078,12 +1077,18 @@ pub(crate) struct CopyFileWindows<'a> {
     pub(crate) read_write_loop: ReadWriteLoop,
 }
 
+// One more word puts this in the 768-byte size class.
+#[cfg(all(windows, not(debug_assertions)))]
+const _: () = assert!(core::mem::size_of::<CopyFileWindows<'_>>() <= 640);
+
 #[cfg(windows)]
 pub(crate) struct ReadWriteLoop {
     pub(crate) source_fd: Fd,
     pub(crate) must_close_source_fd: bool,
     pub(crate) destination_fd: Fd,
     pub(crate) must_close_destination_fd: bool,
+    /// Of the whole copy. Here it uses the padding beside the two flags above.
+    pub(crate) mkdirp_if_not_exists: bool,
     pub(crate) written: usize,
     pub(crate) read_buf: Vec<u8>,
     pub(crate) uv_buf: libuv::uv_buf_t,
@@ -1097,6 +1102,7 @@ impl Default for ReadWriteLoop {
             must_close_source_fd: false,
             destination_fd: Fd::INVALID,
             must_close_destination_fd: false,
+            mkdirp_if_not_exists: false,
             written: 0,
             read_buf: Vec::new(),
             uv_buf: libuv::uv_buf_t {
@@ -1373,12 +1379,14 @@ impl<'a> CopyFileWindows<'a> {
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
             event_loop,
             context: context.id(),
-            mkdirp_if_not_exists,
             destination_mode,
             size: size_,
             written_bytes: 0,
             err: None,
-            read_write_loop: ReadWriteLoop::default(),
+            read_write_loop: ReadWriteLoop {
+                mkdirp_if_not_exists,
+                ..ReadWriteLoop::default()
+            },
         }));
         // SAFETY: result was just allocated above
         let result_ref = unsafe { &mut *result };
@@ -1444,7 +1452,9 @@ impl<'a> CopyFileWindows<'a> {
         ) {
             bun_sys::Result::Ok(fd) => fd,
             bun_sys::Result::Err(err) => {
-                if self.mkdirp_if_not_exists && err.get_errno() == bun_sys::E::ENOENT {
+                if self.read_write_loop.mkdirp_if_not_exists
+                    && err.get_errno() == bun_sys::E::ENOENT
+                {
                     self.mkdirp();
                     return;
                 }
@@ -1759,7 +1769,7 @@ impl<'a> CopyFileWindows<'a> {
 
     fn mkdirp(&mut self) {
         bun_sys::syslog!("mkdirp");
-        self.mkdirp_if_not_exists = false;
+        self.read_write_loop.mkdirp_if_not_exists = false;
         // Borrowck: compute the raw path slice pointer up-front so the
         // immutable borrow of `self.destination_file_store` ends before we take
         // `core::ptr::from_mut(self)` for `completion_ctx` below.
@@ -1836,7 +1846,10 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
                 PathOrFileDescriptor::Fd(_) => false,
             };
 
-        if this.mkdirp_if_not_exists && errno == bun_sys::E::ENOENT && !source_missing {
+        if this.read_write_loop.mkdirp_if_not_exists
+            && errno == bun_sys::E::ENOENT
+            && !source_missing
+        {
             this.io_request.deinit();
             this.mkdirp();
             return;

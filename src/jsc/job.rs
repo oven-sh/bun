@@ -249,7 +249,11 @@ pub struct JobHeader {
     context: crate::ContextId,
     /// `VirtualMachine::test_isolation_generation` when scheduled.
     generation: u32,
+    /// Held from `schedule` until the JS thread takes the job back.
+    keep_alive: KeepAlive,
 }
+// `keep_alive` sits in the tail padding here. In `Job<C>` it takes a word of its own.
+const _: () = assert!(core::mem::size_of::<JobHeader>() == 7 * core::mem::size_of::<usize>());
 
 /// A VM's live [cancellable](JobContext::CANCELLABLE) jobs (JS thread only;
 /// zero-valid), so its stop phase can [`cancel`](JobContext::cancel) them.
@@ -323,7 +327,6 @@ pub struct Job<C: JobContext> {
     /// from then on (never touched on the JS side).
     ticket: Option<Ticket>,
     task: WorkPoolTask,
-    keep_alive: KeepAlive,
     off: C::OffThread,
     js: C::Js,
 }
@@ -363,13 +366,13 @@ impl<C: JobContext> Job<C> {
                 next: core::ptr::null_mut(),
                 context: cx.context().id(),
                 generation: cx.vm().test_isolation_generation,
+                keep_alive,
             },
             ticket: Some(cx.vm().ticket()),
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_on_pool,
             },
-            keep_alive,
             off,
             js,
         }));
@@ -414,7 +417,7 @@ impl<C: JobContext> Job<C> {
         }
         // SAFETY: fn contract.
         let Job {
-            mut keep_alive,
+            header: JobHeader { mut keep_alive, .. },
             off,
             js,
             ..

@@ -123,9 +123,10 @@ struct Row {
     link: Option<Vec<u8>>,
 }
 
+/// A line or a column of a [`LintMessage`](bun_lint::linter::LintMessage).
 fn number(n: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity(4);
-    let _ = write!(out, "{n}");
+    let _ = write!(out, "{}", n as i32);
     out
 }
 

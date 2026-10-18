@@ -546,6 +546,13 @@ impl TranspilerJob {
                 let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
                 debug_assert!(resolved_source.source_url.is_empty());
                 resolved_source.source_url = out.create_if_different(self.path.text);
+                // A job reads a file: `Bun__transpileFile` gives it no blob and no plugin's text.
+                // SAFETY: vm outlives the job, and this is its thread. One field: `self` is in `vm.transpiler_store`.
+                let in_standalone_executable = unsafe { (*vm).standalone_module_graph.is_some() };
+                resolved_source.is_static = VirtualMachine::is_file_on_disk_static(
+                    in_standalone_executable,
+                    self.path.text,
+                );
                 (out, Ok(resolved_source))
             }
         };
@@ -792,9 +799,11 @@ impl TranspilerJob {
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
         let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash) };
-        let is_main = vm_main.len() == path.text.len()
-            && vm_main_hash == hash
-            && strings::eql_long(vm_main, path.text, false);
+        let is_main = vm_main.is_some_and(|vm_main| {
+            vm_main.len() == path.text.len()
+                && vm_main_hash == hash
+                && strings::eql_long(vm_main, path.text, false)
+        });
 
         let module_type: ModuleType = match this_tag {
             ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,

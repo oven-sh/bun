@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
-use rustc_hash::{FxHashMap, FxHashSet};
+use bun_lint::types::IdMap;
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 /// Disallow identifiers from shadowing restricted names.
@@ -42,7 +43,7 @@ pub struct State<'a> {
     reported: FxHashSet<u32>,
     /// `safely_shadows_undefined`, for the variables with several declarations that have been looked
     /// at.
-    seen: FxHashMap<Symbol<'a>, bool>,
+    seen: IdMap<Symbol<'a>, bool>,
 }
 
 impl NoShadowRestrictedNames {
@@ -61,7 +62,7 @@ impl NoShadowRestrictedNames {
     /// reported with it.
     fn report<'a>(at: Span, name: Name<'a>, symbol: Option<Symbol<'a>>, cx: &mut Cx<'a, Self>) {
         let with_others = symbol.filter(|it| it.declaration_count() > 1);
-        let seen = with_others.and_then(|it| cx.state.seen.get(&it).copied());
+        let seen = with_others.and_then(|it| cx.state.seen.get(it).copied());
         let is_safe = seen.unwrap_or_else(|| symbol.is_some_and(safely_shadows_undefined));
         if seen.is_none() {
             cx.state.seen.extend(with_others.map(|it| (it, is_safe)));
@@ -146,7 +147,7 @@ impl Rule for NoShadowRestrictedNames {
             numbers: restricted.iter().fold(0, |numbers, name| numbers | 1 << (name.atom().0 % 64)),
             restricted,
             reported: FxHashSet::default(),
-            seen: FxHashMap::default(),
+            seen: IdMap::default(),
         };
         if state.restricted.is_empty() {
             return None;

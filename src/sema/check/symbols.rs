@@ -2772,8 +2772,28 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.type_of_expr(file, e)
         };
+        self.check_expression_in_flow_loop(file, e);
         self.type_only_node = outside;
         ty
+    }
+
+    /// After `type_of_expr(e)`. tsgo's `checkExpression` is the whole check of `e`, and nothing it reports is dropped. Where a
+    /// loop is being analysed it reports with the types the loop has collected so far, which the walk, with the final types,
+    /// does not: `last = last.next = node` after `last === null` assigns to `never`.
+    pub(super) fn check_expression_in_flow_loop(&mut self, file: FileId, e: ExprId) {
+        if !self.is_in_flow_loop() {
+            return;
+        }
+        let reported = self.reported.len();
+        let cuts = self.interruptions();
+        let outer = std::mem::replace(&mut self.is_checking_in_flow_loop, true);
+        self.check_expression(file, e);
+        self.is_checking_in_flow_loop = outer;
+        // What a check that was cut short has reported is not all: it stays with the frames in progress, which drop it, and
+        // the task that gets through has the owner.
+        if cuts == self.interruptions() {
+            self.log_reported_in_flow_loop(reported, file, e);
+        }
     }
 
     /// The tail of `getBindingElementTypeFromParentType`: the type bound to `pat`, an element of a
@@ -4385,9 +4405,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// No type of a reference is stored, so its flow is walked again. `getResolvedSignature` stores
     /// its result, and the check of a function or a class is deferred.
     fn has_reference_without_flow_type(&mut self, file: FileId, node: Node) -> bool {
-        // A walk nests at most once per flow node.
         if self.flow_analysis_disabled.contains(&file)
-            || self.bound(file).flow_places <= super::flow::MAX_FLOW_DEPTH
+            || !self.bound(file).can_reach_flow_depth_limit()
         {
             return false;
         }
@@ -5140,7 +5159,7 @@ impl<'p, 's> Checker<'p, 's> {
         sig: SigId,
         fallback_type: TypeId,
     ) -> TypeId {
-        let params = self.sig_params(sig);
+        let params = self.sig_params_with_first(sig, 1);
         if params.is_empty() {
             fallback_type
         } else {
@@ -6008,8 +6027,8 @@ impl<'p, 's> Checker<'p, 's> {
         let mut iterators = Vec::new();
         let all_signatures = self.signatures(method, false);
         for &sig in &all_signatures {
-            let params = self.sig_params(sig);
-            if self.min_argument_count(&params) == 0 {
+            let params = self.sig_params_with_first(sig, 0);
+            if self.min_argument_count_asked(Some(sig), &params) == 0 {
                 iterators.push(self.sig_return(sig));
             }
         }
@@ -6168,7 +6187,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (mut parameters, mut results) = (Vec::new(), Vec::new());
         for &sig in &signatures {
-            let params = self.sig_params(sig);
+            let params = self.sig_params_with_first(sig, 1);
             if which != IteratorMethod::Throw && !params.is_empty() {
                 // `getTypeAtPosition`
                 parameters.push(self.param_type_at(&params, 0).unwrap_or(TypeId::ANY));

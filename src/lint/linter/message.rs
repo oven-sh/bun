@@ -181,14 +181,17 @@ pub struct LintMessage {
     pub message: Vec<u8>,
     /// `None`: it is from the linter itself. Empty: from a rule whose messages have no ids.
     pub message_id: Option<Cow<'static, str>>,
-    /// From 1. 0 in a fatal message: it has no place, and ESLint has neither `line` nor `column`.
+    /// From 1. 0 in a fatal message: it has no place, and ESLint has neither `line` nor `column`. A rule written in JavaScript
+    /// can give any number, which ESLint passes on. One below 0 is here as an `i32`: -1 is `u32::MAX`.
     pub line: u32,
-    /// From 1, in UTF-16 code units.
+    /// From 1, in UTF-16 code units. One below 0 is as in `line`.
     pub column: u32,
-    /// `endLine` and `endColumn`.
+    /// `endLine` and `endColumn`. Those below 0 are as in `line`.
     pub end: Option<(u32, u32)>,
     /// The file is not linted because of it.
     pub is_fatal: bool,
+    /// [`Report::claims`](crate::context::Report::claims). See [`LintMessage::hide_claimed`].
+    pub claim: Option<crate::context::Claim>,
     pub fix: Option<Fix>,
     pub suggestions: Vec<Suggestion>,
     pub suppressions: Vec<Suppression>,
@@ -208,6 +211,47 @@ pub struct LintMessage {
 }
 
 impl LintMessage {
+    /// Takes out of `messages` what a rule without types reports about a node that the rule with types of its
+    /// [pair](crate::rule_set::Pairs) reports too. What it would change goes to that report. Whether anything was taken out.
+    ///
+    /// It is the last step: `messages` are those that are shown, after the comments and the files that suppress, and after the
+    /// fixes. Up to here there are two reports, and all of that works as it does for two.
+    pub fn hide_claimed(messages: &mut Vec<LintMessage>) -> bool {
+        let claims = messages
+            .iter()
+            .zip(0..)
+            .filter_map(|(it, at)| Some((it.claim?, at)));
+        let mut with_types: Vec<(crate::context::Claim, usize)> =
+            claims.filter(|it| it.0.with_types).collect();
+        if with_types.is_empty() {
+            return false;
+        }
+        with_types.sort_unstable();
+        let mut is_hidden = vec![false; messages.len()];
+        for from in 0..messages.len() {
+            let Some(claim) = messages[from].claim.filter(|it| !it.with_types) else {
+                continue;
+            };
+            let Ok(found) = with_types.binary_search_by_key(&claim.with_types(), |it| it.0) else {
+                continue;
+            };
+            is_hidden[from] = true;
+            let fix = messages[from].fix.take();
+            let suggestions = std::mem::take(&mut messages[from].suggestions);
+            let shown = &mut messages[with_types[found].1];
+            shown.fix = shown.fix.take().or(fix);
+            for suggestion in suggestions {
+                if !shown.suggestions.iter().any(|it| it.fix == suggestion.fix) {
+                    shown.suggestions.push(suggestion);
+                }
+            }
+        }
+        let mut is_hidden = is_hidden.into_iter();
+        let before = messages.len();
+        messages.retain(|_| is_hidden.next() == Some(false));
+        messages.len() != before
+    }
+
     /// oxlint's `help`. Empty: there is none.
     pub fn help(&self) -> &str {
         self.text(Part::Help, |it| &it.help)
@@ -264,6 +308,7 @@ impl Default for LintMessage {
             column: 0,
             end: None,
             is_fatal: false,
+            claim: None,
             fix: None,
             suggestions: Vec::new(),
             suppressions: Vec::new(),
@@ -317,6 +362,7 @@ impl<'a> Locator<'a> {
             column,
             end: Some(self.position(span.end)),
             is_fatal: false,
+            claim: None,
             fix: None,
             suggestions: Vec::new(),
             suppressions: Vec::new(),
@@ -540,10 +586,30 @@ fn write_data(out: &mut Vec<u8>, suggestion: &Suggestion) {
 impl LintMessage {
     /// Sorts by line and column. Those at the same place keep their order. Most lists are in order already.
     pub fn sort(messages: &mut [LintMessage]) {
-        let place = |it: &LintMessage| (it.line, it.column);
+        let place = |it: &LintMessage| (it.line as i32, it.column as i32);
         if !messages.is_sorted_by_key(place) {
             crate::utils::sort::sort_by_key(messages, place);
         }
+    }
+
+    /// The line and column to go to. What a rule reports before the first line is at the start of the file, and what it reports
+    /// before the first column is at the start of the line.
+    pub fn place(&self) -> (u32, u32) {
+        let is_of_rule = !matches!(self.rule_id, None | Some(RuleId::Unknown(_)));
+        match is_of_rule && self.line as i32 <= 0 {
+            true => (1, 1),
+            false => (self.line, (self.column as i32).max(0) as u32),
+        }
+    }
+
+    /// For where there's no ESLint to agree with, whose own formats print what the rule gave: it starts at
+    /// [`LintMessage::place`] in every format, and has no end before that.
+    pub(crate) fn stay_in_file(&mut self) {
+        let signed = |(line, column): (u32, u32)| (line as i32, column as i32);
+        let place = self.place();
+        (self.line, self.column) = place;
+        self.end = self.end.filter(|end| signed(*end) >= signed(place));
+        self.not_numbers = NotNumbers::default();
     }
 
     /// As ESLint's `json` formatter prints it.
@@ -571,7 +637,7 @@ impl LintMessage {
             ] {
                 let _ = match is_null {
                     true => write!(out, ",\"{key}\":null"),
-                    false => write!(out, ",\"{key}\":{number}"),
+                    false => write!(out, ",\"{key}\":{}", number as i32),
                 };
             }
         }
@@ -580,6 +646,7 @@ impl LintMessage {
             json_stringify(id.as_bytes(), out);
         }
         if let Some((line, column)) = self.end {
+            let (line, column) = (line as i32, column as i32);
             let _ = write!(out, ",\"endLine\":{line},\"endColumn\":{column}");
         }
         if is_severity_last {

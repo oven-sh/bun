@@ -11,11 +11,11 @@ use std::io::Write as _;
 use bun_ast::Loader;
 use bun_bundler::Transpiler;
 use bun_collections::{ArrayHashMap, StringHashMap};
-use bun_core::{self as core, Environment, Global, Output, ZStr};
+use bun_core::{self as core, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
+use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, MainEntryPoint, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_md::root as md;
 use bun_options_types::schema::api;
@@ -96,6 +96,18 @@ pub(crate) struct ConfigureEnvOptions {
 
 pub(crate) struct RunCommand;
 
+/// What `RunCommand::boot_main` starts the VM with.
+enum BootMain {
+    /// The file at `path`. An `.html` file is served by `src/js/internal/html.ts`.
+    File {
+        path: Box<[u8]>,
+        loader: Option<Loader>,
+    },
+    /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory. There is no
+    /// entry module.
+    Bake,
+}
+
 impl RunCommand {
     /// `bun run --help` body.
     pub(crate) fn print_help(package_json: Option<&PackageJSON>) {
@@ -135,9 +147,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         prettyln!("\n");
                         prettyln!(
                             "  <d>$</r> bun run<r> <blue>{}<r>\n",
-                            bstr::BStr::new(key.as_ref())
+                            bun_core::fmt::escape_control_chars(key.as_ref())
                         );
-                        prettyln!("  <d>  {}<r>\n", bstr::BStr::new(value));
+                        prettyln!("  <d>  {}<r>\n", bun_core::fmt::escape_control_chars(value));
                     }
                     prettyln!("\n");
                 } else {
@@ -257,6 +269,41 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             use_system_shell,
             None,
         )
+    }
+
+    /// Like [`Self::run_package_script_foreground`], but puts the `node_modules/.bin` of `cwd` and
+    /// of its parents at the front of `PATH` while the script runs.
+    pub(crate) fn run_lifecycle_script_foreground(
+        ctx: &mut ContextData,
+        script: &[u8],
+        name: &[u8],
+        cwd: &[u8],
+        env: &mut DotEnv::Loader,
+        silent: bool,
+    ) -> crate::Result<()> {
+        let mut original_path: Vec<u8> = Vec::new();
+        let path = Self::path_for_run(
+            env,
+            b"",
+            Some(&mut original_path),
+            cwd,
+            ctx.debug.run_in_bun,
+        )?;
+        env.map.put(b"PATH", &path)?;
+        let use_system_shell = ctx.debug.use_system_shell;
+        let result = Self::run_package_script_foreground_with_shell_path(
+            ctx,
+            script,
+            name,
+            cwd,
+            env,
+            &[],
+            silent,
+            use_system_shell,
+            Some(original_path.as_slice()),
+        );
+        env.map.put(b"PATH", &original_path)?;
+        result
     }
 
     /// Like [`Self::run_package_script_foreground`], but resolves the shell
@@ -605,6 +652,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = opts.store_root_fd;
+        // The VM inherits this dir cache; only an auto-installing resolver records version ranges.
+        this_transpiler.options.global_cache = ctx.debug.global_cache;
+        this_transpiler.resolver.opts.global_cache = ctx.debug.global_cache;
 
         // Bundler-linker + JSX-runtime config: only callers that actually
         // transpile through this `Transpiler` need it. `configure_linker`'s
@@ -677,78 +727,32 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // remaining env-var seeding.
         let env_loader = this_transpiler.env_mut();
 
+        // This and `npm_package_*` describe this run, over whatever an outer `bun run` exported.
         env_loader
             .map
-            .put_default(b"npm_config_local_prefix", top_level_dir)
+            .put(b"npm_config_local_prefix", top_level_dir)
             .expect("unreachable");
 
-        // Propagate --no-orphans / [run] noOrphans to the script's env so any
-        // Bun process the script spawns enables its own watchdog. The env
-        // loader snapshots `environ` before flag parsing runs, so the
-        // `setenv()` in `enable()` isn't reflected here.
-        if bun_io::ParentDeathWatchdog::is_enabled() {
-            env_loader
-                .map
-                .put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")
-                .expect("unreachable");
-        }
-
-        // we have no way of knowing what version they're expecting without running the node executable
-        // running the node executable is too slow
-        // so we will just hardcode it to LTS
-        env_loader
-            .map
-            .put_default(
-                b"npm_config_user_agent",
-                // the use of npm/? is copying yarn
-                // e.g.
-                // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
-                const_format::concatcp!(
-                    "bun/",
-                    Global::package_json_version,
-                    " npm/? node/v",
-                    Environment::REPORTED_NODEJS_VERSION,
-                    " ",
-                    Global::os_name,
-                    " ",
-                    Global::arch_name
-                )
-                .as_bytes(),
-            )
-            .expect("unreachable");
-
-        if env_loader.get(b"npm_execpath").is_none() {
-            // we don't care if this fails
-            if let Ok(self_exe_path) = bun_core::self_exe_path() {
-                env_loader
-                    .map
-                    .put_default(b"npm_execpath", self_exe_path.as_bytes())
-                    .expect("unreachable");
-            }
-        }
+        bun_install::RunCommand::seed_script_env(env_loader);
 
         if let Some(package_json) = root_dir_info.enclosing_package_json {
             if !package_json.name.is_empty() {
-                if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
-                    env_loader
-                        .map
-                        .put(NpmArgs::PACKAGE_NAME, &package_json.name)
-                        .expect("unreachable");
-                }
+                env_loader
+                    .map
+                    .put(NpmArgs::PACKAGE_NAME, &package_json.name)
+                    .expect("unreachable");
             }
 
             env_loader
                 .map
-                .put_default(b"npm_package_json", package_json.source.path.text)
+                .put(b"npm_package_json", package_json.source.path.text)
                 .expect("unreachable");
 
             if !package_json.version.is_empty() {
-                if env_loader.map.get(NpmArgs::PACKAGE_VERSION).is_none() {
-                    env_loader
-                        .map
-                        .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
-                        .expect("unreachable");
-                }
+                env_loader
+                    .map
+                    .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
+                    .expect("unreachable");
             }
 
             if let Some(config) = package_json.config.as_deref() {
@@ -965,6 +969,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         entry_path: Box<[u8]>,
         loader: Option<Loader>,
     ) -> crate::Result<()> {
+        Self::boot_main(
+            ctx,
+            BootMain::File {
+                path: entry_path,
+                loader,
+            },
+        )
+    }
+
+    fn boot_main(ctx: &mut ContextData, main: BootMain) -> crate::Result<()> {
         if !ctx.debug.loaded_bunfig {
             arguments::load_config_path(
                 CommandTag::RunCommand,
@@ -975,12 +989,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         // The shell does not need to initialize JSC (saves 1-3ms).
-        if strings::has_suffix_comptime(&entry_path, b".sh") {
+        if let BootMain::File {
+            path: entry_path, ..
+        } = &main
+            && strings::has_suffix_comptime(entry_path, b".sh")
+        {
             // It has no entry point to start from, like a script of a package.json.
-            if ctx.runtime_options.check && !crate::cli::check_command::check_project_before() {
+            if ctx.runtime_options.check && !crate::cli::check_command::check_project_before(None) {
                 Global::exit(1);
             }
-            let exit_code = Self::boot_bun_shell(ctx, &entry_path)?;
+            let exit_code = Self::boot_bun_shell(ctx, entry_path)?;
             Global::exit(exit_code as u32);
         }
 
@@ -989,11 +1007,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx.runtime_options.check && ctx.runtime_options.eval.interactive_script.is_none();
         // `Run::start` does it then, once there is a file watcher.
         let watches = ctx.debug.hot_reload != cli::command::HotReload::None;
-        if is_checked
-            && !watches
-            && !Self::check_main(ctx, &entry_path, loader, &ctx.passthrough, None)
-        {
-            Global::exit(1);
+        if is_checked && !watches {
+            let has_type_errors = match &main {
+                BootMain::File { path, loader } => {
+                    !Self::check_main(ctx, path, *loader, &ctx.passthrough, None)
+                }
+                BootMain::Bake => !crate::cli::check_command::check_project_before(None),
+            };
+            if has_type_errors {
+                Global::exit(1);
+            }
         }
 
         // `bun_jsc::initialize`
@@ -1012,6 +1035,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             transform_options: ctx.args.clone(),
             log: ::core::ptr::NonNull::new(ctx.log),
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
+            global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
             mini_mode: ctx.runtime_options.smol,
             eval_mode: ctx.runtime_options.eval.eval_and_print,
@@ -1031,14 +1055,19 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8;
         // `vm.main` is a BACKREF into these bytes and the runner never returns,
         // so the allocation is process-lifetime by construction.
-        let entry: &'static [u8] = Box::leak(entry_path);
+        let (entry, loader): (Option<&'static [u8]>, Option<Loader>) = match main {
+            BootMain::File { path, loader } => (Some(Box::leak(path)), loader),
+            BootMain::Bake => (None, None),
+        };
         // What `Run::start` passes to `vm.load_entry_point`; `mut` because the
         // cron-execution branch below may swap in a synthetic `cwd/[eval]` path
         // while `entry` stays the user's path for the loader check further down.
         let mut run_entry = entry;
         vm.set_main(entry);
 
-        if !ctx.runtime_options.eval.script.is_empty() {
+        if let Some(entry) = entry
+            && !ctx.runtime_options.eval.script.is_empty()
+        {
             // SAFETY: `ctx.runtime_options.eval.script` is process-lifetime
             // (CLI argv); erase the borrow lifetime so the `Source` (stored in
             // the VM for the process duration) can backref into it.
@@ -1055,7 +1084,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if ctx.runtime_options.eval.eval_and_print {
                 vm.transpiler.options.dead_code_elimination = false;
             }
-        } else if !ctx.runtime_options.cron_title.is_empty()
+        } else if let Some(entry) = entry
+            && !ctx.runtime_options.cron_title.is_empty()
             && !ctx.runtime_options.cron_period.is_empty()
         {
             // Cron execution mode: wrap the entry point in
@@ -1094,8 +1124,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             )));
             // Override what
             // `Run::start` will pass to `vm.load_entry_point`.
-            run_entry = heap_entry;
-            vm.set_main(heap_entry);
+            run_entry = Some(heap_entry);
+            vm.set_main(Some(heap_entry));
         }
 
         // ctx → transpiler/resolver option mapping.
@@ -1143,9 +1173,18 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         );
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
-        vm.main_is_html_entrypoint = loader
-            .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(entry)))
-            == Loader::Html;
+        // Only `bun bake` boots with no entry module.
+        vm.main_entry_point = match entry {
+            None => MainEntryPoint::Bake,
+            Some(entry)
+                if loader
+                    .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(entry)))
+                    == Loader::Html =>
+            {
+                MainEntryPoint::Html
+            }
+            Some(_) => MainEntryPoint::File,
+        };
 
         // `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
         // b2-cycle widens it to `cli::HotReload`); `Run::start` re-reads it
@@ -1156,7 +1195,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: run_entry,
-            unchecked: (is_checked && watches).then_some(loader),
+            unchecked: (is_checked && watches).then_some(match entry {
+                Some(_) => Unchecked::Main(loader),
+                None => Unchecked::Project,
+            }),
         }
         .start()
     }
@@ -1232,7 +1274,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // buffer and the runner never returns, so the allocation is
         // process-lifetime by construction.
         let entry: &'static [u8] = Box::leak(entry_path);
-        vm.set_main(entry);
+        vm.set_main(Some(entry));
 
         // reshaped for borrowck — `b` borrows `vm.transpiler`
         // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
@@ -1275,7 +1317,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Run {
             ctx,
             vm,
-            entry_path: entry,
+            entry_path: Some(entry),
             unchecked: None,
         }
         .start()
@@ -1295,11 +1337,20 @@ pub(crate) struct Run<'a> {
     vm: &'a mut VirtualMachine,
     /// `vm.main` already points into these bytes; `'static` because the hot
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
-    /// the runner arena).
-    entry_path: &'static [u8],
-    /// `--check` under `--watch`: `loader` of `boot`. With errors the program is not run, and the
-    /// process waits for a change.
-    unchecked: Option<Option<Loader>>,
+    /// the runner arena). `None` for `bun bake`, which has no entry module.
+    entry_path: Option<&'static [u8]>,
+    /// `--check` under `--watch`: what to type check before the program runs. With errors the
+    /// program is not run, and the process waits for a change.
+    unchecked: Option<Unchecked>,
+}
+
+/// What `Run::start` type checks under `--check --watch`.
+#[derive(Clone, Copy)]
+enum Unchecked {
+    /// The main module and what it imports. `loader` of `boot`.
+    Main(Option<Loader>),
+    /// The project that contains the working directory, for `bun bake`.
+    Project,
 }
 
 // `on_unhandled_rejection_before_close` is a plain fn pointer stored on the
@@ -1439,7 +1490,9 @@ impl Run<'_> {
                 let Some(connect_fn) = sql_object.get(global, "connect")? else {
                     return Ok(());
                 };
-                connect_fn.call(global, sql_object, &[])?;
+                if let Some(promise) = connect_fn.call(global, sql_object, &[])?.as_any_promise() {
+                    promise.set_handled(global.vm());
+                }
                 Ok(())
             };
             crate::dispatch::fold(preconnect());
@@ -1453,7 +1506,7 @@ impl Run<'_> {
                 unsafe {
                     bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
                         std::ptr::from_mut::<VirtualMachine>(vm),
-                        Some(entry),
+                        entry,
                     )
                 }
             }
@@ -1463,7 +1516,7 @@ impl Run<'_> {
                 unsafe {
                     bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
                         std::ptr::from_mut::<VirtualMachine>(vm),
-                        Some(entry),
+                        entry,
                     )
                 }
                 bun_jsc::posix_signal_handle::enable_watch_mode_signals(
@@ -1473,23 +1526,33 @@ impl Run<'_> {
             _ => {}
         }
 
-        if entry == b"." {
+        if entry == Some(b".".as_slice()) {
             // SAFETY: `vm.transpiler.fs` is the process-static `FileSystem`
             // singleton (set in `Transpiler::init`).
             let tld = unsafe { (*vm.transpiler.fs).top_level_dir };
             if !tld.is_empty() {
-                entry = tld;
+                entry = Some(tld);
             }
         }
 
-        let has_type_errors = unchecked.is_some_and(|loader| {
-            let watching = crate::cli::check_command::watching(vm);
-            !RunCommand::check_main(ctx, vm.main(), loader, &vm.argv, watching)
-        });
-        if has_type_errors {
-            // It is not read if the options are wrong.
-            vm.add_main_to_watcher_if_needed();
-        }
+        let has_type_errors = match unchecked {
+            None => false,
+            Some(Unchecked::Main(loader)) => {
+                let watching = crate::cli::check_command::watching(vm);
+                let main = (vm.main()).expect("a file entry point has a path");
+                let has_type_errors =
+                    !RunCommand::check_main(ctx, main, loader, &vm.argv, watching);
+                if has_type_errors {
+                    // It is not read if the options are wrong.
+                    vm.add_main_to_watcher_if_needed();
+                }
+                has_type_errors
+            }
+            Some(Unchecked::Project) => {
+                let watching = crate::cli::check_command::watching(vm);
+                !crate::cli::check_command::check_project_before(watching)
+            }
+        };
         let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry));
         match loaded {
             None => {}
@@ -1652,7 +1715,6 @@ impl Run<'_> {
         // (Rust-defined `#[no_mangle]` exports don't need this; the imported
         // C symbols do.)
         crate::napi::fix_dead_code_elimination();
-        crate::webcore::bake_response::fix_dead_code_elimination();
         bun_crash_handler::fix_dead_code_elimination();
         vm.global_exit();
     }
@@ -1809,55 +1871,29 @@ impl RunCommand {
         Global::exit(1);
     }
 
-    // This path is almost always a path to a user directory. So it cannot be
-    // inlined like our uses of /tmp. On Windows use `GetTempPathW` /
-    // `RealFS.platformTempDir` instead — this const is POSIX-only and
-    // referencing it on Windows is a compile error.
-    //
-    // Canonical definition lives in `bun_install::RunCommand` (lower tier so
-    // the package manager can use it without depending on `bun_runtime`).
-    #[cfg(not(windows))]
-    pub(crate) const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
-
     /// Returns the path to the
     /// fake `node` shim that points back at the running `bun` binary.
     pub(crate) fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
         #[cfg(not(windows))]
         {
-            const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
-            Ok(ZStr::from_static(BUN_NODE_DIR_Z.as_bytes()))
+            Ok(bun_install::RunCommand::bun_node_dir())
         }
         #[cfg(windows)]
         {
-            let mut temp_path_buffer = bun_paths::w_path_buffer_pool::get();
+            let mut shim_dir_buffer = bun_paths::w_path_buffer_pool::get();
             let mut target_path_buffer = bun_paths::path_buffer_pool::get();
-            // SAFETY: FFI Win32 `GetTempPathW`. `temp_path_buffer` is a valid
-            // writable WCHAR[MAX_PATH+] buffer and `nBufferLength` is its
-            // capacity in WCHARs; the call writes at most that many wide chars.
-            let len = unsafe {
-                sys::windows::GetTempPathW(
-                    u32::try_from(temp_path_buffer.len()).expect("int cast"),
-                    temp_path_buffer.as_mut_ptr(),
-                )
-            };
-            if len == 0 {
+            let Some(len) =
+                bun_install::RunCommand::windows_node_shim_dir(&mut shim_dir_buffer[..])
+            else {
                 return Err(crate::Error::FailedToGetTempPath);
-            }
+            };
 
             let converted = strings::convert_utf16_to_utf8_in_buffer(
                 &mut target_path_buffer,
-                &temp_path_buffer[..len as usize],
+                &shim_dir_buffer[..len],
             );
 
-            const FILE_NAME: &str = const_format::concatcp!(
-                "bun-node",
-                if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
-                } else {
-                    ""
-                },
-                "\\node.exe"
-            );
+            const FILE_NAME: &str = "\\node.exe";
             let conv_len = converted.len();
             let total = conv_len + FILE_NAME.len();
             target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());
@@ -1895,7 +1931,6 @@ impl RunCommand {
     /// `.bin` dirs + the bun-node shim dir to `PATH` and writes the original
     /// PATH back through `original_path`.
     pub(crate) fn configure_path_for_run(
-        ctx: &mut ContextData,
         root_dir_info: bun_resolver::DirInfoRef,
         this_transpiler: &mut Transpiler<'static>,
         original_path: Option<&mut Vec<u8>>,
@@ -1912,10 +1947,9 @@ impl RunCommand {
             }
         }
 
-        let new_path = Self::configure_path_for_run_with_package_json_dir(
-            ctx,
+        let new_path = Self::path_for_run(
+            this_transpiler.env_mut(),
             package_json_dir,
-            this_transpiler,
             original_path,
             cwd,
             force_using_bun,
@@ -1932,15 +1966,13 @@ impl RunCommand {
     /// (plus `package_json_dir` and the bun-node shim dir) prepended, returns
     /// it as an owned buffer, and writes the original PATH out via
     /// `original_path`.
-    pub(crate) fn configure_path_for_run_with_package_json_dir(
-        _ctx: &mut ContextData,
+    pub(crate) fn path_for_run(
+        env_loader: &mut DotEnv::Loader,
         package_json_dir: &[u8],
-        this_transpiler: &mut Transpiler<'static>,
         original_path: Option<&mut Vec<u8>>,
         cwd: &[u8],
         force_using_bun: bool,
     ) -> crate::Result<Vec<u8>> {
-        let env_loader = this_transpiler.env_mut();
         // Snapshot PATH up front. The env
         // map owns `Box<[u8]>` values, so a borrow would dangle once the
         // caller (`configure_path_for_run`) overwrites PATH. Own a copy instead.
@@ -2009,7 +2041,7 @@ impl RunCommand {
             }
 
             if !force_using_bun {
-                let env_mut = this_transpiler.env_mut();
+                let env_mut = &mut *env_loader;
                 env_mut
                     .map
                     .put(b"NODE", bun_node_exe.as_bytes())
@@ -2432,7 +2464,6 @@ impl RunCommand {
         let force_using_bun = ctx.debug.run_in_bun;
         let mut original_path: Vec<u8> = Vec::new();
         Self::configure_path_for_run(
-            ctx,
             root_dir_info,
             this_transpiler,
             Some(&mut original_path),
@@ -2493,10 +2524,12 @@ impl RunCommand {
                         temp_script_buffer.extend_from_slice(target_name);
 
                         let package_json_dir =
-                            strings::without_trailing_slash(strings::without_suffix_comptime(
-                                package_json.source.path.text,
-                                b"package.json",
-                            ));
+                            paths::string_paths::without_trailing_slash_windows_path(
+                                strings::without_suffix_comptime(
+                                    package_json.source.path.text,
+                                    b"package.json",
+                                ),
+                            );
                         bun_core::scoped_log!(
                             RUN_LOG,
                             "Running in dir `{}`",
@@ -2512,7 +2545,7 @@ impl RunCommand {
 
                         // A script has no entry point to start from: the project is checked, as by `bun check`.
                         if ctx.runtime_options.check
-                            && !crate::cli::check_command::check_project_before()
+                            && !crate::cli::check_command::check_project_before(None)
                         {
                             Global::exit(1);
                         }
@@ -2714,7 +2747,7 @@ impl RunCommand {
                 {
                     // It has no entry point to start from, like a script of a package.json.
                     if ctx.runtime_options.check
-                        && !crate::cli::check_command::check_project_before()
+                        && !crate::cli::check_command::check_project_before(None)
                     {
                         Global::exit(1);
                     }
@@ -2736,6 +2769,62 @@ impl RunCommand {
 
         // ── failure ─────────────────────────────────────────────────────────
         if ctx.runtime_options.if_present {
+            return Ok(true);
+        }
+
+        // `bun bake` in a project with no `bake` script, file or binary of its own.
+        if target_name == b"bake" && bun_core::FeatureFlags::bake() {
+            // These flags of `bun` mean the same after `bake` as before it: `bun bake --watch` is
+            // `bun --watch bake`.
+            let mut take_flag =
+                |flag: &[u8]| match ctx.passthrough.iter().position(|arg| &arg[..] == flag) {
+                    Some(i) => {
+                        ctx.passthrough.remove(i);
+                        true
+                    }
+                    None => false,
+                };
+            let (check, hot, watch, no_clear_screen) = (
+                take_flag(b"--check"),
+                take_flag(b"--hot"),
+                take_flag(b"--watch"),
+                take_flag(b"--no-clear-screen"),
+            );
+            let hot_reload = ctx.debug.hot_reload;
+            if hot_reload == cli::command::HotReload::None {
+                // As in the argument parser, `--hot` wins over `--watch`.
+                if hot {
+                    ctx.debug.hot_reload = cli::command::HotReload::Hot;
+                } else if watch {
+                    ctx.debug.hot_reload = cli::command::HotReload::Watch;
+                    #[cfg(not(windows))]
+                    {
+                        bun_core::set_auto_reload_on_crash(true);
+                    }
+                }
+            }
+            if no_clear_screen {
+                ctx.debug.no_clear_screen = true;
+            }
+            if check {
+                ctx.runtime_options.check = true;
+            }
+            // Also when `--check` came before `bake` and `--hot` after it.
+            if ctx.runtime_options.check {
+                cli::watch_instead_of_hot_for_check(ctx);
+            }
+            // Flags before `bake` that only apply in watch mode, which may only be on now.
+            cli::apply_watch_mode_flags(ctx);
+            if hot_reload != ctx.debug.hot_reload {
+                cli::set_up_watch_restarts(ctx);
+            }
+            Global::configure_allocator(core::Global::AllocatorConfiguration {
+                long_running: true,
+                ..Default::default()
+            });
+            if let Err(err) = Self::boot_main(ctx, BootMain::Bake) {
+                Self::boot_failed_exit(ctx, b"bake", &err);
+            }
             return Ok(true);
         }
 

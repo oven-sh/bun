@@ -3,18 +3,20 @@
 
 use crate::args::{Argument, Group, Param, error};
 pub use crate::args::{Help, UsageError};
-use crate::configs::{Flavor, is_category};
+use crate::configs::{Flavor, is_category, plugin_shorthand};
+use crate::paths;
 use bun_clap as clap;
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::linter::NativePlugins;
+use bun_lint::linter::{NativePlugins, parse_rule_id};
 use bun_lint::options::Json;
+use bun_lint::rule::Plugin;
 
 const RULES: &[Param] = &[
     clap::param!("-c, --config <path>             Use this config file instead of looking for one"),
     clap::param!("--no-config-lookup              Do not look for a config file"),
     clap::param!(
-        "--rule <rule>...                Set a rule: <b>--rule 'eqeqeq: [error, smart]'<r>"
+        "--rule <rule>...                Set a rule, or turn off a plugin: <b>--rule 'eqeqeq: [error, smart]'<r>, <b>--rule 'unicorn/*: off'<r>"
     ),
     clap::param!("--rules                         List the built-in rules"),
     clap::param!("--explain <rule>                Print the documentation of a rule"),
@@ -92,7 +94,7 @@ const TYPES: &[Param] = &[
     clap::param!("--type-aware                    Also run the rules that need types"),
     clap::param!("--no-type-aware                 Skip the rules that need types"),
     clap::param!(
-        "--tsconfig <path>               Use this tsconfig.json for the rules that need types"
+        "--tsconfig <path>               Use this tsconfig.json instead of the nearest one"
     ),
     clap::param!("--type-check                    With <b>--type-aware<r>, report type errors too"),
     clap::param!(
@@ -104,6 +106,9 @@ const TYPES: &[Param] = &[
 const OTHER: &[Param] = &[
     clap::param!(
         "--threads <n>                   Number of threads <d>(default: one per CPU core)<r>"
+    ),
+    clap::param!(
+        "--no-script                     Run the linter even if the project has a <b>lint<r> script"
     ),
     clap::param!("-v, --version                   Print the version of Bun"),
     clap::param!(
@@ -123,7 +128,7 @@ const OF_ESLINT: &[Param] = &[
     clap::param!("--parser <name>                 Parse files with this package"),
     clap::param!("--plugin <name>...              Load ESLint plugins: paths or package names"),
     clap::param!(
-        "--native-plugin-rules <plugins>  Use the built-in rules for these plugins only: <b>import,react-hooks<r> <d>(default: all)<r>"
+        "--native-plugin-rules <plugins>  Of the ESLint plugins a config loads, run only these natively: <b>import,react-hooks<r> <d>(default: all)<r>"
     ),
     clap::param!(
         "--no-native-plugin-rules        Run plugin rules from the installed packages, in JavaScript"
@@ -209,6 +214,7 @@ const OPPOSITES: &[Param] = &[
     clap::param!("--inline-config"),
     clap::param!("--error-on-unmatched-pattern"),
     clap::param!("--eslintrc"),
+    clap::param!("--script"),
 ];
 
 pub const HELP: Help = Help {
@@ -258,6 +264,7 @@ pub const HELP: Help = Help {
         b"max-warnings",
         b"init",
         b"doctor",
+        b"no-script",
     ],
 };
 
@@ -401,6 +408,33 @@ pub enum FixType {
     Layout,
 }
 
+/// A wildcard like `"unicorn/*" = "off"`, which turns off every rule of a plugin. Wildcards are stored apart from single
+/// rules because only native mode supports them: see [`crate::native::expand_wildcards`].
+#[derive(Clone, Debug)]
+pub struct Wildcard {
+    /// As written: `unicorn/*`.
+    pub id: Vec<u8>,
+    /// Byte offset of the key in bunfig.toml. `None` if it came from a flag.
+    pub key_at: Option<usize>,
+}
+
+impl Wildcard {
+    /// Returns `unicorn` for the ID `unicorn/*`, and `None` for the ID of a single rule.
+    pub fn plugin_of(id: &[u8]) -> Option<&[u8]> {
+        id.strip_suffix(b"/*").filter(|it| !it.is_empty())
+    }
+
+    pub fn plugin(&self) -> &[u8] {
+        Wildcard::plugin_of(&self.id).unwrap_or_default()
+    }
+
+    /// The error for a wildcard that is set to `"warn"` or `"error"`.
+    pub fn must_be_off(id: &[u8]) -> Vec<u8> {
+        let hint: &[u8] = b"To turn rules on, name them or use [lint.categories]";
+        [b"\"", id, b"\" can only be \"off\"\n  ", hint].concat()
+    }
+}
+
 /// One entry of `[[lint.overrides]]`.
 #[derive(Clone, Debug, Default)]
 pub struct Override {
@@ -410,6 +444,7 @@ pub struct Override {
     pub rules: Vec<(Vec<u8>, Json)>,
     /// bunfig.toml location of each entry in `rules`.
     pub places: Vec<crate::bunfig::RuleOfBunfig>,
+    pub wildcards: Vec<Wildcard>,
     pub globals: Vec<(Vec<u8>, Json)>,
     pub settings: Vec<(Vec<u8>, Json)>,
 }
@@ -440,16 +475,28 @@ pub struct Options {
     pub rules_of_bunfig: Vec<crate::bunfig::RuleOfBunfig>,
     /// The bunfig that was read, as written: `bunfig.toml`, or the path from `bun --config=<path> lint`.
     pub bunfig: Vec<u8>,
+    /// It has a `[lint]` section, which was read.
+    pub has_section_of_bunfig: bool,
+    /// `bun --config=<path>` names it.
+    pub is_bunfig_named: bool,
+    /// [`Options::config`] is what bunfig.toml says.
+    pub is_config_of_bunfig: bool,
+    /// [`Options::suppressions_location`] is what the flag says.
+    pub is_suppressions_location_of_flag: bool,
+    /// Wildcards from `[lint.rules]`, then from `--rule` and `-A`.
+    pub wildcards: Vec<Wildcard>,
     /// `[[lint.overrides]]` from bunfig.toml. There's no flag for it.
     pub overrides: Vec<Override>,
-    /// Only set if there are `overrides`. The command line's options on their own, because its rules and globals apply
-    /// after the overrides.
+    /// Only set if there are `overrides`, or if a flag has a wildcard. The command line's options on their own, because its
+    /// rules and globals apply after the overrides, and its wildcards after the single rules of bunfig.toml.
     pub of_command_line: Option<Box<Options>>,
     pub fix: bool,
     pub fix_dry_run: bool,
     pub fix_type: Option<Vec<FixType>>,
     pub ignore: bool,
     pub ignore_pattern: Vec<Vec<u8>>,
+    /// How many of them, the first, are of bunfig.toml: those start where that file is.
+    pub ignore_patterns_of_bunfig: usize,
     /// `--staged`, `--changed`
     pub only: Option<crate::git::Only>,
     pub stdin: bool,
@@ -521,6 +568,8 @@ pub struct Options {
     pub deny_warnings: bool,
     pub silent: bool,
     pub ignore_path: Option<Vec<u8>>,
+    /// `ignorePath` of bunfig.toml as it is written there: to oxlint it is a name, for every directory.
+    pub ignore_file_name_of_bunfig: Option<Vec<u8>>,
     pub disable_nested_config: bool,
     /// What the configuration asks for and cannot be done is a warning, and not an error at the end.
     pub allow_unsupported: bool,
@@ -556,13 +605,19 @@ impl Default for Options {
             rule: Vec::new(),
             rules_of_bunfig: Vec::new(),
             bunfig: b"bunfig.toml".to_vec(),
+            has_section_of_bunfig: false,
+            is_bunfig_named: false,
+            is_config_of_bunfig: false,
+            is_suppressions_location_of_flag: false,
             overrides: Vec::new(),
             of_command_line: None,
+            wildcards: Vec::new(),
             fix: false,
             fix_dry_run: false,
             fix_type: None,
             ignore: true,
             ignore_pattern: Vec::new(),
+            ignore_patterns_of_bunfig: 0,
             only: None,
             stdin: false,
             stdin_filename: None,
@@ -612,6 +667,7 @@ impl Default for Options {
             deny_warnings: false,
             silent: false,
             ignore_path: None,
+            ignore_file_name_of_bunfig: None,
             disable_nested_config: false,
             allow_unsupported: false,
             native_plugin_rules: NativePlugins::All,
@@ -663,6 +719,25 @@ fn object(name: &[u8], value: &[u8], into: &mut Vec<(Vec<u8>, Json)>) -> Result<
     Ok(())
 }
 
+/// `value`: a path or a pattern, or a list of them, which are written from `directory`. `always`: also what starts with `**/`.
+fn start_at(directory: &[u8], value: &mut Json, always: bool) {
+    match value {
+        Json::Array(all) => all
+            .iter_mut()
+            .for_each(|it| start_at(directory, it, always)),
+        Json::String(it) if !it.is_empty() => {
+            let (not, written) = match it.strip_prefix(b"!") {
+                Some(rest) => (&b"!"[..], paths::from_native(rest)),
+                None => (&b""[..], paths::from_native(it)),
+            };
+            if !paths::is_absolute(&written) && (always || !written.starts_with(b"**/")) {
+                *it = [not, &paths::join_normalized(directory, &written)].concat();
+            }
+        }
+        _ => {}
+    }
+}
+
 /// optionator's `mergeRepeatedObjects`
 pub(crate) fn merge(into: &mut Vec<(Vec<u8>, Json)>, entries: Vec<(Vec<u8>, Json)>) {
     for (key, value) in entries {
@@ -699,7 +774,7 @@ impl Options {
             });
         }
         match name {
-            b"config" => self.config = owned(),
+            b"config" => (self.config, self.is_config_of_bunfig) = (owned(), false),
             b"config-lookup" => self.config_lookup = is_on,
             b"flavor" => {
                 self.flavor = Some(match text {
@@ -710,7 +785,28 @@ impl Options {
                     }
                 })
             }
-            b"rule" => object(name, text, &mut self.rule)?,
+            b"rule" => {
+                let mut said = Vec::new();
+                object(name, text, &mut said)?;
+                let (wildcards, said): (Vec<_>, Vec<_>) =
+                    (said.into_iter()).partition(|it| Wildcard::plugin_of(&it.0).is_some());
+                for (id, setting) in wildcards {
+                    let severity = setting.as_array().and_then(|it| it.first());
+                    let severity = severity.unwrap_or(&setting);
+                    if bun_lint::linter::severity_of(severity) != Some(Severity::Off) {
+                        return Err(UsageError(Wildcard::must_be_off(&id)));
+                    }
+                    self.wildcards.push(Wildcard { id, key_at: None });
+                }
+                // What bunfig.toml has about them is no longer what counts.
+                for (at, place) in self.rules_of_bunfig.iter_mut().enumerate() {
+                    if (self.rule.get(at)).is_some_and(|it| said.iter().any(|said| said.0 == it.0))
+                    {
+                        place.setting = Json::Null;
+                    }
+                }
+                merge(&mut self.rule, said);
+            }
             b"global" => self.global.extend(list(text)),
             b"parser-options" => object(name, text, &mut self.parser_options)?,
             b"ext" => self.ext.get_or_insert_default().extend(list(text)),
@@ -798,19 +894,37 @@ impl Options {
                 .suppress_rule
                 .get_or_insert_default()
                 .extend(list(text)),
-            b"suppressions-location" => self.suppressions_location = owned(),
+            b"suppressions-location" => {
+                self.suppressions_location = owned();
+                self.is_suppressions_location_of_flag = true;
+            }
             b"prune-suppressions" => self.prune_suppressions = is_on,
             b"pass-on-unpruned-suppressions" => self.pass_on_unpruned_suppressions = is_on,
             b"stats" => self.stats = is_on,
             b"env-info" => self.env_info = is_on,
             b"parser" => self.parser = owned(),
             b"plugin" => self.plugin.extend(list(text)),
-            b"allow" => self.filters.push((Severity::Off, text.to_vec())),
-            b"warn" => self.filters.push((Severity::Warn, text.to_vec())),
-            b"deny" => self.filters.push((Severity::Error, text.to_vec())),
+            b"allow" | b"warn" | b"deny" => {
+                let severity = match name {
+                    b"allow" => Severity::Off,
+                    b"warn" => Severity::Warn,
+                    _ => Severity::Error,
+                };
+                match Wildcard::plugin_of(text) {
+                    None => self.filters.push((severity, text.to_vec())),
+                    Some(_) if severity == Severity::Off => self.wildcards.push(Wildcard {
+                        id: text.to_vec(),
+                        key_at: None,
+                    }),
+                    Some(_) => return Err(UsageError(Wildcard::must_be_off(text))),
+                }
+            }
             b"deny-warnings" => self.deny_warnings = is_on,
             b"silent" => self.silent = is_on,
-            b"ignore-path" => self.ignore_path = owned(),
+            b"ignore-path" => {
+                self.ignore_path = owned();
+                self.ignore_file_name_of_bunfig = None;
+            }
             b"disable-nested-config" => self.disable_nested_config = is_on,
             b"allow-unsupported" => self.allow_unsupported = is_on,
             b"native-plugin-rules" => match NativePlugins::parse(text) {
@@ -885,6 +999,229 @@ impl Options {
         Options::default().with(args)
     }
 
+    /// `self`: what the bunfig at `path` says, which is a path from the working directory. What is a path in it starts at
+    /// [`Options::start_of_bunfig`]. `is_named`: [`Options::is_bunfig_named`].
+    pub fn of_bunfig_at(mut self, path: &[u8], is_named: bool, cwd: &[u8]) -> Options {
+        self.bunfig = paths::from_native(path);
+        self.has_section_of_bunfig = true;
+        self.is_bunfig_named = is_named;
+        self.is_config_of_bunfig = self.config.is_some();
+        self.is_suppressions_location_of_flag = false;
+        self.ignore_patterns_of_bunfig = self.ignore_pattern.len();
+        self.ignore_file_name_of_bunfig
+            .clone_from(&self.ignore_path);
+        let directory = paths::dirname(&self.bunfig).to_vec();
+        if directory != b"." && !is_named {
+            let all = [
+                &mut self.config,
+                &mut self.ignore_path,
+                &mut self.suppressions_location,
+                &mut self.tsconfig,
+            ];
+            for it in all.into_iter().flatten() {
+                let written = paths::from_native(it);
+                if !paths::is_absolute(&written) {
+                    *it = paths::join_normalized(&directory, &written);
+                }
+            }
+        }
+        self.start_settings_at_bunfig(cwd);
+        self
+    }
+
+    /// `rules`, with where bunfig.toml has them: `places`. The rules read the paths and the patterns in their options from the
+    /// working directory. In what the file has they are written from where the file is.
+    pub(crate) fn from_the_working_directory(
+        &self,
+        rules: &[(Vec<u8>, Json)],
+        places: &[crate::bunfig::RuleOfBunfig],
+        is_oxlint: bool,
+        cwd: &[u8],
+    ) -> Vec<(Vec<u8>, Json)> {
+        let mut rules = rules.to_vec();
+        let Some(directory) = self.way_to_bunfig() else {
+            return rules;
+        };
+        for (at, (id, setting)) in rules.iter_mut().enumerate() {
+            // `--rule` may have replaced this entry.
+            if places.get(at).is_none_or(|it| it.setting != *setting) {
+                continue;
+            }
+            let (prefix, name) = parse_rule_id(id);
+            if !Plugin::spelled(&plugin_shorthand(prefix)).any(|it| it == Plugin::Import) {
+                continue;
+            }
+            // What is held against the whole path of a file is the same from everywhere if it starts with `**/`. With what files
+            // are looked for it is not.
+            let (keys, finds_files): (&[&[u8]], bool) = match name {
+                b"no-restricted-paths" => (&[b"basePath"], false),
+                // oxlint holds them against what is written in the import.
+                b"no-unassigned-import" if !is_oxlint => (&[b"allow"], false),
+                b"no-unused-modules" => (&[b"src", b"ignoreExports"], true),
+                b"no-extraneous-dependencies" => (
+                    &[
+                        b"packageDir",
+                        b"devDependencies",
+                        b"optionalDependencies",
+                        b"peerDependencies",
+                        b"bundledDependencies",
+                    ],
+                    false,
+                ),
+                _ => continue,
+            };
+            let Json::Array(parts) = setting else {
+                continue;
+            };
+            let Some(Json::Object(options)) = parts.get_mut(1) else {
+                continue;
+            };
+            // What is the working directory if nothing is said.
+            let usual = match name {
+                b"no-restricted-paths" => Some((&b"basePath"[..], Json::String(b".".to_vec()))),
+                b"no-unused-modules" => {
+                    Some((&b"src"[..], Json::Array(vec![Json::String(b".".to_vec())])))
+                }
+                _ => None,
+            };
+            if let Some((key, value)) = usual.filter(|it| !options.iter().any(|at| at.0 == it.0)) {
+                options.push((key.to_vec(), value));
+            }
+            for (key, value) in options.iter_mut().filter(|it| keys.contains(&&it.0[..])) {
+                match (name, &key[..], &mut *value) {
+                    // The name of a package is held against them too, as it is written: `dotenv/config`. It is one if there is
+                    // nothing of that name beside bunfig.toml.
+                    (b"no-unassigned-import", _, Json::Array(all)) => {
+                        let is_path = |it: &[u8]| {
+                            let first = it.strip_prefix(b"!").unwrap_or(it);
+                            let first = strings::split(first, b"/").next().unwrap_or_default();
+                            strings::contains_any(first, b"*?[{(")
+                                || matches!(first, b"." | b"..")
+                                || {
+                                    let beside = paths::join_normalized(directory, first);
+                                    bun_sys::exists(&paths::resolve(cwd, &beside))
+                                }
+                        };
+                        let paths = all.iter_mut().filter(|it| it.as_str().is_some_and(is_path));
+                        paths.for_each(|it| start_at(directory, it, finds_files));
+                    }
+                    // `path.resolve(cwd, "")`
+                    (_, b"basePath", Json::String(it)) if it.is_empty() => *it = directory.to_vec(),
+                    (_, b"packageDir", Json::Array(all)) => {
+                        for it in all {
+                            match it {
+                                Json::String(it) if it.is_empty() => *it = directory.to_vec(),
+                                it => start_at(directory, it, finds_files),
+                            }
+                        }
+                    }
+                    _ => start_at(directory, value, finds_files),
+                }
+            }
+        }
+        rules
+    }
+
+    /// The bunfig.toml above the working directory whose `[lint]` was found.
+    pub(crate) fn bunfig_above(&self) -> Option<&[u8]> {
+        (self.way_to_bunfig().is_some() && self.has_section_of_bunfig).then_some(&self.bunfig)
+    }
+
+    /// From the working directory to the directory above it that has bunfig.toml.
+    fn way_to_bunfig(&self) -> Option<&[u8]> {
+        let directory = paths::dirname(&self.bunfig);
+        (directory != b"." && !self.is_bunfig_named).then_some(directory)
+    }
+
+    /// `settings` and `parserOptions`, which only bunfig.toml has so far: see [`Options::from_the_working_directory`].
+    fn start_settings_at_bunfig(&mut self, cwd: &[u8]) {
+        let Some(directory) = self.way_to_bunfig().map(<[u8]>::to_vec) else {
+            return;
+        };
+        fn options_of<'a>(json: &'a mut Json, key: &[u8]) -> Option<&'a mut Json> {
+            let Json::Object(entries) = json else {
+                return None;
+            };
+            Some(&mut entries.iter_mut().find(|it| it.0 == key)?.1)
+        }
+        // All that `require_resolver` of the rules reads and that is a path.
+        fn start_options_at(directory: &[u8], cwd: &[u8], name: &[u8], options: &mut Json) {
+            // By its short name, by the name of its package, or by a path into that.
+            let is =
+                |it: &[u8]| name == it || strings::contains(name, &[b"-resolver-", it].concat());
+            if is(b"node") {
+                // Whole: `resolve` goes about one that is relative in a way of its own.
+                if let Some(value) = options_of(options, b"paths") {
+                    start_at(&paths::resolve(cwd, directory), value, true);
+                }
+            } else if is(b"typescript") {
+                if let Some(value) = options_of(options, b"project") {
+                    start_at(directory, value, true);
+                }
+                let file =
+                    options_of(options, b"tsconfig").and_then(|it| options_of(it, b"configFile"));
+                if let Some(value) = file {
+                    start_at(directory, value, true);
+                }
+            }
+        }
+        fn start_resolver_at(directory: &[u8], cwd: &[u8], resolver: &mut Json) {
+            match resolver {
+                Json::Array(all) => all
+                    .iter_mut()
+                    .for_each(|it| start_resolver_at(directory, cwd, it)),
+                Json::Object(all) => (all.iter_mut())
+                    .for_each(|it| start_options_at(directory, cwd, &it.0, &mut it.1)),
+                _ => {}
+            }
+        }
+        let of_overrides = self.overrides.iter_mut().map(|it| &mut it.settings);
+        for (key, value) in std::iter::once(&mut self.settings)
+            .chain(of_overrides)
+            .flatten()
+        {
+            match &key[..] {
+                b"import/resolver" | b"import-x/resolver" => {
+                    start_resolver_at(&directory, cwd, value);
+                }
+                // "backward compatibility"
+                b"import/resolve" => start_options_at(&directory, cwd, b"node", value),
+                _ => {}
+            }
+        }
+        // `project` starts at `tsconfigRootDir`.
+        let has_root = self
+            .parser_options
+            .iter()
+            .any(|it| it.0 == b"tsconfigRootDir");
+        let key: &[u8] = if has_root {
+            b"tsconfigRootDir"
+        } else {
+            b"project"
+        };
+        for (_, value) in self.parser_options.iter_mut().filter(|it| it.0 == key) {
+            start_at(&directory, value, true);
+        }
+    }
+
+    /// Whether a rule is named that holds a file against what `bun fmt` prints, and so needs `[fmt]`.
+    pub fn names_a_format_rule(&self) -> bool {
+        let of_overrides = self.overrides.iter().flat_map(|it| &it.rules);
+        let of_filters = self.filters.iter().map(|it| &it.1[..]);
+        let names = self.rule.iter().chain(of_overrides).map(|it| &it.0[..]);
+        let mut names = names.chain(of_filters);
+        names.any(|it| matches!(it, b"bun/format" | b"prettier/prettier"))
+    }
+
+    /// Where the paths and the patterns in bunfig.toml start: where the file is, which is the project to a run from any
+    /// directory of it. `--config` can name a file that is kept anywhere, and then it is the working directory.
+    pub(crate) fn start_of_bunfig(&self, cwd: &[u8]) -> Vec<u8> {
+        match self.is_bunfig_named {
+            true => cwd.to_vec(),
+            false => paths::dirname(&paths::resolve(cwd, &self.bunfig)).to_vec(),
+        }
+    }
+
     /// The same, where a flag that is not there is as `defaults` says: [`crate::bunfig::lint`].
     pub fn parse_over(mut defaults: Options, args: &[&[u8]]) -> Result<Options, UsageError> {
         let alone = Options::parse(args)?;
@@ -903,7 +1240,7 @@ impl Options {
         if !alone.fix && !alone.fix_dry_run {
             defaults.fix_type = None;
         }
-        if !defaults.overrides.is_empty() {
+        if !defaults.overrides.is_empty() || !alone.wildcards.is_empty() {
             defaults.of_command_line = Some(Box::new(alone));
         }
         defaults.with(args)

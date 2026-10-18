@@ -19,7 +19,7 @@ use crate::{fs, git, paths};
 use bstr::BStr;
 use bun_collections::index_sort::sort_slice_by;
 use bun_core::strings;
-use bun_format::options::{Code, Then};
+use bun_format::options::{Code, Goal, ParsePart, PartError, Then};
 use bun_format::pragma::BeforeParsing;
 use bun_format::syntax_error::SyntaxError;
 use bun_format::tailwind::Tailwind;
@@ -96,26 +96,7 @@ impl Problem {
     /// In any other language. `offset`: in `text`, not counting a byte order mark.
     #[cold]
     fn at(text: &[u8], message: &[u8], offset: u32) -> Problem {
-        let text = strings::without_utf8_bom(text);
-        let before = &text[..text.len().min(offset as usize)];
-        let (mut line, mut line_start, mut from) = (1u32, 0, 0);
-        while let Some(found) = strings::index_of_any(&before[from..], b"\n\r") {
-            from += found + 1;
-            // The `\n` of `\r\n` ends the line.
-            if before[from - 1] == b'\n' || text.get(from) != Some(&b'\n') {
-                (line, line_start) = (line + 1, from);
-            }
-        }
-        let rest = &text[line_start..];
-        let end = strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len());
-        Problem {
-            message: message.to_vec(),
-            at: Some(Place {
-                line,
-                column: strings::utf8_decoded_len_utf16(&before[line_start..]) as u32 + 1,
-                line_text: rest[..end].to_vec(),
-            }),
-        }
+        Places::new(text).problem(message, offset)
     }
 
     /// As Bun prints every other error: the line, a caret, the message, and where it is. `shown`: the name of the file.
@@ -141,6 +122,68 @@ impl Problem {
         };
         printed.push_str("\n\n");
         printed.into_bytes()
+    }
+}
+
+/// The lines and columns of places in a text. Asked for one after the other, from the first to the last, they take one pass
+/// over the text, and what is printed is no longer than the text and the messages: a line is shown with the first problem
+/// that is in it.
+struct Places<'a> {
+    text: &'a [u8],
+    line: u32,
+    line_start: usize,
+    /// Up to where line breaks have been looked for.
+    searched: usize,
+    /// Up to where the line has been measured, and how many UTF-16 code units that is.
+    measured: (usize, u32),
+    /// The line that has been shown last.
+    shown: u32,
+}
+
+impl<'a> Places<'a> {
+    fn new(text: &'a [u8]) -> Places<'a> {
+        Places {
+            text: strings::without_utf8_bom(text),
+            line: 1,
+            line_start: 0,
+            searched: 0,
+            measured: (0, 0),
+            shown: 0,
+        }
+    }
+
+    /// `offset`: in the text, not counting a byte order mark.
+    fn problem(&mut self, message: &[u8], offset: u32) -> Problem {
+        let (text, end) = (self.text, self.text.len().min(offset as usize));
+        if end < self.searched {
+            *self = Places::new(text);
+        }
+        while let Some(found) = strings::index_of_any(&text[self.searched..end], b"\n\r") {
+            self.searched += found + 1;
+            // The `\n` of `\r\n` ends the line.
+            if text[self.searched - 1] == b'\n' || text.get(self.searched) != Some(&b'\n') {
+                (self.line, self.line_start) = (self.line + 1, self.searched);
+                self.measured = (self.searched, 0);
+            }
+        }
+        self.searched = end;
+        let more = strings::utf8_decoded_len_utf16(&text[self.measured.0..end]) as u32;
+        self.measured = (end, self.measured.1 + more);
+        let line_text = match std::mem::replace(&mut self.shown, self.line) == self.line {
+            true => &[][..],
+            false => {
+                let rest = &text[self.line_start..];
+                &rest[..strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len())]
+            }
+        };
+        Problem {
+            message: message.to_vec(),
+            at: Some(Place {
+                line: self.line,
+                column: self.measured.1 + 1,
+                line_text: line_text.to_vec(),
+            }),
+        }
     }
 }
 
@@ -308,6 +351,7 @@ fn with_tree<'h, R>(
         how.atoms.of_this_thread(),
         options.experimental_decorators,
         options.every_file_is_a_module,
+        true,
         // The names are the file's own.
         |summary, atoms| then(summary, atoms, &language),
     )
@@ -411,11 +455,14 @@ struct Scratches {
     graphql: bun_format::graphql::Scratch,
     handlebars: bun_format::handlebars::Scratch,
     html: bun_format::html::Scratch,
+    svelte: bun_format::svelte::Scratch,
     yaml: bun_format::yaml::Scratch,
     markdown: bun_format::markdown::Scratch,
     verify: bun_format::verify::Scratch,
     /// For the blocks of code in Markdown.
     blocks: Option<Box<Scratches>>,
+    /// What is to be said about the file that has been formatted last, though it has been formatted.
+    warnings: Vec<Problem>,
 }
 
 fn without_final_newline(out: &mut Vec<u8>) {
@@ -482,6 +529,71 @@ fn parse_code(
     with_file(&how, code.text, |file, _, _| then(file));
 }
 
+/// For the expressions in a component of Svelte.
+fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
+    let names = Session::new();
+    let (atoms, plain) = (Interner::new_in(&names), Resolved::default());
+    let how = |path| How {
+        path,
+        is_script: false,
+        is_flow: false,
+        resolved: &plain,
+        verifies: false,
+        atoms: &atoms,
+        memory: &names,
+    };
+    let [javascript, typescript] =
+        [&b"dummy.js"[..], b"dummy.ts"].map(|path| (path, how(path).language_and_dialect()));
+    let mut parts = bun_sema_parser::Parts::of(text);
+    then(&mut |part, then| {
+        let (path, (language, dialect, _)) = match part.is_typescript {
+            true => &typescript,
+            false => &javascript,
+        };
+        let part = bun_sema_parser::Part {
+            goal: match part.goal {
+                Goal::Expression => bun_sema_parser::Goal::Expression,
+                Goal::Declaration => bun_sema_parser::Goal::Declaration,
+                Goal::Type => bun_sema_parser::Goal::Type,
+            },
+            from: part.from,
+            until: part.until,
+        };
+        let is_javascript = language.parser != Parser::TypeScript;
+        let is_bound = parts.parse(
+            *dialect,
+            is_javascript,
+            part,
+            |summary, atoms, code, end| {
+                let mut recycled = Recycled::of_this_thread();
+                let Summary::InPlace(hir) = summary else {
+                    return false;
+                };
+                let Some(bound) = try_bind_for_format_in(&*hir, &mut recycled) else {
+                    return false;
+                };
+                then(
+                    &File::new(path, &*hir, bound, atoms, language, None).with_text(code),
+                    end,
+                );
+                true
+            },
+        );
+        match is_bound {
+            Ok(true) => Ok(()),
+            // The stack has ended there.
+            Ok(false) => Err(PartError {
+                at: part.from,
+                is_nested_too_deeply: true,
+            }),
+            Err(error) => Err(PartError {
+                at: error.at,
+                is_nested_too_deeply: error.is_too_deep,
+            }),
+        }
+    });
+}
+
 /// Whether the two texts are the same value. What cannot be read as a value, with a key twice, is not looked at.
 fn is_same_toml(before: &[u8], after: &[u8]) -> bool {
     use bun_lint::json::{Notation, parse_as};
@@ -504,6 +616,7 @@ fn format(
     verifies: bool,
 ) -> Result<Formatted, Failure> {
     let options = &resolved.options;
+    scratch.warnings.clear();
     // What `>` of Windows PowerShell writes. Some parsers take it for UTF-8 with a NUL next to every letter.
     if matches!(text, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]) {
         return Err(Failure::Syntax(Problem::new(
@@ -544,16 +657,6 @@ fn format(
     match kind {
         Some(Kind::Script) | None => {}
         Some(Kind::Json(parser)) => {
-            let mut sorted = Vec::new();
-            let text = match options
-                .sort_package_json
-                .filter(|_| paths::basename(name) == b"package.json")
-            {
-                Some(sort) if bun_format::json::sort_package_json(text, sort, &mut sorted) => {
-                    &sorted[..]
-                }
-                _ => text,
-            };
             let done = bun_format::json::format(text, parser, options, &mut scratch.json, &mut out);
             return finish(done, out, "JSON");
         }
@@ -619,6 +722,33 @@ fn format(
                 return Err(Failure::Changed("formatting would change its contents"));
             }
             return finish(done, out, "TOML");
+        }
+        Some(Kind::Svelte) => {
+            let plain = Resolved::default();
+            let parse = |code: Code<'_>, then: Then<'_>| {
+                parse_code(code, &plain, (atoms, memory), then);
+            };
+            let parse = Some(&parse as bun_format::options::JavaScriptParser<'_>);
+            let done = bun_format::svelte::format(
+                name,
+                text,
+                options,
+                parse,
+                &mut scratch.svelte,
+                &mut out,
+            );
+            if verifies
+                && done.is_ok()
+                && out != text
+                && !bun_format::svelte::has_same_content(text, &out, options, parse)
+            {
+                return Err(Failure::Changed("formatting would change its contents"));
+            }
+            let mut places = Places::new(text);
+            scratch.warnings = (scratch.svelte.unformatted().iter())
+                .map(|it| places.problem(&it.message, it.at))
+                .collect();
+            return finish(done, out, "Svelte");
         }
         Some(Kind::Handlebars) => {
             let done =
@@ -783,11 +913,20 @@ fn print<'a>(
         && out != file.text()
     {
         let is_same = with_tree(how, &out, |after, atoms, _| {
-            let after = match &after {
-                Summary::InPlace(hir) => Program::new(&**hir, &out, atoms),
-                Summary::InArena(hir) => Program::new(&**hir, &out, atoms),
+            // The parser goes on after an error, and the tree can be the same: `a\n=> b`.
+            let (has_parse_errors, after) = match &after {
+                Summary::InPlace(hir) => (
+                    hir.has_errors || hir.has_parse_diagnostics,
+                    Program::new(&**hir, &out, atoms),
+                ),
+                Summary::InArena(hir) => (
+                    hir.has_errors || hir.has_parse_diagnostics,
+                    Program::new(&**hir, &out, atoms),
+                ),
             };
-            bun_format::verify::compare(file, program, &after, options, &mut scratch.verify).is_ok()
+            !has_parse_errors
+                && bun_format::verify::compare(file, program, &after, options, &mut scratch.verify)
+                    .is_ok()
         });
         if !is_same {
             return Err(Failure::Changed(
@@ -839,6 +978,7 @@ pub fn format_for_tests(
         options: FormatOptions {
             format_javascript: Some(format_block),
             parse_javascript: Some(parse_javascript),
+            parse_parts: Some(parse_parts),
             ..options.clone()
         },
         formats_what_has_errors: true,
@@ -857,6 +997,49 @@ pub fn format_for_tests(
         Failure::Syntax(_) | Failure::Unread(_) => Refusal::Syntax,
         Failure::Bug | Failure::Changed(_) => Refusal::Bug,
     })
+}
+
+/// A line for each comment of the file at `path`: the node that owns it, or with `only_unprinted` the comments that no
+/// printer has printed. `None` if the file has a syntax error.
+pub fn debug_comments(
+    path: &[u8],
+    text: &[u8],
+    only_unprinted: bool,
+    is_oxfmt: bool,
+) -> Option<Vec<u8>> {
+    let options = FormatOptions {
+        flavor: match is_oxfmt {
+            true => bun_format::options::Flavor::Oxfmt,
+            false => bun_format::options::Flavor::Prettier,
+        },
+        debug_comments: match only_unprinted {
+            true => bun_format::options::DebugComments::Unprinted,
+            false => bun_format::options::DebugComments::Owners,
+        },
+        ..FormatOptions::default()
+    };
+    Some(format_for_tests(path, text, &options).ok()?.0)
+}
+
+/// What `--debug-check` says about the Svelte component `before` if `after` is what it is formatted to: whether both say the
+/// same. For the tests of the check, which the formatter gives nothing to complain about.
+pub fn is_same_svelte_for_tests(before: &[u8], after: &[u8]) -> bool {
+    let options = FormatOptions {
+        parse_javascript: Some(parse_javascript),
+        parse_parts: Some(parse_parts),
+        ..FormatOptions::default()
+    };
+    bun_format::svelte::has_same_content(before, after, &options, None)
+}
+
+/// The error message for the file at `path`, which has no known language.
+fn has_no_parser(configs: &Configs, path: Vec<u8>) -> Vec<u8> {
+    let is_off = configs.asks_for_parser_of_svelte() && configs.turns_svelte_off_for(&path);
+    let reason: &[u8] = match is_off {
+        true => b"Cannot use --parser svelte, because Svelte is off for \"",
+        false => b"No parser could be inferred for file \"",
+    };
+    [reason, &paths::to_native(path)[..], b"\"."].concat()
 }
 
 /// What has become of a file.
@@ -891,14 +1074,21 @@ struct Run<'r> {
 fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
     // The `parser` option says what it is. One that Prettier does not have is that of a plugin.
     match configs.parser_for(scope, path) {
+        Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
+            Language::Other
+        }
         Some(parser) if Kind::of_parser(&parser).is_none() => Language::Other,
         Some(_) => Language::Supported,
         None if configs.is_oxfmt_for(scope) => {
-            files::language_for_oxfmt(path, configs.formats_svelte(scope, path))
+            files::language_for_oxfmt(path, configs.formats_svelte(scope, Some(path)))
         }
         None => match files::language_of(path) {
+            Language::Unknown
+                if path.ends_with(b".svelte") && configs.formats_svelte(scope, Some(path)) =>
+            {
+                Language::Supported
+            }
             Language::Unknown if configs.is_read_by_plugin(scope, path) => Language::Other,
-            Language::Supported if configs.is_read_by_plugin(scope, path) => Language::Other,
             Language::Unknown if files::is_toml(path) && configs.is_native_in(scope) => {
                 Language::Supported
             }
@@ -1065,6 +1255,16 @@ impl Run<'_> {
         out
     }
 
+    /// Says what is wrong in the file that is shown as `shown`, which has been formatted all the same.
+    fn report_warnings(&mut self, shown: &[u8], warnings: &[Problem]) {
+        if self.options.log_level >= LogLevel::Warn {
+            for problem in warnings {
+                let printed = problem.print(shown, bun_ast::Kind::Warn, self.colors());
+                self.out.stderr.extend_from_slice(&printed);
+            }
+        }
+    }
+
     /// Says why the file that is shown as `shown` is left as it is. Not in the way of Prettier or oxfmt, whose words for it
     /// are others anyway.
     fn report(&mut self, shown: &[u8], failure: &Failure) {
@@ -1120,7 +1320,7 @@ impl Run<'_> {
         };
         let language = language_of(configs, &scope, &path);
         let is_ignored = ignored.ignores_file(&path, configs.ignores_of(&scope));
-        let is_of_plugin = configs.plugin_that_reads(&scope, &path).is_some();
+        let is_of_plugin = configs.is_read_by_plugin(&scope, &path);
         let not_installed = match language == Language::Other && is_of_plugin {
             true => self.not_installed(configs, &scope, Some(&path)),
             false => Vec::new(),
@@ -1143,16 +1343,7 @@ impl Run<'_> {
         }
         // As for a file. Who gets the text back with 0 takes it for formatted.
         let allows = self.options.allow_unsupported;
-        // It is the plugin that is missing, not the language.
-        let plugin = (configs.plugin_that_reads(&scope, &path))
-            .filter(|_| files::language_of(&path) == Language::Supported);
-        if let (Language::Other, Some(plugin)) = (language, plugin) {
-            self.say_not_installed(&not_installed);
-            if !allows {
-                self.say_left_for_plugins(1, &[plugin]);
-                return self.out;
-            }
-        } else if language == Language::Other {
+        if language == Language::Other {
             self.say_unsupported(&mut [(ending_of(&path), 1)], &not_installed);
             if allows && !only_looks {
                 self.out.stdout = text;
@@ -1170,15 +1361,7 @@ impl Run<'_> {
             if configs.flavor == Flavor::Prettier && self.options.ignore_unknown && !only_looks {
                 return self.out;
             }
-            let mut out = self.fail_to_start(
-                configs.flavor,
-                &[
-                    b"No parser could be inferred for file \"",
-                    &paths::to_native(path)[..],
-                    b"\".",
-                ]
-                .concat(),
-            );
+            let mut out = self.fail_to_start(configs.flavor, &has_no_parser(configs, path));
             if forgives {
                 out.exit_code = 0;
             }
@@ -1226,8 +1409,10 @@ impl Run<'_> {
             }
             return self.out;
         };
-        let Some(kind) = Kind::of_parser(&parser) else {
-            if !configs.names_other_plugins(&scope, None) {
+        let is_formatted = |kind: &Kind| *kind != Kind::Svelte || options.options.svelte.is_on;
+        let Some(kind) = Kind::of_parser(&parser).filter(is_formatted) else {
+            // Prettier has no `svelte` parser without the plugin either.
+            if &*parser == b"svelte" || !configs.names_other_plugins(&scope, None) {
                 self.error(&cannot_resolve_parser(&parser));
                 self.out.exit_code = match (self.is_native, forgives) {
                     (true, _) => 2,
@@ -1335,7 +1520,8 @@ impl Run<'_> {
         let names = Session::new();
         // Prettier's `listDifferent` comes first, and that is all.
         let verifies = self.options.debug_check && !only_looks;
-        let format_text = |options: &Resolved| {
+        let mut scratch = Scratches::default();
+        let mut format_text = |options: &Resolved| {
             let mut first_failure = None;
             for path in paths {
                 match format(
@@ -1343,7 +1529,7 @@ impl Run<'_> {
                     &text,
                     options,
                     (&Interner::new_in(&names), &names),
-                    &mut Scratches::default(),
+                    &mut scratch,
                     verifies,
                 ) {
                     Err(failure @ Failure::Syntax(_)) => _ = first_failure.get_or_insert(failure),
@@ -1372,6 +1558,9 @@ impl Run<'_> {
             if (options.options.tailwind.as_deref()).is_some_and(Tailwind::has_missed) {
                 return self.fail(&has_classes_without_order(name));
             }
+        }
+        if formatted.is_ok() {
+            self.report_warnings(name, &scratch.warnings);
         }
         match formatted {
             Err(failure @ Failure::Unread(_)) => {
@@ -1510,7 +1699,7 @@ impl Run<'_> {
                 }
                 Language::Supported => work.push((index, target)),
                 Language::Other
-                    if (configs.plugin_that_reads(&target.scope, &target.path)).is_some()
+                    if configs.is_read_by_plugin(&target.scope, &target.path)
                         && [&b"prettier"[..]]
                             .into_iter()
                             .chain(configs.packages_of_plugins(&target.scope, Some(&target.path)))
@@ -1519,8 +1708,7 @@ impl Run<'_> {
                     handed_over.push((index, target));
                 }
                 Language::Other => {
-                    let plugin = configs.plugin_that_reads(&target.scope, &target.path);
-                    if plugin.is_some() {
+                    if configs.is_read_by_plugin(&target.scope, &target.path) {
                         for package in [&b"prettier"[..]]
                             .into_iter()
                             .chain(configs.packages_of_plugins(&target.scope, Some(&target.path)))
@@ -1530,20 +1718,6 @@ impl Run<'_> {
                             }
                         }
                     }
-                    // It is the plugin that is missing, not the language.
-                    if let Some(plugin) = plugin
-                        && files::language_of(&target.path) == Language::Supported
-                    {
-                        if options.allow_unsupported {
-                            work.push((index, target));
-                        } else {
-                            left_for_plugins.0 += 1;
-                            if !left_for_plugins.1.contains(&plugin) {
-                                left_for_plugins.1.push(plugin);
-                            }
-                        }
-                        continue;
-                    }
                     let kind = ending_of(&target.path);
                     match others.iter_mut().find(|it| it.0 == kind) {
                         Some(entry) => entry.1 += 1,
@@ -1552,14 +1726,8 @@ impl Run<'_> {
                 }
                 Language::Unknown if target.ignores_unknown || options.ignore_unknown => {}
                 Language::Unknown => {
-                    done[index] = Some(Done::Failed(
-                        [
-                            b"No parser could be inferred for file \"",
-                            &paths::to_native(target.path.clone())[..],
-                            b"\".",
-                        ]
-                        .concat(),
-                    ));
+                    let path = target.path.clone();
+                    done[index] = Some(Done::Failed(has_no_parser(configs, path)));
                 }
             }
         }
@@ -1609,6 +1777,8 @@ impl Run<'_> {
         let atoms = InternerPerThread::new_in(&names);
         let memory = Session::new();
         let mut results = Guarded::new(done);
+        // By the place of a file in `expanded`.
+        let mut warnings: Guarded<Vec<(usize, Vec<Problem>)>> = Guarded::new(Vec::new());
         // Tailwind cannot be asked, and that is allowed.
         let leaves_classes = AtomicBool::new(false);
         let once = fs::Written::default();
@@ -1653,6 +1823,10 @@ impl Run<'_> {
                     .is_some_and(Tailwind::has_missed)
                 {
                     return Ok(Done::PutAside);
+                }
+                if !scratch.warnings.is_empty() {
+                    let all = std::mem::take(&mut scratch.warnings);
+                    warnings.lock().push((index, all));
                 }
                 if formatted == text {
                     return Ok(Done::Unchanged);
@@ -1719,7 +1893,11 @@ impl Run<'_> {
 
         let (mut different, mut unchanged, mut failed) = (0usize, 0usize, 0usize);
         let (mut written, mut partly_staged) = (Vec::new(), Vec::new());
-        for (it, done) in expanded.iter().zip(std::mem::take(results.get_mut())) {
+        let mut warnings = std::mem::take(warnings.get_mut());
+        sort_slice_by(&mut warnings[..], |a, b| a.0.cmp(&b.0));
+        let mut warnings = warnings.into_iter().peekable();
+        let results = std::mem::take(results.get_mut());
+        for (index, (it, done)) in expanded.iter().zip(results).enumerate() {
             let target = match it {
                 Expanded::Error(error) => {
                     self.error(error);
@@ -1728,6 +1906,9 @@ impl Run<'_> {
                 Expanded::File(target) => target,
             };
             let shown = paths::relative(cwd, &target.path);
+            if let Some((_, all)) = warnings.next_if(|it| it.0 == index) {
+                self.report_warnings(&shown, &all);
+            }
             match done {
                 None => {}
                 Some(Done::Unchanged) => {
@@ -1916,8 +2097,6 @@ impl Run<'_> {
         // The tool that this stands in for would have formatted or checked them, so this comes last and is an error.
         if !others.is_empty() {
             self.say_unsupported(&mut others, &not_installed);
-        } else {
-            self.say_not_installed(&not_installed);
         }
         self.out
     }
@@ -1981,7 +2160,7 @@ impl Run<'_> {
         match scope.as_ref().map(|scope| configs.config_of(scope)) {
             Ok(Ok(other)) => {
                 let other = other.map(|it| &it.path[..]);
-                crate::init::FORMAT.add(other, self.environment)
+                crate::init::FORMAT.add(other, self.options.bunfig_above(), self.environment)
             }
             Ok(Err(Fatal(error))) => self.fail_to_start(configs.flavor, &error),
             Err(Fatal(error)) => self.fail_to_start(configs.flavor, error),
@@ -2010,6 +2189,14 @@ impl Run<'_> {
         }
         if !(options.plugins.iter()).all(|it| config::is_built_in_plugin(it)) {
             self.warn(b"--plugin has no effect because bun fmt does not load Prettier plugins");
+        }
+        if configs.asks_for_parser_of_svelte()
+            && (configs.for_directory(&environment.cwd))
+                .is_ok_and(|own| configs.turns_svelte_off(&own, &environment.cwd))
+        {
+            return self.fail(
+                b"Cannot use --parser svelte while Svelte is off (--no-svelte, or svelte = false in bunfig.toml).",
+            );
         }
         if options.config.is_some() && !options.config_lookup {
             let mut out = self.fail(b"Cannot use --no-config and --config together.");

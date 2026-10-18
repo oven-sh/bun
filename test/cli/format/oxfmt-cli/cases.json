@@ -2445,6 +2445,20 @@
   },
   {
    "name": "stdin_svelte",
+   "index": 0,
+   "args": [
+    "--stdin-filepath",
+    "App.svelte",
+    "--config",
+    "./fmt-with-svelte.json"
+   ],
+   "stdin": "input.svelte",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "<script>\n  let count = $state(0);\n</script>\n\n<button onclick={() => count++}>{count}</button>\n"
+  },
+  {
+   "name": "stdin_svelte",
    "index": 1,
    "args": [
     "--stdin-filepath",
@@ -2459,6 +2473,24 @@
   },
   {
    "name": "svelte",
+   "index": 0,
+   "args": [
+    "--check",
+    "--config",
+    "./fmt-simple.json"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "App.svelte",
+    "Doc.mdx",
+    "README.md",
+    "legacy/Old.svelte",
+    "script.js"
+   ]
+  },
+  {
+   "name": "svelte",
    "index": 1,
    "args": [
     "--check",
@@ -2468,6 +2500,72 @@
    "exitCode": 1,
    "changed": {},
    "listed": [
+    "script.js"
+   ]
+  },
+  {
+   "name": "svelte",
+   "index": 2,
+   "args": [
+    "--check",
+    "--config",
+    "./fmt-root-overrides.json"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "App.svelte",
+    "Doc.mdx",
+    "README.md",
+    "legacy/Old.svelte",
+    "script.js"
+   ]
+  },
+  {
+   "name": "svelte",
+   "index": 3,
+   "args": [
+    "--check",
+    "--config",
+    "./fmt-overrides-only.json"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "App.svelte",
+    "legacy/Old.svelte",
+    "script.js"
+   ]
+  },
+  {
+   "name": "svelte",
+   "index": 4,
+   "args": [
+    "--check",
+    "--config",
+    "./fmt-md-only.json"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "README.md",
+    "script.js"
+   ]
+  },
+  {
+   "name": "svelte",
+   "index": 5,
+   "args": [
+    "--check",
+    "--config",
+    "./fmt-bool-disable.json"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "App.svelte",
+    "Doc.mdx",
+    "README.md",
     "script.js"
    ]
   },

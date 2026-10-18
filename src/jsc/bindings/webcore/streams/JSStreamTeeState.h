@@ -80,6 +80,8 @@ public:
     // `canceled1` / `canceled2`
     bool m_canceled1 : 1 { false };
     bool m_canceled2 : 1 { false };
+    // Fetch Body cloning uses StructuredClone for the second branch; public tee() does not.
+    bool m_cloneForBranch2 : 1 { false };
 
 private:
     JSStreamTeeState(JSC::VM&, JSC::Structure*);

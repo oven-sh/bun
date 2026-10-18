@@ -579,7 +579,10 @@ impl Default for PlanOptions {
             orders_types_by_content: true,
             shares_at_once: true,
             has_no_steps: true,
-            commit_policy: CommitPolicy { entries: 1024, ..CommitPolicy::default() },
+            commit_policy: CommitPolicy {
+                entries: 1024,
+                ..CommitPolicy::default()
+            },
             jitter: Jitter::default(),
             projects_at_once: 4,
             after_file_is_for_checked_files: false,

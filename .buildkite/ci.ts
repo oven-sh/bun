@@ -87,6 +87,12 @@ function setBuildMetadata(name: string, value: string): void {
   }
 }
 
+/**
+ * How many of a pull request's files the test shards are told about, the
+ * first ones in path order: a meta-data value holds at most 100 KB.
+ */
+const maxStoredPullRequestFiles = 500;
+
 /** The fields of GitHub's "get the latest release" response that are read here. */
 interface GithubRelease {
   tag_name: string;
@@ -1922,13 +1928,7 @@ async function main() {
 
   startGroup("Listing the files of the pull request...");
   if (options && isBuildkite && !isMainBranch()) {
-    let allFiles: string[] = [];
-    let newFiles: string[] = [];
-    try {
-      ({ allFiles, newFiles } = await getPullRequestFiles());
-    } catch (e) {
-      console.error(e);
-    }
+    const { allFiles, newFiles } = getPullRequestFiles();
     if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
       console.log(`- PR is only docs, skipping tests!`);
       return;
@@ -1936,10 +1936,12 @@ async function main() {
     options.changedFiles = allFiles;
     // Publish the file lists as build meta-data, where the test shards read
     // them: a shard has no history to work them out from, and does not ask
-    // GitHub (scripts/runner.node.ts).
+    // GitHub (scripts/runner.node.ts). Only what is stored is cut short: this
+    // step decides on every file.
     if (allFiles.length > 0) {
-      setBuildMetadata("pr-all-files", JSON.stringify(allFiles));
-      setBuildMetadata("pr-new-files", JSON.stringify(newFiles));
+      const stored = new Set(allFiles.slice(0, maxStoredPullRequestFiles));
+      setBuildMetadata("pr-all-files", JSON.stringify([...stored]));
+      setBuildMetadata("pr-new-files", JSON.stringify(newFiles.filter(filename => stored.has(filename))));
     }
   }
 

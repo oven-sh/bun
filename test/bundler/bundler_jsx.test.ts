@@ -527,7 +527,7 @@ describe("bundler", () => {
     },
   });
 
-  // An object `define` is a literal at each use. The automatic runtime passes a
+  // Every use of an object `define` gets the whole value. The automatic runtime passes a
   // lone spread object as the props, and that must not take the properties
   // away from the other uses of the define, in the same file or in another one.
   describe("a spread of an object define", () => {

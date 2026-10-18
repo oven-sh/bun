@@ -67,8 +67,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 35: Long hexadecimal, octal and binary literals are rounded to the nearest double.
 /// Version 36: `export`, `require()`, `import()`, a JSX element, an exported async function and
 /// an abstract class are mapped elsewhere.
-/// Version 37: A JSX spread no longer empties an object `--define` or an inlined macro
-/// result. Older entries print `{}` for the uses that the module loader transpiled after it.
+/// Version 37: A JSX spread no longer empties an object `--define`. Older entries can print it as `{}`.
 const EXPECTED_VERSION: u32 = 37;
 
 /// Source files smaller than this are not written to / read from the on-disk

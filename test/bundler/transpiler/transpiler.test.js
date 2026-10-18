@@ -2593,7 +2593,7 @@ export default <>hi</>
     expect(exitCode).toBe(0);
   });
 
-  // Each use of an object or array define is a literal of its own. The automatic JSX runtime
+  // Every use of an object or array define gets the whole value. The automatic JSX runtime
   // passes a lone spread object as the props: `<div {...OBJ} />` is `jsxDEV("div", { a: 1 })`.
   // That must not take the properties away from the other uses of the define.
   describe("define with an object or array value", () => {
@@ -2648,19 +2648,22 @@ export const after = { a: 1 };
       expect(transpiler.transformSync("export const b = OBJ;")).toBe("export const b = { a: 1 };\n");
     });
 
-    // transform() parses on a pool thread. Every call reads the one define table of the transpiler.
+    // transform() parses on a pool thread, and every call reads the one define table of the transpiler.
+    // When a call takes the properties of the table, the other calls print wrong output or crash.
     it("is whole in every concurrent transform()", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
           `
-            const object = Object.fromEntries(Array.from({ length: 200 }, (_, i) => ["k" + i, "v" + i]));
-            const transpiler = new Bun.Transpiler({ loader: "jsx", define: { OBJ: JSON.stringify(object) } });
-            const source = "export const a = <div {...OBJ}>kid</div>; export const b = OBJ;";
-            const outputs = await Promise.all(Array.from({ length: 64 }, () => transpiler.transform(source)));
-            const count = text => text.split('"v199"').length - 1;
-            console.log(JSON.stringify({ distinct: new Set(outputs).size, uses: count(outputs[0]) }));
+            const transpiler = new Bun.Transpiler({ loader: "jsx", define: { OBJ: '{"a":1}' } });
+            const source = Array.from(
+              { length: 200 },
+              (_, i) => "export const c" + i + " = <div {...OBJ}>kid</div>;\\nexport const p" + i + " = OBJ;",
+            ).join("\\n");
+            const outputs = await Promise.all(Array.from({ length: 8 }, () => transpiler.transform(source)));
+            const uses = outputs[0].split("a: 1").length - 1;
+            console.log(JSON.stringify({ distinct: new Set(outputs).size, uses }));
           `,
         ],
         env: bunEnv,
@@ -2668,10 +2671,11 @@ export const after = { a: 1 };
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-        stdout: JSON.stringify({ distinct: 1, uses: 2 }),
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: JSON.stringify({ distinct: 1, uses: 400 }),
         stderr: "",
         exitCode: 0,
+        signalCode: null,
       });
     });
   });

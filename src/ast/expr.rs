@@ -140,14 +140,11 @@ enum LiteralContainer {
 }
 
 impl Expr {
-    /// Copies a tree of object, array and string literals. The copy shares
-    /// string bytes with `self` and no node; a node of any other kind is
-    /// copied by value. Nodes go in the thread-local `Store`, lists in the
-    /// active `AstAlloc` scope. Iterative: the tree can be deeper than the
-    /// stack of this thread allows a recursion.
+    /// Copies a tree of object, array and string literals. The copy shares no node with `self`.
     #[cold]
     pub fn clone_literal_tree(self) -> Expr {
         let mut root = self;
+        // A work list, not recursion: a define can nest deeper than the stack of a pool thread allows.
         let mut work: Vec<LiteralContainer> = Vec::new();
         let mut next = root.own_literal_node();
         while let Some(container) = next {
@@ -211,6 +208,44 @@ impl Expr {
             }
             _ => None,
         }
+    }
+
+    /// Whether `self` and `other` share a string, object or array node, or a list, at the same place.
+    pub fn shares_literal_node_with(&self, other: &Expr) -> bool {
+        let mut work: Vec<(Expr, Expr)> = vec![(*self, *other)];
+        while let Some((a, b)) = work.pop() {
+            match (a.data, b.data) {
+                (Data::EString(a), Data::EString(b)) => {
+                    if a == b {
+                        return true;
+                    }
+                }
+                (Data::EObject(a), Data::EObject(b)) => {
+                    if a == b
+                        || (!a.properties.is_empty()
+                            && a.properties.as_ptr() == b.properties.as_ptr())
+                    {
+                        return true;
+                    }
+                    for (a, b) in a.properties.iter().zip(b.properties.iter()) {
+                        let children = [
+                            (a.key, b.key),
+                            (a.value, b.value),
+                            (a.initializer, b.initializer),
+                        ];
+                        work.extend(children.into_iter().filter_map(|(a, b)| a.zip(b)));
+                    }
+                }
+                (Data::EArray(a), Data::EArray(b)) => {
+                    if a == b || (!a.items.is_empty() && a.items.as_ptr() == b.items.as_ptr()) {
+                        return true;
+                    }
+                    work.extend(a.items.iter().copied().zip(b.items.iter().copied()));
+                }
+                _ => {}
+            }
+        }
+        false
     }
 }
 

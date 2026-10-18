@@ -525,8 +525,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         spread_object = Some(*inner);
                     }
                     let mut props: G::PropertyList = match spread_object {
-                        // Other expressions can point at this object: each use of a
-                        // `const` that holds a macro result does. Copy its list.
+                        // Another expression can hold the spread object (a macro result), so copy its list.
                         Some(object) => {
                             let mut props = G::PropertyList::init_capacity(
                                 object.properties.len() + usize::from(!e_.children.is_empty()),

@@ -195,8 +195,7 @@ impl Property {
         self.class_static_block.as_deref_mut()
     }
 
-    /// Field-wise copy: every expression and the static block still point at
-    /// the nodes of `self`. The decorator list is a new list of the same items.
+    /// Field-wise copy: the expressions and the static block still point at the nodes of `self`.
     pub fn shallow_clone(&self) -> Property {
         Property {
             initializer: self.initializer,

@@ -313,7 +313,7 @@ devTest("import.meta.hot.accept multiple modules", {
     await c.expectMessageInAnyOrder("Counter updated: 3", "Name updated: Charlie");
   },
 });
-// An array `define` is a literal at each use. `import.meta.hot.accept` replaces the items of its
+// Every use of an array `define` gets the whole value. `import.meta.hot.accept` replaces the items of its
 // dependency list, and that must not change what the next use or the next parse gets for the define.
 devTest("import.meta.hot.accept with a dependency list from a define", {
   files: {

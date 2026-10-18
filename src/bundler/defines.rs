@@ -10,7 +10,7 @@ use crate::defines_table::{
 };
 
 // ══════════════════════════════════════════════════════════════════════════
-// B-3 UNIFIED: `Define` / `DefineData` / `DotDefine` / `Flags` / `Options` /
+// B-3 UNIFIED: `Define` / `DefineData` / `DotDefine` / `Options` /
 // `RawDefines` / `UserDefines` / `UserDefinesArray` are canonical in
 // `bun_js_parser::defines` (lower tier) so the parser's `P.define: &'a Define`
 // and `BundleOptions.define: Box<Define>` are the *same* nominal type. This
@@ -21,7 +21,7 @@ use crate::defines_table::{
 // directly with no cross-crate hook.
 // ══════════════════════════════════════════════════════════════════════════
 pub use bun_js_parser::defines::{
-    Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines, UserDefines,
+    Define, DefineData, DotDefine, IdentifierDefine, Options, RawDefines, UserDefines,
     UserDefinesArray, are_parts_equal,
 };
 

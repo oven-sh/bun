@@ -7112,8 +7112,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_delete_target: bool,
         define_data: &DefineData,
     ) -> Expr {
-        // Callers gate on `!valueless()` before reaching here, so `value` is a
-        // real Expr.Data by contract.
         match define_data.identifier() {
             Some(id) => {
                 // Identifier defines always carry a name. Match the

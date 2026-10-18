@@ -290,7 +290,7 @@ pub mod defines {
     /// (`E.CallUnwrap`, 2 bits), `method_call_must_be_replaced_with_undefined`.
     #[repr(transparent)]
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
-    pub struct Flags(u8);
+    pub(crate) struct Flags(u8);
 
     impl Flags {
         const VALUELESS_SHIFT: u8 = 3;
@@ -341,7 +341,7 @@ pub mod defines {
             self.0 = (self.0 & !(1 << Self::METHOD_CALL_UNDEF_SHIFT))
                 | ((v as u8) << Self::METHOD_CALL_UNDEF_SHIFT);
         }
-        pub fn new(
+        pub(crate) fn new(
             valueless: bool,
             can_be_removed_if_unused: bool,
             call_can_be_unwrapped_if_unused: E::CallUnwrap,
@@ -360,17 +360,14 @@ pub mod defines {
 
     #[derive(Clone)]
     pub struct DefineData {
-        /// Nodes of the define table. Private: `value_for_use` is the only way
-        /// from here to an `Expr`, and it copies every node it returns.
+        /// A node of the define table. Only `value_for_use` turns it into an `Expr`, and it copies.
         value: ExprData,
         // The `RawDefines` value bytes are owned (`Box<[u8]>`), so borrowing
         // would be a use-after-free once the `RawDefines` map is dropped after
         // `Define::init`. Own the bytes here instead — these are tiny
         // startup-time copies.
-        // Kept `pub` so the bundler-side `parse`/`from_input` (which live a
-        // tier up for json-parser access) can construct directly.
-        pub original_name: Option<Box<[u8]>>,
-        pub flags: Flags,
+        original_name: Option<Box<[u8]>>,
+        flags: Flags,
     }
 
     // SAFETY: the nodes behind `value` are not written after init. They never
@@ -454,7 +451,6 @@ pub mod defines {
             self.flags.valueless()
         }
 
-        /// The identifier this define names, for the parser to resolve.
         #[inline]
         pub(crate) fn identifier(&self) -> Option<E::Identifier> {
             match self.value {
@@ -463,24 +459,27 @@ pub mod defines {
             }
         }
 
-        /// The value as one use of the define gets it. A string, an object or
-        /// an array is a copy, so no pass over the AST can write to the table.
+        /// What one use of the define gets: its own copy of a string, an object or an array.
         #[inline]
         pub(crate) fn value_for_use(&self, loc: bun_ast::Loc) -> Expr {
-            if let ExprData::EString(string) = self.value {
-                return Expr::init(&*string, loc);
-            }
-            let expr = Expr {
+            let table = Expr {
                 data: self.value,
                 loc,
             };
-            if matches!(self.value, ExprData::EObject(_) | ExprData::EArray(_)) {
-                return expr.clone_literal_tree();
-            }
+            let expr = if let ExprData::EString(string) = self.value {
+                Expr::init(&*string, loc)
+            } else if matches!(self.value, ExprData::EObject(_) | ExprData::EArray(_)) {
+                table.clone_literal_tree()
+            } else {
+                table
+            };
+            debug_assert!(
+                !expr.shares_literal_node_with(&table),
+                "a use of a define got a node of the define table"
+            );
             expr
         }
 
-        /// The string this define holds.
         #[inline]
         pub fn string(&self) -> Option<&E::EString> {
             match &self.value {

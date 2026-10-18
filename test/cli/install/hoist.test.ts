@@ -2548,6 +2548,18 @@ describe.concurrent("adding an unrelated package doesn't split a plugin from its
       ["a@1.0.0", "cx@1.0.0", "holder@1.0.0", "host@2.1.0", "tg@1.0.0"],
     ],
     [
+      // kit uses the host@2 that n provides, so kit and plug both stay under n.
+      "the plugin's owner has the same peer dependency",
+      {
+        n: { "1.0.0": { dependencies: { host: "^2.1.0", kit: "1.0.0" } } },
+        kit: { "1.0.0": { dependencies: { plug: "1.0.0" }, peerDependencies: { host: "^2.1.0" } } },
+        plug: { "1.0.0": { peerDependencies: { host: ">=1.0.0" } } },
+      },
+      { n: "1.0.0" },
+      "a",
+      ["a@1.0.0", "host@1.5.0", "n@1.0.0", "n/host@2.1.0", "n/kit@1.0.0", "n/kit/plug@1.0.0"],
+    ],
+    [
       // As in pnpm, plug belongs to the project and not to n, so it loads the host at the top.
       "but a plugin that's only installed for a peer dependency goes to the top",
       {

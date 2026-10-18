@@ -564,18 +564,28 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) linked: reachable::Linked,
 }
 
-/// The peers of the package that's being hoisted. Each one comes with:
-/// - whether the package loads an in-range copy from the highest folder checked so far, and
-/// - the in-range copy that the package's owner depends on, if the owner also depends on the package.
+/// The peers of the package that's being hoisted. Each one comes with whether the package loads an
+/// in-range copy from the highest folder checked so far, and with the copy that its owner uses.
 ///
 /// An optional peer is only listed if the owner provides it. The bit sets cache which packages have
 /// peers, and which packages a regular dependency resolves to.
 #[derive(Default)]
 pub(crate) struct PeerProbes(
-    Vec<(DependencyID, bool, Option<PackageID>)>,
+    Vec<(DependencyID, bool, OwnerCopy)>,
     Option<DynamicBitSet>,
     Option<DynamicBitSet>,
 );
+
+/// The copy of a peer that the owner of the package uses too.
+#[derive(Clone, Copy)]
+enum OwnerCopy {
+    /// The owner doesn't use the peer, or it only has a peer dependency on the package.
+    None,
+    /// The owner has the same peer dependency, so it uses the first copy above it.
+    FirstAbove,
+    /// The owner depends on this copy.
+    Package(PackageID),
+}
 
 impl PeerProbes {
     /// `package_id` is about to be hoisted out of the package with `owner_deps`.
@@ -654,9 +664,20 @@ impl PeerProbes {
                 None => !peer.behavior.is_optional_peer(),
             };
             if is_listed {
-                let next_to_package = owner_copy.filter(|_| !is_for_peer);
+                let has_same_peer = || {
+                    (owner_deps.begin()..owner_deps.end()).any(|dep_id| {
+                        let dep = &deps[dep_id as usize];
+                        dep.name_hash == peer.name_hash && !dep.behavior.is_optional_peer()
+                    })
+                };
+                let used_by_owner = match owner_copy {
+                    _ if is_for_peer => OwnerCopy::None,
+                    Some(copy) => OwnerCopy::Package(copy),
+                    None if has_same_peer() => OwnerCopy::FirstAbove,
+                    None => OwnerCopy::None,
+                };
                 self.0
-                    .push((peer_dep_id, owner_copy.is_some(), next_to_package));
+                    .push((peer_dep_id, owner_copy.is_some(), used_by_owner));
             }
         }
     }
@@ -664,9 +685,9 @@ impl PeerProbes {
     /// Returns true if the package must not be hoisted into tree `tree_id`, because it would stop
     /// loading the copy of a peer that it loads now. That's the case if the tree has:
     /// - an out-of-range version of a required peer, or
-    /// - a different version than the package's owner depends on, which was only installed for
-    ///   another package's peer dependency. Adding an unrelated package to a project must not split
-    ///   a plugin from its host. This doesn't apply to a package that's hoisted for a peer
+    /// - a different version than the package's owner uses, which was only installed for another
+    ///   package's peer dependency. Adding an unrelated package to a project must not split a
+    ///   plugin from its host. This doesn't apply to a package that's hoisted for a peer
     ///   dependency. As in pnpm, it belongs to the project.
     fn is_hidden_by(
         &mut self,
@@ -694,14 +715,18 @@ impl PeerProbes {
             let is_optional = peer.behavior.is_optional_peer();
             if pkg_resolutions[held as usize].satisfies_dependency_version(&peer.version, buf, buf)
             {
-                if owner_copy.is_some_and(|copy| copy != held) {
-                    if !(self.2)
-                        .get_or_insert_with(|| regular_targets(lockfile, deps, resolutions))
-                        .is_set(held as usize)
-                    {
-                        return true;
+                match owner_copy {
+                    OwnerCopy::Package(copy) if copy != held => {
+                        if !(self.2)
+                            .get_or_insert_with(|| regular_targets(lockfile, deps, resolutions))
+                            .is_set(held as usize)
+                        {
+                            return true;
+                        }
+                        self.0[i].2 = OwnerCopy::None;
                     }
-                    self.0[i].2 = None;
+                    OwnerCopy::FirstAbove => self.0[i].2 = OwnerCopy::Package(held),
+                    _ => {}
                 }
                 self.0[i].1 |= !is_optional;
                 i += 1;

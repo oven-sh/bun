@@ -152,6 +152,11 @@ for (const property of ["width", "outline-width"]) {
   });
 }
 
+test.concurrent(`width: a percentage that cancels at the start of a sum of ${long} terms stays as 0%`, async () => {
+  const result = await build(`.a{width:calc(50% + ${join(f, " + ", long)} - 50% + 25% - 25%)}`);
+  expectSame(result, result.output, rule(`width: calc(0% + ${join(F, " + ", long)})`));
+});
+
 const query = (sum: string) => `@media (min-width: calc(${sum} + .001px)) {\n  .a {\n    color: red;\n  }\n}\n`;
 
 test.concurrent(`a media query range of ${long} terms, lowered for the default targets of bun build`, async () => {

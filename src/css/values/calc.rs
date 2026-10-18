@@ -123,13 +123,17 @@ mod sum {
 
     impl<V: CalcValue> Calc<V> {
         /// The sum of `terms`. A term that is a sum gives its own terms, and a
-        /// value of zero is left out. One term is that term.
+        /// value that adds nothing is left out. One term is that term.
         pub(crate) fn sum(mut terms: Vec<Calc<V>>) -> Calc<V> {
             let (mut nested, mut zeros) = (false, 0);
-            for term in &terms {
+            for term in &mut terms {
                 match term {
                     Calc::Sum(_) => nested = true,
-                    term if term.is_zero_value() => zeros += 1,
+                    Calc::Value(v) if v.try_sign() == Some(0.0) => match v.zero_in_sum() {
+                        None => zeros += 1,
+                        // `-0%` stays as `0%`.
+                        Some(zero) => **v = zero,
+                    },
                     _ => {}
                 }
             }
@@ -144,9 +148,9 @@ mod sum {
                 terms = flat;
             }
             if zeros > 0 && terms.len() > 1 {
-                // The first one stays when every term is a value of zero.
+                // The first one stays when every term adds nothing.
                 let mut keep_one = zeros == terms.len();
-                terms.retain(|term| !term.is_zero_value() || core::mem::take(&mut keep_one));
+                terms.retain(|term| !term.adds_nothing() || core::mem::take(&mut keep_one));
             }
             match terms.len() {
                 0 => Calc::Number(0.0),
@@ -217,6 +221,9 @@ pub trait CalcValue:
         next: Calc<Self>,
         input: &mut css::Parser,
     ) -> CssResult<RunningSum<Self>>;
+    /// What a sum keeps in place of this value when it is zero. `None` leaves it out, and not
+    /// every zero is left out: https://drafts.csswg.org/css-values-4/#calc-simplification
+    fn zero_in_sum(&self) -> Option<Self>;
     /// Wrap a value as a `Calc<Self>`.
     fn into_calc(self) -> Calc<Self>;
 }
@@ -385,27 +392,10 @@ impl<V: CalcValue> Calc<V> {
                 Ok(Calc::Function(Box::new(MathFunction::Calc(calc))))
             }
             CalcUnit::Min => {
-                let mut reduced = input.parse_nested_block(|i| {
-                    i.parse_comma_separated(|i| Self::parse_sum(i, parse_ident))
-                })?;
-                // PERF(alloc): i don't like this additional allocation
-                // can we use stack fallback here if the common case is that there will be 1 argument?
-                Self::reduce_args(&mut reduced, Ordering::Less);
-                if reduced.len() == 1 {
-                    return Ok(reduced.swap_remove(0));
-                }
-                Ok(Calc::Function(Box::new(MathFunction::Min(reduced))))
+                Self::parse_min_max(input, Ordering::Less, MathFunction::Min, parse_ident)
             }
             CalcUnit::Max => {
-                let mut reduced = input.parse_nested_block(|i| {
-                    i.parse_comma_separated(|i| Self::parse_sum(i, parse_ident))
-                })?;
-                // PERF: i don't like this additional allocation
-                Self::reduce_args(&mut reduced, Ordering::Greater);
-                if reduced.len() == 1 {
-                    return Ok(reduced.remove(0));
-                }
-                Ok(Calc::Function(Box::new(MathFunction::Max(reduced))))
+                Self::parse_min_max(input, Ordering::Greater, MathFunction::Max, parse_ident)
             }
             CalcUnit::Clamp => {
                 let (min, mut center, max) = input.parse_nested_block(|i| {
@@ -557,6 +547,25 @@ impl<V: CalcValue> Calc<V> {
                 Ok(Calc::Function(Box::new(MathFunction::Sign(v))))
             }),
         }
+    }
+
+    fn parse_min_max(
+        input: &mut css::Parser,
+        order: Ordering,
+        function: fn(Vec<Self>) -> MathFunction<V>,
+        parse_ident: ParseIdent<'_, V>,
+    ) -> CssResult<Self> {
+        let mut args = input
+            .parse_nested_block(|i| i.parse_comma_separated(|i| Self::parse_sum(i, parse_ident)))?;
+        Self::reduce_args(&mut args, order);
+        if args.len() == 1 {
+            // min(x) and max(x) are x, but a sum or a product is only valid inside a math function.
+            return Ok(match args.swap_remove(0) {
+                arg @ (Calc::Value(_) | Calc::Number(_) | Calc::Function(_)) => arg,
+                arg => Calc::Function(Box::new(MathFunction::Calc(arg))),
+            });
+        }
+        Ok(Calc::Function(Box::new(function(args))))
     }
 
     pub(crate) fn parse_numeric_fn(
@@ -901,6 +910,10 @@ impl<V: CalcValue> Calc<V> {
 
     pub(crate) fn parse_hypot(args: &mut [Self]) -> CssResult<Option<Self>> {
         if args.len() == 1 {
+            // A sum or a product is only valid inside a math function, so it stays in hypot().
+            if matches!(args[0], Calc::Sum(_) | Calc::Product { .. }) {
+                return Ok(None);
+            }
             let v = core::mem::replace(&mut args[0], Calc::Number(0.0));
             return Ok(Some(v));
         }
@@ -988,7 +1001,7 @@ impl<V: CalcValue> Calc<V> {
                     }
                     // White space is always required.
                     match term {
-                        Calc::Value(v) if term.is_sign_negative() => {
+                        Calc::Value(v) if term.sign_in_sum().is_some_and(f32::is_sign_negative) => {
                             dest.write_str(b" - ")?;
                             Self::mul_value_f32((**v).clone(), -1.0).to_css(dest)?;
                         }
@@ -1038,9 +1051,17 @@ impl<V: CalcValue> Calc<V> {
         s.is_sign_negative()
     }
 
-    /// Whether this is a value of zero. It adds nothing to a sum.
-    fn is_zero_value(&self) -> bool {
-        matches!(self, Calc::Value(v) if v.try_sign() == Some(0.0))
+    /// The sign of a term of a sum. A value of zero that stays in the sum has none.
+    fn sign_in_sum(&self) -> Option<f32> {
+        match self {
+            Calc::Value(v) => v.try_sign().filter(|sign| *sign != 0.0),
+            _ => self.try_sign(),
+        }
+    }
+
+    /// Whether a sum leaves this term out.
+    fn adds_nothing(&self) -> bool {
+        matches!(self, Calc::Value(v) if v.try_sign() == Some(0.0) && v.zero_in_sum().is_none())
     }
 
     pub(crate) fn mul_f32(self, other: f32) -> Self {
@@ -1256,7 +1277,7 @@ impl<V: CalcValue + protocol::TryAdd> SumBuilder<V> {
                 if let Calc::Value(a) = &mut self.terms[i] {
                     **a = sum;
                 }
-                if self.terms.len() > 1 && self.terms[i].is_zero_value() {
+                if self.terms.len() > 1 && self.terms[i].adds_nothing() {
                     self.remove(i);
                 }
                 self.order_first_two();
@@ -1264,9 +1285,9 @@ impl<V: CalcValue + protocol::TryAdd> SumBuilder<V> {
             }
         }
         // `0px + x` is `x` and `x + 0px` is `x`.
-        if matches!(self.terms.as_slice(), [a] if a.is_zero_value()) {
+        if matches!(self.terms.as_slice(), [a] if a.adds_nothing()) {
             self.remove(0);
-        } else if rhs.is_zero_value() {
+        } else if rhs.adds_nothing() {
             return;
         }
         if let (Some(values), Calc::Value(_)) = (&mut self.values, &rhs) {
@@ -1323,7 +1344,10 @@ impl<V: CalcValue + protocol::TryAdd> SumBuilder<V> {
         let [a, b, ..] = self.terms.as_mut_slice() else {
             return;
         };
-        if !a.is_sign_negative() || !b.try_sign().is_some_and(|sign| sign.is_sign_positive()) {
+        let (Some(a_sign), Some(b_sign)) = (a.sign_in_sum(), b.sign_in_sum()) else {
+            return;
+        };
+        if !a_sign.is_sign_negative() || !b_sign.is_sign_positive() {
             return;
         }
         // A term with a sign is a value or a number.
@@ -1797,6 +1821,10 @@ impl CalcValue for CSSNumber {
         sum.add_value(next, input, |a, b| a + b)
     }
     #[inline]
+    fn zero_in_sum(&self) -> Option<Self> {
+        None
+    }
+    #[inline]
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
@@ -1820,6 +1848,10 @@ impl CalcValue for Angle {
         input: &mut css::Parser,
     ) -> CssResult<RunningSum<Self>> {
         sum.add_value(next, input, Angle::add_internal)
+    }
+    #[inline]
+    fn zero_in_sum(&self) -> Option<Self> {
+        None
     }
     #[inline]
     fn into_calc(self) -> Calc<Self> {
@@ -1966,6 +1998,10 @@ impl CalcValue for Percentage {
         sum.add_value(next, input, Percentage::add_internal)
     }
     #[inline]
+    fn zero_in_sum(&self) -> Option<Self> {
+        None
+    }
+    #[inline]
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
@@ -2015,6 +2051,10 @@ impl CalcValue for Time {
         sum.add_value(next, input, Time::add_internal)
     }
     #[inline]
+    fn zero_in_sum(&self) -> Option<Self> {
+        None
+    }
+    #[inline]
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
@@ -2062,6 +2102,10 @@ impl CalcValue for Length {
         Ok(sum.add_term(next))
     }
     #[inline]
+    fn zero_in_sum(&self) -> Option<Self> {
+        None
+    }
+    #[inline]
     fn into_calc(self) -> Calc<Self> {
         Length::into_calc(self)
     }
@@ -2075,7 +2119,7 @@ impl CalcValue for Length {
 /// `calc_protocol_forwarders!` — `LengthPercentage` already gets `Parse`/`ToCss`
 /// from `impl_parse_tocss_via_inherent!`, only `Angle` needs them stamped here.
 macro_rules! dim_pct_protocol {
-    ($D:ty $(, $($extra:tt)*)?) => {
+    ($D:ty, percentage_basis_known: $known:literal $(, $($extra:tt)*)?) => {
         calc_protocol_forwarders!(DimensionPercentage<$D> {
             mul_f32: forward,
             try_from_angle: forward,
@@ -2086,7 +2130,7 @@ macro_rules! dim_pct_protocol {
                     (DimensionPercentage::Dimension(a), DimensionPercentage::Dimension(b)) => {
                         Some(DimensionPercentage::Dimension(<$D as protocol::TryOp>::try_op(a, b, ctx, f)?))
                     }
-                    (DimensionPercentage::Percentage(a), DimensionPercentage::Percentage(b)) => {
+                    (DimensionPercentage::Percentage(a), DimensionPercentage::Percentage(b)) if $known => {
                         Some(DimensionPercentage::Percentage(Percentage { v: f(ctx, a.v, b.v) }))
                     }
                     _ => None,
@@ -2097,16 +2141,24 @@ macro_rules! dim_pct_protocol {
                     (DimensionPercentage::Dimension(a), DimensionPercentage::Dimension(b)) => {
                         <$D as protocol::TryOpTo>::try_op_to(a, b, ctx, f)
                     }
-                    (DimensionPercentage::Percentage(a), DimensionPercentage::Percentage(b)) => {
+                    (DimensionPercentage::Percentage(a), DimensionPercentage::Percentage(b)) if $known => {
                         Some(f(ctx, a.v, b.v))
                     }
                     _ => None,
                 }
             },
-            partial_cmp: forward,
             is_compatible: forward,
             $($($extra)*)?
         });
+        impl protocol::PartialCmp for DimensionPercentage<$D> {
+            #[inline]
+            fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
+                match (self, rhs) {
+                    (DimensionPercentage::Percentage(_), DimensionPercentage::Percentage(_)) if !$known => None,
+                    _ => DimensionPercentage::partial_cmp(self, rhs),
+                }
+            }
+        }
         impl CalcValue for DimensionPercentage<$D> {
             #[inline]
             fn add_to_sum(
@@ -2116,12 +2168,20 @@ macro_rules! dim_pct_protocol {
             ) -> CssResult<RunningSum<Self>> {
                 Ok(sum.add_term(next))
             }
+            #[inline]
+            fn zero_in_sum(&self) -> Option<Self> {
+                (!$known && matches!(self, DimensionPercentage::Percentage(_)))
+                    .then_some(DimensionPercentage::Percentage(Percentage { v: 0.0 }))
+            }
             #[inline] fn into_calc(self) -> Calc<Self> { DimensionPercentage::into_calc(self) }
         }
     };
 }
-dim_pct_protocol!(LengthValue);
-dim_pct_protocol!(Angle, parse_to_css: forward,);
+// What a percentage of a length refers to is not known here. It can be nothing, and then the
+// value is `auto` also at `0%`. It can be below zero, and then `20%` is less than `10%`.
+dim_pct_protocol!(LengthValue, percentage_basis_known: false);
+// A percentage of an angle is a part of a full turn.
+dim_pct_protocol!(Angle, percentage_basis_known: true, parse_to_css: forward,);
 
 // `Calc` is a node of every parsed math expression, and `parse_sum` keeps a `RunningSum` in a frame for each bracket.
 const _: () = {

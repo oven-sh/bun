@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -216,9 +216,14 @@ describe("css tests", () => {
     // A center that cannot be compared with the maximum leaves the clamp() alone, even when
     // it could be compared with the minimum.
     minify_test(`a { width: clamp(10px, 5px, 20vw) }`, `a{width:clamp(10px,5px,20vw)}`);
-    // Other value types.
-    minify_test(`a { width: clamp(10%, 5%, 20%) }`, `a{width:10%}`);
-    minify_test(`a { width: clamp(10%, 25%, 20%) }`, `a{width:20%}`);
+    // Other value types. A percentage of a length has no order here, so its clamp() stays.
+    minify_test(`a { width: clamp(10%, 5%, 20%) }`, `a{width:clamp(10%,5%,20%)}`);
+    minify_test(`a { width: clamp(10%, 25%, 20%) }`, `a{width:clamp(10%,25%,20%)}`);
+    minify_test(`a { opacity: clamp(10%, 5%, 20%) }`, `a{opacity:.1}`);
+    minify_test(
+      `a { background: conic-gradient(red clamp(10%, 25%, 20%), blue) }`,
+      `a{background:conic-gradient(red 20%,#00f)}`,
+    );
     minify_test(`a { rotate: clamp(0deg, 45deg, 30deg) }`, `a{rotate:30deg}`);
     minify_test(`a { transition-duration: clamp(1s, 500ms, 2s) }`, `a{transition-duration:1s}`);
     minify_test(`a { width: calc(clamp(1px, 2px, 3px) + 1px) }`, `a{width:3px}`);
@@ -430,6 +435,234 @@ describe("css tests", () => {
       `@media (min-width: calc(1.001px + 1em)) { a { color: red; } }`,
       { safari: 14 << 16 },
     );
+  });
+  describe("calc sum with a percentage of zero", () => {
+    // lightningcss leaves `0%` out of a sum. It stays: https://drafts.csswg.org/css-values-4/#calc-simplification
+    const sum = (source: string, expected: string) =>
+      minify_twice_test(`a { height: ${source} }`, `a{height:${expected}}`);
+    sum(`calc(10% + 2px - 10%)`, `calc(0% + 2px)`);
+    sum(`calc(0% + 2px)`, `calc(0% + 2px)`);
+    sum(`calc(2px + 0%)`, `calc(2px + 0%)`);
+    sum(`calc(2px - 0%)`, `calc(2px + 0%)`);
+    sum(`calc(-0% + 2px)`, `calc(0% + 2px)`);
+    sum(`calc(0% - 2px)`, `calc(0% - 2px)`);
+    sum(`calc((0% + 2px) * -1)`, `calc(0% - 2px)`);
+    sum(`calc(1px + 0% + 5%)`, `calc(1px + 5%)`);
+    sum(`calc(10% - 10%)`, `0%`);
+    // A length of zero is left out.
+    sum(`calc(0% + 0px)`, `0%`);
+    sum(`calc(0px + 0%)`, `0%`);
+    // css/css-values/calc-serialization-002.html of the web platform tests
+    sum(`calc(100% - 100% + 1em)`, `calc(0% + 1em)`);
+    sum(`calc(100% + 1em - 100%)`, `calc(0% + 1em)`);
+    // A sum as an operand.
+    sum(`calc((1px + 10%) + (1px - 10%))`, `calc(2px + 0%)`);
+    sum(`calc((100% - 20px) - (100% - 40px))`, `calc(0% + 20px)`);
+    sum(`calc(50% - calc(50% + 25px))`, `calc(0% - 25px)`);
+    // A sum multiplied by zero keeps the percentage, whichever term it was.
+    sum(`calc((1px + 10%) * 0)`, `0%`);
+    sum(`calc((10% + 1px) * 0)`, `0%`);
+    sum(`calc((10% + 1px) * 0 + 5px)`, `calc(0% + 5px)`);
+    sum(`min(10% - 10% + 2px, 5px)`, `min(0% + 2px,5px)`);
+    // A math function of one argument is that argument. A sum stays in a math function.
+    sum(`min(10% - 10% + 2px)`, `calc(0% + 2px)`);
+    sum(`max(10% - 10% + 2px)`, `calc(0% + 2px)`);
+    sum(`hypot(10% - 10% + 2px)`, `hypot(0% + 2px)`);
+    sum(`min(1px + 1em)`, `calc(1px + 1em)`);
+    sum(`max(2 * min(1px,1em))`, `calc(2*min(1px,1em))`);
+    sum(`hypot(1px + 1em)`, `hypot(1px + 1em)`);
+    sum(`hypot(2 * min(1px,1em))`, `hypot(2*min(1px,1em))`);
+    // The other math functions do not fold a sum that keeps `0%`.
+    sum(`abs(10% - 10% - 2px)`, `abs(0% - 2px)`);
+    sum(`round(10% - 10% + 2.5px, 1px)`, `round(0% + 2.5px,1px)`);
+    sum(`mod(10% - 10% + 5px, 2px)`, `mod(0% + 5px,2px)`);
+    sum(`rem(10% - 10% + 5px, 2px)`, `rem(0% + 5px,2px)`);
+    sum(`clamp(1px, 10% - 10% + 2px, 3px)`, `clamp(1px,0% + 2px,3px)`);
+    sum(`hypot(10% - 10% + 3px, 4px)`, `hypot(0% + 3px,4px)`);
+    // sign() of such a sum is not a number, so the product stays as written.
+    sum(`calc(sign(10% - 10% + 2px) * 1px)`, `calc(sign(10% - 10% + 2px)*1px)`);
+    sum(`calc(sign(2px) * 1px)`, `1px`);
+    // A length has no percentage, and a percentage of an angle is a part of a turn. Their zero is left out.
+    minify_twice_test(`a { outline-width: calc(1em + 2px - 1em) }`, `a{outline-width:2px}`);
+    minify_twice_test(
+      `a { background: conic-gradient(red calc(10deg + 5% - 5%), blue) }`,
+      `a{background:conic-gradient(red 10deg,#00f)}`,
+    );
+  });
+  describe("calc percentages of a length are not ordered", () => {
+    // What a percentage of a length refers to can be below zero, and then 20% is less than 10%:
+    // https://drafts.csswg.org/css-values-4/#calc-simplification
+    const value = (prop: string, source: string, expected: string) =>
+      minify_twice_test(`a { ${prop}: ${source} }`, `a{${prop}:${expected}}`);
+    value("background-position", `min(1%, 2%, 3%) 0`, `min(1%,2%,3%) 0`);
+    value("background-position", `max(0% + 0px, 20%) 0`, `max(0%,20%) 0`);
+    value("background-position", `min(1px + 0% - 1px, 20%) 0`, `min(0%,20%) 0`);
+    value("width", `max(10%, 20%)`, `max(10%,20%)`);
+    value("width", `round(15%, 10%)`, `round(15%,10%)`);
+    value("width", `mod(15%, 10%)`, `mod(15%,10%)`);
+    value("width", `hypot(30%, 40%)`, `hypot(30%,40%)`);
+    // Two lengths have an order. So do two percentages that are numbers, or parts of a turn.
+    value("width", `max(10px, 20px)`, `20px`);
+    value("opacity", `min(10%, 20%)`, `.1`);
+    value("background", `conic-gradient(red min(10%, 20%), blue)`, `conic-gradient(red 10%,#00f)`);
+  });
+  describe("min() and max() with one argument", () => {
+    // The rows of https://github.com/oven-sh/bun/pull/38654. A sum or a product is only valid inside a math function.
+    minify_test(`a { width: min(1px + 10%) }`, `a{width:calc(1px + 10%)}`);
+    minify_test(`a { width: max(1px + 10%) }`, `a{width:calc(1px + 10%)}`);
+    minify_test(`a { width: min(-1px - 10%) }`, `a{width:calc(-1px - 10%)}`);
+    minify_test(`a { width: min(2 * min(1px, 1em)) }`, `a{width:calc(2*min(1px,1em))}`);
+    minify_test(`a { width: max(max(1px, 1em) / 2) }`, `a{width:calc(max(1px,1em)/2)}`);
+    minify_test(`a { width: max(2 * (1px + 10%)) }`, `a{width:calc(2px + 20%)}`);
+    minify_test(`a { margin: min(1px + 10%) auto }`, `a{margin:calc(1px + 10%) auto}`);
+    minify_test(`a { inset: max(1px + 10%) }`, `a{inset:calc(1px + 10%)}`);
+    // A nested calc() or min() of one argument loses its function while the outer argument is read.
+    minify_test(`a { width: min(calc(1px + 10%)) }`, `a{width:calc(1px + 10%)}`);
+    minify_test(`a { width: min(max(1px + 10%)) }`, `a{width:calc(1px + 10%)}`);
+    // A <length> and an <angle-percentage>.
+    minify_test(`a { border-spacing: max(1px + 1em) }`, `a{border-spacing:calc(1px + 1em)}`);
+    minify_test(`a { border-spacing: min(2 * max(1px, 1em)) }`, `a{border-spacing:calc(2*max(1px,1em))}`);
+    minify_test(
+      `a { background: conic-gradient(red min(10deg + 10%), blue) }`,
+      `a{background:conic-gradient(red calc(10deg + 10%),#00f)}`,
+    );
+    minify_test(
+      `a { background: conic-gradient(red max(2 * max(10deg, 10%)), blue) }`,
+      `a{background:conic-gradient(red calc(2*max(10deg,10%)),#00f)}`,
+    );
+    // An argument that is one value or a math function is that argument.
+    minify_test(`a { width: min(5px) }`, `a{width:5px}`);
+    minify_test(`a { width: min(1px + 2px) }`, `a{width:3px}`);
+    minify_test(`a { width: max(10% + 5%) }`, `a{width:15%}`);
+    minify_test(`a { width: min(3px, 5px) }`, `a{width:3px}`);
+    minify_test(`a { width: max(3px, 5px) }`, `a{width:5px}`);
+    minify_test(`a { width: max(min(1px, 1em)) }`, `a{width:min(1px,1em)}`);
+    minify_test(`a { line-height: min(1 + 2) }`, `a{line-height:3}`);
+    minify_test(`a { opacity: max(10% + 20%) }`, `a{opacity:.3}`);
+    minify_test(`a { transition-duration: min(1s + 500ms) }`, `a{transition-duration:1.5s}`);
+    minify_test(`a { rotate: max(90deg + 0.25turn) }`, `a{rotate:180deg}`);
+    // More than one argument, or a place inside another expression.
+    minify_test(`a { width: min(1px + 10%, 1em + 5%) }`, `a{width:min(1px + 10%,1em + 5%)}`);
+    minify_test(`a { width: max(3px, 1px + 10%) }`, `a{width:max(3px,1px + 10%)}`);
+    minify_test(`a { width: min(max(1px + 10%), 1em) }`, `a{width:min(1px + 10%,1em)}`);
+    minify_test(`a { width: calc(min(1px + 10%) * 2) }`, `a{width:calc(2px + 20%)}`);
+    minify_test(`a { width: calc(min(1px + 10%) + 5px) }`, `a{width:calc(6px + 10%)}`);
+  });
+  describe("calc sums from a generator", () => {
+    const F = "min(1px,1em)";
+    // Each number is a sum of powers of two, so no sum has a rounding error.
+    const alphabets: Record<string, string[]> = {
+      width: ["1px", "2px", "-3px", "1em", "-1em", "50%", "-50%", "25%", "0px", "0%", F, "1vh", "2rem"],
+      "outline-width": ["1px", "2px", "-3px", "1em", "-1em", "0px", "1vh", "-1vh", F, "2rem"],
+    };
+
+    /** The value of a sum as a coefficient for each unit, with no use of the fold. `min(1px,1em)` is the unit F. */
+    function evaluate(text: string): Map<string, number> {
+      const src = text.replaceAll(F, "1F");
+      const token = /\s*(calc\(|[()*\/]|[+-] |[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)([a-zA-Z%]*)/y;
+      let at = 0;
+      let tok: RegExpExecArray | null = null;
+      const advance = () => {
+        token.lastIndex = at;
+        tok = token.exec(src);
+        if (tok) at = token.lastIndex;
+      };
+      const scale = (m: Map<string, number>, k: number) => new Map([...m].map(([u, c]) => [u, c * k]));
+      function sum(): Map<string, number> {
+        const acc = new Map(product());
+        while (tok && (tok[1] === "+ " || tok[1] === "- ")) {
+          const sign = tok[1] === "+ " ? 1 : -1;
+          advance();
+          for (const [u, c] of product()) acc.set(u, (acc.get(u) ?? 0) + sign * c);
+        }
+        return acc;
+      }
+      function product(): Map<string, number> {
+        let acc = unary();
+        while (tok && (tok[1] === "*" || tok[1] === "/")) {
+          const op = tok[1];
+          advance();
+          const rhs = unary();
+          if (rhs.size === 1 && rhs.has("")) acc = scale(acc, op === "*" ? rhs.get("")! : 1 / rhs.get("")!);
+          else acc = scale(rhs, acc.get("")!);
+        }
+        return acc;
+      }
+      function unary(): Map<string, number> {
+        if (!tok) throw new Error("cannot read " + text);
+        if (tok[1] === "calc(" || tok[1] === "(") {
+          advance();
+          const v = sum();
+          if (tok?.[1] !== ")") throw new Error("cannot read " + text);
+          advance();
+          return v;
+        }
+        const v = new Map([[tok[2], parseFloat(tok[1])]]);
+        if (Number.isNaN(v.get(tok[2]))) throw new Error("cannot read " + text);
+        advance();
+        return v;
+      }
+      advance();
+      const v = sum();
+      if (at !== src.length) throw new Error("cannot read " + text);
+      return v;
+    }
+
+    for (const property of Object.keys(alphabets)) {
+      test(`${property}: a sum keeps its value and its percentage, and prints a valid fixed point`, () => {
+        const seed = Number(process.env.BUN_CSS_CALC_SEED ?? 0x63616c63) >>> 0;
+        let state = seed;
+        const next = () => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+        const pick = <T>(list: readonly T[]): T => list[Math.floor(next() * list.length)];
+        // A factor below zero is left out: see `minify_twice_test`.
+        const sum = (depth: number, max: number): string =>
+          Array.from(
+            { length: 1 + Math.floor(next() * max) },
+            (_, i) => (i ? pick([" + ", " - "]) : "") + product(depth),
+          ).join("");
+        const product = (depth: number): string => {
+          const r = next();
+          const v = value(depth);
+          if (r < 0.12) return `${v} * ${pick(["2", "0.5", "3"])}`;
+          if (r < 0.2) return `${pick(["2", "0.5", "3"])} * ${v}`;
+          if (r < 0.27) return `${v} / ${pick(["2", "4"])}`;
+          return v;
+        };
+        const value = (depth: number): string => {
+          const r = next();
+          if (depth > 0 && r < 0.22) return `(${sum(depth - 1, 4)})`;
+          if (depth > 0 && r < 0.27) return `calc(${sum(depth - 1, 3)})`;
+          return pick(alphabets[property]);
+        };
+        const printed = (css: string) => /^a\{[a-z-]+:(.*)\}$/.exec(minify_test_with_options(css, ""))![1];
+        const failures: object[] = [];
+        // A debug build needs about 1 ms for each sum.
+        for (let i = isDebug || isASAN ? 150 : 3000; i > 0; i--) {
+          const body = sum(3, i % 5 === 0 ? 14 : 5);
+          const source = `${pick(["calc", "calc", "calc", "min", "max"])}(${body})`;
+          const once = printed(`a{${property}:${source}}`);
+          const twice = printed(`a{${property}:${once}}`);
+          const want = evaluate(`calc(${body})`);
+          let got: Map<string, number> | undefined;
+          try {
+            got = evaluate(once);
+          } catch {}
+          const sameValue =
+            got &&
+            [...new Set([...want.keys(), ...got.keys()])].every(
+              u => Math.abs((want.get(u) ?? 0) - (got.get(u) ?? 0)) <= 1e-4 * Math.max(1, Math.abs(want.get(u) ?? 0)),
+            );
+          let problem: string | undefined;
+          if (!/^(calc|min|max)\(.*\)$/.test(once) && /[*\/]| [+-] /.test(once))
+            problem = "no math function around a sum";
+          else if (!sameValue) problem = "another value";
+          else if (body.includes("%") && !once.includes("%")) problem = "the percentage is lost";
+          else if (twice !== once) problem = "the second minify differs";
+          if (problem) failures.push({ problem, source, once, twice });
+        }
+        expect({ seed, failures: failures.slice(0, 3) }).toEqual({ seed, failures: [] });
+      });
+    }
   });
   describe("border_spacing", () => {
     minify_test(
@@ -2441,6 +2674,15 @@ describe("css tests", () => {
       `.foo { width: 22px; width: calc(100% - 1em - 1dvh); }`,
       { chrome: 100 << 16 },
     );
+    prefix_test(`.foo { width: 22px; width: min(1px + 1em) }`, `.foo { width: 22px; width: calc(1px + 1em); }`, {
+      chrome: 20 << 16,
+    });
+    prefix_test(`.foo { width: 22px; width: min(1px + 1em) }`, `.foo { width: calc(1px + 1em); }`, {
+      chrome: 26 << 16,
+    });
+    prefix_test(`.foo { height: 22px; height: calc(10% + 2px - 10%) }`, `.foo { height: calc(0% + 2px); }`, {
+      chrome: 26 << 16,
+    });
   });
 
   describe("padding", () => {
@@ -8531,6 +8773,34 @@ console.log(line.length - line.trimStart().length);`,
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("300");
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun pm diff` calls a style sheet "formatting only" when both sides print the same.
+  test("bun pm diff compares a calc() sum as it folds", async () => {
+    using dir = tempDir("css-calc-pm-diff", {
+      "a/percent.css": `.a{height:calc(10% + 2px - 10%)}`,
+      "b/percent.css": `.a{height:2px}`,
+      "a/brackets.css": `.a{width:calc(1px + (1em + 2px))}`,
+      "b/brackets.css": `.a{width:calc(3px + 1em)}`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "./a", "./b"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1", COLUMNS: "120" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const headers = stdout
+      .replace(/\x1b\[[0-9;]*[mK]/g, "")
+      .split("\n")
+      .filter(line => line.includes(".css ─"))
+      .map(line => line.replace(/ ─+ /, ": "));
+    expect({ headers, stderr }).toEqual({
+      headers: ["brackets.css: formatting only", "percent.css: normalized +1 -1"],
+      stderr: "",
+    });
     expect(exitCode).toBe(0);
   });
 });

@@ -203,8 +203,10 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
                 script->cachedDataRejected(TriState::True);
             }
         }
-    } else if (script->options().produceCachedData)
-        script->cacheBytecode();
+    } else if (script->options().produceCachedData) {
+        script->getBytecodeBuffer();
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     return JSValue::encode(script);
 }
@@ -250,34 +252,21 @@ JSC::ProgramExecutable* NodeVMScript::createExecutable()
     return m_cachedExecutable.get();
 }
 
-void NodeVMScript::cacheBytecode()
-{
-    m_cachedBytecode = getBytecode(globalObject(), JSC::SourceCodeType::ProgramType, m_source);
-    m_cachedDataProduced = m_cachedBytecode != nullptr;
-}
-
 JSC::JSUint8Array* NodeVMScript::getBytecodeBuffer()
 {
-    auto scope = DECLARE_THROW_SCOPE(vm());
+    VM& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!m_options.produceCachedData) {
         return nullptr;
     }
 
     if (!m_cachedBytecodeBuffer) {
-        if (!m_cachedBytecode)
-            cacheBytecode();
-        if (!m_cachedBytecode)
-            return nullptr;
-
-        std::span<const uint8_t> bytes = m_cachedBytecode->span();
-        m_cachedBytecodeBuffer.set(vm(), this, WebCore::createBuffer(globalObject(), bytes));
+        JSC::JSUint8Array* buffer = createCachedData(globalObject(), JSC::SourceCodeType::ProgramType, m_source);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (!m_cachedBytecodeBuffer) {
-            return nullptr;
-        }
+        if (buffer)
+            m_cachedBytecodeBuffer.set(vm, this, buffer);
     }
 
-    ASSERT(m_cachedBytecodeBuffer);
     return m_cachedBytecodeBuffer.get();
 }
 
@@ -503,8 +492,12 @@ JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject,
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
-    const JSC::SourceCode& source = script->source();
-    RELEASE_AND_RETURN(scope, createCachedData(globalObject, source));
+    JSC::JSUint8Array* buffer = createCachedData(globalObject, JSC::SourceCodeType::ProgramType, script->source());
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!buffer) [[unlikely]]
+        return throwVMError(globalObject, scope, "createCachedData failed"_s);
+
+    return JSValue::encode(buffer);
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, CallFrame* callFrame))

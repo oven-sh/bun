@@ -31,8 +31,7 @@ public:
     AbstractModuleRecord* moduleRecord(JSGlobalObject* globalObject);
     JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher);
     JSValue instantiate(JSGlobalObject* globalObject);
-    RefPtr<CachedBytecode> bytecode(JSGlobalObject* globalObject);
-    JSUint8Array* cachedData(JSGlobalObject* globalObject);
+    JSUint8Array* createCachedData(JSGlobalObject* globalObject);
     void initializeImportMeta(JSGlobalObject* globalObject);
     bool hasTopLevelAwait() const { return m_hasTopLevelAwait; }
 
@@ -44,9 +43,7 @@ public:
 private:
     WriteBarrier<JSModuleRecord> m_moduleRecord;
     WriteBarrier<JSArray> m_moduleRequestsArray;
-    WriteBarrier<JSUint8Array> m_cachedBytecodeBuffer;
     WriteBarrier<Unknown> m_initializeImportMeta;
-    RefPtr<CachedBytecode> m_bytecode;
     SourceCode m_sourceCode;
     bool m_hasTopLevelAwait { false };
     bool m_linkCalled { false };

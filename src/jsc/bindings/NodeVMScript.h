@@ -63,7 +63,8 @@ public:
     static JSObject* createPrototype(VM& vm, JSGlobalObject* globalObject);
 
     JSC::ProgramExecutable* createExecutable();
-    void cacheBytecode();
+    // The Buffer `cachedData` returns, produced by the first call. Null if produceCachedData is off or the
+    // source does not compile to a cache (no exception), or if the Buffer cannot be allocated (exception).
     JSC::JSUint8Array* getBytecodeBuffer();
 
     // The source compiled the way globalObject compiles programs (see ProgramExecutable::initializeGlobalProperties):
@@ -76,8 +77,7 @@ public:
     const ScriptOptions& options() const { return m_options; }
     WTF::Vector<uint8_t>& cachedData() { return m_options.cachedData; }
     JSC::ProgramExecutable* cachedExecutable() const { return m_cachedExecutable.get(); }
-    bool cachedDataProduced() const { return m_cachedDataProduced; }
-    void cachedDataProduced(bool value) { m_cachedDataProduced = value; }
+    bool cachedDataProduced() const { return !!m_cachedBytecodeBuffer; }
     TriState cachedDataRejected() const { return m_cachedDataRejected; }
     void cachedDataRejected(TriState value) { m_cachedDataRejected = value; }
 
@@ -85,14 +85,12 @@ public:
 
 private:
     JSC::SourceCode m_source;
-    RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     JSC::WriteBarrier<JSC::JSUint8Array> m_cachedBytecodeBuffer;
     JSC::WriteBarrier<JSC::ProgramExecutable> m_cachedExecutable;
     // The compile every run links. Only recompiled (and replaced) when a global object with a different
     // CodeGenerationMode, i.e. a debugger attached, runs the Script.
     JSC::WriteBarrier<JSC::UnlinkedProgramCodeBlock> m_unlinkedCodeBlock;
     ScriptOptions m_options;
-    bool m_cachedDataProduced = false;
     TriState m_cachedDataRejected = TriState::Indeterminate;
 
     NodeVMScript(JSC::VM& vm, JSC::Structure* structure, JSC::SourceCode source, ScriptOptions options)

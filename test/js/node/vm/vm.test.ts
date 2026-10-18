@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectRssDeltaBelow,
+  isASAN,
+  isDebug,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+} from "harness";
 import { totalmem } from "node:os";
 import { join } from "node:path";
 import {
@@ -1024,6 +1033,128 @@ test("SourceTextModule accepts the cachedData it produced", () => {
   expect(() => new SourceTextModule("export default 2;", { identifier: "m", cachedData })).toThrow(
     expect.objectContaining({ code: "ERR_VM_MODULE_CACHED_DATA_REJECTED" }),
   );
+});
+
+describe("cachedData that bun produces", () => {
+  // Sixteen live objects with a 4 MiB blob each. The source is one string literal of two-byte characters: 4 MiB of
+  // blob from 2 MiB of text, which a debug build parses quickly. The tests that run it are not concurrent: run at
+  // once, each takes a debug build several times longer, close to the test timeout.
+  const sixteenLive = (build: string, measure: string) => `
+    const vm = require("node:vm");
+    const size = 4 * 1024 * 1024;
+    const literal = "'" + Buffer.alloc(size, "\\u0100", "utf16le").toString("utf16le") + "'";
+    const moduleSource = "export default " + literal;
+    const checked = cachedData => {
+      if (cachedData.length < size) throw new Error("the blob does not hold the literal");
+    };
+    const build = () => {${build}};
+    const measure = () => {
+      Bun.gc(true);
+      return ${measure};
+    };
+    build();
+    const before = measure();
+    const kept = [];
+    for (let i = 0; i < 16; i++) kept.push(build());
+    const deltaMiB = (measure() - before) / 1024 / 1024;
+    console.log(JSON.stringify({ live: kept.length, deltaMiB }));
+  `;
+
+  test.each([
+    [
+      "a Script keeps one copy of the cachedData it produced",
+      `const script = new vm.Script(literal, { produceCachedData: true });
+      checked(script.cachedData);
+      return script;`,
+      // One copy is 64 MiB. A second one, as the Script had after the first read, makes it 128 MiB.
+      { release: 96, debug: 90 },
+    ],
+    [
+      "a SourceTextModule keeps no copy of the cachedData it created",
+      `const module = new vm.SourceTextModule(moduleSource);
+      checked(module.createCachedData());
+      return module;`,
+      // One copy is 64 MiB. The module had two after its first createCachedData().
+      { release: 32, debug: 44 },
+    ],
+  ])("%s", async (_, build, bounds) => {
+    await expectRssDeltaBelow(["-e", sixteenLive(build, "process.memoryUsage.rss()")], bounds);
+  });
+
+  test("the garbage collector counts the cachedData of a Script that does not read it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        sixteenLive(
+          `return new vm.Script(literal, { produceCachedData: true });`,
+          `require("bun:jsc").heapStats().extraMemorySize`,
+        ),
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Sixteen Buffers are 64 MiB. A blob that only native memory holds is not counted at all.
+    expect(JSON.parse(stdout).deltaMiB).toBeGreaterThan(32);
+    expect(exitCode).toBe(0);
+  });
+
+  test("SourceTextModule#createCachedData() returns a new Buffer for each call", () => {
+    const source = "export default 1;";
+    const module = new SourceTextModule(source, { identifier: "m" }) as any;
+    const first: Buffer = module.createCachedData();
+    const second: Buffer = module.createCachedData();
+    expect(second).not.toBe(first);
+    expect(second).toEqual(first);
+
+    // What a caller does to one result does not reach the next result.
+    const expected = Buffer.from(first);
+    first.fill(0);
+    structuredClone(second.buffer, { transfer: [second.buffer] });
+    const third: Buffer = module.createCachedData();
+    expect(third).toEqual(expected);
+    expect(() => new SourceTextModule(source, { identifier: "m", cachedData: third })).not.toThrow();
+  });
+
+  test("a Script built with produceCachedData has one cachedData Buffer from the start", () => {
+    const source = "1 + 1;";
+    const script = new Script(source, { produceCachedData: true });
+    expect(script.cachedDataProduced).toBe(true);
+    const cachedData = script.cachedData!;
+    expect(cachedData).toBeInstanceOf(Buffer);
+    expect(script.cachedData).toBe(cachedData);
+    expect(new Script(source, { cachedData }).cachedDataRejected).toBe(false);
+  });
+
+  test("a Script built with cachedData and produceCachedData has one cachedData Buffer once it is read", () => {
+    const source = "1 + 1;";
+    const script = new Script(source, { cachedData: new Script(source).createCachedData(), produceCachedData: true });
+    const cachedData = script.cachedData!;
+    expect(cachedData).toBeInstanceOf(Buffer);
+    expect(script.cachedData).toBe(cachedData);
+    expect(script.cachedDataProduced).toBe(true);
+    expect(new Script(source, { cachedData }).cachedDataRejected).toBe(false);
+  });
+
+  test("a source whose code cannot be generated produces no cachedData", () => {
+    // The body of f passes the syntax check of the enclosing code. To produce cachedData, bun generates the code
+    // of f too, and that fails: the expression is too deep for the stack.
+    const body = "return " + Buffer.alloc(300_000, "!").toString() + "x;";
+    const source = `function f(x) { ${body} }`;
+
+    const script = new Script(source, { produceCachedData: true });
+    expect([script.cachedDataProduced, script.cachedData, script.cachedData]).toEqual([false, undefined, undefined]);
+    expect(() => new Script(source).createCachedData()).toThrow("createCachedData failed");
+
+    const fn = compileFunction(body, ["x"], { produceCachedData: true }) as any;
+    expect([fn.cachedDataProduced, Object.hasOwn(fn, "cachedData")]).toEqual([false, false]);
+
+    expect(() => (new SourceTextModule(source, { identifier: "m" }) as any).createCachedData()).toThrow(
+      expect.objectContaining({ name: "SyntaxError", message: "Failed to create cached data" }),
+    );
+  });
 });
 
 // Several SourceTextModules with one identifier and one source text are several records of the same module. Each reads

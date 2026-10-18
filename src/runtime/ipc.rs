@@ -1143,6 +1143,19 @@ impl SendQueue {
         self.socket_closed_notify(true);
     }
 
+    fn closed_by_peer(&self) {
+        // Node handles the EOF in the loop iteration that reads it. A task has the loop poll once more before the owner hears of it.
+        let run_now = !self.deferred_scheduled.replace(true);
+        if run_now {
+            self.ref_();
+        }
+        self.close_socket(CloseReason::Failure, CloseFrom::User);
+        if run_now {
+            // SAFETY: the ref taken above is the one `run_deferred` releases, and the owner holds its own.
+            unsafe { Self::run_deferred(self.root_ptr()) };
+        }
+    }
+
     fn socket_closed_notify(&self, notify: bool) {
         log!("SendQueue#_socketClosed");
         #[cfg(windows)]
@@ -2551,7 +2564,11 @@ pub(crate) mod IPCHandlers {
 
         pub(crate) fn on_end(send_queue: &SendQueue, _: Socket) {
             log!("onEnd");
-            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+            let _scope = send_queue
+                .get_global_this()
+                .bun_vm()
+                .enter_event_loop_scope();
+            send_queue.closed_by_peer();
         }
     }
 
@@ -2581,7 +2598,7 @@ pub(crate) mod IPCHandlers {
 
         pub(crate) fn on_read_error(send_queue: &SendQueue, err: bun_sys::E) {
             log!("NewNamedPipeIPCHandler#onReadError {:?}", err);
-            send_queue.close_socket_next_tick(true);
+            send_queue.closed_by_peer();
         }
 
         /// `nread` is the byte count libuv reported into the slice handed out

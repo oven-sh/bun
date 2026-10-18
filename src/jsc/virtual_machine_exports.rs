@@ -32,11 +32,6 @@ pub fn has_unhandled_error(this: &VirtualMachine) -> bool {
             }))
 }
 
-// HOST_EXPORT(Bun__VirtualMachine__isInPreload, c)
-pub fn is_in_preload(this: &VirtualMachine) -> bool {
-    this.is_in_preload
-}
-
 // HOST_EXPORT(Bun__VM__scriptExecutionStatus, c)
 pub fn script_execution_status(this: &VirtualMachine) -> i32 {
     this.script_execution_status() as i32

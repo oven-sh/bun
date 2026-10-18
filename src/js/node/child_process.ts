@@ -1226,8 +1226,6 @@ class ChildProcess extends EventEmitter {
       this.emit("error", err);
     }
 
-    // In Node 'disconnect' comes before 'exit', so that a listener added from here on gets no kept message.
-    if (this.channel) this.channel = null;
     this.emit("exit", this.exitCode, this.signalCode);
 
     this.#maybeClose();
@@ -1642,6 +1640,7 @@ class ChildProcess extends EventEmitter {
       return;
     }
     $assert(!this.connected);
+    this.channel = null;
     this.#pendingMessages = [];
     process.nextTick(() => this.emit("disconnect"));
     process.nextTick(() => this.#maybeClose());

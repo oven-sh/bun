@@ -178,9 +178,9 @@ class FSWatcher extends EventEmitter {
   #onEvent(eventType, filenameOrError, fromAbort = false) {
     if (eventType === "close") {
       if (this.#silentClose) return;
-      // close on next microtask tick to avoid long-running function calls when
+      // close on next tick to avoid long-running function calls when
       // we're trying to detach the watcher
-      queueMicrotask(() => {
+      process.nextTick(() => {
         this.emit("close", filenameOrError);
       });
       return;

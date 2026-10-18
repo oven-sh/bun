@@ -185,7 +185,6 @@ extern "C" void Bun__closeChildIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" bool Bun__VirtualMachine__hasUnhandledError(void* /* BunVM */);
-extern "C" bool Bun__VirtualMachine__isInPreload(void* /* BunVM */);
 extern "C" const char* Bun__githubURL;
 extern "C" const char* Bun__sqlite3_version();
 extern "C" const char* Bun__typescript_version();
@@ -5045,12 +5044,10 @@ static void emitOrHoldMessage(Zig::GlobalObject* global, JSValue message, JSValu
         return;
     auto* pending = process->m_pendingMessages.get();
     if (!pending) {
-        // The process's first tick, if a microtask queues it, runs before the other microtasks: right only for a CommonJS entry point, which can still follow a preload.
-        if (!Bun__VirtualMachine__isInPreload(global->bunVM())) {
-            process->constructNextTickFn(vm, global);
-            RETURN_IF_EXCEPTION(scope, );
-            global->resetOnEachMicrotaskTick();
-        }
+        // The process's first tick, if a microtask queues it, runs before the other microtasks, so before what an ES module throws at its top level gets to the entry point's promise.
+        process->constructNextTickFn(vm, global);
+        RETURN_IF_EXCEPTION(scope, );
+        global->resetOnEachMicrotaskTick();
         pending = JSC::constructEmptyArray(global, nullptr);
         RETURN_IF_EXCEPTION(scope, );
         process->m_pendingMessages.set(vm, process, pending);

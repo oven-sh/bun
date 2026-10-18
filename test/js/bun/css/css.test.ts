@@ -264,7 +264,8 @@ describe("css tests", () => {
     // The acosf of musl gave `1.00423rad`. So did the one of the Windows C runtime for a processor without FMA3.
     minify_test(`a { rotate: acos(0.53674) }`, `a{rotate:57.538deg}`);
 
-    // Special values. A NaN is not an angle, so the function stays. An infinity prints as the largest `f32`.
+    // Special values. A NaN is not an angle, so the function stays. A NaN number prints as 0, and an infinity as
+    // the largest `f32`.
     minify_test(`a { transform: rotate(acos(2)) }`, `a{transform:rotate(acos(2))}`);
     minify_test(`a { transform: rotate(asin(0)) }`, `a{transform:rotate(0)}`);
     minify_test(`a { transform: rotate(atan2(0, 0)) }`, `a{transform:rotate(0)}`);
@@ -281,6 +282,8 @@ describe("css tests", () => {
     minify_test(`a { line-height: log(0.125, 0.5) }`, `a{line-height:3}`);
     minify_test(`a { line-height: log(infinity, 2) }`, `a{line-height:3.40282e38}`);
     minify_test(`a { line-height: log(0, 2) }`, `a{line-height:-3.40282e38}`);
+    minify_test(`a { line-height: log(-1, 2) }`, `a{line-height:0}`);
+    minify_test(`a { line-height: log(NaN, 2) }`, `a{line-height:0}`);
     // The cube root of zero, and of a subnormal.
     minify_test(`a { color: oklab(from black l a b) }`, `a{color:oklab(0% 0 0)}`);
     minify_test(
@@ -303,6 +306,7 @@ describe("css tests", () => {
     angle("atan2(1, 0)", "1.5707964");
     angle("atan2(-infinity, 1)", "-1.5707964");
     angle("atan2(1, -1)", "2.3561945");
+    angle("atan2(-1, -1)", "-2.3561945");
     angle("atan2(1, 1)", "0.78539816");
     // In CI, the C library of at least one host gave another `f32` for each of these folds, or for the same inputs
     // with another sign or unit.

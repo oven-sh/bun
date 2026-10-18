@@ -971,10 +971,15 @@ const dir = String(
       });
     `,
     "dials-after-it-was-disposed.mjs": `
-      // The port each dial that arrives comes from, and whether the host's fetch is among them.
+      // The port each dial that arrives comes from. The host's own two: a socket, known by its port, and
+      // a fetch, known by what it asks for.
       const arrived = [];
-      let theHostsFetchArrived = false;
-      const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open(socket) { arrived.push(socket.remotePort); }, data(socket, bytes) { theHostsFetchArrived ||= bytes.toString().startsWith("GET /the-hosts "); } } });
+      let theHostsPort = -1;
+      const theHostsSocket = Promise.withResolvers(), theHostsFetch = Promise.withResolvers();
+      const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
+        open(socket) { arrived.push(socket.remotePort); if (socket.remotePort === theHostsPort) theHostsSocket.resolve(); },
+        data(socket, bytes) { if ((socket.data = (socket.data ?? "") + bytes).startsWith("GET /the-hosts ")) theHostsFetch.resolve(); },
+      } });
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/dials-the-host.mjs");
       graph.run(() => app.dialLater(server.port));
@@ -984,9 +989,15 @@ const dir = String(
       // Dials of the host's own, made afterwards on each of the two threads that dial, have arrived: the
       // graph's would have too. (Arrived is the listener's to say. A connect() is done one packet before
       // the listener has the connection, and on macOS that packet can take many turns.)
-      fetch("http://127.0.0.1:" + server.port + "/the-hosts").catch(() => {});
-      const theHosts = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
-      while (!(arrived.includes(theHosts.localPort) && theHostsFetchArrived)) await new Promise(resolve => setImmediate(resolve));
+      Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: {
+        open(socket) { theHostsPort = socket.localPort; if (arrived.includes(theHostsPort)) theHostsSocket.resolve(); },
+        data() {},
+        close() { theHostsSocket.reject(new Error("the host's socket closed before the listener had it")); },
+        error(socket, error) { theHostsSocket.reject(error); },
+      } }).catch(theHostsSocket.reject);
+      // (The listener answers nothing: a fetch that gets an answer went somewhere else.)
+      fetch("http://127.0.0.1:" + server.port + "/the-hosts").then(response => theHostsFetch.reject(new Error("the host's fetch did not go to the listener: it was answered with status " + response.status)), theHostsFetch.reject);
+      await Promise.all([theHostsSocket.promise, theHostsFetch.promise]);
       console.log(JSON.stringify({ arrivedFromTheGraph: arrived.length - 2 }));
       process.exit(0);
     `,

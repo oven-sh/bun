@@ -467,12 +467,11 @@ describe("a malformed first request stream", () => {
   }
 
   /** What the listener's first session reports, and the status a later connection gets. */
-  async function exchange(
-    streams: RawQuicStream[],
-    send: RawQuicOptions["send"],
+  async function serve(
+    firstPeer: (address: NonNullable<QuicEndpoint["address"]>) => Promise<unknown>,
     listenCallbacks: Record<string, unknown> = { onheaders: respond },
   ) {
-    const events: unknown[] = [];
+    const events: unknown[][] = [];
     const sessions: Promise<unknown>[] = [];
     await using server = await listen(
       (session: any) => {
@@ -512,7 +511,7 @@ describe("a malformed first request stream", () => {
       },
     );
 
-    const close = await rawQuicExchange({ port: server.address!.port, alpn: "h3", streams, send });
+    const close = await firstPeer(server.address!);
 
     // The listener is still serving: it answers a well-formed request on a
     // new connection.
@@ -532,6 +531,12 @@ describe("a malformed first request stream", () => {
     await Promise.all(sessions);
     return { close, events, status };
   }
+
+  const exchange = (
+    streams: RawQuicStream[],
+    send: RawQuicOptions["send"],
+    listenCallbacks?: Record<string, unknown>,
+  ) => serve(address => rawQuicExchange({ port: address.port, alpn: "h3", streams, send }), listenCallbacks);
 
   const expected = (listenCallbacks: string[]) => ({
     close: { application: true, code: 0x105, reason: "unexpected HTTP/3 frame on stream 0" },
@@ -567,6 +572,49 @@ describe("a malformed first request stream", () => {
       expect(await exchange(emptyData, "with-finished", { [name]() {} })).toEqual(expected([name]));
     },
   );
+
+  // A node:quic client reaches the same engine pass: a request created before
+  // `opened` goes out with the client's Finished, and lsquic answers a
+  // content-length that is not a number with H3_MESSAGE_ERROR (0x10e).
+  test("a request with an invalid content-length, created before `opened`, closes only that connection", async () => {
+    const { close, events, status } = await serve(async address => {
+      const client = await connect(address, {
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: { maxIdleTimeout: 5 },
+        onerror() {},
+      } as SessionOptions);
+      client.opened.catch(() => {});
+      const closed = client.closed.then(
+        () => undefined,
+        (err: any) => ({ code: err.code, errorCode: err.errorCode }),
+      );
+      const stream = await client.createBidirectionalStream({
+        headers: {
+          ":method": "GET",
+          ":path": "/",
+          ":scheme": "https",
+          ":authority": "localhost",
+          "content-length": "abc",
+        },
+      });
+      stream.closed.catch(() => {});
+      return closed;
+    });
+    expect({
+      close,
+      events: events.map(([name, info]) => (name === "handshake" ? [name, info] : [name])),
+      status,
+    }).toEqual({
+      close: { code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 0x10en },
+      events: [
+        ["handshake", { protocol: "h3", cipher: "TLS_AES_128_GCM_SHA256", servername: "localhost" }],
+        ["stream"],
+        ["error"],
+      ],
+      status: "200",
+    });
+  });
 });
 
 // Node selects a session's application (HTTP/3 or raw QUIC) when the ALPN is

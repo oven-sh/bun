@@ -190,6 +190,50 @@ test.concurrent.skipIf(!tsc)(
   },
 );
 
+/** Rings of aliases with a link that is no import: it names the UMD global of a module. */
+function ringsOfAliasesThroughGlobals() {
+  const files: Record<string, string> = {};
+  for (const n of [2, 3, 5]) {
+    for (let i = 0; i < n; i++) {
+      const next = (i + 1) % n;
+      // Every other link is an import.
+      files[`half${n}/u${i}.d.ts`] =
+        `export as namespace Half${n}U${i};\n` +
+        (i % 2 ? `export { a } from "./u${next}";\n` : `export import a = Half${n}U${next}.a;\n`);
+      // Ambient modules, the last of which names the global of the module that imports the first.
+      const link = i === n - 1 ? `export import a = Ambient${n}U.a;` : `export { a } from "ambient${n}v${i + 1}";`;
+      files[`ambient${n}/d${i}.d.ts`] = `declare module "ambient${n}v${i}" { ${link} }\n`;
+    }
+    files[`half${n}/main.ts`] =
+      `import { a } from "./u0";\nimport { a as b } from "./u1";\nexport const read: never[] = [a, b];\n`;
+    files[`ambient${n}/u.d.ts`] = `export as namespace Ambient${n}U;\nexport { a } from "ambient${n}v0";\n`;
+    files[`ambient${n}/main.ts`] = `import { a } from "./u";\nexport const read: never[] = [a];\n`;
+  }
+  // The lowest module names the global of the highest.
+  files["levels/l0.d.ts"] = `export import a = Levels.a;\nexport declare const real: 1;\n`;
+  files["levels/l1.d.ts"] = `export { a, real } from "./l0";\n`;
+  files["levels/l2.d.ts"] = `export as namespace Levels;\nexport { a, real } from "./l1";\n`;
+  files["levels/main.ts"] =
+    `import { a, real } from "./l2";\nimport { a as b } from "./l0";\nexport const read: never[] = [a, b, real];\n`;
+  return files;
+}
+
+// Every alias of a ring is circular (TS2303), also one in a module that is linked after another part of the ring.
+test.concurrent.skipIf(!tsc)("rings of aliases through UMD globals, on any number of threads", async () => {
+  const options = { ...JSON.parse(tsconfig).compilerOptions, lib: ["es5"], skipLibCheck: false };
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: options }),
+    ...ringsOfAliasesThroughGlobals(),
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  expect(theirs.filter(line => line.includes("TS2303")).length).toBe(26);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
 /**
  * A chain of `length` modules, each of which imports from the one before it and passes a name on. Some export a default
  * that does not exist, which the next one imports. Beside it `beside` modules, in rings of two with an alias that goes

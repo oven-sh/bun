@@ -33,9 +33,8 @@ use bun_sema::jitter::Jitter;
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{
-    COMPARE_PATHS_CASE_SENSITIVE, COUNTS_IDENTIFIERS_WHILE_LOADING, Claim, FileId, Files,
-    GlobalName, Run, SharedVerdict, Sym, count_identifiers, declaration_emit_output_file_path,
-    has_libraries, own_emit_output_file_path,
+    COMPARE_PATHS_CASE_SENSITIVE, Claim, FileId, Files, GlobalName, Run, SharedVerdict, Sym,
+    declaration_emit_output_file_path, has_libraries, own_emit_output_file_path,
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
@@ -3914,9 +3913,6 @@ fn may_declare_a_global(
         && !(is_javascript(path) && has(b"require"))
 }
 
-/// Off: the thread that makes the plan estimates the cost of every file by itself.
-const ESTIMATES_COSTS_ON_ALL_THREADS: bool = true;
-
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they
 /// refer to are checked.
 /// `is_owned_elsewhere`: of a file of a referenced project, which is loaded but not checked.
@@ -4575,20 +4571,9 @@ fn check_named_files(
     // instructions of the check.
     let cost_of = |file: FileId| {
         let (identifiers, type_nodes) = program.files.sizes[file.idx()];
-        let identifiers = match COUNTS_IDENTIFIERS_WHILE_LOADING {
-            true => identifiers,
-            false => count_identifiers(program.files.hir(file)),
-        };
         identifiers as usize + type_nodes as usize * request.plan_options.type_node_cost + 1
     };
-    let costs: Vec<AtomicUsize> = to_check.iter().map(|_| AtomicUsize::new(0)).collect();
-    let estimate = |index: usize| costs[index].store(cost_of(to_check[index]), Ordering::Relaxed);
-    // Without the counts it reads every expression of the program.
-    match ESTIMATES_COSTS_ON_ALL_THREADS && !COUNTS_IDENTIFIERS_WHILE_LOADING {
-        true => host.parallel(costs.len(), &estimate),
-        false => (0..costs.len()).for_each(estimate),
-    }
-    let costs: Vec<usize> = costs.into_iter().map(AtomicUsize::into_inner).collect();
+    let costs: Vec<usize> = to_check.iter().map(|&file| cost_of(file)).collect();
     let size_of = |index: usize| costs[index];
     // `PlanOptions::split_files`: the text of file `index` in at most `parts` ranges of about the same length, each from the start of
     // a statement to the start of another. Empty: the file is not split. In a declaration file nothing is inferred and no node is

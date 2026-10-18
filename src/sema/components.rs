@@ -1,8 +1,8 @@
 //! The strongly connected components of the import graph, and their levels. Computed once, at the
 //! end of loading.
 //!
-//! The link step resolves exports and aliases component by component, level by level. Everything
-//! here is a function of the graph and of program order alone.
+//! The link step resolves exports and aliases component by component, each after what it imports.
+//! Everything here is a function of the graph and of program order alone.
 
 use crate::program::FileId;
 use crate::session::Arena;
@@ -88,16 +88,6 @@ impl<'s> Components<'s> {
             all: arena.alloc_slice_fill_iter(in_program_order.iter().map(component)),
             of_file: arena.alloc_slice_fill_iter(node_of.iter().map(of_node)),
         }
-    }
-
-    /// The indices in `all` of the components of level 0, of level 1, .. Within a level in program order.
-    pub fn by_level(&self) -> Vec<Vec<u32>> {
-        let levels = self.all.iter().map(|it| it.level as usize + 1).max();
-        let mut by_level: Vec<Vec<u32>> = vec![Vec::new(); levels.unwrap_or(0)];
-        for (index, component) in self.all.iter().enumerate() {
-            by_level[component.level as usize].push(index as u32);
-        }
-        by_level
     }
 }
 

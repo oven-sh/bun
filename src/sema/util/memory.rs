@@ -9,12 +9,9 @@
 //! - `Cells`: atomic integers for a range of indices that keeps growing, initially all zero.
 //! - `Newest`: the newest of a series of slices of cells, read without a lock.
 //!
-//! And `slice_made_by`: a boxed slice whose elements are written by several threads.
-//!
 //! Each gets its memory from the allocator that it holds, and returns it there. Any thread that
 //! adds to an `AppendVec`, a `Cells` or a `Newest` may allocate, and the thread that drops it frees.
 
-use bun_threading::Guarded;
 use std::alloc::{Allocator, Global};
 use std::cell::Cell;
 use std::marker::PhantomData;
@@ -522,29 +519,6 @@ impl<C, A: Allocator + Clone> Drop for Newest<C, A> {
     }
 }
 
-// ───────────────────────────── a slice that several threads fill ─────────────────────────────
-
-/// A slice of `len` elements, of which `make(index)` is the element `index`. `run` gets a function, and
-/// calls it with every index below `len`, on whichever threads. So the elements are made by all the
-/// threads. An element that `run` has left out is made at the end.
-pub fn slice_made_by<T: Send, A: Allocator>(
-    len: usize,
-    alloc: A,
-    make: &(dyn Fn(usize) -> T + Sync),
-    run: impl FnOnce(&(dyn Fn(usize) + Sync)),
-) -> Box<[T], A> {
-    let mut slots: Vec<Guarded<Option<T>>> = (0..len).map(|_| Guarded::new(None)).collect();
-    run(&|index| {
-        let element = make(index);
-        *slots[index].lock() = Some(element);
-    });
-    let mut all = Vec::with_capacity_in(len, alloc);
-    for (index, slot) in slots.iter_mut().enumerate() {
-        all.push(slot.get_mut().take().unwrap_or_else(|| make(index)));
-    }
-    all.into_boxed_slice()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -944,55 +918,5 @@ mod tests {
 
         drop(AtomicU64::zeroed_slice_in(10, alloc));
         assert_eq!(count(), 0);
-    }
-
-    #[test]
-    fn four_threads_make_one_slice() {
-        let (blocks, alive, next) = (
-            AtomicUsize::new(0),
-            AtomicUsize::new(0),
-            AtomicUsize::new(0),
-        );
-        let counts = || {
-            (
-                blocks.load(Ordering::Relaxed),
-                alive.load(Ordering::Relaxed),
-            )
-        };
-        let slice = slice_made_by(
-            100,
-            Counting(&blocks),
-            &|index| Counted::new(index as u32 * 3, &alive),
-            |make| {
-                std::thread::scope(|scope| {
-                    for _ in 0..4 {
-                        scope.spawn(|| {
-                            loop {
-                                let index = next.fetch_add(1, Ordering::Relaxed);
-                                if index >= 100 {
-                                    break;
-                                }
-                                make(index);
-                            }
-                        });
-                    }
-                });
-            },
-        );
-        let mut elements = slice.iter().enumerate();
-        assert!(elements.all(|(index, element)| element.0 == index as u32 * 3));
-        assert_eq!(counts(), (1, 100));
-        drop(slice);
-        assert_eq!(counts(), (0, 0));
-        assert!(slice_made_by(0, Global, &|index| index, |_| {}).is_empty());
-    }
-
-    #[test]
-    fn an_element_that_is_left_out_is_made_at_the_end() {
-        let slice = slice_made_by(3, Global, &|index| index, |make| {
-            make(0);
-            make(2);
-        });
-        assert_eq!(&slice[..], [0, 1, 2]);
     }
 }

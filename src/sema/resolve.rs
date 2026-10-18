@@ -1881,9 +1881,6 @@ fn normalize_path_for_cjs_resolution(containing_directory: &[u8], module_name: &
     candidate
 }
 
-/// Off: `Resolver::package_json` returns a copy.
-const SHARES_PACKAGE_JSONS: bool = true;
-
 struct Package<'h> {
     /// A program keeps those of its packages when the resolver is gone.
     json: std::sync::Arc<Json>,
@@ -2844,10 +2841,8 @@ impl<'h> Resolver<'h> {
 
     /// The `package.json` in `dir`, if one exists.
     pub fn package_json(&self, dir: &[u8]) -> Option<std::sync::Arc<Json>> {
-        self.package(dir).map(|package| match SHARES_PACKAGE_JSONS {
-            true => std::sync::Arc::clone(&package.json),
-            false => std::sync::Arc::new(Json::clone(&package.json)),
-        })
+        self.package(dir)
+            .map(|package| std::sync::Arc::clone(&package.json))
     }
 
     /// `Resolver.GetPackageScopeForPath`: the nearest `package.json` in `dir` or an ancestor

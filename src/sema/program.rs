@@ -21,12 +21,11 @@ use crate::resolve::{
     typescript_path,
 };
 use crate::session::{
-    Arena, ArenaHashMap, ArenaHashSet, ArenaVec, Session, map_in, set_in, transfer_arena,
+    Arena, ArenaBox, ArenaHashMap, ArenaHashSet, ArenaVec, Session, map_in, set_in, transfer_arena,
     vec_from_iter_in,
 };
 use crate::table::{Bases, ByNode, ByNodeIndirect, Frozen, RawWord};
 use crate::util::SharedSort;
-use crate::util::memory::slice_made_by;
 use crate::util::{FxBuild, FxHashMap, FxHashSet, List, ShardedMap};
 use crate::verify::{Place, Problem};
 use bstr::ByteSlice;
@@ -81,41 +80,6 @@ enum TransientCandidate<'s> {
     Unresolved(SymbolId),
 }
 
-/// For a build that is run to find mistakes: what the shortcuts below find before the first file is checked is also found
-/// the long way, and a difference is a panic that names the file, the specifier or the path.
-const COMPARES_WITH_THE_LONG_WAY: bool = false;
-
-/// Off: `Files::make_transient_symbols` goes through every alias of every file, on the thread that merges.
-const FINDS_TRANSIENT_CANDIDATES_ON_ALL_THREADS: bool = true;
-
-/// Off: a file gets no transient symbol unless it has an `import * as ns`, or one of `Bound::specifiers` leads to a module
-/// with `export =`. That misses `declare module "a" { import { b } from "c"; }` in a script, and so differs from TypeScript.
-const ASKS_EVERY_IMPORT_OF_A_FILE: bool = true;
-
-/// Off: a specifier is compared with every `declare module "*.svg"`.
-const ASKS_ONLY_THE_PATTERNS_THAT_END_ALIKE: bool = true;
-
-/// On: `Files::merge` finds the `declare module "*.svg"` for every specifier of every file, and later lookups read the result.
-const KEEPS_THE_PATTERN_OF_EVERY_SPECIFIER: bool = false;
-
-/// Off: each step of `Files::link_by_level` is a parallel region of its own. The tasks, what each of them sees, and the order
-/// in which they are published are the same.
-const LINKS_ALL_LEVELS_IN_ONE_REGION: bool = true;
-
-/// Off: `Files::link` goes level by level of the import graph, with a barrier after each.
-const LINKS_BY_COMPONENT: bool = false;
-
-/// For `Files::link_by_level`. Not a function of the number of threads: which components share a buffer is part of the
-/// plan.
-const COMPONENTS_OF_A_TASK: usize = 64;
-
-/// Off: the import graph of `Files::components` has no edge from a file that names an ambient module to the scripts that
-/// declare it. Then every task of the link step that comes to the module resolves its aliases for itself.
-const LINKS_AMBIENT_MODULES_LIKE_IMPORTS: bool = true;
-
-/// Off: `Files::publish` gets the entries of a task in the order of a hash table.
-const PUBLISHES_IN_TABLE_ORDER: bool = true;
-
 fn add_transient_symbols<'s>(module: &mut Module<'s>, created: Vec<(TransientSymbol, Symbol<'s>)>) {
     module.bound.symbols.reserve_exact(created.len());
     for (mut links, symbol) in created {
@@ -126,7 +90,7 @@ fn add_transient_symbols<'s>(module: &mut Module<'s>, created: Vec<(TransientSym
 }
 
 /// How many of the expressions of a file are identifiers.
-pub fn count_identifiers(hir: &hir::File) -> u32 {
+fn count_identifiers(hir: &hir::File) -> u32 {
     let tags = hir.exprs.iter().map(|it| it.kind.tag());
     tags.filter(|&tag| tag == ExprTag::Ident).count() as u32
 }
@@ -139,18 +103,15 @@ fn slice_in<'s, T: Copy>(list: &[T], arena: &'s Arena) -> &'s [T] {
     arena.alloc_slice_copy(list)
 }
 
-/// `work` for every module, on all the threads of the host.
+/// `work` for every module, with its index among them, on all the threads of the host.
 fn each_module<'s>(
     host: &dyn Host,
-    modules: &mut [Option<Box<Module<'s>>>],
-    work: &(dyn Fn(&mut Module<'s>) + Sync),
+    modules: &mut [Option<ArenaBox<'s, Module<'s>>>],
+    work: &(dyn Fn(usize, &mut Module<'s>) + Sync),
 ) {
-    if !FINISHES_MODULES_ON_ALL_THREADS {
-        return modules.iter_mut().flatten().for_each(|it| work(it));
-    }
-    let modules: Vec<Guarded<&mut Box<Module<'s>>>> =
+    let modules: Vec<Guarded<&mut ArenaBox<'s, Module<'s>>>> =
         modules.iter_mut().flatten().map(Guarded::new).collect();
-    host.parallel(modules.len(), &|at| work(&mut modules[at].lock()));
+    host.parallel(modules.len(), &|at| work(at, &mut modules[at].lock()));
 }
 
 /// `list` at its final size, in `arena`.
@@ -260,37 +221,9 @@ pub struct Module<'s> {
     identifiers: u32,
 }
 
-/// On: a module stays where the thread that loaded it has put it, and `Files::modules` has its address. That is one more
-/// load wherever a module is looked up. Off: it is moved into `Files::modules`, thousands of bytes for each.
-const MODULES_STAY_WHERE_THEY_ARE_LOADED: bool = false;
-
-/// What `Files::modules` has of a module.
-trait Holds {
-    type Held<'s>;
-    fn hold<'s>(module: Box<Module<'s>>) -> Self::Held<'s>;
-}
-
-/// By `MODULES_STAY_WHERE_THEY_ARE_LOADED`.
-struct Holding<const STAYS: bool>;
-
-impl Holds for Holding<true> {
-    type Held<'s> = Box<Module<'s>>;
-    fn hold<'s>(module: Box<Module<'s>>) -> Box<Module<'s>> {
-        module
-    }
-}
-
-impl Holds for Holding<false> {
-    type Held<'s> = Module<'s>;
-    fn hold<'s>(module: Box<Module<'s>>) -> Module<'s> {
-        *module
-    }
-}
-
-type HoldingModules = Holding<MODULES_STAY_WHERE_THEY_ARE_LOADED>;
-
-/// A module in the list of all modules. In a cell for `Files::free_tree`.
-pub struct ModuleCell<'s>(std::cell::UnsafeCell<<HoldingModules as Holds>::Held<'s>>);
+/// A module in the list of all modules. It is thousands of bytes, and stays where the thread that loaded it has put it. In
+/// a cell for `Files::free_tree`.
+pub struct ModuleCell<'s>(std::cell::UnsafeCell<ArenaBox<'s, Module<'s>>>);
 
 // SAFETY: a module is only mutated through `&mut Files`, or by `Files::free_tree`.
 unsafe impl Sync for ModuleCell<'_> {}
@@ -572,7 +505,7 @@ pub struct Files<'s> {
     arena: &'s Arena,
     pub atoms: Interner<'s>,
     pub options: &'s Options,
-    pub modules: Box<[ModuleCell<'s>], &'s Arena>,
+    pub modules: ArenaVec<'s, ModuleCell<'s>>,
     pub by_path: ByPath<'s>,
 
     pub globals: SymbolMap<'s>,
@@ -598,9 +531,6 @@ pub struct Files<'s> {
     /// Where in `ambient_patterns` they are, by the last byte of what follows the `*`, and at 256 those that end with the
     /// `*`. Only these two lists can match a specifier that ends in that byte. Empty until all patterns are known.
     ambient_patterns_by_end: &'s [&'s [u32]],
-    /// `best_ambient_pattern` of every specifier of every file. Most lookups of a specifier end there, in a mode in which the
-    /// file does not import it, and there can be a hundred patterns.
-    ambient_patterns_of_specifiers: ArenaHashMap<'s, Atom, Option<Sym>>,
     /// `patternAmbientModuleAugmentations`: keyed by the declared name, the symbol that `declare
     /// module "a.svg"` in a module creates from `declare module "*.svg"`.
     pattern_augmentations: ArenaHashMap<'s, Atom, Sym>,
@@ -691,8 +621,8 @@ pub struct Files<'s> {
     /// `redirectTargetsMap`: the paths of the duplicates of a package file, for which that file is
     /// in the program, in order.
     pub redirect_targets: ArenaHashMap<'s, FileId, &'s [&'s [u8]]>,
-    /// By `FileId`, for an estimate of what a file costs to check: `count_identifiers` (0 unless
-    /// `COUNTS_IDENTIFIERS_WHILE_LOADING`), and how many type nodes it has.
+    /// By `FileId`, for an estimate of what a file costs to check: how many of its expressions are identifiers, and how
+    /// many type nodes it has.
     pub sizes: &'s [(u32, u32)],
     /// What `traceResolution` logs, in order.
     pub resolution_trace: &'s [DiagAndArgs],
@@ -869,30 +799,6 @@ struct Resolution<'r> {
 /// compare the paths anyway. The one thread that then gives every file its id goes by the numbers.
 const NOT_NUMBERED: u32 = u32::MAX;
 
-/// Off: `Files::load` looks every path up by its bytes.
-const FINDS_FILES_BY_THE_NUMBERS_OF_PATHS: bool = true;
-
-/// Off: `Files::load` gives the files their ids when the last of them is loaded.
-const ORDERS_FILES_WHILE_THEY_ARE_LOADED: bool = true;
-
-/// Off: one thread gives the modules their new ids, finishes them and moves them to `Files::modules`.
-const FINISHES_MODULES_ON_ALL_THREADS: bool = true;
-
-/// Off: `Files::load` finds `Files::components` before the merge, on its own thread.
-const FINDS_COMPONENTS_BESIDE_THE_MERGE: bool = true;
-
-/// Off: `Files::load` reads `Files::package_jsons` and frees the resolver before the merge, on its own thread.
-const ENDS_RESOLUTION_BESIDE_THE_MERGE: bool = true;
-
-/// Off: `Files::load` frees the paths of the resolver before it links, on its own thread.
-const FREES_PATHS_BESIDE_THE_LINK: bool = true;
-
-/// Off: `Files::merge` looks at every file for what it declares for all files.
-const MERGES_ONLY_THE_FILES_THAT_DECLARE_FOR_ALL: bool = true;
-
-/// Off: the identifiers of a file are counted when the checks are planned.
-pub const COUNTS_IDENTIFIERS_WHILE_LOADING: bool = true;
-
 /// What `Files::load` reads of a module as it finishes it. The lists of these are short enough to walk on one thread.
 struct Noted<'s> {
     file_name: &'s [u8],
@@ -910,8 +816,6 @@ struct Noted<'s> {
     is_lib: bool,
     /// `edges`, and what it imports.
     targets: Vec<FileId>,
-    /// The names in it that may be those of ambient modules.
-    bare_specifiers: Vec<Atom>,
     /// The sources of referenced projects that it imports, each with the declaration file that is read in its place.
     built_imports: Vec<(Atom, FileId)>,
     /// `Module::is_leaf`, if no file refers to it and it imports from no ambient module with a relative name.
@@ -1212,7 +1116,7 @@ fn keep_list<'s, T: Clone + Send + Sync + 'static>(session: &'s Session, list: &
 /// `'r`: the paths belong to the `Resolver`.
 struct Loaded<'s, 'r> {
     /// Without `hir` and `bound` if `parse` has them. It is large, and goes from list to list.
-    module: Box<Module<'s>>,
+    module: ArenaBox<'s, Module<'s>>,
     /// For `Ahead::take_parse`: the `Parse` for it and for the other copies of the file.
     parse: Option<u32>,
     imports: Vec<Resolution<'r>>,
@@ -2759,7 +2663,7 @@ struct AliasResolver<'a, 's> {
     scope: Option<(&'a LinkPlan<'s>, u32)>,
 }
 
-/// What the tasks of `Files::link_by_component` share. A task links one component, and publishes at once what it has found
+/// What the tasks of `Files::link_components` share. A task links one component, and publishes at once what it has found
 /// for the symbols of that component. Nobody else publishes anything for them.
 ///
 /// What a task reads must not depend on how far the other tasks have come. So of what the link step finds, it reads what
@@ -2791,7 +2695,7 @@ impl LinkPlan<'_> {
     /// that is published.
     ///
     /// It waits for a lower level only, and the lowest component that is not finished is always at work
-    /// (`Files::link_by_component`). So that one is finished without waiting, and then the next.
+    /// (`Files::link_components`). So that one is finished without waiting, and then the next.
     fn sees(&self, own: u32, file: FileId) -> bool {
         let other = self.component_of(file);
         // Nothing is published for its own symbols before it ends.
@@ -2841,26 +2745,6 @@ fn is_nested(&(module, links): &(&Sym, &ModuleSymbolLinks)) -> bool {
 fn pause_before_sleeping() {
     for _ in 0..64 {
         std::hint::spin_loop();
-    }
-}
-
-/// The threads of one parallel region that lasts for the whole link step. Under the lock of what they take their tasks
-/// from.
-#[derive(Default)]
-struct LinkThreads {
-    /// How many have come and not left.
-    present: usize,
-    /// How many of them sleep because there is no task to take.
-    asleep: usize,
-}
-
-impl LinkThreads {
-    /// After tasks have been added: wakes a thread for each of the `tasks` that can be taken, but for the one that the
-    /// calling thread takes.
-    fn wake_for(&self, tasks: usize, has_tasks: &bun_threading::Condvar) {
-        for _ in 0..tasks.saturating_sub(1).min(self.asleep) {
-            has_tasks.notify_one();
-        }
     }
 }
 
@@ -4923,14 +4807,14 @@ impl<'s> Files<'s> {
         // `parseTaskData.tasks`: the tasks by file name, where a file can have several.
         let mut by_name: FxHashMap<&'s [u8], FileId> = FxHashMap::default();
         let mut all_found = Found::default();
-        let mut modules: Vec<Option<Box<Module>>> = Vec::new();
+        let mut modules: Vec<Option<ArenaBox<Module>>> = Vec::new();
         // `parseTaskData.lowestDepth`, indexed by `FoundFile::first`: the lowest number of steps
         // into packages (`increaseDepth`) that a task for the file has run at.
         let mut depths: Vec<u32> = Vec::new();
         // `taskDataByPath.LoadOrStore`
         let mut add = |path: &[u8],
                        is_lib: bool,
-                       modules: &mut Vec<Option<Box<Module>>>,
+                       modules: &mut Vec<Option<ArenaBox<'s, Module<'s>>>>,
                        depths: &mut Vec<u32>,
                        found: &mut Found<'s>|
          -> FileId {
@@ -5163,27 +5047,18 @@ impl<'s> Files<'s> {
         let mut add_numbered = |number: u32,
                                 path: &[u8],
                                 is_lib: bool,
-                                modules: &mut Vec<Option<Box<Module>>>,
+                                modules: &mut Vec<Option<ArenaBox<'s, Module<'s>>>>,
                                 depths: &mut Vec<u32>,
                                 found: &mut Found<'s>|
          -> FileId {
-            if !FINDS_FILES_BY_THE_NUMBERS_OF_PATHS || number == NOT_NUMBERED {
+            if number == NOT_NUMBERED {
                 return add(path, is_lib, modules, depths, found);
             }
             let at = number as usize;
             if at >= files_by_number.len() {
                 files_by_number.resize(at + 1, None);
             }
-            let file = *files_by_number[at]
-                .get_or_insert_with(|| add(path, is_lib, modules, depths, found));
-            if COMPARES_WITH_THE_LONG_WAY {
-                assert!(
-                    file == add(path, is_lib, modules, depths, found),
-                    "another file the long way: {}",
-                    path.as_bstr(),
-                );
-            }
-            file
+            *files_by_number[at].get_or_insert_with(|| add(path, is_lib, modules, depths, found))
         };
         // On this thread, while the others load: see `load_ahead`.
         let mut put_in_order = |all_are_loaded: &mut dyn FnMut()| {
@@ -5511,19 +5386,11 @@ impl<'s> Files<'s> {
                     }
                     // The copy that is in the program. Another file has taken the `Parse` if the tasks
                     // gave the two of them different ids.
-                    if let Some(slot) = all_found.files[file.idx()].parse.take()
-                        && let Some(module) = &mut modules[file.idx()]
-                    {
+                    if let Some(slot) = all_found.files[file.idx()].parse.take() {
                         let at = slot as usize;
                         is_parse_taken.resize(is_parse_taken.len().max(at + 1), false);
-                        let slot =
-                            (!std::mem::replace(&mut is_parse_taken[at], true)).then_some(slot);
-                        if FINISHES_MODULES_ON_ALL_THREADS {
-                            parses_to_take[file.idx()] = Some(slot);
-                        } else {
-                            let parse = slot.and_then(|slot| ahead.take_parse(slot));
-                            Self::give_parse(arena, host, options, &atoms, module, parse);
-                        }
+                        let is_taken = std::mem::replace(&mut is_parse_taken[at], true);
+                        parses_to_take[file.idx()] = Some((!is_taken).then_some(slot));
                     }
                     seen[file.idx()] = true;
                     log.append(&mut traces[file.idx()]);
@@ -5586,7 +5453,7 @@ impl<'s> Files<'s> {
                 file += 1;
                 is_kept[file - 1]
             });
-            each_module(host, &mut modules, &|module| {
+            each_module(host, &mut modules, &|_, module| {
                 // A task that is elided loads nothing. `collectFiles` goes on from the task for
                 // the automatic type directives to its sub tasks.
                 let mut edges: SmallVec<[FileId; 32]> = SmallVec::new();
@@ -5678,18 +5545,12 @@ impl<'s> Files<'s> {
         // The ambient modules with `export .. from "./relative"` (2439). What else is reported
         // there depends on who imports from them (`Checker::modules_is_imported_by_name`).
         let with_relative_names: Guarded<Vec<Atom>> = Guarded::new(Vec::new());
-        // The ambient modules that scripts declare, each with the script.
-        let ambient_modules: Guarded<Vec<(Atom, FileId)>> = Guarded::new(Vec::new());
         let has_type_only_stars = AtomicBool::new(false);
-        let boxes: Vec<Guarded<Option<Box<Module<'s>>>>> =
-            modules.into_iter().map(Guarded::new).collect();
         let notes: Vec<Guarded<Option<Noted<'s>>>> =
             (0..count).map(|_| Guarded::new(None)).collect();
-        // Everything that is done to a module by itself, as it moves to its place among the modules. A module is thousands
-        // of bytes: each walk over all of them on one thread is a cache miss or more for each.
-        let finish = |at: usize| -> ModuleCell<'s> {
-            let mut boxed = boxes[at].lock().take().unwrap();
-            let module: &mut Module<'s> = &mut boxed;
+        // Everything that is done to a module by itself. A module is thousands of bytes: each walk over all of them on one
+        // thread is a cache miss or more for each.
+        each_module(host, &mut modules, &|at, module| {
             // Of the calling thread.
             let own = session.arena();
             if let Some(slot) = parses_to_take[at] {
@@ -5787,14 +5648,6 @@ impl<'s> Files<'s> {
             if bound.export_stars.iter().any(is_type_only) {
                 has_type_only_stars.store(true, Ordering::Relaxed);
             }
-            if !module.is_module() {
-                let declared = bound.ambient_modules.iter().filter(|it| it.2);
-                let declared = declared.map(|it| (it.0, FileId(at as u32)));
-                ambient_modules.lock().extend(declared);
-            }
-            let names = (bound.specifiers.iter())
-                .chain(bound.ambient_specifiers.iter())
-                .chain(bound.module_augmentations.iter());
             *notes[at].lock() = Some(Noted {
                 file_name: module.file_name(),
                 package_json_directory: module.package_json_directory,
@@ -5809,12 +5662,6 @@ impl<'s> Files<'s> {
                 edges: module.edges,
                 is_lib: module.is_lib,
                 targets,
-                bare_specifiers: match LINKS_AMBIENT_MODULES_LIKE_IMPORTS {
-                    true => (names.copied())
-                        .filter(|&name| !is_relative(atoms.bytes(name)))
-                        .collect(),
-                    false => Vec::new(),
-                },
                 built_imports,
                 may_be_leaf,
                 declares_for_all: !module.is_module()
@@ -5823,16 +5670,10 @@ impl<'s> Files<'s> {
                     || !bound.pattern_ambient_modules.is_empty()
                     || !bound.ambient_modules.is_empty(),
             });
-            ModuleCell(HoldingModules::hold(boxed).into())
-        };
-        let mut modules: Box<[ModuleCell<'s>], &'s Arena> = slice_made_by(
-            count,
+        });
+        let mut modules: ArenaVec<'s, ModuleCell<'s>> = vec_from_iter_in(
+            (modules.into_iter()).map(|module| ModuleCell(module.unwrap().into())),
             arena,
-            &finish,
-            |finish| match FINISHES_MODULES_ON_ALL_THREADS {
-                true => host.parallel(count, finish),
-                false => (0..count).for_each(finish),
-            },
         );
         let notes: Vec<Noted<'s>> = (notes.into_iter())
             .map(|mut noted| noted.get_mut().take().unwrap())
@@ -5997,7 +5838,6 @@ impl<'s> Files<'s> {
             ambient_modules: map_in(arena),
             ambient_patterns: ArenaVec::new_in(arena),
             ambient_patterns_by_end: &[],
-            ambient_patterns_of_specifiers: map_in(arena),
             pattern_augmentations: map_in(arena),
             merged_symbols: map_in(arena),
             merged_parts: map_in(arena),
@@ -6044,15 +5884,6 @@ impl<'s> Files<'s> {
             package_copies: slice_in(&package_copies, arena),
             explained_in_diagnostics: session.keep(explained_in_diagnostics),
         };
-        if COMPARES_WITH_THE_LONG_WAY && COUNTS_IDENTIFIERS_WHILE_LOADING {
-            for (module, size) in files.modules.iter().zip(files.sizes) {
-                assert!(
-                    size.0 == count_identifiers(&module.hir),
-                    "another number of identifiers the long way: {}",
-                    module.file_name().as_bstr(),
-                );
-            }
-        }
         let merging = Spent::on(host, Phase::Merge);
         let order: &'s [FileId] = slice_in(&files.declaration_order(&starts, &notes), arena);
         files.order = order;
@@ -6073,16 +5904,7 @@ impl<'s> Files<'s> {
         // What needs neither the symbols nor this thread is done by other threads while this one merges the symbols.
         let components: Guarded<Option<Components<'s>>> = Guarded::new(None);
         let find_components = || {
-            let mut declared_in: FxHashMap<Atom, SmallVec<[FileId; 1]>> = FxHashMap::default();
-            for &(name, file) in ambient_modules.lock().iter() {
-                declared_in.entry(name).or_default().push(file);
-            }
-            let imports = |file: FileId| -> Vec<FileId> {
-                let noted = &notes[file.idx()];
-                let names = noted.bare_specifiers.iter();
-                let scripts = names.filter_map(|name| declared_in.get(name)).flatten();
-                noted.targets.iter().chain(scripts).copied().collect()
-            };
+            let imports = |file: FileId| notes[file.idx()].targets.clone();
             *components.lock() = Some(Components::new(order, &imports, session.arena()));
         };
         let atoms = files.atoms;
@@ -6096,18 +5918,8 @@ impl<'s> Files<'s> {
             // With the files that were predicted to be part of the program and are not.
             *leftovers = None;
         };
-        let jobs: [(bool, &(dyn Fn() + Sync)); 2] = [
-            (FINDS_COMPONENTS_BESIDE_THE_MERGE, &find_components),
-            (ENDS_RESOLUTION_BESIDE_THE_MERGE, &end_resolution),
-        ];
-        for job in jobs.iter().filter(|job| !job.0) {
-            (job.1)();
-        }
-        let beside: Vec<&(dyn Fn() + Sync)> =
-            (jobs.iter().filter(|job| job.0).map(|job| job.1)).collect();
-        let declares_for_all = |file: &FileId| {
-            !MERGES_ONLY_THE_FILES_THAT_DECLARE_FOR_ALL || notes[file.idx()].declares_for_all
-        };
+        let beside: [&(dyn Fn() + Sync); 2] = [&find_components, &end_resolution];
+        let declares_for_all = |file: &FileId| notes[file.idx()].declares_for_all;
         let declaring: Vec<FileId> = order.iter().copied().filter(declares_for_all).collect();
         host.parallel_while(beside.len(), &|at| beside[at](), &mut || {
             files.merge(host, &declaring);
@@ -6122,12 +5934,7 @@ impl<'s> Files<'s> {
         let resolving = Guarded::new(Some(resolving));
         let free_paths = |_: usize| drop(resolving.lock().take());
         let linking = Spent::on(host, Phase::Aliases);
-        if FREES_PATHS_BESIDE_THE_LINK {
-            host.parallel_while(1, &free_paths, &mut || files.link(host));
-        } else {
-            free_paths(0);
-            files.link(host);
-        }
+        host.parallel_while(1, &free_paths, &mut || files.link(host));
         drop(linking);
         let known_names = (0..known::sym_iterator.0).map(Atom);
         files.global_types =
@@ -6386,13 +6193,8 @@ impl<'s> Files<'s> {
         let (threads, io) = (host.threads(), host.io_pool());
         let mut alone = io.map(|_| WAITS_ACROSS_POOLS.lock());
         let mut meanwhile = || meanwhile(&mut || drop(alone.take()));
-        let mut on_all_threads = |work: &(dyn Fn(usize) + Sync)| {
-            if ORDERS_FILES_WHILE_THEY_ARE_LOADED {
-                return host.parallel_while(threads, work, &mut meanwhile);
-            }
-            host.parallel(threads, work);
-            meanwhile();
-        };
+        let mut on_all_threads =
+            |work: &(dyn Fn(usize) + Sync)| host.parallel_while(threads, work, &mut meanwhile);
         match io {
             Some(io) => io.each_while(
                 (),
@@ -6973,10 +6775,7 @@ impl<'s> Files<'s> {
                 TypeNodeKind::Cond { .. } | TypeNodeKind::Mapped(_)
             )
         });
-        let identifiers = match COUNTS_IDENTIFIERS_WHILE_LOADING {
-            true => count_identifiers(hir),
-            false => 0,
-        };
+        let identifiers = count_identifiers(hir);
         let adds_nothing = !is_lib
             && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
             && !hir.is_js
@@ -6994,7 +6793,7 @@ impl<'s> Files<'s> {
             bound: Bound::empty_in(arena),
             shared_id: 0,
         });
-        let module = Box::new(Module {
+        let module = Module {
             hir: parse.hir,
             bound: parse.bound,
             shared_id: parse.shared_id,
@@ -7033,9 +6832,9 @@ impl<'s> Files<'s> {
             has_conditional_or_mapped_type,
             identifiers,
             transient_symbols: ArenaVec::new_in(arena),
-        });
+        };
         Loaded {
-            module,
+            module: ArenaBox::new_in(module, arena),
             parse: None,
             imports,
             references,
@@ -7384,7 +7183,7 @@ impl<'s> Files<'s> {
                 self.ambient_modules.insert(name, merged);
             }
         }
-        if !self.ambient_patterns.is_empty() && ASKS_ONLY_THE_PATTERNS_THAT_END_ALIKE {
+        if !self.ambient_patterns.is_empty() {
             let mut by_end: Vec<Vec<u32>> = vec![Vec::new(); 257];
             for (at, pattern) in self.ambient_patterns.iter().enumerate() {
                 let end = pattern.1.last().map_or(256, |&end| usize::from(end));
@@ -7393,16 +7192,6 @@ impl<'s> Files<'s> {
             let arena = self.arena;
             let by_end = by_end.iter().map(|patterns| slice_in(patterns, arena));
             self.ambient_patterns_by_end = arena.alloc_slice_fill_iter(by_end);
-        }
-        if !self.ambient_patterns.is_empty() && KEEPS_THE_PATTERN_OF_EVERY_SPECIFIER {
-            for &id in self.order {
-                for &specifier in self.modules[id.idx()].bound.specifiers.iter() {
-                    if !self.ambient_patterns_of_specifiers.contains_key(&specifier) {
-                        let best = self.best_ambient_pattern(specifier);
-                        self.ambient_patterns_of_specifiers.insert(specifier, best);
-                    }
-                }
-            }
         }
         for (file, name, sym) in augmentations {
             match self.module_of_specifier_as(file, name, self.module(file).default_mode) {
@@ -7752,45 +7541,22 @@ impl<'s> Files<'s> {
     ///
     /// It resolves no alias, and it reads nothing that `make_transient_symbols` changes, which adds symbols and resolves
     /// aliases. So the answer is the same whichever files were asked about before, on whichever thread.
-    ///
-    /// `is_long_way`: the tables are not asked about an alias. Each is `Unresolved`.
-    fn transient_candidates_of(
-        &self,
-        file: FileId,
-        is_long_way: bool,
-    ) -> Vec<TransientCandidate<'s>> {
+    fn transient_candidates_of(&self, file: FileId) -> Vec<TransientCandidate<'s>> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut found = Vec::new();
-        let modes = [
-            ResolutionMode::Import,
-            ResolutionMode::Require,
-            ResolutionMode::None,
-        ];
         let has_export_equals = |specifier: Atom, mode: ResolutionMode| {
             self.module_of_specifier_as(file, specifier, mode)
                 .is_some_and(|m| self.export(m, known::export_equals).is_some())
         };
-        // Most files have no candidate, and then their symbols are not read.
-        let may_have_one = match ASKS_EVERY_IMPORT_OF_A_FILE {
-            // The declarations that make an alias a candidate, wherever in the file they are: an import in the body
-            // of an ambient module is not among `specifiers`. `require` is a declaration in JavaScript alone.
-            true => {
-                let mode_of = |written: ResolutionMode| self.mode_of_import(file, written);
-                hir.is_js
-                    || (hir.imports.iter()).any(|it| {
-                        it.namespace.is_some() || has_export_equals(it.spec, mode_of(it.mode))
-                    })
-                    || (hir.exports.iter()).any(|it| {
-                        it.has_module_specifier && has_export_equals(it.spec, mode_of(it.mode))
-                    })
-            }
-            false => {
-                hir.imports.iter().any(|import| import.namespace.is_some())
-                    || bound.specifiers.iter().any(|&specifier| {
-                        (modes.into_iter()).any(|mode| has_export_equals(specifier, mode))
-                    })
-            }
-        };
+        // Most files have no candidate, and then their symbols are not read. These are the declarations that make an alias
+        // a candidate, wherever in the file they are: an import in the body of an ambient module is not among
+        // `specifiers`. `require` is a declaration in JavaScript alone.
+        let mode_of = |written: ResolutionMode| self.mode_of_import(file, written);
+        let may_have_one = hir.is_js
+            || (hir.imports.iter())
+                .any(|it| it.namespace.is_some() || has_export_equals(it.spec, mode_of(it.mode)))
+            || (hir.exports.iter())
+                .any(|it| it.has_module_specifier && has_export_equals(it.spec, mode_of(it.mode)));
         if !may_have_one {
             return found;
         }
@@ -7802,10 +7568,6 @@ impl<'s> Files<'s> {
                 || self.canonical(alias) != alias
                 || (self.module(file).transient_symbols.iter()).any(|created| created.alias == id)
             {
-                continue;
-            }
-            if is_long_way {
-                found.push(TransientCandidate::Unresolved(id));
                 continue;
             }
             let Some(import) = self.namespace_import_of(alias) else {
@@ -7885,36 +7647,16 @@ impl<'s> Files<'s> {
         let counts: Vec<AtomicUsize> = (0..self.modules.len())
             .map(|_| AtomicUsize::new(NOT_COUNTED))
             .collect();
-        if FINDS_TRANSIENT_CANDIDATES_ON_ALL_THREADS {
-            let files = &*self;
-            host.parallel(order.len(), &|at| {
-                let file = order[at];
-                *found[at].lock() = files.transient_candidates_of(file, false);
-                let count = files.modules[file.idx()].bound.symbols.len();
-                counts[file.idx()].store(count, Ordering::Relaxed);
-            });
-        }
+        let files = &*self;
+        host.parallel(order.len(), &|at| {
+            let file = order[at];
+            *found[at].lock() = files.transient_candidates_of(file);
+            let count = files.modules[file.idx()].bound.symbols.len();
+            counts[file.idx()].store(count, Ordering::Relaxed);
+        });
         let mut counts: Vec<usize> = counts.into_iter().map(AtomicUsize::into_inner).collect();
         for (&file, mut found) in order.iter().zip(found) {
-            let found = match FINDS_TRANSIENT_CANDIDATES_ON_ALL_THREADS {
-                true => std::mem::take(found.get_mut()),
-                false => self.transient_candidates_of(file, true),
-            };
-            let created = self.transient_symbols_of(file, found);
-            if COMPARES_WITH_THE_LONG_WAY {
-                let every_alias = self.transient_candidates_of(file, true);
-                let long_way = self.transient_symbols_of(file, every_alias);
-                let all_of = |(links, symbol): &(TransientSymbol, Symbol)| {
-                    let of_links = (links.alias, links.target, links.is_combined);
-                    let of_symbol = (symbol.name, symbol.flags, symbol.value_declaration);
-                    (of_links, of_symbol)
-                };
-                assert!(
-                    created.iter().map(all_of).eq(long_way.iter().map(all_of)),
-                    "other transient symbols the long way: {}",
-                    self.module(file).file_name().as_bstr(),
-                );
-            }
+            let created = self.transient_symbols_of(file, std::mem::take(found.get_mut()));
             if created.is_empty() {
                 continue;
             }
@@ -7925,13 +7667,6 @@ impl<'s> Files<'s> {
         for (count, module) in counts.iter_mut().zip(self.modules.iter()) {
             if *count == NOT_COUNTED {
                 *count = module.bound.symbols.len();
-            }
-            if COMPARES_WITH_THE_LONG_WAY {
-                assert!(
-                    *count == module.bound.symbols.len(),
-                    "another number of symbols the long way: {}",
-                    module.file_name().as_bstr(),
-                );
             }
         }
         counts
@@ -8985,10 +8720,7 @@ impl<'s> Files<'s> {
         if self.ambient_patterns.is_empty() {
             return None;
         }
-        let pattern = match self.ambient_patterns_of_specifiers.get(&spec) {
-            Some(&best) => best,
-            None => self.best_ambient_pattern(spec),
-        }?;
+        let pattern = self.best_ambient_pattern(spec)?;
         let augmented = self.pattern_augmentations.get(&spec).copied();
         Some(self.canonical(augmented.unwrap_or(pattern)))
     }
@@ -9002,15 +8734,7 @@ impl<'s> Files<'s> {
         let end = self.atoms.bytes(spec).last();
         let alike = end.map_or(&[][..], |&end| by_end[usize::from(end)]);
         let candidates = alike.iter().chain(*ending_with_the_star).copied();
-        let best = self.best_ambient_pattern_among(spec, candidates);
-        if COMPARES_WITH_THE_LONG_WAY {
-            assert!(
-                best == self.best_ambient_pattern_among(spec, all),
-                "another ambient pattern the long way: {}",
-                self.atoms.bytes(spec).as_bstr(),
-            );
-        }
-        best
+        self.best_ambient_pattern_among(spec, candidates)
     }
 
     /// `best_ambient_pattern`, where only the patterns at `candidates` in `ambient_patterns` can match. In any order.
@@ -9204,16 +8928,6 @@ impl<'s> Files<'s> {
 
     /// The link step: resolves the aliases and the exports of every module. `Files` is immutable
     /// afterwards.
-    ///
-    /// Proceeds level by level of the import graph. A task reads the tables and its own buffer. At
-    /// the barrier after a level the buffers are published in task order, and the first entry for a
-    /// key wins. So the result is a function of the program, regardless of thread scheduling.
-    ///
-    /// The levels only save work. An alias can depend on a file that its own file does not import:
-    /// through an ambient module, a UMD global, an `import a = b.c` in a script, a module
-    /// augmentation. A task resolves for itself whatever is not published.
-    ///
-    /// Or component by component: see `link_by_component`.
     fn link(&mut self, host: &dyn Host) {
         // A file that is unreachable from every starting point is in `modules` and not in `order`.
         let unordered: Vec<FileId> = (0..self.modules.len() as u32)
@@ -9227,10 +8941,7 @@ impl<'s> Files<'s> {
         });
         let nested: Vec<Sym> = at_merge.filter(is_nested).map(|it| *it.0).collect();
         let found = Guarded::new((nested, Vec::<FailedLookup>::new()));
-        match LINKS_BY_COMPONENT {
-            true => self.link_by_component(host, &unordered, &found),
-            false => self.link_by_level(host, unordered, &found),
-        }
+        self.link_components(host, &unordered, &found);
         let (mut nested, mut failed_lookups) = std::mem::take(&mut *found.lock());
         failed_lookups.shared_sort_by_key(|it| (it.file, it.identifier));
         self.failed_lookups = slice_in(&failed_lookups, self.arena);
@@ -9256,10 +8967,14 @@ impl<'s> Files<'s> {
     /// - What is left, for a symbol that is neither, waits until all tasks have ended. Then the first entry for a key wins,
     ///   in the order of the components by level.
     ///
+    /// The order only saves work. An alias can depend on a file that its own file does not import: through an ambient
+    /// module, a UMD global, an `import a = b.c` in a script, a module augmentation. A task resolves for itself whatever it
+    /// does not read.
+    ///
     /// A thread that finds no component to take leaves, if the levels that are left are too narrow for the threads that are
     /// here, and else sleeps until there are more components than the thread that made them ready takes itself. A chain of
     /// modules is linked by one thread, which waits for nothing.
-    fn link_by_component(&self, host: &dyn Host, unordered: &[FileId], found: &FoundByLink<'s>) {
+    fn link_components(&self, host: &dyn Host, unordered: &[FileId], found: &FoundByLink<'s>) {
         use std::cmp::Reverse;
         let all = self.components.all;
         let at_merge = self.resolved_at_merge.iter().map(|it| it.0);
@@ -9306,7 +9021,10 @@ impl<'s> Files<'s> {
             not_taken: Vec<usize>,
             /// The lowest level that has one.
             lowest: usize,
-            threads: LinkThreads,
+            /// How many threads have come and not left.
+            present: usize,
+            /// How many of them sleep because there is no component to take.
+            asleep: usize,
         }
         let levels = plan.levels.iter().map(|&it| it as usize + 1).max();
         let mut widths = vec![0usize; levels.unwrap_or(0)];
@@ -9324,7 +9042,8 @@ impl<'s> Files<'s> {
             finished: 0,
             not_taken: widths,
             lowest: 0,
-            threads: LinkThreads::default(),
+            present: 0,
+            asleep: 0,
         });
         // For a thread that sleeps because `ready` is empty: it is not, or all components are finished.
         let has_tasks = bun_threading::Condvar::new();
@@ -9332,10 +9051,9 @@ impl<'s> Files<'s> {
         let decls: Guarded<Vec<Vec<(Sym, &'s [(FileId, Decl)])>>> = Guarded::new(Vec::new());
         // With `place`.
         let left_over: Guarded<Vec<(u64, Resolved<'s>)>> = Guarded::new(Vec::new());
-        let all_dropped: Guarded<Vec<(Sym, AliasSymbolLinks)>> = Guarded::new(Vec::new());
         host.parallel(host.threads().min(widest_from[0]), &|_| {
             let mut queue = shared.lock();
-            queue.threads.present += 1;
+            queue.present += 1;
             let mut has_paused = false;
             loop {
                 // The lowest first. A thread that has finished a component adds what that has made ready and takes the
@@ -9346,8 +9064,8 @@ impl<'s> Files<'s> {
                     }
                     // What is left never feeds all the threads that are here. The others go on, and wake nobody for it.
                     let is_any_left = queue.lowest < queue.not_taken.len();
-                    if is_any_left && queue.threads.present > widest_from[queue.lowest] {
-                        queue.threads.present -= 1;
+                    if is_any_left && queue.present > widest_from[queue.lowest] {
+                        queue.present -= 1;
                         return;
                     }
                     if !std::mem::replace(&mut has_paused, true) {
@@ -9356,9 +9074,9 @@ impl<'s> Files<'s> {
                         queue = shared.lock();
                         continue;
                     }
-                    queue.threads.asleep += 1;
+                    queue.asleep += 1;
                     has_tasks.wait_guarded(&mut queue);
-                    queue.threads.asleep -= 1;
+                    queue.asleep -= 1;
                     continue;
                 };
                 has_paused = false;
@@ -9373,10 +9091,10 @@ impl<'s> Files<'s> {
                 if !of_symbols.is_empty() {
                     decls.lock().push(of_symbols);
                 }
-                let (mut nested, mut dropped) = (Vec::new(), Vec::new());
+                let mut nested = Vec::new();
                 let mut failed_lookups = std::mem::take(&mut resolved.failed_lookups);
                 failed_lookups.retain(|it| plan.component_of(it.file) == at);
-                let rest = self.publish_own(resolved, &plan, at, &mut nested, &mut dropped);
+                let rest = self.publish_own(resolved, &plan, at, &mut nested);
                 plan.set_published(at);
                 let is_ready =
                     |&&it: &&u32| waits_for[it as usize].fetch_sub(1, Ordering::AcqRel) == 1;
@@ -9392,15 +9110,15 @@ impl<'s> Files<'s> {
                 if let Some(rest) = rest {
                     left_over.lock().push((next, rest));
                 }
-                if !dropped.is_empty() {
-                    all_dropped.lock().append(&mut dropped);
-                }
                 queue = shared.lock();
                 queue.ready.extend(now_ready);
                 queue.finished += 1;
-                match queue.finished == all.len() {
-                    true => has_tasks.notify_all(),
-                    false => queue.threads.wake_for(queue.ready.len(), &has_tasks),
+                if queue.finished == all.len() {
+                    has_tasks.notify_all();
+                }
+                // This thread takes one of them.
+                for _ in 0..queue.ready.len().saturating_sub(1).min(queue.asleep) {
+                    has_tasks.notify_one();
                 }
             }
             drop(queue);
@@ -9425,138 +9143,6 @@ impl<'s> Files<'s> {
         };
         left_over.into_iter().for_each(|it| publish(it.1));
         publish(self.resolve_files(unordered, None));
-        // What a task finds for an alias of another file on its way differs from what the task of that file finds only if
-        // the alias depends on one that the first task had in progress, through something that is no import.
-        for (sym, links) in std::mem::take(&mut *all_dropped.lock()) {
-            let all_of = |it: AliasSymbolLinks| {
-                let targets = (it.immediate_target, it.alias_target);
-                (targets, it.type_only_declaration, it.is_circular)
-            };
-            assert!(
-                self.alias_symbol_links.get(&sym).map(all_of) == Some(all_of(links)),
-                "an alias has other links for another component: {}",
-                self.atoms.bytes(self.symbol(sym).name).as_bstr(),
-            );
-        }
-    }
-
-    fn link_by_level(&self, host: &dyn Host, unordered: Vec<FileId>, found: &FoundByLink<'s>) {
-        let files_of = |components: &[u32]| -> Vec<FileId> {
-            let components = components
-                .iter()
-                .map(|&at| &self.components.all[at as usize]);
-            components
-                .flat_map(|component| component.files)
-                .copied()
-                .collect()
-        };
-        let mut steps: Vec<Vec<Vec<FileId>>> = (self.components.by_level().iter())
-            .map(|level| level.chunks(COMPONENTS_OF_A_TASK).map(files_of).collect())
-            .collect();
-        steps.push(vec![unordered]);
-        // The tasks of all steps, and where the tasks of each step end.
-        let tasks: Vec<&[FileId]> = steps.iter().flatten().map(|task| &task[..]).collect();
-        let mut ends: Vec<usize> = Vec::new();
-        for step in steps.iter().filter(|step| !step.is_empty()) {
-            ends.push(ends.last().unwrap_or(&0) + step.len());
-        }
-        let resolved: Vec<Guarded<Resolved>> = tasks
-            .iter()
-            .map(|_| Guarded::new(Resolved::default()))
-            .collect();
-        let run = |at: usize| *resolved[at].lock() = self.resolve_files(tasks[at], None);
-        // The barrier after the step whose tasks are `step`.
-        let publish = |step: std::ops::Range<usize>| {
-            let mut found = found.lock();
-            let (nested, failed_lookups) = &mut *found;
-            for resolved in &resolved[step] {
-                let mut resolved = std::mem::take(&mut *resolved.lock());
-                let links = resolved.module_links.iter();
-                nested.extend(links.filter(is_nested).map(|it| *it.0));
-                failed_lookups.append(&mut resolved.failed_lookups);
-                self.publish(resolved);
-            }
-        };
-        if LINKS_ALL_LEVELS_IN_ONE_REGION {
-            // There are dozens of steps, most of them shorter than it takes to start a region. So the threads stay for all
-            // the steps. A thread takes a task of the step that has begun. Whoever finishes the last task of a step is the
-            // barrier, begins the next step and takes a task of it: one thread alone gets through all of them.
-            #[derive(Default)]
-            struct Steps {
-                /// Which step has begun. Its tasks end at `ends[step]`.
-                step: usize,
-                /// The first task that no thread has taken.
-                next: usize,
-                finished: usize,
-                threads: LinkThreads,
-            }
-            // How many tasks the widest step has, of each step and those after it. More threads than that are not fed.
-            let mut widest_from = vec![0usize; ends.len() + 1];
-            for step in (0..ends.len()).rev() {
-                let start = step.checked_sub(1).map_or(0, |before| ends[before]);
-                widest_from[step] = widest_from[step + 1].max(ends[step] - start);
-            }
-            let shared = Guarded::new(Steps::default());
-            // For a thread that sleeps because the tasks of the step are taken: there are more, or all tasks are taken.
-            let has_tasks = bun_threading::Condvar::new();
-            host.parallel(host.threads().min(widest_from[0]), &|_| {
-                let mut steps = shared.lock();
-                steps.threads.present += 1;
-                let mut has_paused = false;
-                loop {
-                    // Whoever finishes the last of them publishes.
-                    if steps.next == tasks.len() {
-                        return;
-                    }
-                    if steps.next == ends[steps.step] {
-                        // What is left never feeds all the threads that are here. The others go on, and wake nobody
-                        // for it.
-                        if steps.threads.present > widest_from[steps.step + 1] {
-                            steps.threads.present -= 1;
-                            return;
-                        }
-                        if !std::mem::replace(&mut has_paused, true) {
-                            drop(steps);
-                            pause_before_sleeping();
-                            steps = shared.lock();
-                            continue;
-                        }
-                        steps.threads.asleep += 1;
-                        has_tasks.wait_guarded(&mut steps);
-                        steps.threads.asleep -= 1;
-                        continue;
-                    }
-                    has_paused = false;
-                    let at = steps.next;
-                    steps.next += 1;
-                    if steps.next == tasks.len() {
-                        has_tasks.notify_all();
-                    }
-                    drop(steps);
-                    run(at);
-                    steps = shared.lock();
-                    steps.finished += 1;
-                    let (step, end) = (steps.step, ends[steps.step]);
-                    if steps.finished == end {
-                        // No task is at work, and none can be taken.
-                        drop(steps);
-                        publish(step.checked_sub(1).map_or(0, |before| ends[before])..end);
-                        steps = shared.lock();
-                        if let Some(next_end) = ends.get(step + 1) {
-                            steps.step += 1;
-                            steps.threads.wake_for(next_end - end, &has_tasks);
-                        }
-                    }
-                }
-            });
-        } else {
-            let mut start = 0;
-            for &end in &ends {
-                host.parallel(end - start, &|at| run(start + at));
-                publish(start..end);
-                start = end;
-            }
-        }
     }
 
     /// A task of the link step. First the links of every alias of `files`, in that order, by
@@ -9621,7 +9207,7 @@ impl<'s> Files<'s> {
         let (alias_links, symbol_flags) = (&mut resolved.alias_links, &mut resolved.symbol_flags);
         resolved.alias_links_in_order.reserve(alias_links.len());
         resolved.symbol_flags_in_order.reserve(symbol_flags.len());
-        for sym in linked.iter().filter(|_| PUBLISHES_IN_TABLE_ORDER) {
+        for sym in &linked {
             (resolved.alias_links_in_order).extend(alias_links.remove_entry(sym));
             (resolved.symbol_flags_in_order).extend(symbol_flags.remove_entry(sym));
         }
@@ -9632,14 +9218,13 @@ impl<'s> Files<'s> {
 
     /// Publishes what the task for the component `own` has found for the symbols of its files. The modules among them that
     /// `is_nested` are added to `nested`. It returns what the task has found for symbols of other files that are neither
-    /// aliases nor modules, if anything. `dropped`: the rest, for `COMPARES_WITH_THE_LONG_WAY`.
+    /// aliases nor modules, if anything.
     fn publish_own(
         &self,
         resolved: Resolved<'s>,
         plan: &LinkPlan,
         own: u32,
         nested: &mut Vec<Sym>,
-        dropped: &mut Vec<(Sym, AliasSymbolLinks)>,
     ) -> Option<Resolved<'s>> {
         let is_own = |sym: Sym| plan.component_of(sym.file) == own;
         let mut rest = Resolved::default();
@@ -9648,8 +9233,6 @@ impl<'s> Files<'s> {
                 self.alias_symbol_links.insert_ref(sym, links);
             } else if !self.flags(sym).contains(SymFlags::ALIAS) {
                 rest.alias_links_in_order.push((sym, links));
-            } else if COMPARES_WITH_THE_LONG_WAY {
-                dropped.push((sym, links));
             }
         }
         // Only an alias has them.
@@ -10114,8 +9697,12 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
 
     fn alias_links(&self, sym: Sym) -> AliasSymbolLinks {
         let is_at_merge = |(plan, _): (&LinkPlan, u32)| plan.aliases_at_merge.contains(&sym);
-        if (self.scope.is_some_and(is_at_merge) || self.sees(sym.file))
+        let is_at_merge = self.scope.is_none_or(is_at_merge);
+        // A ring of aliases can have a link that is no import, and so be in several components. Each of them goes round
+        // it for itself: an alias is circular if it is in progress when the ring closes.
+        if (is_at_merge || self.sees(sym.file))
             && let Some(known) = self.alias_symbol_links.get(&sym)
+            && (is_at_merge || !known.is_circular)
         {
             return known;
         }

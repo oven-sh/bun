@@ -3503,7 +3503,7 @@ impl<'p, 's> Types<'p, 's> {
     /// Compares `a.id` with `b.id` for `isDeeplyNestedType`, which treats a higher id as a sign of a newer instantiation,
     /// one caused by recursion. Only the heights are compared. The instantiations of a recursion
     /// that steps from one literal type to the next all have the same height, and comparing their hashes would count
-    /// only about half of them. The caller orders two types with the same height.
+    /// only about half of them. The caller looks further unless `a` has the lower height.
     #[inline]
     pub fn nesting_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         self.rank(a).height.cmp(&self.rank(b).height)
@@ -3977,14 +3977,11 @@ impl<'p, 's> Types<'p, 's> {
     }
 }
 
-// ───────────────────────────── references between records: `visit` and `follow`
-// ─────────────────────────────
+// ───────────────────────────── references between records: `visit` ─────────────────────────────
 
 /// Receives what `Follow::visit` reports for a value: every id, every file, and everything else as
 /// data to hash.
 pub trait Visitor {
-    /// True if `visit` must report equal values in the same order, even where they contain a hash map.
-    const IS_ORDERED: bool = false;
     fn atom(&mut self, atom: Atom);
     fn components(&mut self, id: ComponentsId);
     fn mapper(&mut self, id: MapperId);
@@ -4178,21 +4175,8 @@ impl Follow for &[u8] {
 }
 
 impl<K: Follow + Hash + Eq, T: Follow> Follow for FxHashMap<K, T> {
-    /// Visits the entries in arbitrary order, so don't use it for a content hash unless `V::IS_ORDERED`. Then the
-    /// entries are sorted by the hash of their keys, which is the same order for two maps with the same ids.
+    /// Visits the entries in arbitrary order, so don't use it for a content hash.
     fn visit<V: Visitor>(&self, visitor: &mut V) {
-        if V::IS_ORDERED {
-            let mut entries: Vec<(u64, &K, &T)> = (self.iter())
-                .map(|(key, value)| (crate::util::fx_hash(key), key, value))
-                .collect();
-            entries.shared_sort_unstable_by_key(|entry| entry.0);
-            visitor.plain(&entries.len());
-            for (_, key, value) in entries {
-                key.visit(visitor);
-                value.visit(visitor);
-            }
-            return;
-        }
         for (key, value) in self {
             key.visit(visitor);
             value.visit(visitor);

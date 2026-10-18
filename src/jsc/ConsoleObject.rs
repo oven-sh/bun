@@ -2432,7 +2432,7 @@ pub mod formatter {
                             }
                             PercentTag::D | PercentTag::I | PercentTag::F => {
                                 if next_value.is_int32() {
-                                    // An int32, and an integer under `%d` or `%i` below, add one column.
+                                    // An int32, and a whole number under `%d` or `%i` below, add one column.
                                     writer.add_for_new_line(1);
                                     writer.print(format_args!("{}", next_value.as_int32()));
                                 } else if token != PercentTag::F && next_value.is_big_int() {
@@ -2447,8 +2447,9 @@ pub mod formatter {
                                     let number = number_substitution(token, next_value, global)?;
                                     let mut buf = [0u8; 124];
                                     let text = js_number_text(&mut buf, number);
+                                    let is_whole = number.is_finite() && number.trunc() == number;
                                     writer.add_for_new_line(
-                                        if token == PercentTag::F || number.is_nan() {
+                                        if token == PercentTag::F || !is_whole {
                                             text.len()
                                         } else {
                                             1
@@ -2513,7 +2514,7 @@ pub mod formatter {
         }
     }
 
-    /// `parseInt(value)` for `%i` and `parseFloat(value)` for `%f`, as node calls them: <https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L2839-L2882>
+    /// `Number(value)` for `%d`, `parseInt(value)` for `%i` and `parseFloat(value)` for `%f`, as node calls them: <https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L2839-L2882>
     fn number_substitution(
         token: PercentTag,
         value: JSValue,
@@ -2525,8 +2526,7 @@ pub mod formatter {
                 PercentTag::I => crate::cpp::Bun__parseIntDouble(number),
                 // `parseFloat(-0)` is 0.
                 PercentTag::F if number == 0.0 => 0.0,
-                PercentTag::F => number,
-                _ => integer_part(number),
+                _ => number,
             });
         }
         if value.is_symbol() {
@@ -2543,19 +2543,12 @@ pub mod formatter {
         global: &JSGlobalObject,
     ) -> JsResult<f64> {
         match token {
-            PercentTag::D => {
-                crate::cpp::Bun__JSValue__toNumberFromNumeric(global, value).map(integer_part)
-            }
+            PercentTag::D => crate::cpp::Bun__JSValue__toNumberFromNumeric(global, value),
             // `parseInt` and `parseFloat` of undefined, null, true and false are NaN.
             _ if value.is_undefined_or_null() || value.is_boolean() => Ok(f64::NAN),
             PercentTag::I => crate::cpp::Bun__JSValue__parseInt(global, value),
             _ => crate::cpp::Bun__JSValue__parseFloat(global, value),
         }
-    }
-
-    /// `%d` prints the integer part of `Number(value)`. Its zero has no sign.
-    fn integer_part(number: f64) -> f64 {
-        crate::cpp::Bun__parseIntDouble(number) + 0.0
     }
 
     /// `String(number)`, except that negative zero is `-0`.

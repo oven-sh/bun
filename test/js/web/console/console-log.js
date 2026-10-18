@@ -271,7 +271,7 @@ console.log("Hello %%i %i", 5, 6);
 // doesn't go out of bounds when printing
 console.log("%%d", 1);
 
-// %d is the integer part of Number(value), %i is parseInt(value) and %f is parseFloat(value)
+// %d is Number(value), %i is parseInt(value) and %f is parseFloat(value)
 console.log("%i %i", [1, 2, 3, 4, 5]);
 console.log("| %d | %i | %f |", "42abc", "42abc", "42abc");
 console.log("| %d | %i | %f |", "\u00a04.5px", "\u00a04.5px", "\u00a04.5px");

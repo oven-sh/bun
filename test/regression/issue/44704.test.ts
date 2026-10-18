@@ -15,12 +15,12 @@ test("bun build --minify keeps both adjacent :where() rules that hold only custo
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, exitCode, built: stdout.includes("Bundled") }).toEqual({ stderr: "", exitCode: 0, built: true });
 
   const files = [...new Glob("out/*.css").scanSync(String(dir))];
   const css = await Promise.all(files.map(file => Bun.file(`${dir}/${file}`).text()));
 
   // The two rules can stay apart or merge. Both declarations must survive.
   expect(css.map(text => text.match(/--\w+:\d+/g))).toEqual([["--a:1", "--b:2"]]);
-  expect(exitCode).toBe(0);
 });

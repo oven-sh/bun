@@ -6,6 +6,7 @@ use core::fmt;
 use bun_alloc::{Arena as Bump, ArenaPtr};
 use bun_core::strings;
 use bun_css as css;
+use bun_css::css_parser::CssModuleScope;
 use bun_css::css_values::ident::{CustomIdent, Ident};
 use bun_css::selector::serialize;
 use bun_css::{
@@ -1188,7 +1189,7 @@ impl<'a> SelectorParser<'a> {
         raw: Str,
         loc: usize,
     ) -> <impl_::Selectors as SelectorImpl>::LocalIdentifier {
-        if input.flags.css_modules() {
+        if input.flags.make_local_symbols() {
             return <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ref(
                 input.add_symbol_for_name(
                     raw,
@@ -1343,6 +1344,7 @@ impl<'a> SelectorParser<'a> {
         &mut self,
         name: Str,
         parser: &mut CssParser,
+        state: &mut SelectorParsingState,
     ) -> CResult<PseudoClass> {
         let pseudo_class = crate::match_ignore_ascii_case! { name, {
             b"lang" => {
@@ -1364,10 +1366,14 @@ impl<'a> SelectorParser<'a> {
                 direction: Direction::parse(parser)?,
             },
             b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
-                selector: Box::new(Selector::parse(self, parser)?),
+                selector: Box::new(parser.with_css_module_scope(CssModuleScope::Local, |parser| {
+                    Selector::parse_inner(self, parser, state)
+                })?),
             },
             b"global" if self.options.css_modules.is_some() => PseudoClass::Global {
-                selector: Box::new(Selector::parse(self, parser)?),
+                selector: Box::new(parser.with_css_module_scope(CssModuleScope::Global, |parser| {
+                    Selector::parse_inner(self, parser, state)
+                })?),
             },
             _ => {
                 if !strings::starts_with_char(name, b'-') {
@@ -1797,6 +1803,20 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     pub fn parse(parser: &mut SelectorParser, input: &mut CssParser) -> CResult<Self> {
         let mut state = SelectorParsingState::empty();
         parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)
+    }
+
+    /// `&` in the parsed selector counts as `&` in the selector that holds it.
+    pub(crate) fn parse_inner(
+        parser: &mut SelectorParser,
+        input: &mut CssParser,
+        outer_state: &mut SelectorParsingState,
+    ) -> CResult<Self> {
+        let mut state = SelectorParsingState::empty();
+        let selector = parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)?;
+        if state.contains(SelectorParsingState::AFTER_NESTING) {
+            outer_state.insert(SelectorParsingState::AFTER_NESTING);
+        }
+        Ok(selector)
     }
 
     pub(crate) fn append(&mut self, component: GenericComponent<Impl>) {
@@ -3631,7 +3651,7 @@ pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
             .new_custom_error(SelectorParseErrorKind::InvalidState.into_default_parser_error()));
     }
 
-    let result = parser.parse_non_ts_functional_pseudo_class(name, input)?;
+    let result = parser.parse_non_ts_functional_pseudo_class(name, input, state)?;
 
     Ok(GenericComponent::NonTsPseudoClass(result))
 }
@@ -4119,6 +4139,8 @@ pub enum ViewTransitionPartName {
     All,
     /// <custom-ident>
     Name(CustomIdent),
+    /// <custom-ident> inside `:global(...)` of a CSS module: printed as written, never hashed.
+    GlobalName(CustomIdent),
 }
 
 impl ViewTransitionPartName {
@@ -4126,6 +4148,7 @@ impl ViewTransitionPartName {
         match self {
             Self::All => dest.write_str("*"),
             Self::Name(name) => name.to_css(dest),
+            Self::GlobalName(name) => name.to_css_with_options(dest, false),
         }
     }
 
@@ -4134,13 +4157,19 @@ impl ViewTransitionPartName {
             return Ok(Self::All);
         }
 
-        Ok(Self::Name(CustomIdent::parse(input)?))
+        let name = CustomIdent::parse(input)?;
+        Ok(if input.flags.in_global_scope() {
+            Self::GlobalName(name)
+        } else {
+            Self::Name(name)
+        })
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
         match (self, rhs) {
             (Self::All, Self::All) => true,
             (Self::Name(a), Self::Name(b)) => a.eql(b),
+            (Self::GlobalName(a), Self::GlobalName(b)) => a.eql(b),
             _ => false,
         }
     }
@@ -4150,6 +4179,10 @@ impl ViewTransitionPartName {
             Self::All => hasher.update(&0u32.to_ne_bytes()),
             Self::Name(n) => {
                 hasher.update(&1u32.to_ne_bytes());
+                n.hash(hasher);
+            }
+            Self::GlobalName(n) => {
+                hasher.update(&2u32.to_ne_bytes());
                 n.hash(hasher);
             }
         }
@@ -4172,7 +4205,7 @@ impl ViewTransitionPartSelector {
         }
         for class in self.classes.iter() {
             dest.write_char(b'.')?;
-            dest.write_ident_or_ref(*class, dest.css_module.is_some())?;
+            dest.write_ident_or_ref(*class)?;
         }
         Ok(())
     }

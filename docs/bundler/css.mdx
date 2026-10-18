@@ -869,6 +869,7 @@ Bun's bundler also supports CSS modules, with the following features:
 
 - Detecting CSS module files (`.module.css`) with no configuration
 - Composition (`composes` property)
+- Global class names (`:global()` and `:local()`)
 - Importing CSS modules into JSX/TSX
 - Warnings/errors for invalid usages of CSS modules
 
@@ -931,6 +932,34 @@ This outputs:
 ```
 
 The class names are unique to each file, so they don't collide.
+
+### Global class names
+
+Wrap part of a selector in `:global(...)` to keep its class names and ids as written. Bun does not rename them, and the imported object does not contain them.
+
+```css title="styles.module.css" icon="file-code"
+.card :global(.is-active) {
+  color: red;
+}
+```
+
+```ts title="app.tsx" icon="/icons/typescript.svg"
+import styles from "./styles.module.css";
+
+console.log(styles);
+```
+
+This outputs:
+
+```ts title="app.tsx" icon="/icons/typescript.svg"
+{
+  card: "card_123";
+}
+```
+
+The stylesheet contains `.card_123 .is-active`. In your code, use the string `"is-active"` for the global class.
+
+Inside `:global(...)`, wrap a selector in `:local(...)` to scope its names to the file again. For example, `:global(.theme-dark :local(.card))` becomes `.theme-dark .card_123`.
 
 ### Composition
 

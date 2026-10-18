@@ -72,6 +72,15 @@ pub(crate) enum WriteResult {
     Sent = 1,
 }
 
+/// The frame whose END_STREAM flag `Sink::on_stream_end` reports.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum EndStreamFrame {
+    /// A header block (a request, a response or trailers). `Sink::on_headers_complete` already
+    /// reported this END_STREAM, in `end_stream` and in the END_STREAM bit of `flags`.
+    Headers,
+    Data,
+}
+
 /// Outcome of feeding bytes: how many were consumed, and whether the connection is now closing.
 #[derive(Clone, Copy, Debug)]
 enum StreamedDataStart {
@@ -231,8 +240,9 @@ pub(crate) trait Sink {
     fn on_headers_complete(&self, _stream_id: u32, _end_stream: bool, _flags: u8) {}
     /// A DATA payload (padding already stripped).
     fn on_data(&self, _stream_id: u32, _data: &[u8]) {}
-    /// The stream half/fully closed; `state` is the `stream::State` integer.
-    fn on_stream_end(&self, _stream_id: u32, _state: u8) {}
+    /// The peer ended its half of the stream with END_STREAM on `frame`; `state` is the
+    /// `stream::State` integer the stream is in now.
+    fn on_stream_end(&self, _stream_id: u32, _state: u8, _frame: EndStreamFrame) {}
     /// The stream was reset (inbound RST_STREAM or a local stream error). `code` is the raw
     /// u32 from the wire so unknown error codes survive to JS (node parity).
     fn on_stream_reset(&self, _stream_id: u32, _code: u32) {}
@@ -1440,7 +1450,7 @@ impl Connection {
         if end_stream {
             let state = self.streams.get(&target).map(|s| s.state as u8);
             if let Some(state) = state {
-                sink.on_stream_end(target, state);
+                sink.on_stream_end(target, state, EndStreamFrame::Headers);
             }
         }
         false
@@ -1566,7 +1576,7 @@ impl Connection {
                 None => None,
             };
             if let Some(state) = state {
-                sink.on_stream_end(inflight.stream_id, state);
+                sink.on_stream_end(inflight.stream_id, state, EndStreamFrame::Data);
             }
         }
     }
@@ -1697,7 +1707,7 @@ impl Connection {
                 None => None,
             };
             if let Some(state) = state {
-                sink.on_stream_end(hdr.stream_id, state);
+                sink.on_stream_end(hdr.stream_id, state, EndStreamFrame::Data);
             }
         }
         false
@@ -2136,7 +2146,7 @@ mod tests {
         headers: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
         headers_done: RefCell<Vec<(u32, bool)>>,
         data: RefCell<Vec<(u32, Vec<u8>)>>,
-        ended: RefCell<Vec<u32>>,
+        ended: RefCell<Vec<(u32, EndStreamFrame)>>,
         resets: RefCell<Vec<(u32, u32)>>,
         pushes: RefCell<Vec<(u32, u32)>>,
         altsvc: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
@@ -2176,8 +2186,8 @@ mod tests {
         fn on_data(&self, id: u32, data: &[u8]) {
             self.data.borrow_mut().push((id, data.to_vec()));
         }
-        fn on_stream_end(&self, id: u32, _state: u8) {
-            self.ended.borrow_mut().push(id);
+        fn on_stream_end(&self, id: u32, _state: u8, frame: EndStreamFrame) {
+            self.ended.borrow_mut().push((id, frame));
         }
         fn on_stream_reset(&self, id: u32, code: u32) {
             self.resets.borrow_mut().push((id, code));
@@ -2296,7 +2306,7 @@ mod tests {
                 .any(|(id, n, v)| *id == 1 && n == b":path" && v == b"/")
         );
         assert_eq!(*sink.headers_done.borrow(), vec![(1, true)]);
-        assert_eq!(*sink.ended.borrow(), vec![1]);
+        assert_eq!(*sink.ended.borrow(), vec![(1, EndStreamFrame::Headers)]);
         assert_eq!(
             c.streams.get(&1).map(|s| s.state),
             Some(State::HalfClosedRemote)
@@ -2323,7 +2333,7 @@ mod tests {
         let fed = c.receive(&sink, &d);
         assert!(!fed.fatal);
         assert_eq!(*sink.data.borrow(), vec![(1, b"hello".to_vec())]);
-        assert_eq!(*sink.ended.borrow(), vec![1]);
+        assert_eq!(*sink.ended.borrow(), vec![(1, EndStreamFrame::Data)]);
         assert_eq!(
             c.streams.get(&1).map(|s| s.state),
             Some(State::HalfClosedRemote)
@@ -2384,7 +2394,7 @@ mod tests {
                 .iter()
                 .any(|(id, n, v)| *id == 1 && n == b":path" && v == b"/x")
         );
-        assert_eq!(*ssink.ended.borrow(), vec![1]);
+        assert_eq!(*ssink.ended.borrow(), vec![(1, EndStreamFrame::Headers)]);
     }
 
     #[test]

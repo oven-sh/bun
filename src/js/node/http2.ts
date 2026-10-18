@@ -2043,6 +2043,31 @@ function endInboundHalf(stream: Http2Stream) {
   pushToStream(stream, null);
 }
 
+// The readable side of a stream at its half-close (state 6) or full close (state 7), for both
+// session types. The parser reports state 6 only for END_STREAM on a DATA frame: a HEADERS frame
+// that leaves the stream open gets its EOF from streamHeaders and, as in node, nothing reads the
+// stream until its consumer does.
+function endReadable(stream: Http2Stream, state: number, isServer: boolean) {
+  if (!stream.readable) return;
+  endInboundHalf(stream);
+  // A flowing stream ends without a read.
+  if (stream.readableFlowing === true) return;
+  if (state === 7 && isServer) {
+    // Node's onStreamClose: a stream that nobody tried to consume is dumped so that it can finish.
+    if (stream.readableFlowing === null) stream.resume();
+    // A paused stream is read after the call that closed it has returned, and only when the close
+    // has NO_ERROR: close(code) stores its code after its end().
+    else process.nextTick(readUnlessResetNT, stream);
+    return;
+  }
+  // Node's onStreamRead at EOF: read(0) ends an empty readable whatever its flow state and
+  // leaves buffered data to its reader.
+  stream.read(0);
+}
+function readUnlessResetNT(stream: Http2Stream) {
+  if (!stream.rstCode) stream.read(0);
+}
+
 enum StreamState {
   EndedCalled = 1 << 0, // 00001 = 1
   WantTrailer = 1 << 1, // 00010 = 2
@@ -2300,6 +2325,7 @@ function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: numbe
 }
 interface Http2StreamReadableState {
   destroyed: boolean;
+  ended: boolean;
 }
 interface Http2StreamWritableState {
   ending: boolean;
@@ -3780,8 +3806,12 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       }
     }
     if (stream.readable) {
+      // The EOF of a HEADERS frame that nothing read yet: node's onStreamClose still ends such a
+      // readable when the reset has NO_ERROR.
+      const unreadEof = stream._readableState.ended && stream.readableLength === 0;
       stream.resume(); // we have a error we consume and close
       pushToStream(stream, null);
+      if (unreadEof && destroy && error === NGHTTP2_NO_ERROR) stream.read(0);
     }
     if (destroy) {
       // node marks the stream closed (and publishes the close diagnostics channel) from inside
@@ -4096,21 +4126,12 @@ class ServerHttp2Session extends Http2Session {
         process.nextTick(ServerHttp2Session.#Handlers.streamEnd, self, stream, state);
         return;
       }
-      if (state == 6 || state == 7) {
-        if (stream.readable) {
-          endInboundHalf(stream);
-
-          // If the user hasn't tried to consume the stream then dump the incoming data so the
-          // stream can finish — but at half-close only when nothing is buffered: a consumer may
-          // attach a tick later (e.g. a CONNECT tunnel piping once its socket connects) and
-          // resuming with buffered data would silently discard it. At full close, dump as before.
-          if ((state == 7 || stream.readableLength === 0) && stream.readableFlowing === null) {
-            stream.resume();
-          }
-        }
-      }
+      if (state == 6) endReadable(stream, 6, true);
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
+        // The close can come from inside the respond(), end() or close() of user code: the 'end'
+        // it starts is the stream's, not that caller's (AsyncLocalStorage).
+        runInFrame(stream[bunHTTP2AsyncContextFrame], endReadable, undefined, stream, 7, true);
         stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
@@ -4119,7 +4140,8 @@ class ServerHttp2Session extends Http2Session {
           // Clean close while data is still buffered on the readable side (e.g. the response
           // ended before the request body was consumed): node defers the destroy until the
           // consumer drains it ('end'), so the buffered request body is not lost.
-          stream.once("end", destroySelfOnEnd);
+          stream.on("end", destroySelfOnEndAndFinish);
+          stream.on(EventEmitter.errorMonitor, destroySelfIfErrored);
         } else if (
           (stream.writableEnded || stream[kEndingWithChunk]) &&
           !stream.writableFinished &&
@@ -4158,7 +4180,14 @@ class ServerHttp2Session extends Http2Session {
       headersTuple: [string[], Record<string, any>, string[] | undefined],
       flags: number,
     ) {
-      if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
+      if (!self || typeof stream !== "object" || stream.closed) return;
+      const endOfStream = (flags & constants.NGHTTP2_FLAG_END_STREAM) !== 0;
+      if (self.closed) {
+        // The frame is dropped, its END_STREAM is not: no streamEnd follows a HEADERS frame that
+        // leaves the stream open.
+        if (endOfStream) endInboundHalf(stream);
+        return;
+      }
       const requestPerf = stream[kPerfState];
       if (requestPerf !== undefined && requestPerf.firstHeader === 0) {
         requestPerf.firstHeader = performance.now() - requestPerf.start;
@@ -4187,7 +4216,6 @@ class ServerHttp2Session extends Http2Session {
         stream[kHeadRequest] = true;
       }
       const status = stream[bunHTTP2StreamStatus];
-      const endOfStream = (flags & constants.NGHTTP2_FLAG_END_STREAM) !== 0;
       if ((status & StreamState.StreamResponded) !== 0) {
         if (endOfStream) endInboundHalf(stream);
         stream.emit("trailers", headers, flags, rawheaders);
@@ -4937,6 +4965,17 @@ function sessionTimerExpired(session: Http2Session) {
 function destroySelfOnEnd(this: Http2Stream) {
   this.destroy();
 }
+// The 'end' of a cleanly closed stream. Like node's kMaybeDestroy, the writable side finishes
+// first: destroy() would swallow its 'finish'.
+function destroySelfOnEndAndFinish(this: Http2Stream) {
+  if (this.writableEnded && !this.writableFinished) this.on("finish", destroySelfOnEnd);
+  else this.destroy();
+}
+// A write() after end() errors the stream, and an errored stream emits no 'end'. Node's
+// onStreamClose destroys a stream that is no longer readable. Here the close can come first.
+function destroySelfIfErrored(this: Http2Stream) {
+  if (this.errored != null) process.nextTick(destroyIfNotDestroyedNT, this);
+}
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
 }
@@ -5101,14 +5140,7 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(ClientHttp2Session.#Handlers.streamEnd, self, stream, state);
         return;
       }
-      if (state == 6 || state == 7) {
-        if (stream.readable) {
-          // Push a null so the stream can end whenever the client consumes
-          // it completely.
-          endInboundHalf(stream);
-          stream.read(0);
-        }
-      }
+      if (state == 6 || state == 7) endReadable(stream, state, false);
 
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
@@ -5119,7 +5151,8 @@ class ClientHttp2Session extends Http2Session {
           // Clean close while data is still buffered on the readable side: node defers the
           // destroy until the consumer drains it ('end'), so a late-attaching reader does not
           // lose data.
-          stream.once("end", destroySelfOnEnd);
+          stream.on("end", destroySelfOnEndAndFinish);
+          stream.on(EventEmitter.errorMonitor, destroySelfIfErrored);
         } else if (
           (stream.writableEnded || stream[kEndingWithChunk]) &&
           !stream.writableFinished &&
@@ -5183,6 +5216,8 @@ class ClientHttp2Session extends Http2Session {
           stream.emit("trailers", headers, flags, rawheaders);
         } else {
           if (header_status >= 100 && header_status < 200) {
+            // No streamEnd follows a HEADERS frame that leaves the stream open.
+            if (endOfStream) endInboundHalf(stream);
             stream.emit("headers", headers, flags, rawheaders);
           } else {
             // Set the bit BEFORE dispatching synchronously to user code — a

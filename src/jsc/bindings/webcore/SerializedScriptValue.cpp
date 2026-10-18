@@ -3271,11 +3271,7 @@ private:
             result = CryptoKeyAKP::importPkcs8(algorithm, WTF::move(keyData), extractable, usages, nullptr);
             break;
         }
-        // A corrupt payload leaves the BoringSSL parse error in the queue;
-        // nothing here attaches it as a cause, so clear it.
-        if (!result)
-            ERR_clear_error();
-        return !!result;
+        return true;
     }
 
     bool readCryptoKey(JSValue& cryptoKey)
@@ -3371,7 +3367,12 @@ private:
                 return false;
             break;
         }
-        cryptoKey = getJSValue(result.get());
+        if (!result) {
+            // A failed import can leave its BoringSSL error queued, and nothing here reports it.
+            ERR_clear_error();
+            return false;
+        }
+        cryptoKey = getJSValue(*result);
         return true;
     }
 #endif
@@ -3463,6 +3464,7 @@ private:
             if (keyType == CryptoKeyType::Public) {
                 EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio.get(), nullptr, nullptr, nullptr);
                 if (!pkey) {
+                    ERR_clear_error();
                     fail();
                     return JSValue();
                 }
@@ -3475,6 +3477,7 @@ private:
 
             EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr);
             if (!pkey) {
+                ERR_clear_error();
                 fail();
                 return JSValue();
             }

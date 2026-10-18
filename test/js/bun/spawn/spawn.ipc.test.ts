@@ -382,6 +382,58 @@ describe("ipc mode advanced", () => {
     expect(exitCode).toBe(0);
   });
 
+  it.skipIf(isWindows)("rejects a message that holds a CryptoKey whose key bytes do not import", async () => {
+    // The child sends the record of an AES-GCM key with 31 key bytes. The receiver used to
+    // deliver `null` for it, which reads like a message the child sent on purpose.
+    const parent = `
+      const child = Bun.spawn({
+        cmd: [
+          process.execPath, "-e",
+          \`
+          const { serialize } = require("bun:jsc");
+          const keyBytes = Buffer.alloc(32, 7);
+          crypto.subtle.importKey("raw", keyBytes, "AES-GCM", true, ["encrypt"]).then(key => {
+            // [u32 version][CryptoKeyTag][u32 recordLength][record], and the key is [u32 length][bytes].
+            const whole = serialize(key, { binaryType: "nodebuffer" });
+            const at = whole.indexOf(keyBytes);
+            const body = Buffer.concat([whole.subarray(0, at + 31), whole.subarray(at + 32)]);
+            body.writeUInt32LE(31, at - 4);
+            body.writeUInt32LE(body.length - 9, 5);
+            const head = Buffer.alloc(5);
+            head[0] = 2;
+            head.writeUInt32LE(body.length, 1);
+            process.on("disconnect", () => process.exit(42));
+            require("fs").writeSync(3, Buffer.concat([head, body]));
+          });
+          \`,
+        ],
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "advanced",
+        ipc(msg, subprocess) {
+          // Delivered means the frame was accepted. Report and stop the child,
+          // which otherwise waits for a disconnect that never comes.
+          console.log("MESSAGE", msg);
+          subprocess.kill();
+        },
+      });
+      process.on("uncaughtException", err => console.log("UNCAUGHT", err.message));
+      console.log("CHILD_EXIT", await child.exited);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parent],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["UNCAUGHT Unable to deserialize data.", "CHILD_EXIT 42"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   it.skipIf(isWindows)(
     "closes the channel when a frame declares a length that cannot be framed with its header",
     async () => {

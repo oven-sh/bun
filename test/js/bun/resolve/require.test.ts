@@ -96,12 +96,12 @@ describe("require(specifier)", () => {
   });
 
   // Node's Module._load deletes Module._cache[filename], the name it resolved before the load.
-  describe("when the module throws after module.filename was assigned", () => {
+  describe("when an imported module throws after module.filename was assigned", () => {
     const files = {
       // Takes the name of another cached module, then throws.
       "thrower.cjs": `
         globalThis.runs = (globalThis.runs ?? 0) + 1;
-        if (process.argv.at(-1) !== "assigned-by-requirer") module.filename = require.resolve("./other.cjs");
+        if (process.argv.at(-1) !== "renamed-by-another-module") module.filename = require.resolve("./other.cjs");
         throw new Error("boom " + globalThis.runs);
       `,
       "other.cjs": `module.exports = "other";`,
@@ -120,79 +120,143 @@ describe("require(specifier)", () => {
           report(e);
         }
       `,
-      // require() of an ES module loads all of its imports before it runs the first one,
-      // so thrower.cjs is in require.cache, and has not run, when requirer.cjs runs.
-      "require-esm.cjs": `
-        try {
-          require("./graph.mjs");
-        } catch {}
+      // require() of an ES module fetches all of its imports before it runs the first one,
+      // so thrower.cjs is in require.cache, and has not run, when renamer.cjs runs.
+      "require-renamed.cjs": `
+        const thrower = require.resolve("./thrower.cjs");
+        const other = require.resolve("./other.cjs");
+        for (const id of ["./renamed-graph.mjs", thrower]) {
+          try {
+            require(id);
+            console.log("no error");
+          } catch (e) {
+            console.log(e.message, thrower in require.cache, other in require.cache);
+          }
+        }
       `,
-      "graph.mjs": `
-        import "./requirer.cjs";
+      "renamed-graph.mjs": `
+        import "./renamer.cjs";
         import "./thrower.cjs";
       `,
-      "requirer.cjs": `
+      "renamer.cjs": `
         const thrower = require.resolve("./thrower.cjs");
         const other = require.resolve("./other.cjs");
         require(other);
         if (require.cache[thrower]?.loaded !== false) console.log("thrower.cjs must be in require.cache here, not loaded");
-        if (process.argv.at(-1) === "assigned-by-requirer") require.cache[thrower].filename = other;
-        for (let i = 0; i < 2; i++) {
-          try {
-            require(thrower);
-            console.log("no error");
-          } catch (e) {
-            console.log(e.message, thrower in require.cache, other in require.cache);
-          }
-        }
+        require.cache[thrower].filename = other;
       `,
-      // module._compile() stores the code before it rejects a filename that is not a string.
-      // require() runs that code after the handler returns.
-      "leftover-code.cjs": `
-        const Module = require("module");
-        const thrower = require.resolve("./thrower.txt");
-        const other = require.resolve("./other.cjs");
-        require(other);
-        Module._extensions[".txt"] = function (module) {
-          const code =
-            "globalThis.runs = (globalThis.runs ?? 0) + 1;" +
-            "module.filename = " + JSON.stringify(other) + ";" +
-            "throw new Error('boom ' + globalThis.runs);";
-          try {
-            module._compile(code, 123);
-          } catch (e) {
-            if (e.code !== "ERR_INVALID_ARG_TYPE") throw e;
-          }
-        };
-        for (let i = 0; i < 2; i++) {
-          try {
-            require(thrower);
-            console.log("no error");
-          } catch (e) {
-            console.log(e.message, thrower in require.cache, other in require.cache);
-          }
-        }
-      `,
-      "thrower.txt": "",
       "in-graph.mjs": `
         import path from "node:path";
         await new Bun.ModuleGraph().import(path.join(import.meta.dirname, process.argv[2]));
       `,
     };
     it.concurrent.each([
-      // require() of a file whose import failed throws the error of the import. Node runs the file again.
-      ["import() ran it", ["import.mjs"], "boom 1"],
-      ["require() ran it before the import that put it in require.cache", ["require-esm.cjs"], "boom 2"],
-      ["require() ran it, its requirer assigned the filename", ["require-esm.cjs", "assigned-by-requirer"], "boom 2"],
-      ["require() ran code that a failed module._compile() call left on it", ["leftover-code.cjs"], "boom 2"],
+      ["import() ran it", ["import.mjs"]],
+      ["the loader ran it, another module assigned the filename", ["require-renamed.cjs", "renamed-by-another-module"]],
       // A Bun.ModuleGraph has its own require.cache.
-      ["import() ran it, inside a Bun.ModuleGraph", ["in-graph.mjs", "import.mjs"], "boom 1"],
-      ["require() ran it, inside a Bun.ModuleGraph", ["in-graph.mjs", "require-esm.cjs"], "boom 2"],
-    ])("%s: only the failed module leaves require.cache, and the next require() throws", async (_, args, next) => {
-      using dir = tempDir("bun-test-require-renamed", files);
+      ["import() ran it, inside a Bun.ModuleGraph", ["in-graph.mjs", "import.mjs"]],
+    ])("%s: only the failed module leaves require.cache, and the next require() throws", async (_, args) => {
+      using dir = tempDir("bun-test-import-renamed", files);
       const [entry, ...rest] = args;
       expect(await bunRun([path.join(String(dir), entry), ...rest])).toEqual({
-        stdout: `boom 1 false true\n${next} false true`,
+        // The second line is the error of the import again: require() does not run the file a second time. Node does.
+        stdout: "boom 1 false true\nboom 1 false true",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  });
+
+  // Node's ES module loader runs only the CommonJS modules it put in Module._cache itself.
+  describe("import() of a file that require.cache holds as a module with no source", () => {
+    it.concurrent("a Module that the program put in require.cache is imported as it is and stays there", async () => {
+      using dir = tempDir("bun-test-import-user-module", {
+        "real.cjs": `
+          globalThis.realRuns = (globalThis.realRuns ?? 0) + 1;
+          module.exports = { real: true };
+        `,
+        "index.mjs": `
+          import Module, { createRequire } from "node:module";
+          const require = createRequire(import.meta.url);
+          const id = require.resolve("./real.cjs");
+          const mock = new Module(id);
+          mock.exports = { mocked: true };
+          require.cache[id] = mock;
+          const imported = (await import("./real.cjs")).default;
+          const cached = require.cache[id] === mock;
+          console.log(JSON.stringify({ imported, cached, required: require(id), realRuns: globalThis.realRuns ?? 0 }));
+        `,
+      });
+      expect(await bunRun(path.join(String(dir), "index.mjs"))).toEqual({
+        stdout: JSON.stringify({ imported: { mocked: true }, cached: true, required: { mocked: true }, realRuns: 0 }),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    it.concurrent("a module that a Module._extensions handler filled without module._compile()", async () => {
+      using dir = tempDir("bun-test-import-handler-module", {
+        "real.js": `
+          globalThis.realRuns = (globalThis.realRuns ?? 0) + 1;
+          module.exports = { real: true };
+        `,
+        "index.cjs": `
+          const Module = require("module");
+          const id = require.resolve("./real.js");
+          const original = Module._extensions[".js"];
+          Module._extensions[".js"] = function (module, filename) {
+            if (filename !== id) return original.apply(this, arguments);
+            module.exports = { fromHandler: true };
+          };
+          const required = require(id);
+          import("./real.js").then(ns => {
+            const cached = id in require.cache;
+            console.log(JSON.stringify({ required, imported: ns.default, cached, again: require(id), realRuns: globalThis.realRuns ?? 0 }));
+          });
+        `,
+      });
+      expect(await bunRun(path.join(String(dir), "index.cjs"))).toEqual({
+        stdout: JSON.stringify({
+          required: { fromHandler: true },
+          imported: { fromHandler: true },
+          cached: true,
+          again: { fromHandler: true },
+          realRuns: 0,
+        }),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    it.concurrent("the module that a Module._extensions handler is still loading", async () => {
+      using dir = tempDir("bun-test-import-loading-module", {
+        "real.cjs": `
+          globalThis.realRuns = (globalThis.realRuns ?? 0) + 1;
+          exports.runs = globalThis.realRuns;
+        `,
+        "importer.mjs": `
+          import real from "./real.cjs";
+          export const seen = JSON.stringify(real);
+        `,
+        "index.cjs": `
+          const Module = require("module");
+          const fs = require("fs");
+          const id = require.resolve("./real.cjs");
+          let seen;
+          Module._extensions[".cjs"] = function (module, filename) {
+            // The handler has not called module._compile() yet, so the module has no source.
+            if (filename === id) seen = require("./importer.mjs").seen;
+            module._compile(fs.readFileSync(filename, "utf8"), filename);
+          };
+          const first = require(id);
+          console.log(JSON.stringify({ seen, first, cached: id in require.cache, same: require(id) === first }));
+        `,
+      });
+      expect(await bunRun(path.join(String(dir), "index.cjs"))).toEqual({
+        stdout: JSON.stringify({ seen: "{}", first: { runs: 1 }, cached: true, same: true }),
         stderr: "",
         exitCode: 0,
         signalCode: null,

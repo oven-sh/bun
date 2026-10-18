@@ -316,51 +316,38 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     return true;
 }
 
-// A module failed to load. Takes `key` out of `requireMap`, so that the next require() loads the
-// file again, and throws the error again. `key` is the one the caller found or put the module
-// under. It is not read from the module: a module can assign `module.filename`.
-static NEVER_INLINE void evictFromRequireMapAndRethrow(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSMap* requireMap, JSC::JSValue key)
+bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
-    auto& vm = JSC::getVM(globalObject);
-    JSC::Exception* exception = scope.exception();
-    ASSERT(exception);
-    // tryClearException() cannot clear a termination, and JSMap::remove with
-    // it still pending does nothing.
-    if (vm.hasPendingTerminationException()) [[unlikely]]
-        return;
-    (void)scope.tryClearException();
-
-    // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
-    requireMap->remove(globalObject, key);
-    RETURN_IF_EXCEPTION(scope, );
-
-    scope.throwException(globalObject, exception);
-}
-
-// Records `moduleObject` as a child of `referrer`. Returns `referrer.children` when that array
-// exists, for the caller to append to, and null otherwise.
-static ALWAYS_INLINE JSValue recordChildModule(JSC::VM& vm, JSCommonJSModule* referrer, JSCommonJSModule* moduleObject)
-{
-    if (!referrer) [[unlikely]]
-        return jsNull();
-    if (referrer->m_childrenValue) [[unlikely]] {
-        // It's too hard to append from native code:
-        // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
-        return referrer->m_childrenValue.get();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (this->hasEvaluated || this->sourceCode.isNull()) {
+        return true;
     }
-    WTF::Locker locker { referrer->cellLock() };
-    referrer->m_children.append(WriteBarrier<Unknown>());
-    referrer->m_children.last().set(vm, referrer, moduleObject);
-    return jsNull();
+
+    evaluateCommonJSModuleOnce(
+        globalObject->vm(),
+        globalObject,
+        this,
+        this->m_dirname.get(),
+        this->m_filename.get());
+
+    if (auto exception = scope.exception()) {
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return false;
+        (void)scope.tryClearException();
+
+        // On error, remove the module from the require map
+        // so that it can be re-evaluated on the next require.
+        // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
+        requireMapOf(globalObject, moduleGraph())->remove(globalObject, this->filename());
+        RETURN_IF_EXCEPTION(scope, false);
+
+        scope.throwException(globalObject, exception);
+        return false;
+    }
+
+    return true;
 }
 
-// $evaluateCommonJSModule(module, referrer) records `module` as a child of `referrer` and returns
-// what recordChildModule does.
-//
-// An import puts a CommonJS module in the require map before the loader runs it. When a
-// require() gets to the module first, this call does nothing and returns true. The caller then
-// calls $evaluateCommonJSModule(module, referrer, requireMap, key), which also runs the module:
-// only the caller knows which entry of which map to remove if the module throws.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -368,27 +355,30 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     // These casts are jsDynamicCast because require.cache pollution + invalid
     // this calls can put arbitrary values here instead of JSCommonJSModule*
-    ASSERT(callframe->argumentCount() == 2 || callframe->argumentCount() == 4);
+    ASSERT(callframe->argumentCount() == 2);
     JSCommonJSModule* moduleObject = dynamicDowncast<JSCommonJSModule>(callframe->uncheckedArgument(0));
     JSCommonJSModule* referrer = dynamicDowncast<JSCommonJSModule>(callframe->uncheckedArgument(1));
     if (!moduleObject) [[unlikely]] {
         RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
     }
 
-    if (!moduleObject->hasEvaluated && !moduleObject->sourceCode.isNull()) [[unlikely]] {
-        if (callframe->argumentCount() < 4)
-            RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(true)));
-
-        JSValue returnValue = recordChildModule(vm, referrer, moduleObject);
-        evaluateCommonJSModuleOnce(vm, globalObject, moduleObject, moduleObject->m_dirname.get(), moduleObject->filename());
-        if (throwScope.exception()) [[unlikely]] {
-            evictFromRequireMapAndRethrow(globalObject, throwScope, uncheckedDowncast<JSC::JSMap>(callframe->uncheckedArgument(2)), callframe->uncheckedArgument(3));
-            return {};
+    JSValue returnValue = jsNull();
+    if (referrer) [[likely]] {
+        if (referrer->m_childrenValue) [[unlikely]] {
+            // It's too hard to append from native code:
+            // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
+            returnValue = referrer->m_childrenValue.get();
+        } else {
+            WTF::Locker locker { referrer->cellLock() };
+            referrer->m_children.append(WriteBarrier<Unknown>());
+            referrer->m_children.last().set(vm, referrer, moduleObject);
         }
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(returnValue));
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(recordChildModule(vm, referrer, moduleObject)));
+    moduleObject->load(vm, globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(returnValue));
 }
 
 JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalObject, CallFrame* callframe))
@@ -1397,6 +1387,26 @@ const JSC::ClassInfo JSCommonJSModule::s_info = { "Module"_s, &Base::s_info, nul
 const JSC::ClassInfo RequireResolveFunctionPrototype::s_info = { "resolve"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireResolveFunctionPrototype) };
 const JSC::ClassInfo RequireFunctionPrototype::s_info = { "require"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireFunctionPrototype) };
 
+// A module failed to load. Takes `key` out of `requireMap`, so that the next require() loads the
+// file again, and throws the error again. `key` is the one the caller found or put the module
+// under. It is not read from the module: a module can assign `module.filename`.
+static NEVER_INLINE void evictFromRequireMapAndRethrow(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSMap* requireMap, JSC::JSValue key)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSC::Exception* exception = scope.exception();
+    ASSERT(exception);
+    // tryClearException() cannot clear a termination, and JSMap::remove with
+    // it still pending does nothing.
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
+    (void)scope.tryClearException();
+
+    // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
+    requireMap->remove(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, );
+
+    scope.throwException(globalObject, exception);
+}
 #define REQUIRE_CJS_RETURN_IF_EXCEPTION                                                                                                     \
     if (throwScope.exception()) [[unlikely]] {                                                                                              \
         evictFromRequireMapAndRethrow(globalObject, throwScope, requireMapOf(globalObject, referrerModule->moduleGraph()), specifierValue); \
@@ -1691,7 +1701,9 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
-                        if (!moduleObject->hasEvaluated) {
+                        // A module with no source is not this loader's to run or to remove: a `new Module()` that the
+                        // program put in require.cache, or one that a `Module._extensions` handler filled itself.
+                        if (!moduleObject->hasEvaluated && !moduleObject->sourceCode.isNull()) {
                             evaluateCommonJSModuleOnce(
                                 vm,
                                 globalObject,

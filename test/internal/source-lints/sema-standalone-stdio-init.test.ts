@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -15,30 +15,38 @@ import path from "node:path";
 //   - `main` makes the call before anything else, which is before every thread and before `each` forks.
 //   - native.rs has a stand-in for each C function that `stdio::init()` calls. Without one the tool does not link.
 //
-// To fix a failure: keep the call first in `main`, or add `extern "C" fn <name>() {}` to native.rs.
+// To fix a failure: keep the call first in `main`, or add `#[unsafe(no_mangle)] extern "C" fn <name>() {}` to native.rs.
 
 const src = path.resolve(import.meta.dir, "..", "..", "..", "src");
 const read = (file: string) => readFileSync(path.join(src, file), "utf8");
 
-test("bun-sema: `main` calls `bun_core::output::stdio::init()` before anything else", () => {
-  const body = /\nfn main\(\) \{\n([\s\S]*?)\n\}\n/.exec(read("sema/standalone/main.rs"))?.[1] ?? "";
-  const statements = body
-    .split("\n")
-    .map(line => line.trim())
-    .filter(line => line !== "" && !line.startsWith("//"));
-  expect(statements[0]).toBe("bun_core::output::stdio::init();");
-});
+describe("bun-sema", () => {
+  test("`main` calls `bun_core::output::stdio::init()` before anything else", () => {
+    const body = /\nfn main\(\) \{\n([\s\S]*?)\n\}\n/.exec(read("sema/standalone/main.rs"))?.[1] ?? "";
+    const statements = body
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line !== "" && !line.startsWith("//"));
+    expect(statements[0]).toBe("bun_core::output::stdio::init();");
+  });
 
-test("bun-sema: native.rs stands in for each C function that `stdio::init()` calls", () => {
-  const stdio = read("bun_core/output.rs").split("\npub mod stdio {\n")[1] ?? "";
-  const externs = /\n    unsafe extern "C" \{\n([\s\S]*?)\n    \}\n/.exec(stdio)?.[1] ?? "";
-  const init = /\n    pub fn init\(\) \{\n([\s\S]*?)\n    \}\n/.exec(stdio)?.[1] ?? "";
-  const called = [...externs.matchAll(/\bfn (\w+)\(/g)]
-    .map(found => found[1])
-    .filter(name => init.includes(`${name}(`));
-  // Not a check of nothing, should output.rs take another shape.
-  expect(called).toContain("bun_initialize_process");
+  test("native.rs stands in for each C function that `stdio::init()` calls", () => {
+    const stdio = read("bun_core/output.rs").split("\npub mod stdio {\n")[1] ?? "";
+    const externs = /\n    unsafe extern "C" \{\n([\s\S]*?)\n    \}\n/.exec(stdio)?.[1] ?? "";
+    const init = /\n    pub fn init\(\) \{\n([\s\S]*?)\n    \}\n/.exec(stdio)?.[1] ?? "";
+    const called = [...externs.matchAll(/\bfn (\w+)\(/g)]
+      .map(found => found[1])
+      .filter(name => init.includes(`${name}(`));
+    // Not a check of nothing, should output.rs take another shape.
+    expect(called).toContain("bun_initialize_process");
 
-  const native = read("sema/standalone/native.rs");
-  expect(called.filter(name => !native.includes(`extern "C" fn ${name}(`))).toEqual([]);
+    const native = read("sema/standalone/native.rs");
+    // The attribute, then the definition: without `no_mangle` the linker does not find the name.
+    const standsIn = (name: string) =>
+      new RegExp(
+        `^ *#\\[unsafe\\(no_mangle\\)\\]\\n(?: *#\\[.*\\]\\n)* *(?:unsafe )?extern "C" fn ${name}\\(`,
+        "m",
+      ).test(native);
+    expect(called.filter(name => !standsIn(name))).toEqual([]);
+  });
 });

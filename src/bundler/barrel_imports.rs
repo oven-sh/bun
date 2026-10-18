@@ -87,8 +87,7 @@ fn resolve_barrel_export(
 /// import records as is_unused so they won't be resolved. Runs BEFORE resolution.
 ///
 /// A file qualifies as a barrel if:
-/// 1. It has `sideEffects: false` (unless `--ignore-dce-annotations`) or is in
-///    `optimize_imports`, AND
+/// 1. It has `sideEffects: false` (without `--ignore-dce-annotations`) or is in `optimize_imports`, AND
 /// 2. All named exports are re-exports (no local definitions), AND
 /// 3. It is not an export star target of another barrel.
 ///

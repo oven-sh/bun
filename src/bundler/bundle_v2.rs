@@ -132,9 +132,7 @@ pub struct BundleV2<'a> {
     /// If false we can skip TLA validation and propagation.
     pub(crate) has_any_top_level_await_modules: bool,
 
-    /// The import graph is the result, and nothing is printed: set by
-    /// `scan_module_graph_from_cli`, and by `generate_from_cli` for a
-    /// `DependenciesScanner`.
+    /// The import graph is the result, and nothing is printed.
     pub(crate) scan_only: bool,
 
     /// Barrel optimization: tracks which exports have been requested from each
@@ -6460,9 +6458,7 @@ pub mod bv2_impl {
 
         /// Returns true when barrel optimization is enabled. Barrel optimization
         /// can apply to any package with sideEffects: false or listed in
-        /// optimize_imports, so it is always enabled during bundling. A scan
-        /// needs every edge of the import graph, and a deferred record has no
-        /// target.
+        /// optimize_imports, so it is enabled for every bundle, and off for a scan.
         pub(crate) fn is_barrel_optimization_enabled(&self) -> bool {
             !self.scan_only
         }

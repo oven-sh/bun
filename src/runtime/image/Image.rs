@@ -64,12 +64,12 @@ pub(crate) use crate::generated_classes::js_Image as js;
 pub(crate) struct Image {
     source: JsCell<Source>,
     pipeline: Cell<Pipeline>,
-    /// What the setter of each format has recorded, indexed by
-    /// `codecs::Format`. A format call starts from its own entry, so an
-    /// option stays for a later call of that format (as in Sharp) and never
-    /// reaches another format. Not in `Pipeline`: the worker needs only
-    /// `Pipeline.output`, the entry of the format that was set last.
-    format_options: [Cell<codecs::EncodeOptions>; ENCODABLE_FORMATS],
+    /// What the setter of each format has recorded. A format call starts
+    /// from its own entry, so an option stays for a later call of that format
+    /// (as in Sharp) and never reaches another format. Not in `Pipeline`: the
+    /// worker needs only `Pipeline.output`, the entry of the format that was
+    /// set last.
+    format_options: FormatOptions,
     /// Decompression-bomb guard. Checked against the *header* dimensions before
     /// any RGBA buffer is allocated. Mirrors Sharp's `limitInputPixels`.
     max_pixels: u64,
@@ -104,8 +104,15 @@ impl Default for Image {
     }
 }
 
-/// The formats with a setter are the leading `codecs::Format` variants.
-const ENCODABLE_FORMATS: usize = codecs::Format::Avif as usize + 1;
+/// One entry per format setter.
+#[derive(Default)]
+struct FormatOptions {
+    jpeg: Cell<codecs::EncodeOptions>,
+    png: Cell<codecs::EncodeOptions>,
+    webp: Cell<codecs::EncodeOptions>,
+    heic: Cell<codecs::EncodeOptions>,
+    avif: Cell<codecs::EncodeOptions>,
+}
 
 pub(crate) enum Source {
     /// Input is a JS ArrayBuffer/TypedArray held in the wrapper's `sourceJS`
@@ -569,8 +576,8 @@ impl Image {
         global: &JSGlobalObject,
         callframe: &CallFrame,
         fmt: codecs::Format,
+        recorded: &Cell<codecs::EncodeOptions>,
     ) -> JsResult<JSValue> {
-        let recorded = &self.format_options[fmt as usize];
         let mut enc: codecs::EncodeOptions = recorded.get();
         enc.format = fmt;
         let args = callframe.arguments();
@@ -611,23 +618,23 @@ impl Image {
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_format_jpeg(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Jpeg)
+        self.set_format(g, cf, codecs::Format::Jpeg, &self.format_options.jpeg)
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_format_png(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Png)
+        self.set_format(g, cf, codecs::Format::Png, &self.format_options.png)
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_format_webp(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Webp)
+        self.set_format(g, cf, codecs::Format::Webp, &self.format_options.webp)
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_format_heic(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Heic)
+        self.set_format(g, cf, codecs::Format::Heic, &self.format_options.heic)
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_format_avif(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Avif)
+        self.set_format(g, cf, codecs::Format::Avif, &self.format_options.avif)
     }
 }
 

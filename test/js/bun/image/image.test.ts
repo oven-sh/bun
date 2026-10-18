@@ -154,6 +154,23 @@ function decodePngRaw(png: Uint8Array): { w: number; h: number; data: Uint8Array
   return { w, h, data: out };
 }
 
+// HEIC and AVIF encode only through the OS, and only on some macOS and Windows
+// machines. Probed once, so that a test which needs an encoder is skipped by
+// name where it is missing. Any other error counts as present: that test then
+// reports it.
+const osEncoder = { heic: false, avif: false };
+if (isMacOS || isWindows) {
+  for (const format of ["heic", "avif"] as const) {
+    osEncoder[format] = await new Bun.Image(cornersPng)
+      [format]()
+      .bytes()
+      .then(
+        () => true,
+        (e: any) => e?.code !== "ERR_IMAGE_FORMAT_UNSUPPORTED",
+      );
+  }
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe("Bun.Image", () => {
@@ -1528,30 +1545,22 @@ describe("Bun.Image", () => {
       }
     });
 
-    // HEIC and AVIF encode only through the OS, so a Linux build cannot
-    // observe their options. Each OS encoder exists only on some macOS and
-    // Windows machines (see the HEIC / AVIF block above): a missing one ends
-    // the case early.
-    test.skipIf(!isMacOS && !isWindows).each([
+    // Linux has no HEIC or AVIF encoder, so it cannot observe their options.
+    for (const [first, second] of [
       ["heic", "avif"],
       ["avif", "heic"],
-    ] as const)(".%s({ quality }) does not reach a later .%s()", async (first, second) => {
-      const encode = async (img: Bun.Image) => {
-        try {
-          return Buffer.from(await img.bytes());
-        } catch (e: any) {
-          expect(e?.code).toBe("ERR_IMAGE_FORMAT_UNSUPPORTED");
-          return null;
-        }
-      };
-      const fresh = await encode(image()[second]());
-      // macOS always has the HEIC encoder, so that case always runs there.
-      if (isMacOS && second === "heic") expect(fresh).not.toBeNull();
-      if (fresh === null) return;
-      // Control: quality changes this encoder's output when its own call names it.
-      expect((await encode(image()[second]({ quality: 10 })))!.equals(fresh)).toBe(false);
-      expect((await encode(image()[first]({ quality: 10 })[second]()))!.equals(fresh)).toBe(true);
-    });
+    ] as const) {
+      // macOS always has the HEIC encoder, so that case must run there.
+      test.skipIf(!osEncoder[second] && !(isMacOS && second === "heic"))(
+        `.${first}({ quality }) does not reach a later .${second}()`,
+        async () => {
+          const fresh = await bytes(image()[second]());
+          // Control: quality changes this encoder's output when its own call names it.
+          expect((await bytes(image()[second]({ quality: 10 }))).equals(fresh)).toBe(false);
+          expect((await bytes(image()[first]({ quality: 10 })[second]())).equals(fresh)).toBe(true);
+        },
+      );
+    }
   });
 });
 

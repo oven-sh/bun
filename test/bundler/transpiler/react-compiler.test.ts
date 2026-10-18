@@ -2906,6 +2906,669 @@ describe("bundler", () => {
     },
   });
 
+  // A fake React for the tests below. It keeps one memo cache per component, as React does per fiber, so a render
+  // can hit the cache of the render before it. `print` writes one line per component: what each render gave, then
+  // the size of its memo cache, or `as written` for a function that has none.
+  const reactWithACachePerComponent = {
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": `exports.useMemo = make => make();`,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      const caches = new Map();
+      exports.c = n => {
+        if (!caches.has(globalThis.rendering))
+          caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+        return caches.get(globalThis.rendering);
+      };
+      exports.print = (forms, renders, show) => {
+        const lines = [];
+        for (const [name, form] of Object.entries(forms)) {
+          globalThis.rendering = form;
+          const rendered = renders.map(props => {
+            try {
+              return show(form(props));
+            } catch (e) {
+              return "threw " + e.name;
+            }
+          });
+          const cache = caches.get(form);
+          lines.push(name + ": " + rendered.join(" | ") + (cache ? " _c(" + cache.length + ")" : " as written"));
+        }
+        console.log(lines.join("\\n"));
+      };
+    `,
+  };
+
+  // Regression from #44805, in no release. A handler sees what throws in its `try`, so dead code elimination keeps
+  // there what can throw, also when nothing reads its value. It kept a reassignment too, and dependency collection
+  // took all that is kept so for instructions that only read. Three effects:
+  // - `let items` stayed in the memo block of the first value, and the store printed behind that block:
+  //   `ReferenceError: items is not defined`, inside the component's own `try`, so its handler ran on valid input.
+  // - The memo block that reads `status` and holds the store remembered `status` as it was after the store, so a
+  //   render with that value got the element of an earlier one.
+  // - A pattern that declares `a` stayed in a memo block, and a read of `a` that is kept for its throw printed
+  //   behind that block: `ReferenceError: a is not defined`.
+  //
+  // A store is removed again: those forms have the cache sizes of 1.4.3. An update or a pattern stays, because it
+  // is taken as able to throw, and is now an output of the memo blocks around it. `OnAPathThatReturns` is why the
+  // store is not kept and made an output too: its memo block would then give `label` back on a path that never
+  // assigned it. The two numbers are the cache size without and with `minifySyntax`. With it the parser joins a
+  // store and an expression statement behind it into one sequence, and the compiler keeps that store for its value.
+  const deadStoreInATry: [form: string, rendered: string, cacheSize: number, withMinifySyntax: number][] = [
+    ["AfterTheScope", "parsed | parsed | parsed", 2, 6],
+    ["AfterTheScopeFromProps", "parsed | parsed | parsed", 2, 7],
+    ["AfterTheScopeWithAPattern", "parsed | parsed | parsed", 3, 7],
+    ["DeclaredByAPattern", "made 1 | made 1 | made 1", 4, 3],
+    ["DeclaredByAPatternThenUpdated", "made 1 | made 1 | made 1", 4, 3],
+    // The last two renders throw in the `try`: in the call, and in what is kept for its throw.
+    ["ArrayPattern", "draft | saved | draft | saved SyntaxError | draft", 10, 10],
+    ["Compound", "1 | 2 | 1 | 2 SyntaxError | Symbol() TypeError", 5, 5],
+    ["InAHandler", "draft | saved | draft | saved SyntaxError | draft", 5, 5],
+    ["InAnIife", "draft | saved | draft | saved | draft", 7, 7],
+    ["InTheScope", "draft | saved | draft | saved SyntaxError | draft", 5, 8],
+    ["InUseMemo", "draft | saved | draft | saved | draft", 7, 7],
+    ["ObjectPattern", "draft | saved | draft | saved SyntaxError | draft", 10, 10],
+    ["OnAPathThatReturns", "draft | saved | draft | saved | draft", 13, 13],
+    ["PatternOfAPath", "draft | saved | draft | saved SyntaxError | draft TypeError", 9, 9],
+    ["Postfix", "1 | 2 | 1 | 2 SyntaxError | Symbol() TypeError", 9, 9],
+    ["Prefix", "1 | 2 | 1 | 2 SyntaxError | Symbol() TypeError", 9, 9],
+    ["ReadForItsThrow", "draft | saved | draft | saved SyntaxError | draft TypeError", 10, 10],
+    ["ThenADeclaration", "draft | saved | draft | saved SyntaxError | draft", 5, 5],
+    ["UpdateInUseMemo", "1 | 2 | 1 | 2 SyntaxError | Symbol() TypeError", 9, 7],
+  ];
+  for (const minifySyntax of [false, true]) {
+    itBundled(`react-compiler/DeadStoreInATry-syntax=${minifySyntax}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { print } from "react/compiler-runtime";
+          import * as afterTheScope from "./after-the-scope";
+          import * as inTheScope from "./in-the-scope";
+          const props = { text: "1", later: "saved", a: { b: ["saved"] } };
+          const renders = [["draft", 1], ["saved", 2], ["draft", 1]].map(([status, n]) => {
+            return { ...props, status, n, next: [status] };
+          });
+          print(afterTheScope, renders, it => it.p.state);
+          renders.push(
+            { ...props, status: "saved", n: 2, text: "{" },
+            { ...props, status: "draft", n: Symbol(), later: undefined, a: {} },
+          );
+          print(inTheScope, renders, it => String(it.p.info.was) + (it.p.info.error ? " " + it.p.info.error : ""));
+        `,
+        "/after-the-scope.jsx": /* jsx */ `
+          const count = list => list.size;
+          const mutate = it => {
+            it.k = 1;
+          };
+
+          // The declaration is in the memo block of the Map, the store is behind it.
+          export function AfterTheScope({ text }) {
+            let items = new Map();
+            const before = count(items);
+            let state = "not run";
+            try {
+              items = 19;
+              JSON.parse(text);
+              state = "parsed";
+            } catch (e) {
+              state = "caught " + e.name + ": " + e.message;
+            }
+            return <div state={state} before={before} items={String(items)} />;
+          }
+          export function AfterTheScopeFromProps({ text, next }) {
+            let items = new Map();
+            const before = count(items);
+            let state = "not run";
+            try {
+              items = next;
+              JSON.parse(text);
+              state = "parsed";
+            } catch (e) {
+              state = "caught " + e.name + ": " + e.message;
+            }
+            return <div state={state} before={before} />;
+          }
+          export function AfterTheScopeWithAPattern({ text, next }) {
+            let items = new Map();
+            const before = count(items);
+            let state = "not run";
+            try {
+              [items] = next;
+              JSON.parse(text);
+              state = "parsed";
+            } catch (e) {
+              state = "caught " + e.name + ": " + e.message;
+            }
+            return <div state={state} before={before} />;
+          }
+          // The pattern declares \`a\` in the memo block of \`made\`. What uses \`a\` is kept for its throw.
+          export function DeclaredByAPattern(props) {
+            let state = "not run";
+            try {
+              const made = {};
+              let { a } = props;
+              mutate(made);
+              state = "made " + made.k;
+              a.b;
+            } catch (e) {
+              state = "caught " + e.name + ": " + e.message;
+            }
+            return <div state={state} />;
+          }
+          export function DeclaredByAPatternThenUpdated(props) {
+            let state = "not run";
+            try {
+              const made = {};
+              let [a] = props.next;
+              mutate(made);
+              state = "made " + made.k;
+              a++;
+            } catch (e) {
+              state = "caught " + e.name + ": " + e.message;
+            }
+            return <div state={state} />;
+          }
+        `,
+        "/in-the-scope.jsx": /* jsx */ `
+          import { useMemo } from "react";
+
+          // The memo block of \`info\` reads the variable and holds the store.
+          export function InTheScope(props) {
+            let status = props.status;
+            const info = { was: status };
+            try {
+              status = "saved";
+              info.data = JSON.parse(props.text);
+            } catch (e) {
+              info.error = e.name;
+            }
+            return <li now={status} info={info} />;
+          }
+          export function ThenADeclaration(props) {
+            let status = props.status;
+            const info = { was: status };
+            try {
+              status = "saved";
+              const parsed = JSON.parse(props.text);
+              info.data = parsed;
+            } catch (e) {
+              info.error = e.name;
+            }
+            return <li now={status} info={info} />;
+          }
+          export function InUseMemo(props) {
+            const items = useMemo(() => {
+              let status = props.status;
+              const list = [status];
+              try {
+                status = "saved";
+                list.push(JSON.parse(props.text));
+              } catch (e) {}
+              return list;
+            }, [props.status, props.text]);
+            return <ul info={{ was: items[0] }} />;
+          }
+          export function InAnIife(props) {
+            const items = (() => {
+              let status = props.status;
+              const list = [status];
+              try {
+                status = "saved";
+                list.push(JSON.parse(props.text));
+              } catch (e) {}
+              return list;
+            })();
+            return <ul info={{ was: items[0] }} />;
+          }
+          export function InAHandler(props) {
+            let status = props.status;
+            const info = { was: status };
+            try {
+              JSON.parse("{");
+            } catch {
+              try {
+                status = "saved";
+                const parsed = JSON.parse(props.text);
+                info.data = parsed;
+              } catch (e) {
+                info.error = e.name;
+              }
+            }
+            return <li info={info} />;
+          }
+          export function Compound(props) {
+            let n = props.n;
+            const info = { was: n };
+            try {
+              n += 1;
+              const parsed = JSON.parse(props.text);
+              info.data = parsed;
+            } catch (e) {
+              info.error = e.name;
+            }
+            return <li info={info} />;
+          }
+          // The store is on a path that returns. The other path reads the variable.
+          export function OnAPathThatReturns({ status, text, later }) {
+            let label = status;
+            const info = {};
+            if (later === "editing") {
+              try {
+                label = "editing";
+                const draft = JSON.parse(text);
+                info.draft = draft;
+              } catch (e) {
+                info.error = e.name;
+              }
+              return <form info={info} />;
+            }
+            return <li info={{ was: label }} extra={info} />;
+          }
+          // The store stays: \`status.length\`, which is kept for its throw, reads it.
+          export function ReadForItsThrow({ status: first, later, text }) {
+            let status = first;
+            const info = { was: status };
+            try {
+              status = later;
+              status.length;
+              const parsed = JSON.parse(text);
+              info.data = parsed;
+            } catch (e) {
+              info.error = e.name;
+            }
+            return <li info={info} />;
+          }
+
+          // These stay, because they are taken as able to throw.
+          export function ArrayPattern(props) {
+            let status = props.status;
+            const info = { was: status };
+            try {
+              [status] = ["saved"];
+              const parsed = JSON.parse(props.text);
+              info.data = parsed;
+            } catch (e) {
+              info.error = e.name;
+            }
+            return <li info={info} />;
+          }
+          export function ObjectPattern(props) {
+            let status = props.status;
+            const info = { was: status };
+            try {
+              ({ status } = { status: "saved" });
+              const parsed = JSON.parse(props.text);
+              info.data = parsed;
+            } catch (e) {
+              info.error = e.name;
+            }
+            return <li info={info} />;
+          }
+          // The memo block must not read \`props.a.b\` outside of the \`try\`.
+          export function PatternOfAPath(props) {
+            let status = props.status;
+            const info = { was: status };
+            try {
+              [status] = props.a.b;
+              const parsed = JSON.parse(props.text);
+              info.data = parsed;
+            } catch (e) {
+              info.error = e.name;
+            }
+            return <li info={info} />;
+          }
+          export function Postfix(props) {
+            let n = props.n;
+            const info = { was: n };
+            try {
+              n++;
+              const parsed = JSON.parse(props.text);
+              info.data = parsed;
+            } catch (e) {
+              info.error = e.name;
+            }
+            return <li info={info} />;
+          }
+          export function Prefix(props) {
+            let n = props.n;
+            const info = { was: n };
+            try {
+              ++n;
+              const parsed = JSON.parse(props.text);
+              info.data = parsed;
+            } catch (e) {
+              info.error = e.name;
+            }
+            return <li info={info} />;
+          }
+          export function UpdateInUseMemo(props) {
+            const info = useMemo(() => {
+              let n = props.n;
+              const made = { was: n };
+              try {
+                n++;
+                made.data = JSON.parse(props.text);
+              } catch (e) {
+                made.error = e.name;
+              }
+              return made;
+            }, [props.n, props.text]);
+            return <li info={info} />;
+          }
+        `,
+        ...reactWithACachePerComponent,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target: "browser",
+      minifySyntax,
+      run: {
+        stdout: deadStoreInATry
+          .map(([form, rendered, cacheSize, withMinifySyntax]) => {
+            return `${form}: ${rendered} _c(${minifySyntax ? withMinifySyntax : cacheSize})`;
+          })
+          .join("\n"),
+      },
+    });
+  }
+
+  // With the store removed, nothing in these `try` bodies can throw: PruneMaybeThrows removes the handler, and the
+  // block behind the `try` has to be merged into the body. While the store was kept, these forms did not get there.
+  // `AssignedInCatch` is left as written: the phi behind the `try` still has the operand of the handler that is gone.
+  //
+  // A server build has no memo cache, and it drops a handler and a ref. There the last two forms have nothing left
+  // that reads the store, and their `try` is removed too.
+  const tryBodyOfDeadStores: [form: string, rendered: string, cacheSize: number | null][] = [
+    ["AssignedInCatch", "on1 | on2 | on1", null],
+    ["DeadForTheServer", "v1/function | v2/function | v1/function", 2],
+    ["DeadRefForTheServer", "v1 | v2 | v1", 2],
+    ["HoistedFunction", "v1/function | v2/function | v1/function", 5],
+    ["HoistedFunctionInBranchingCatch", "v1/function | v2/function | v1/function", 6],
+    ["IfInCatch", "v1 | v2 | v1", 2],
+    ["OneBlockCatch", "v1 | v2 | v1", 2],
+    ["OptionalInCatch", "v1 | v2 | v1", 2],
+    ["RestOfLoopBody", "v1,2 | v3 | v1,2", 4],
+    ["RestOfOuterTryBody", "v1 | v2 | v1", 4],
+    ["ReturnInCatch", "v1 | v2 | v1", 2],
+    ["TernaryInCatch", "v1 | v2 | v1", 2],
+  ];
+  for (const target of ["browser", "bun"] as const) {
+    itBundled(`react-compiler/TryBodyOfDeadStoresKeepsTheCodeBehindIt-${target}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { print } from "react/compiler-runtime";
+          import * as forms from "./forms";
+          const renders = [{ v: 1, list: [1, 2] }, { v: 2, list: [3] }, { v: 1, list: [1, 2] }];
+          print(forms, renders, it => {
+            if (it === undefined) return "nothing";
+            return it.p.r + (it.p.onClick === undefined ? "" : "/" + typeof it.p.onClick);
+          });
+        `,
+        "/forms.jsx": /* jsx */ `
+          const log = () => {};
+
+          export function OneBlockCatch(props) {
+            let a = 0;
+            try {
+              a = 1;
+            } catch (e) {
+              log(e);
+            }
+            return <div r={"v" + props.v} />;
+          }
+          export function IfInCatch(props) {
+            let a = 0;
+            try {
+              a = 1;
+            } catch (e) {
+              if (props.x) log(e);
+            }
+            return <div r={"v" + props.v} />;
+          }
+          export function ReturnInCatch(props) {
+            let a = 0;
+            try {
+              a = 1;
+            } catch (e) {
+              if (props.x) {
+                return <b r={e.name} />;
+              }
+            }
+            return <div r={"v" + props.v} />;
+          }
+          export function TernaryInCatch(props) {
+            let a = 0;
+            try {
+              a = 1;
+            } catch {
+              log(props.x ? 1 : 2);
+            }
+            return <div r={"v" + props.v} />;
+          }
+          export function OptionalInCatch(props) {
+            let a = 0;
+            try {
+              a = 1;
+            } catch (e) {
+              props.onError?.(e);
+            }
+            return <div r={"v" + props.v} />;
+          }
+          export function RestOfLoopBody(props) {
+            let a = 0;
+            const out = [];
+            for (const it of props.list) {
+              try {
+                a = 1;
+              } catch {
+                if (props.x) log(1);
+              }
+              out.push(it);
+            }
+            return <div r={"v" + out.join()} />;
+          }
+          export function RestOfOuterTryBody(props) {
+            let a = 0;
+            const seen = [];
+            try {
+              try {
+                a = 1;
+              } catch {
+                if (props.x) log(1);
+              }
+              seen.push(props.v);
+            } catch {}
+            return <div r={"v" + seen.join()} />;
+          }
+          export function AssignedInCatch(props) {
+            let ok = true;
+            let a = 0;
+            try {
+              a = 1;
+            } catch {
+              ok = false;
+            }
+            return <div r={(ok ? "on" : "off") + props.v} />;
+          }
+          // The handler calls a function that is declared behind it. With the handler gone, that function is compiled.
+          export function HoistedFunction(props) {
+            let a = 0;
+            try {
+              a = 1;
+            } catch (e) {
+              report(e);
+            }
+            function report() {
+              return props.v;
+            }
+            return <button onClick={report} r={"v" + props.v} />;
+          }
+          export function HoistedFunctionInBranchingCatch(props) {
+            let a = 0;
+            try {
+              a = 1;
+            } catch (e) {
+              if (props.x) report(e);
+            }
+            const label = "v" + props.v;
+            function report() {
+              return props.v;
+            }
+            return <button onClick={report} r={label} />;
+          }
+          export function DeadForTheServer(props) {
+            let h;
+            try {
+              h = () => log(1);
+            } catch (e) {
+              if (props.x) log(e);
+            }
+            return <button onClick={h} r={"v" + props.v} />;
+          }
+          export function DeadRefForTheServer(props) {
+            let h;
+            try {
+              h = () => log(1);
+            } catch (e) {
+              if (props.x) log(e);
+            }
+            return <input ref={h} r={"v" + props.v} />;
+          }
+        `,
+        ...reactWithACachePerComponent,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: tryBodyOfDeadStores
+          .map(([form, rendered, cacheSize]) => {
+            if (target === "bun") return `${form}: ${rendered.replaceAll("/function", "")} as written`;
+            return `${form}: ${rendered}${cacheSize === null ? " as written" : ` _c(${cacheSize})`}`;
+          })
+          .join("\n"),
+      },
+      onAfterBundle(api) {
+        if (target !== "bun") return;
+        const out = api.readFile("/out.js");
+        const body = (name: string) => out.slice(out.indexOf(`function ${name}(`)).split("\n}")[0];
+        expect({
+          DeadForTheServer: body("DeadForTheServer").includes("try"),
+          DeadRefForTheServer: body("DeadRefForTheServer").includes("try"),
+          AssignedInCatch: body("AssignedInCatch").includes("try"),
+        }).toEqual({ DeadForTheServer: false, DeadRefForTheServer: false, AssignedInCatch: true });
+      },
+    });
+  }
+
+  // A store before its `let` throws a ReferenceError, and the handler sees it. The compiled function does not
+  // throw: the store is dead code and is removed, as on 1.4.3 and in babel-plugin-react-compiler 1.0.0. The store
+  // that #44805 kept did not keep that throw either: it became the declaration (`InABlock`). The `switch` forms
+  // threw then for another reason: each `case` is printed as a block, so the store was outside the block of its
+  // `let`. The loop form was left as written.
+  itBundled("react-compiler/StoreBeforeItsDeclarationThrows", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        import * as forms from "./forms";
+        const renders = [{ k: 1, text: "1", list: [1, 2] }, { k: 0, text: "1", list: [] }];
+        for (const [name, form] of Object.entries(forms)) {
+          globalThis.rendering = form;
+          console.log(name + ": " + renders.map(props => form(props).p.r || "nothing").join(" | "));
+        }
+      `,
+      "/forms.jsx": /* jsx */ `
+        export function InABlock(p) {
+          let r = "ok";
+          {
+            try {
+              x = 1;
+              JSON.parse(p.text);
+            } catch (e) {
+              r = "caught " + e.name;
+            }
+            let x;
+          }
+          return <div r={r} />;
+        }
+        // A \`case\` that is skipped leaves its \`let\` in the dead zone for the next one.
+        export function InASwitch(p) {
+          let r = "ok";
+          switch (p.k) {
+            case 0:
+              let x;
+              break;
+            case 1:
+              try {
+                x = 1;
+                JSON.parse(p.text);
+              } catch (e) {
+                r = "caught " + e.name;
+              }
+          }
+          return <div r={r} />;
+        }
+        export function InASwitchThatReturns(p) {
+          switch (p.k) {
+            case 0:
+              let x;
+              break;
+            case 1:
+              try {
+                x = 1;
+              } catch (e) {
+                return <b r={"caught " + e.name} />;
+              }
+          }
+          return <div r="ok" />;
+        }
+        export function InASwitchWithAnInitializer(p) {
+          let r = "ok";
+          switch (p.k) {
+            case 0:
+              let x = 5;
+              r = "zero" + x;
+              break;
+            case 1:
+              try {
+                x = 1;
+                JSON.parse(p.text);
+              } catch (e) {
+                r = "caught " + e.name;
+              }
+          }
+          return <div r={r} />;
+        }
+        export function InALoop(p) {
+          let r = "";
+          for (const n of p.list) {
+            try {
+              x = n;
+              JSON.parse(p.text);
+            } catch (e) {
+              r += e.name + " ";
+            }
+            let x;
+          }
+          return <div r={r} />;
+        }
+      `,
+      ...reactWithACachePerComponent,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    run: {
+      stdout: `
+        InABlock: caught ReferenceError | caught ReferenceError
+        InALoop: ReferenceError ReferenceError  | nothing
+        InASwitch: caught ReferenceError | ok
+        InASwitchThatReturns: caught ReferenceError | ok
+        InASwitchWithAnInitializer: caught ReferenceError | zero5
+      `,
+    },
+  });
+
   // Outside the compiler, the bundler binds a local that holds a `require()` /
   // `import()` export to the export itself: `const { a } = require("./m")`
   // declares nothing, and `ns.a` off `const ns = require("./m")` is an import

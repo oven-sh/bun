@@ -177,6 +177,17 @@ fn reference_reassigned_variables(
     }
 }
 
+/// Whether a handler can see `value` throw.
+fn may_throw_in_a_try(value: &InstructionValue, env: &Environment) -> bool {
+    match value {
+        InstructionValue::StoreLocal { lvalue, .. }
+        | InstructionValue::StoreContext { lvalue, .. } => {
+            env.config.reassignments_can_throw && lvalue.kind == InstructionKind::Reassign
+        }
+        _ => value_may_throw(value),
+    }
+}
+
 /// What throws in a block that ends so goes to a handler.
 fn is_caught(terminal: &Terminal) -> bool {
     matches!(
@@ -228,7 +239,7 @@ fn find_referenced_identifiers(
                     // That it throws can be seen, even where nothing uses what it gives.
                     || (preserve_caught_throws
                         && is_caught(&block.terminal)
-                        && value_may_throw(&instr.value))
+                        && may_throw_in_a_try(&instr.value, env))
                     || !pruneable_value(&instr.value, &state, env)
                 {
                     reference(&mut state, &env.identifiers, instr.lvalue.identifier);
@@ -286,11 +297,9 @@ pub(crate) fn find_semantic_only_caught_instructions(
     let mut candidates = Vec::new();
     for block in func.body.blocks.values() {
         if is_caught(&block.terminal) {
-            candidates.extend(
-                block.instructions.iter().copied().filter(|instr_id| {
-                    value_may_throw(&func.instructions[instr_id.0 as usize].value)
-                }),
-            );
+            candidates.extend(block.instructions.iter().copied().filter(|instr_id| {
+                may_throw_in_a_try(&func.instructions[instr_id.0 as usize].value, env)
+            }));
         }
     }
     if candidates.is_empty() {

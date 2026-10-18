@@ -19,7 +19,7 @@ use crate::hir::cfg_utils::{
     remove_unreachable_for_updates, reverse_postorder_blocks,
 };
 use crate::hir::{
-    ArrayElement, BlockId, HirFunction, InstructionKind, InstructionValue, ObjectPropertyKey,
+    ArrayElement, BlockId, HirFunction, InstructionValue, ObjectPropertyKey,
     ObjectPropertyOrSpread, Terminal,
 };
 
@@ -141,10 +141,10 @@ pub(crate) fn value_may_throw(value: &InstructionValue) -> bool {
         | InstructionValue::MetaProperty { .. }
         | InstructionValue::Debugger { .. }
         | InstructionValue::StartMemoize { .. }
-        | InstructionValue::FinishMemoize { .. } => false,
-        // To a `const`, or before the declaration.
-        InstructionValue::StoreLocal { lvalue, .. }
-        | InstructionValue::StoreContext { lvalue, .. } => lvalue.kind == InstructionKind::Reassign,
+        | InstructionValue::FinishMemoize { .. }
+        // Only before its `let`, or to a function expression's own name: `EnvironmentConfig::reassignments_can_throw`.
+        | InstructionValue::StoreLocal { .. }
+        | InstructionValue::StoreContext { .. } => false,
         InstructionValue::ArrayExpression { elements, .. } => elements
             .iter()
             .any(|element| matches!(element, ArrayElement::Spread(_))),

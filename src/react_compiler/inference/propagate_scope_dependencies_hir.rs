@@ -2187,7 +2187,11 @@ fn handle_instruction(
         for operand in visitors::operands(&instr.value, &[]) {
             ctx.visit_operand_root(operand, env);
         }
-        return;
+        // An update or a pattern still assigns: its arm below records that, and the root above covers its operand.
+        let assigns = visitors::value_lvalues(&instr.value).next().is_some();
+        if !assigns || env.config.reassignments_can_throw {
+            return;
+        }
     }
 
     if ctx.is_deferred_dependency_instr(instr) {

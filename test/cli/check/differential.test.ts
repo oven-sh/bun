@@ -94,31 +94,34 @@ test.concurrent.skipIf(!tsc)("every thread enters a ring where `tsc --singleThre
 
 // The base type of `Box` is a mapped type over `Box`: its members are resolved once without the base type and once with it.
 // Whoever asks in between gets the first round.
-test.concurrent.skipIf(!tsc)("an interface whose base type maps over the interface, on any number of threads", async () => {
-  const files: Record<string, string> = {
-    "tsconfig.json": tsconfig,
-    "box.d.ts": `type WithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? \`$\${K & string}\` : never]: T[K] };
+test.concurrent.skipIf(!tsc)(
+  "an interface whose base type maps over the interface, on any number of threads",
+  async () => {
+    const files: Record<string, string> = {
+      "tsconfig.json": tsconfig,
+      "box.d.ts": `type WithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? \`$\${K & string}\` : never]: T[K] };
 declare interface Box<T> { then(x: T): T; catch(): void; finally(): void; value: T }
 declare interface Box<T> extends WithIntrinsics<Box<T>> {}
 declare function makeBox<T>(): { box: Box<T>; done: (v: T) => void };
 `,
-  };
-  for (let i = 0; i < (isDebug || isASAN ? 16 : 64); i++) {
-    const use = `declare const q${i}: Box<R${i}>; q${i}.$then;\n`;
-    const body = `interface W${i} { box: Box<R${i}> & { child?: number }; done: (v: R${i}) => void }
+    };
+    for (let i = 0; i < (isDebug || isASAN ? 16 : 64); i++) {
+      const use = `declare const q${i}: Box<R${i}>; q${i}.$then;\n`;
+      const body = `interface W${i} { box: Box<R${i}> & { child?: number }; done: (v: R${i}) => void }
 const { box: c${i}, done: a${i} }: W${i} = makeBox();\n`;
-    files[`f${i}.ts`] =
-      `interface R${i} { n${i}: ${i} }\n${[body, use + body, body + use][i % 3]}const planted${i}: 1 = 2;\nexport {};\n`;
-  }
-  using dir = tempDir("bun-check-differential", files);
-  const root = String(dir);
-  const [theirs, ...ours] = await Promise.all([
-    linesOf([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], root, root),
-    ...[1, 8, 32].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
-  ]);
-  expect(theirs.length).toBe(isDebug || isASAN ? 16 : 64);
-  for (const lines of ours) expect(lines).toEqual(theirs);
-});
+      files[`f${i}.ts`] =
+        `interface R${i} { n${i}: ${i} }\n${[body, use + body, body + use][i % 3]}const planted${i}: 1 = 2;\nexport {};\n`;
+    }
+    using dir = tempDir("bun-check-differential", files);
+    const root = String(dir);
+    const [theirs, ...ours] = await Promise.all([
+      linesOf([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], root, root),
+      ...[1, 8, 32].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+    ]);
+    expect(theirs.length).toBe(isDebug || isASAN ? 16 : 64);
+    for (const lines of ours) expect(lines).toEqual(theirs);
+  },
+);
 
 // `b.ts` comes to a ring while `a.ts` is being checked, so it is checked again later. By then it has shared what it has
 // found out about its first lines. The names there that do not resolve are reported all the same.

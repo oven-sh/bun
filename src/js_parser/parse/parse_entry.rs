@@ -111,6 +111,7 @@ pub struct Parser<'a> {
 pub struct Options<'a> {
     pub jsx: options::JSX::Pragma,
     pub ts: bool,
+    pub keep_names: bool,
     pub ignore_dce_annotations: bool,
     /// Keeps every directive in the AST, in its original position and with its original text.
     /// Otherwise `"use strict"` is only recorded on its scope, and `minify_syntax` drops the rest.
@@ -170,6 +171,7 @@ impl<'a> Default for Options<'a> {
         Options {
             jsx: options::JSX::Pragma::default(),
             ts: false,
+            keep_names: true,
             ignore_dce_annotations: false,
             keep_directives: false,
             preserve_unused_imports_ts: false,
@@ -221,6 +223,7 @@ impl<'a> Options<'a> {
         Options {
             jsx: self.jsx.clone(),
             ts: self.ts,
+            keep_names: self.keep_names,
             ignore_dce_annotations: self.ignore_dce_annotations,
             keep_directives: self.keep_directives,
             preserve_unused_imports_ts: self.preserve_unused_imports_ts,
@@ -328,6 +331,7 @@ impl<'a> Options<'a> {
         let mut opts = Options {
             ts: loader.is_typescript(),
             jsx,
+            keep_names: true,
             ignore_dce_annotations: false,
             keep_directives: false,
             preserve_unused_imports_ts: false,

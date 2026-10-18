@@ -7250,12 +7250,15 @@ impl NodeFS {
         // to the kernel which only stores into it.
         unsafe { buf.expand_to_capacity() };
 
+        // Two-phase read: first up to `size`, then keep going until EOF.
+        // `phase == 0` is the size-bounded loop, `phase == 1` is the unbounded tail.
+        let mut phase: u8 = if (total as u64) < size { 0 } else { 1 };
         loop {
             if args.aborted() {
                 return Err(abort_err());
             }
             // When `total == min(buf.capacity, max_size)`
-            // the next read receives an empty slice → returns 0 → `break`.
+            // the next read receives an empty slice → returns 0 → `did_succeed = true; break`.
             // Do NOT pre-grow here; growth happens only in the `total > size && amt != 0 &&
             // !has_max_size` arm below.
             let upper = (buf.capacity() as u64).min(max_size) as usize;
@@ -7292,7 +7295,13 @@ impl NodeFS {
             }
 
             if amt == 0 {
+                did_succeed = true;
                 break;
+            }
+
+            if phase == 0 && (total as u64) >= size {
+                // fall through into the unbounded tail loop
+                phase = 1;
             }
         }
 
@@ -7316,6 +7325,7 @@ impl NodeFS {
                 }
             };
         }
+        let _ = did_succeed; // `buf` is dropped on every error-return above.
 
         match args.encoding {
             Encoding::Buffer => {

@@ -269,7 +269,9 @@ impl<'a> HeaderList<'a> {
 pub struct Request<'a> {
     pub method: &'a [u8],
     pub path: &'a [u8],
+    pub minor_version: usize,
     pub headers: &'a [Header],
+    pub bytes_read: u32,
 }
 
 impl<'a> Request<'a> {
@@ -297,8 +299,10 @@ impl<'a> Request<'a> {
             method: unsafe { &*core::ptr::from_ref::<[u8]>(self.method) },
             // SAFETY: caller contract.
             path: unsafe { &*core::ptr::from_ref::<[u8]>(self.path) },
+            minor_version: self.minor_version,
             // SAFETY: caller contract.
             headers: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers) },
+            bytes_read: self.bytes_read,
         }
     }
 }

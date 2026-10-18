@@ -123,6 +123,7 @@ pub mod options {
     /// §Forbidden re: `&'static [T]` for arena-freed data.
     #[derive(Clone, Default)]
     pub struct Framework {
+        pub is_built_in_react: bool,
         pub server_components: Option<FrameworkServerComponents>,
         pub react_fast_refresh: Option<ReactFastRefresh>,
     }
@@ -132,6 +133,7 @@ pub mod options {
     /// (see re-export above).
     #[derive(Clone)]
     pub struct FrameworkServerComponents {
+        pub separate_ssr_graph: bool,
         /// REQUIRED — no default; `fromJS` throws
         /// if `serverRuntimeImportSource` is absent.
         pub server_runtime_import: Cow<'static, [u8]>,

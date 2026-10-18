@@ -2900,6 +2900,7 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
         }
         dangling.push(name.into());
     }
+    drop(iter);
     let mut removed = false;
     for name in &dangling {
         removed |= remove_link(bin, name).is_ok();

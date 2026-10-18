@@ -16,6 +16,8 @@ use bun_sys::{Dir, Fd};
 declare_scope!(jest, hidden);
 
 pub(crate) struct Scanner<'a> {
+    /// Memory is borrowed.
+    pub(crate) exclusion_names: &'a [&'a [u8]],
     /// When this list is empty, no filters are applied.
     /// "test" suffixes (e.g. .spec.*) are always applied when traversing directories.
     pub(crate) filter_names: &'a [&'a [u8]],
@@ -76,6 +78,7 @@ impl<'a> Scanner<'a> {
     ) -> Result<Scanner<'a>, AllocError> {
         let results = Vec::with_capacity(initial_results_capacity);
         Ok(Scanner {
+            exclusion_names: &[],
             filter_names: &[],
             path_ignore_patterns: &[],
             dirs_to_scan: Fifo::new(),
@@ -338,6 +341,12 @@ impl<'a> Scanner<'a> {
                 }
 
                 debug_assert!(strings::index_of(name, bun_paths::NODE_MODULES_NEEDLE).is_none());
+
+                for exclude_name in self.exclusion_names {
+                    if strings::eql(exclude_name, name) {
+                        return;
+                    }
+                }
 
                 // Prune ignored directory trees early so we never traverse them.
                 if !self.path_ignore_patterns.is_empty() {

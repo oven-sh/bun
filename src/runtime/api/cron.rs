@@ -114,13 +114,14 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     }
 
     #[cfg(target_os = "macos")]
-    fn prepare_bootout(&self) -> ZString {
+    fn prepare_bootout(&self) -> Result<ZString, ()> {
         self.set_state(Self::BOOTING_OUT);
         alloc_print_z(format_args!(
             "gui/{}/bun.cron.{}",
             get_uid(),
             bstr::BStr::new(self.title_bytes())
         ))
+        .map_err(|_| self.set_err(format_args!("Out of memory")))
     }
 
     fn check_finished(&self) -> JobAction;
@@ -479,14 +480,19 @@ impl CronRegisterJob {
 
         // Build new entry with single-quoted paths to prevent shell injection
         let mut new_entry = Vec::new();
-        let _ = write!(
+        if write!(
             &mut new_entry,
             "# bun-cron: {title}\n{sched} '{exe}' run --cron-title={title} --cron-period='{sched}' '{path}'\n",
             title = bstr::BStr::new(self.title.as_bytes()),
             sched = bstr::BStr::new(self.schedule.as_bytes()),
             exe = bstr::BStr::new(self.bun_exe.as_bytes()),
             path = bstr::BStr::new(self.abs_path.as_bytes()),
-        );
+        )
+        .is_err()
+        {
+            self.set_err(format_args!("Out of memory"));
+            return Err(());
+        }
         result.extend_from_slice(&new_entry);
 
         let tmp_path = match make_temp_path("bun-cron-") {
@@ -569,21 +575,38 @@ impl CronRegisterJob {
             return Err(());
         }
 
-        let plist_path = alloc_print_z(format_args!(
+        let plist_path = match alloc_print_z(format_args!(
             "{}/Library/LaunchAgents/bun.cron.{}.plist",
             bstr::BStr::new(home),
             bstr::BStr::new(self.title.as_bytes())
-        ));
+        )) {
+            Ok(p) => p,
+            Err(_) => {
+                self.set_err(format_args!("Out of memory"));
+                return Err(());
+            }
+        };
         self.tmp_path.set(Some(plist_path));
 
         // XML-escape all dynamic values
-        let xml_title = xml_escape(self.title.as_bytes());
-        let xml_bun = xml_escape(self.bun_exe.as_bytes());
-        let xml_path = xml_escape(self.abs_path.as_bytes());
-        let xml_sched = xml_escape(self.schedule.as_bytes());
+        macro_rules! try_escape {
+            ($e:expr) => {
+                match xml_escape($e) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        self.set_err(format_args!("Out of memory"));
+                        return Err(());
+                    }
+                }
+            };
+        }
+        let xml_title = try_escape!(self.title.as_bytes());
+        let xml_bun = try_escape!(self.bun_exe.as_bytes());
+        let xml_path = try_escape!(self.abs_path.as_bytes());
+        let xml_sched = try_escape!(self.schedule.as_bytes());
 
         let mut plist = Vec::new();
-        let _ = write!(
+        if write!(
             &mut plist,
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
@@ -612,7 +635,12 @@ impl CronRegisterJob {
             bstr::BStr::new(&xml_path),
             bstr::BStr::new(&xml_sched),
             bstr::BStr::new(&calendar_xml),
-        );
+        )
+        .is_err()
+        {
+            self.set_err(format_args!("Out of memory"));
+            return Err(());
+        }
 
         let file = match File::openat(
             Fd::cwd(),
@@ -638,7 +666,9 @@ impl CronRegisterJob {
     /// May free `this`; see [`CronJobBase`] note.
     #[cfg(target_os = "macos")]
     fn spawn_bootout(this: ThisPtr<Self>) {
-        let uid_str = this.prepare_bootout();
+        let Ok(uid_str) = this.prepare_bootout() else {
+            return Self::finish(this);
+        };
         let argv = [c"/bin/launchctl", c"bootout", uid_str.as_cstr()];
         Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
     }
@@ -665,7 +695,13 @@ impl CronRegisterJob {
             self.set_err(format_args!("No plist path"));
             return Err(());
         };
-        let uid_str = alloc_print_z(format_args!("gui/{}", get_uid()));
+        let uid_str = match alloc_print_z(format_args!("gui/{}", get_uid())) {
+            Ok(v) => v,
+            Err(_) => {
+                self.set_err(format_args!("Out of memory"));
+                return Err(());
+            }
+        };
         Ok((uid_str, plist_path))
     }
 }
@@ -872,10 +908,16 @@ impl CronRegisterJob {
     fn prepare_schtasks_create(&self) -> Result<(ZString, ZString), ()> {
         self.state.set(RegisterState::InstallingCrontab);
 
-        let task_name = alloc_print_z(format_args!(
+        let task_name = match alloc_print_z(format_args!(
             "bun-cron-{}",
             bstr::BStr::new(self.title.as_bytes())
-        ));
+        )) {
+            Ok(v) => v,
+            Err(_) => {
+                self.set_err(format_args!("Out of memory"));
+                return Err(());
+            }
+        };
 
         let xml = match cron_to_task_xml(
             &self.parsed_cron,
@@ -1127,12 +1169,15 @@ impl CronRemoveJob {
             self.set_err(format_args!("HOME not set"));
             return;
         };
-        let plist_path = alloc_print_z(format_args!(
+        if let Ok(plist_path) = alloc_print_z(format_args!(
             "{}/Library/LaunchAgents/bun.cron.{}.plist",
             bstr::BStr::new(home),
             bstr::BStr::new(self.title.as_bytes())
-        ));
-        let _ = sys::unlink(&plist_path);
+        )) {
+            let _ = sys::unlink(&plist_path);
+        } else {
+            self.set_err(format_args!("Out of memory"));
+        }
     }
 
     /// May free `this` (via spawn → synchronous exit → finish, or error path).
@@ -1223,7 +1268,9 @@ impl CronRemoveJob {
     /// May free `this`; see [`CronJobBase`] note.
     #[cfg(target_os = "macos")]
     fn start_mac(this: ThisPtr<Self>) {
-        let uid_str = this.prepare_bootout();
+        let Ok(uid_str) = this.prepare_bootout() else {
+            return Self::finish(this);
+        };
         let argv = [c"/bin/launchctl", c"bootout", uid_str.as_cstr()];
         Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
     }
@@ -1284,17 +1331,20 @@ pub(crate) fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
 impl CronRemoveJob {
     /// May free `this`; see [`CronJobBase`] note.
     fn start_windows(this: ThisPtr<Self>) {
-        let task_name = this.prepare_schtasks_delete();
+        let Ok(task_name) = this.prepare_schtasks_delete() else {
+            return Self::finish(this);
+        };
         let argv = [c"schtasks", c"/delete", c"/tn", task_name.as_cstr(), c"/f"];
         Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
     }
 
-    fn prepare_schtasks_delete(&self) -> ZString {
+    fn prepare_schtasks_delete(&self) -> Result<ZString, ()> {
         self.state.set(RemoveState::InstallingCrontab);
         alloc_print_z(format_args!(
             "bun-cron-{}",
             bstr::BStr::new(self.title.as_bytes())
         ))
+        .map_err(|_| self.set_err(format_args!("Out of memory")))
     }
 }
 
@@ -2273,10 +2323,10 @@ fn resolve_path(
 }
 
 #[cfg(any(target_os = "macos", windows))]
-fn alloc_print_z(args: core::fmt::Arguments<'_>) -> ZString {
+fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_alloc::AllocError> {
     let mut v = Vec::new();
-    let _ = v.write_fmt(args);
-    ZString::from_vec(v)
+    v.write_fmt(args).map_err(|_| bun_alloc::AllocError)?;
+    Ok(ZString::from_vec(v))
 }
 
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
@@ -2354,7 +2404,7 @@ pub(crate) fn filter_crontab(
 
 /// XML-escape a string for safe embedding in plist XML.
 #[cfg(any(target_os = "macos", windows))]
-pub(crate) fn xml_escape(input: &[u8]) -> Vec<u8> {
+pub(crate) fn xml_escape(input: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
     let mut needs_escape = false;
     for &c in input {
         if c == b'&' || c == b'<' || c == b'>' || c == b'"' || c == b'\'' {
@@ -2363,7 +2413,7 @@ pub(crate) fn xml_escape(input: &[u8]) -> Vec<u8> {
         }
     }
     if !needs_escape {
-        return input.to_vec();
+        return Ok(input.to_vec());
     }
 
     let mut result: Vec<u8> = Vec::new();
@@ -2377,7 +2427,7 @@ pub(crate) fn xml_escape(input: &[u8]) -> Vec<u8> {
             _ => result.push(c),
         }
     }
-    result
+    Ok(result)
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, PartialEq, Eq)]
@@ -2452,7 +2502,7 @@ pub(crate) fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, Cale
         for (fv, key) in fv_slices.iter().zip(PLIST_KEYS.iter()) {
             if let Some(vals) = fv {
                 if vals.len() == 1 {
-                    append_calendar_key(&mut result, key, vals[0]);
+                    append_calendar_key(&mut result, key, vals[0])?;
                 }
             }
         }
@@ -2463,12 +2513,12 @@ pub(crate) fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, Cale
         if needs_or_split {
             // OR split: emit day-of-month dicts (no Weekday), then day-of-week dicts (no Day)
             // Pass 1: Day + time fields (minute, hour, day, month — no weekday)
-            emit_calendar_dicts(&mut result, &fv_slices, EmitMode::ExcludeWeekday);
+            emit_calendar_dicts(&mut result, &fv_slices, EmitMode::ExcludeWeekday)?;
             // Pass 2: Weekday + time fields (minute, hour, weekday, month — no day)
-            emit_calendar_dicts(&mut result, &fv_slices, EmitMode::ExcludeDay);
+            emit_calendar_dicts(&mut result, &fv_slices, EmitMode::ExcludeDay)?;
         } else {
             // Normal Cartesian product: all fields together
-            emit_calendar_dicts(&mut result, &fv_slices, EmitMode::IncludeAll);
+            emit_calendar_dicts(&mut result, &fv_slices, EmitMode::IncludeAll)?;
         }
 
         result.extend_from_slice(b"    </array>");
@@ -2477,13 +2527,14 @@ pub(crate) fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, Cale
 }
 
 #[cfg(target_os = "macos")]
-fn append_calendar_key(result: &mut Vec<u8>, key: &[u8], val: i32) {
+fn append_calendar_key(result: &mut Vec<u8>, key: &[u8], val: i32) -> Result<(), CalendarError> {
     let _ = write!(
         result,
         "        <key>{}</key>\n        <integer>{}</integer>\n",
         bstr::BStr::new(key),
         val
     );
+    Ok(())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2498,7 +2549,11 @@ enum EmitMode {
 /// In exclude_weekday mode, day-of-week (index 4) is treated as wildcard.
 /// In exclude_day mode, day-of-month (index 2) is treated as wildcard.
 #[cfg(target_os = "macos")]
-fn emit_calendar_dicts(result: &mut Vec<u8>, field_values: &[Option<&[i32]>; 5], mode: EmitMode) {
+fn emit_calendar_dicts(
+    result: &mut Vec<u8>,
+    field_values: &[Option<&[i32]>; 5],
+    mode: EmitMode,
+) -> Result<(), CalendarError> {
     const PLIST_KEYS: [&[u8]; 5] = [b"Minute", b"Hour", b"Day", b"Month", b"Weekday"];
 
     // Build effective field values based on mode
@@ -2523,19 +2578,19 @@ fn emit_calendar_dicts(result: &mut Vec<u8>, field_values: &[Option<&[i32]>; 5],
                     for &w in iter_wdays {
                         result.extend_from_slice(b"    <dict>\n");
                         if effective[0].is_some() {
-                            append_calendar_key(result, PLIST_KEYS[0], m);
+                            append_calendar_key(result, PLIST_KEYS[0], m)?;
                         }
                         if effective[1].is_some() {
-                            append_calendar_key(result, PLIST_KEYS[1], h);
+                            append_calendar_key(result, PLIST_KEYS[1], h)?;
                         }
                         if effective[2].is_some() {
-                            append_calendar_key(result, PLIST_KEYS[2], d);
+                            append_calendar_key(result, PLIST_KEYS[2], d)?;
                         }
                         if effective[3].is_some() {
-                            append_calendar_key(result, PLIST_KEYS[3], mo);
+                            append_calendar_key(result, PLIST_KEYS[3], mo)?;
                         }
                         if effective[4].is_some() {
-                            append_calendar_key(result, PLIST_KEYS[4], w);
+                            append_calendar_key(result, PLIST_KEYS[4], w)?;
                         }
                         result.extend_from_slice(b"    </dict>\n");
                     }
@@ -2543,6 +2598,7 @@ fn emit_calendar_dicts(result: &mut Vec<u8>, field_values: &[Option<&[i32]>; 5],
             }
         }
     }
+    Ok(())
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, PartialEq, Eq)]
@@ -2551,6 +2607,8 @@ pub enum TaskXmlError {
     InvalidCron,
     #[error("TooManyTriggers")]
     TooManyTriggers,
+    #[error("OutOfMemory")]
+    OutOfMemory,
 }
 
 /// Build a Windows Task Scheduler XML definition from a parsed cron expression.
@@ -2689,7 +2747,7 @@ pub(crate) fn cron_to_task_xml(
                         &mut xml,
                         sb,
                         ScheduleType::ByMonth { cron: *cron },
-                    );
+                    )?;
                 }
 
                 // Emit day-of-week trigger if needed
@@ -2699,28 +2757,28 @@ pub(crate) fn cron_to_task_xml(
                             &mut xml,
                             sb,
                             ScheduleType::ByWeek(cron.weekdays),
-                        );
+                        )?;
                     } else {
                         // Use ScheduleByMonthDayOfWeek to include month restrictions
                         append_calendar_trigger_with_schedule(
                             &mut xml,
                             sb,
                             ScheduleType::ByMonthDow { cron: *cron },
-                        );
+                        )?;
                     }
                 }
 
                 // Both wildcard: every day (with optional month restriction)
                 if days_is_wild && weekdays_is_wild {
                     if months_is_wild {
-                        append_calendar_trigger_with_schedule(&mut xml, sb, ScheduleType::ByDay);
+                        append_calendar_trigger_with_schedule(&mut xml, sb, ScheduleType::ByDay)?;
                     } else {
                         // Daily but restricted months → use ScheduleByMonth with all days
                         append_calendar_trigger_with_schedule(
                             &mut xml,
                             sb,
                             ScheduleType::ByMonthAllDays(cron.months),
-                        );
+                        )?;
                     }
                 }
             }
@@ -2728,10 +2786,10 @@ pub(crate) fn cron_to_task_xml(
     }
 
     // Close triggers, add action
-    let xml_bun = xml_escape(bun_exe);
-    let xml_title = xml_escape(title);
-    let xml_sched = xml_escape(schedule);
-    let xml_path = xml_escape(abs_path);
+    let xml_bun = xml_escape(bun_exe).map_err(|_| TaskXmlError::OutOfMemory)?;
+    let xml_title = xml_escape(title).map_err(|_| TaskXmlError::OutOfMemory)?;
+    let xml_sched = xml_escape(schedule).map_err(|_| TaskXmlError::OutOfMemory)?;
+    let xml_path = xml_escape(abs_path).map_err(|_| TaskXmlError::OutOfMemory)?;
 
     let _ = write!(
         &mut xml,
@@ -2766,7 +2824,7 @@ pub(crate) fn cron_to_task_xml(
 }
 
 #[cfg(windows)]
-fn append_days_of_month_xml(xml: &mut Vec<u8>, days: u32) {
+fn append_days_of_month_xml(xml: &mut Vec<u8>, days: u32) -> Result<(), TaskXmlError> {
     xml.extend_from_slice(b"        <DaysOfMonth>\n");
     for day in 1..32u32 {
         if days & (1u32 << day) != 0 {
@@ -2774,10 +2832,11 @@ fn append_days_of_month_xml(xml: &mut Vec<u8>, days: u32) {
         }
     }
     xml.extend_from_slice(b"        </DaysOfMonth>\n");
+    Ok(())
 }
 
 #[cfg(windows)]
-fn append_months_xml(xml: &mut Vec<u8>, months: u16) {
+fn append_months_xml(xml: &mut Vec<u8>, months: u16) -> Result<(), TaskXmlError> {
     const MONTH_NAMES: [&str; 13] = [
         "",
         "January",
@@ -2800,10 +2859,11 @@ fn append_months_xml(xml: &mut Vec<u8>, months: u16) {
         }
     }
     xml.extend_from_slice(b"        </Months>\n");
+    Ok(())
 }
 
 #[cfg(windows)]
-fn append_days_of_week_xml(xml: &mut Vec<u8>, weekdays: u8) {
+fn append_days_of_week_xml(xml: &mut Vec<u8>, weekdays: u8) -> Result<(), TaskXmlError> {
     const DAY_NAMES: [&str; 7] = [
         "Sunday",
         "Monday",
@@ -2820,6 +2880,7 @@ fn append_days_of_week_xml(xml: &mut Vec<u8>, weekdays: u8) {
         }
     }
     xml.extend_from_slice(b"        </DaysOfWeek>\n");
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -2843,7 +2904,7 @@ fn append_calendar_trigger_with_schedule(
     xml: &mut Vec<u8>,
     start_boundary: &[u8],
     sched: ScheduleType,
-) {
+) -> Result<(), TaskXmlError> {
     xml.extend_from_slice(b"    <CalendarTrigger>\n");
     let _ = writeln!(
         xml,
@@ -2860,32 +2921,33 @@ fn append_calendar_trigger_with_schedule(
         ScheduleType::ByWeek(weekdays) => {
             xml.extend_from_slice(b"      <ScheduleByWeek>\n");
             xml.extend_from_slice(b"        <WeeksInterval>1</WeeksInterval>\n");
-            append_days_of_week_xml(xml, weekdays);
+            append_days_of_week_xml(xml, weekdays)?;
             xml.extend_from_slice(b"      </ScheduleByWeek>\n");
         }
         ScheduleType::ByMonth { cron } => {
             xml.extend_from_slice(b"      <ScheduleByMonth>\n");
-            append_days_of_month_xml(xml, cron.days);
-            append_months_xml(xml, cron.months);
+            append_days_of_month_xml(xml, cron.days)?;
+            append_months_xml(xml, cron.months)?;
             xml.extend_from_slice(b"      </ScheduleByMonth>\n");
         }
         ScheduleType::ByMonthDow { cron } => {
             // ScheduleByMonthDayOfWeek: weekday + month restriction
             xml.extend_from_slice(b"      <ScheduleByMonthDayOfWeek>\n");
             xml.extend_from_slice(b"        <Weeks><Week>1</Week><Week>2</Week><Week>3</Week><Week>4</Week><Week>Last</Week></Weeks>\n");
-            append_days_of_week_xml(xml, cron.weekdays);
-            append_months_xml(xml, cron.months);
+            append_days_of_week_xml(xml, cron.weekdays)?;
+            append_months_xml(xml, cron.months)?;
             xml.extend_from_slice(b"      </ScheduleByMonthDayOfWeek>\n");
         }
         ScheduleType::ByMonthAllDays(months) => {
             xml.extend_from_slice(b"      <ScheduleByMonth>\n");
-            append_days_of_month_xml(xml, 0xFFFFFFFE);
-            append_months_xml(xml, months);
+            append_days_of_month_xml(xml, 0xFFFFFFFE)?;
+            append_months_xml(xml, months)?;
             xml.extend_from_slice(b"      </ScheduleByMonth>\n");
         }
     }
 
     xml.extend_from_slice(b"    </CalendarTrigger>\n");
+    Ok(())
 }
 
 /// Local stand-in for the planned `bun_core::BitOps` trait — only what

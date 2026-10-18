@@ -23,7 +23,9 @@ use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use bun_options_types::bundle_enums as bundle_opts;
 
-/// Derives `ConstParamTy` so the string-escape helpers can take it as `const ENCODING: Encoding`.
+/// Local stand-in for `bun_core::strings::Encoding` that derives `ConstParamTy` so it can
+/// be used as a const-generic parameter (`const ENCODING: Encoding`). The variant set is
+/// identical; convert at the boundary if a `strings::Encoding` is ever needed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum Encoding {
     Ascii,

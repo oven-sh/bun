@@ -2070,12 +2070,24 @@ pub mod printer {
         encoding: StrEncoding,
     ) -> crate::CrateResult<()> {
         debug_assert!(!json || quote_char == b'"');
-        let n: usize = text_in.len();
+        // utf16 view over the same bytes (only used when encoding == Utf16).
+        // Callers pass 2-byte-aligned even-length input for Utf16; `cast_slice`
+        // panics (rather than UB) if that contract is violated.
+        let text16: &[u16] = if encoding == StrEncoding::Utf16 {
+            crate::cast_slice::<u8, u16>(text_in)
+        } else {
+            &[]
+        };
+        let n: usize = if encoding == StrEncoding::Utf16 {
+            text16.len()
+        } else {
+            text_in.len()
+        };
         let mut i: usize = 0;
 
         while i < n {
             let width: u8 = match encoding {
-                StrEncoding::Latin1 => 1,
+                StrEncoding::Latin1 | StrEncoding::Ascii | StrEncoding::Utf16 => 1,
                 StrEncoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text_in[i]),
             };
             let clamped_width = (width as usize).min(n.saturating_sub(i));
@@ -2094,7 +2106,12 @@ pub mod printer {
                         strings::decode_wtf8_rune_t::<i32>(buf, width, MALFORMED)
                     }
                 }
+                StrEncoding::Ascii => {
+                    debug_assert!(text_in[i] <= 0x7F);
+                    text_in[i] as i32
+                }
                 StrEncoding::Latin1 => text_in[i] as i32,
+                StrEncoding::Utf16 => text16[i] as i32,
             };
 
             if c == MALFORMED {
@@ -2110,7 +2127,7 @@ pub mod printer {
 
             if can_print_without_escape(c, ascii_only) {
                 match encoding {
-                    StrEncoding::Utf8 => {
+                    StrEncoding::Ascii | StrEncoding::Utf8 => {
                         let remain = &text_in[i + clamped_width..];
                         if let Some(j) = strings::index_of_needs_escape_for_java_script_string(
                             remain, quote_char,
@@ -2124,7 +2141,7 @@ pub mod printer {
                             break;
                         }
                     }
-                    StrEncoding::Latin1 => {
+                    StrEncoding::Latin1 | StrEncoding::Utf16 => {
                         let mut cp = [0u8; 4];
                         let cp_len = strings::encode_wtf8_rune(&mut cp, c as u32);
                         writer.write_all(&cp[..cp_len])?;
@@ -2177,7 +2194,10 @@ pub mod printer {
                 }
                 0x24 => {
                     if quote_char == b'`' {
-                        let next_is_brace = i + 1 < n && text_in[i + 1] == b'{';
+                        let next_is_brace = match encoding {
+                            StrEncoding::Utf16 => i + 1 < n && text16[i + 1] == b'{' as u16,
+                            _ => i + 1 < n && text_in[i + 1] == b'{',
+                        };
                         writer.write_all(if next_is_brace { b"\\$" } else { b"$" })?;
                     } else {
                         writer.write_all(b"$")?;

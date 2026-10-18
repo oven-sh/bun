@@ -1462,6 +1462,7 @@ impl<'a> Transpiler<'a> {
                 let mut opts = js_ast::ParserOptions::<'_> {
                     ts: loader.is_typescript(),
                     jsx: to_parser_jsx_pragma(jsx),
+                    keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,
                     keep_directives: false,
                     preserve_unused_imports_ts: false,

@@ -776,6 +776,11 @@ pub mod dir_iterator {
     /// `DirIterator.NewWrappedIterator(if windows .u16 else .u8)`
     pub struct WrappedIterator {
         dir: Fd,
+        // Windows: NtQueryDirectoryFile filter (UNICODE_STRING). On POSIX,
+        // ignored (kernel readdir has no name filter; callers post-filter).
+        // stored on `State` on Windows so `next()` can pass it.
+        #[cfg(not(windows))]
+        name_filter: Option<Vec<u16>>,
         state: State,
     }
     impl WrappedIterator {
@@ -792,7 +797,9 @@ pub mod dir_iterator {
                 self.state.name_filter = filter.map(|f| f.to_vec());
             }
             #[cfg(not(windows))]
-            let _ = filter;
+            {
+                self.name_filter = filter.map(|f| f.to_vec());
+            }
         }
         /// Memory such as file names referenced in this returned entry becomes
         /// invalid with subsequent calls to `next`, as well as when this
@@ -808,9 +815,20 @@ pub mod dir_iterator {
     }
 
     pub fn iterate(dir: Fd) -> WrappedIterator {
-        WrappedIterator {
-            dir,
-            state: State::new(),
+        #[cfg(not(windows))]
+        {
+            WrappedIterator {
+                dir,
+                name_filter: None,
+                state: State::new(),
+            }
+        }
+        #[cfg(windows)]
+        {
+            WrappedIterator {
+                dir,
+                state: State::new(),
+            }
         }
     }
 }

@@ -337,8 +337,10 @@ fn reinterpret_to_u8<T: crate::NoUninit>(s: &[T]) -> &[u8] {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Encoding {
+    Ascii,
     Utf8,
     Latin1,
+    Utf16,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

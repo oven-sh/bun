@@ -65,6 +65,23 @@ impl<'a> Bits<'a> {
         self.nbits = self.nbits.saturating_sub(n);
         v
     }
+
+    /// Skip the rest of this image's sub-blocks (after EOI we may still be
+    /// mid-block, and there can be trailing padding sub-blocks).
+    fn drain(&mut self) {
+        let mut i = self.i + self.block;
+        while i < self.src.len() {
+            // Widen before the add: `1 + u8(255)` overflows u8 (peer-type
+            // resolution) before reaching the usize lhs — Debug panics,
+            // ReleaseFast wraps to 0 and loops forever.
+            let n: usize = self.src[i] as usize;
+            i += 1 + n;
+            if n == 0 {
+                break;
+            }
+        }
+        self.i = i.min(self.src.len());
+    }
 }
 
 /// One node per dictionary entry. The classic LZW dict is "string = previous
@@ -296,6 +313,7 @@ fn decode_frame(
         }
         prev = Some(code);
     }
+    bits.drain();
     // Short/truncated stream: pad the tail with the transparent index (or 0), as browsers do.
     idx.resize(npix, trns.unwrap_or(0));
 

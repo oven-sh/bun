@@ -1594,7 +1594,7 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
     Bun.Image.backend = "bun";
     const m = await new Bun.Image(g).metadata();
     expect(m).toEqual({ width: 2, height: 2, format: "gif" });
-    // And actually decode.
+    // And actually decode (exercises Bits.drain too).
     const out = await new Bun.Image(g).png().bytes();
     expect(out[0]).toBe(0x89);
   });

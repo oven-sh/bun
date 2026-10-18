@@ -375,7 +375,9 @@ impl FrameworkRouter {
         *new_route.file_ptr(file_kind) = Some(file_id);
 
         if file_kind == FileKind::Page {
-            match pattern {
+            // Another page with a different file path but the same URL pattern: `(a)/about.tsx`
+            // and `(b)/about.tsx`, or `[a].tsx` and `[b].tsx`.
+            let aliased = match pattern {
                 InsertPattern::Static(p) => {
                     let key: &[u8] = if p.route_path().is_empty() {
                         b"/"
@@ -384,17 +386,28 @@ impl FrameworkRouter {
                     };
                     let gop = self.static_routes.get_or_put(key)?;
                     if gop.found_existing {
-                        panic!("TODO: propagate aliased route error");
+                        Some(*gop.value_ptr)
+                    } else {
+                        *gop.value_ptr = new_route_index;
+                        None
                     }
-                    *gop.value_ptr = new_route_index;
                 }
                 InsertPattern::Dynamic(p) => {
                     let gop = self.dynamic_routes.get_or_put(p)?;
                     if gop.found_existing {
-                        panic!("TODO: propagate aliased route error");
+                        Some(*gop.value_ptr)
+                    } else {
+                        *gop.value_ptr = new_route_index;
+                        None
                     }
-                    *gop.value_ptr = new_route_index;
                 }
+            };
+            if let Some(existing_route) = aliased {
+                self.route_ptr_mut(new_route_index).file_page = None;
+                if let Some(existing) = self.route_ptr(existing_route).file_page {
+                    *out_colliding_file_id = existing;
+                }
+                return Err(InsertError::RouteCollision);
             }
         }
         Ok(())

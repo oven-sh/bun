@@ -149,8 +149,10 @@ impl DevServer {
                     break 'arr arr;
                 }
             },
-            // clientId
+            // clientId: none when the router has no client entry, so there is no bundle to load.
+            // SAFETY: per-access raw deref; `router.types` not reallocated.
             client_id: match framework_bundle.cached_client_bundle_url.get() {
+                _ if unsafe { (*router_type).client_file }.is_none() => JSValue::NULL,
                 Some(s) => s,
                 None => 'str: {
                     let bundle_index: u32 = route_bundle_index.get();
@@ -507,6 +509,20 @@ impl DevServer {
         // immediately decays to a raw pointer.
         let route_bundle: *mut RouteBundle =
             unsafe { &mut *self_ptr }.route_bundle_ptr(bundle_index);
+        // A route of a router with no client entry has no browser bundle.
+        // SAFETY: shared, statement-scoped reads; nothing mutates `route_bundles` or `router` here.
+        if let route_bundle::Data::Framework(fw) = unsafe { &(*route_bundle).data } {
+            let router = unsafe { &(*self_ptr).router };
+            if router
+                .type_ptr_const(router.route_ptr(fw.route_index).r#type)
+                .client_file
+                .is_none()
+            {
+                resp.write_status(b"404 Not Found");
+                resp.end(b"", false);
+                return;
+            }
+        }
         // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in
         // this fn; the shared reborrow ends with this statement.
         let cached: Option<bun_ptr::ThisPtr<StaticRoute>> =

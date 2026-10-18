@@ -126,6 +126,13 @@ export const lsquic: Dependency = {
     // one (a late or reordered packet) stayed unacknowledged and were then
     // declared lost.
     "patches/lsquic/merge-acks-contained-range.patch",
+    // A DATAGRAM frame that was reported lost got no acknowledgement when
+    // the peer acknowledged its packet after all: the packet, with the
+    // frame's id, was gone at the loss. ngtcp2 reports both, so node:quic has
+    // to. The send controller keeps the last lost (packet number, id) pairs
+    // and reports a late ACK through on_datagram_late_ack. Applies on top of
+    // node-quic-accessors.
+    "patches/lsquic/datagram-ack-after-loss.patch",
     // send_packets_out() leaked every packet already coalesced into the
     // current out_spec when encrypting a later one failed.
     "patches/lsquic/coalesce-batch-drop.patch",

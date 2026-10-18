@@ -3,7 +3,7 @@ title: "Auto-install"
 description: "Bun's automatic package installation feature for standalone script execution"
 ---
 
-If Bun finds no `node_modules` directory in the working directory or higher, it abandons Node.js-style module resolution in favor of the **Bun module resolution algorithm**.
+If Bun finds no `node_modules` directory in the directory of the importing file or higher, it abandons Node.js-style module resolution in favor of the **Bun module resolution algorithm**.
 
 Under Bun-style module resolution, Bun auto-installs every imported package on the fly into a [global module cache](/pm/global-cache) during execution. [`bun install`](/pm/cli/install) uses the same cache.
 
@@ -79,7 +79,7 @@ Bun downloads packages from the npm registry (`https://registry.npmjs.org/`) unl
 //npm.myorg.com/:_authToken=${NPM_TOKEN}
 ```
 
-Bun reads the user's `.npmrc`, then the `.npmrc` in the directory where you started `bun`, then each `.npmrc` from the [project root](#project-root) down to the importing file, then the `[install]` settings of each `bunfig.toml` in those same directories, then the `bunfig.toml` in the directory where you started `bun`. A later file overrides the same value in an earlier one. Other `.npmrc` options, such as `cache`, apply to `bun install` and the other package manager commands only. `install.auto` and `install.prefer` count only in the directory where you started `bun`.
+Bun reads the user's `.npmrc`, then the `.npmrc` in the directory where you started `bun`, then each `.npmrc` from the [project root](#project-root) down to the importing file. Then it reads the `[install]` section of each `bunfig.toml` in those same directories, in the same order. Later files override earlier ones, so the file closest to the importing file wins. If you started `bun` from a directory inside the project, that directory's files are read in their normal position instead of first. Other `.npmrc` options, such as `cache`, apply to `bun install` and the other package manager commands only. `install.auto` and `install.prefer` count only in the directory where you started `bun`.
 
 Auto-install replaces `${NAME}` with a variable from the environment of the script, which includes its `.env` files. `bun install` reads `.env.production` where a script reads `.env.development` by default.
 

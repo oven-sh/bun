@@ -87,7 +87,7 @@ pub(super) fn report(
         named
             .chain(missing.map(|it| &it[..]))
             .filter(is_in_use)
-            .for_each(|it| plugins.add(it, configs.is_built_in(it)));
+            .for_each(|it| plugins.add(it, config::is_built_in_plugin(it)));
         nested.extend(configs.path_of_config(scope).map(shown));
     }
     let mut nested = sorted(nested);

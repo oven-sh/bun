@@ -2146,8 +2146,7 @@ test.concurrent("skips an optional git dependency when git is not installed", as
   const emptyPath = join(root, "empty-path");
   mkdirSync(emptyPath);
 
-  // `Path` is how Windows spells it
-  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), { PATH: emptyPath, Path: emptyPath });
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), { PATH: emptyPath });
   expect(diagnostics(stderr)).toEqual([
     'warn: "git" is not installed (needed for "nope")',
     "warn: ENOENT cloning repository for nope",
@@ -3263,12 +3262,10 @@ test.concurrent(
     rmSync(join(project, "node_modules"), { recursive: true });
     const emptyPath = join(root, "empty-path");
     mkdirSync(emptyPath);
-    // Windows spells it `Path`, and the first spelling in an environment wins there.
-    const pathKey = Object.keys(gitEnv).find(key => key.toUpperCase() === "PATH") ?? "PATH";
     const { stderr, exitCode } = await runInstall(
       project,
       join(root, "cache-cold"),
-      { [pathKey]: emptyPath },
+      { PATH: emptyPath },
       "--linker=hoisted",
     );
     // The error names the optional package when the required one was reached

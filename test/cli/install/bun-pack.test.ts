@@ -4198,6 +4198,64 @@ describe.concurrent(".gitignore/.npmignore", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  // A monorepo keeps one ignore file and links to it from each package.
+  test.each([".gitignore", ".npmignore"])("a %s that is a link to a file is read", async ignoreFile => {
+    using dir = tempDir("pack-ignore-linked", {
+      "shared-ignore": "secret.txt\n",
+      "pkg/package.json": JSON.stringify({ name: "pack-ignore-linked", version: "1.0.0" }),
+      "pkg/index.js": indexJs,
+      "pkg/secret.txt": "x",
+    });
+    const pkg = join(dir, "pkg");
+    await symlink(join("..", "shared-ignore"), join(pkg, ignoreFile), "file");
+
+    const { err, exitCode } = await runPack(pkg);
+    expect(err).toBe("");
+    expect(tarballEntries(join(pkg, "pack-ignore-linked-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/index.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("an .npmignore without a rule still keeps the .gitignore from being read", async () => {
+    using dir = tempDir("pack-ignore-empty", {
+      "package.json": JSON.stringify({ name: "pack-ignore-empty", version: "1.0.0" }),
+      ".npmignore": "",
+      ".gitignore": "index.js\n",
+      "index.js": indexJs,
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-ignore-empty-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/index.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The ignore file is opened by its usual name, so the filesystem decides whether another case of the name is it.
+  test.each([".GITIGNORE", ".NpmIgnore"])(
+    "%s is the ignore file only where the filesystem ignores case",
+    async name => {
+      using dir = tempDir("pack-ignore-case", {
+        "package.json": JSON.stringify({ name: "pack-ignore-case", version: "1.0.0" }),
+        [name]: "secret.txt\n",
+        "index.js": indexJs,
+        "secret.txt": "x",
+      });
+      const ignoresCase = existsSync(join(dir, name.toLowerCase()));
+
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      const packed = tarballEntries(join(dir, "pack-ignore-case-1.0.0.tgz"));
+      expect(packed).toContain("package/index.js");
+      expect(packed.includes("package/secret.txt")).toBe(!ignoresCase);
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 describe.concurrent("bins", () => {
@@ -4867,12 +4925,13 @@ describe.concurrent("bins", () => {
 // `chmod 000` keeps the user that packs out of one entry that the scan looks for. The entry is
 // there, so the scan must not continue as if it was not.
 describe.concurrent.skipIf(isWindows)("an entry that is there and does not open", () => {
-  // Runs `bun ...cmd` in `cwd` while `locked` has no permission bits. Restores them so that the tree can be removed.
-  async function runWithout(dir: string, locked: string, cmd: string[], cwd: string = dir) {
+  // Runs `bun ...cmd` in `cwd` while `locked` has only the permission bits `left`. Restores them so that the tree
+  // can be removed.
+  async function runWithout(dir: string, locked: string, cmd: string[], cwd: string = dir, left: number = 0o000) {
     using unprivileged = unprivilegedSpawnOptions(dir);
     const path = join(dir, locked);
     const { mode } = await lstat(path);
-    await chmod(path, 0o000);
+    await chmod(path, left);
     try {
       await using proc = spawn({
         cmd: [bunExe(), ...cmd],
@@ -5025,6 +5084,205 @@ describe.concurrent.skipIf(isWindows)("an entry that is there and does not open"
       "package/package.json",
       "package/node_modules/plain/package.json",
     ]);
+  });
+
+  // Mode 0444: the directory lists its entries and opens none of them. Only an ignore file that it lists is opened.
+  test.each([
+    {
+      lists: "no ignore file",
+      ignoreFile: {},
+      message: 'EACCES: Permission denied: failed to open file: "lib/index.js" (open)',
+    },
+    {
+      lists: "an .npmignore",
+      ignoreFile: { "lib/.npmignore": "" },
+      message: 'EACCES: failed to open .npmignore at: "<dir>/lib/.npmignore"',
+    },
+    {
+      lists: "a .gitignore",
+      ignoreFile: { "lib/.gitignore": "" },
+      message: 'EACCES: failed to open .gitignore at: "<dir>/lib/.gitignore"',
+    },
+  ])("a directory that can be listed and not searched, and lists $lists", async ({ ignoreFile, message }) => {
+    using dir = tempDir("pack-locked-listed", {
+      "package.json": manifest("pack-locked"),
+      "lib/index.js": indexJs,
+      ...ignoreFile,
+    });
+
+    const { out, err, exitCode } = await runWithout(dir, "lib", ["pm", "pack"], dir, 0o444);
+    expect(err).toBe(message);
+    expect(out).toBe("bun pack <version> (<revision>)");
+    expect(exitCode).toBe(1);
+    expect(await tarballs(dir)).toEqual([]);
+  });
+});
+
+// The listing of a directory says whether it has an ignore file. `open` follows a link and answers ENOENT when the
+// target is gone, which is also its answer when no entry has the name. The scan took such a link for no ignore file
+// and packed what the file was to keep out. npm lists the directory first and stops on the same link.
+describe.concurrent("an ignore file that is a link to nothing", () => {
+  const manifest = (fields: object = {}) => JSON.stringify({ name: "pack-ignore-link", version: "1.0.0", ...fields });
+  const tarball = "pack-ignore-link-1.0.0.tgz";
+  const linkFailed = (ignoreFile: string, at: string = "") =>
+    `ENOENT: failed to open ${ignoreFile} at: "<dir>/${at}${ignoreFile}": link target does not exist`;
+
+  async function bun(dir: string, command: string, cwd: string = dir) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...command.split(" ")],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      // `bun publish` stops early when it has no credentials. Nothing listens on port 1.
+      env: { ...bunEnv, npm_config_registry: "http://user:password@127.0.0.1:1/" },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: normalizeBunSnapshot(stdout, dir), err: normalizeBunSnapshot(stderr, dir), exitCode };
+  }
+
+  async function linkToNothing(path: string) {
+    await symlink("gone", path, "file");
+    expect((await lstat(path)).isSymbolicLink()).toBe(true);
+    expect(existsSync(path)).toBe(false);
+  }
+
+  const files = {
+    "index.js": indexJs,
+    "lib/index.js": indexJs,
+    "lib/secret.txt": "the ignore file is there to keep this one out",
+  };
+
+  // One row for each walk that reads ignore files. `at` is the directory of the link.
+  const walks = [
+    { walk: "the package root", fields: {}, at: "" },
+    { walk: "a subdirectory", fields: {}, at: "lib/" },
+    { walk: 'a directory that "files" includes', fields: { files: ["lib"] }, at: "lib/" },
+    // `files` keeps the walk of the package out of the directory, so only directories.bin leads there.
+    { walk: "directories.bin", fields: { files: ["index.js"], directories: { bin: "lib" } }, at: "lib/" },
+  ];
+  test.each(walks.flatMap(walk => [".npmignore", ".gitignore"].map(ignoreFile => ({ ...walk, ignoreFile }))))(
+    "$ignoreFile in $walk",
+    async ({ fields, at, ignoreFile }) => {
+      using dir = tempDir("pack-ignore-link", { "package.json": manifest(fields), ...files });
+      await linkToNothing(join(dir, at, ignoreFile));
+
+      expect(await bun(dir, "pm pack")).toEqual({
+        out: "bun pack <version> (<revision>)",
+        err: linkFailed(ignoreFile, at),
+        exitCode: 1,
+      });
+      expect(await exists(join(dir, tarball))).toBeFalse();
+    },
+  );
+
+  // `bun publish` and `bun pm diff <folder>` run the same scan. The package is folder `b`, and `a` is a copy without
+  // the link.
+  test.each([
+    { command: "pm pack --dry-run", cwd: "b", banner: "bun pack <version> (<revision>)" },
+    { command: "publish", cwd: "b", banner: "bun publish <version> (<revision>)" },
+    { command: "publish --dry-run", cwd: "b", banner: "bun publish <version> (<revision>)" },
+    { command: "pm diff ./a ./b --name-only", cwd: "", banner: "" },
+  ])("bun $command", async ({ command, cwd, banner }) => {
+    const folder = { "package.json": manifest(), ...files };
+    using dir = tempDir("pack-ignore-link-command", { a: folder, b: folder });
+    await linkToNothing(join(dir, "b", ".npmignore"));
+
+    expect(await bun(dir, command, join(dir, cwd))).toEqual({
+      out: banner,
+      err: linkFailed(".npmignore", "b/"),
+      exitCode: 1,
+    });
+  });
+
+  // Before, the .gitignore was read in its place, and what only the .npmignore named was packed.
+  test("an .npmignore beside a .gitignore", async () => {
+    using dir = tempDir("pack-ignore-link-beside", {
+      "package.json": manifest(),
+      ...files,
+      ".gitignore": "index.js\n",
+    });
+    await linkToNothing(join(dir, ".npmignore"));
+
+    expect(await bun(dir, "pm pack")).toEqual({
+      out: "bun pack <version> (<revision>)",
+      err: linkFailed(".npmignore"),
+      exitCode: 1,
+    });
+    expect(await exists(join(dir, tarball))).toBeFalse();
+  });
+
+  test("a prepack script removes the file that the link leads to", async () => {
+    using dir = tempDir("pack-ignore-link-prepack", {
+      "shared-ignore": "secret.txt\n",
+      "pkg/package.json": manifest({ scripts: { prepack: `${bunExe()} remove.js` } }),
+      "pkg/remove.js": `require("fs").unlinkSync("../shared-ignore");`,
+      "pkg/index.js": indexJs,
+      "pkg/secret.txt": "the ignore file is there to keep this one out",
+    });
+    const pkg = join(dir, "pkg");
+    await symlink(join("..", "shared-ignore"), join(pkg, ".npmignore"), "file");
+
+    const { out, err, exitCode } = await bun(dir, "pm pack", pkg);
+    expect(err.split("\n").at(-1)).toBe(linkFailed(".npmignore", "pkg/"));
+    expect(out).toBe("bun pack <version> (<revision>)");
+    expect(exitCode).toBe(1);
+    expect(await exists(join(pkg, tarball))).toBeFalse();
+  });
+
+  // node_modules holds a link to the workspace, which is packed by its own rules.
+  test.skipIf(isWindows)("in a workspace that the packed package bundles", async () => {
+    using dir = tempDir("pack-ignore-link-bundled", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      "packages/lib/package.json": manifest({ dependencies: { other: "workspace:*" }, bundledDependencies: ["other"] }),
+      "packages/other/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
+      "packages/other/index.js": indexJs,
+      "packages/other/secret.txt": "the ignore file is there to keep this one out",
+      "node_modules": {},
+    });
+    await symlink(join("..", "packages", "other"), join(dir, "node_modules", "other"));
+    await linkToNothing(join(dir, "packages", "other", ".npmignore"));
+    const lib = join(dir, "packages", "lib");
+
+    expect(await bun(dir, "pm pack", lib)).toEqual({
+      out: "bun pack <version> (<revision>)",
+      err: linkFailed(".npmignore", "packages/other/"),
+      exitCode: 1,
+    });
+    expect(await exists(join(lib, tarball))).toBeFalse();
+  });
+
+  // The scan does not open the link in these, so it does not stop.
+  test.each([
+    {
+      where: "a .gitignore beside an .npmignore, which is the one that counts",
+      fields: {},
+      ignore: { ".npmignore": "secret.txt\n" },
+      link: ".gitignore",
+      packed: ["index.js", "lib/index.js"],
+    },
+    {
+      where: "in a directory that the ignore file of its parent excludes",
+      fields: {},
+      ignore: { ".npmignore": "lib\n" },
+      link: "lib/.npmignore",
+      packed: ["index.js"],
+    },
+    {
+      where: 'in the package root, which "files" decides',
+      fields: { files: ["lib"] },
+      ignore: {},
+      link: ".npmignore",
+      packed: ["lib/index.js", "lib/secret.txt"],
+    },
+  ])("is not read: $where", async ({ fields, ignore, link, packed }) => {
+    using dir = tempDir("pack-ignore-link-unread", { "package.json": manifest(fields), ...files, ...ignore });
+    await linkToNothing(join(dir, link));
+
+    const { err, exitCode } = await bun(dir, "pm pack");
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, tarball))).toEqual(["package.json", ...packed].map(path => `package/${path}`));
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -5311,7 +5569,7 @@ long syscall(long nr, ...) {
     /** Which walk of the directory, counted from 1 in the process. A walk starts with a read at offset 0. */
     reader?: number;
     /** "removed": the directory, which is empty, is removed before the read and the kernel answers ENOENT. */
-    errno?: "EIO" | "removed";
+    errno?: "EIO" | "ENOENT" | "removed";
   };
 
   /** The environment of a bun process in which the read fails, and the reads of the directory that the process made. */
@@ -5326,7 +5584,7 @@ long syscall(long nr, ...) {
         DIR_READ_FAULT_DIR: realpathSync(fault.dir),
         DIR_READ_FAULT_READ: fault.read === undefined ? undefined : String(fault.read),
         DIR_READ_FAULT_READER: String(fault.reader ?? 1),
-        DIR_READ_FAULT_ERRNO: fault.errno === "removed" ? "removed" : String(constants.errno.EIO),
+        DIR_READ_FAULT_ERRNO: fault.errno === "removed" ? "removed" : String(constants.errno[fault.errno ?? "EIO"]),
         DIR_READ_FAULT_LOG: log,
       },
       /** `ok`: the byte count of each read that the kernel answered (0 is the end). `failed`: the errno of each read that failed. */
@@ -5449,6 +5707,27 @@ long syscall(long nr, ...) {
     expect(tarballEntries(join(dir, "pack-read-removed-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/lib/index.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // ENOENT is the kernel's answer when the directory was removed since the read before. What that read listed is gone
+  // too, and the entry of the ignore file can be in the part that was not read: nothing of the directory is packed.
+  test.concurrent("bun pm pack: a directory that is removed while pack lists it has no entries", async () => {
+    using dir = tempDir("pack-read-removed-300", {
+      "package.json": JSON.stringify({ name: "pack-read-removed-300", version: "1.0.0" }),
+      "index.js": index,
+      "lib/big/.npmignore": "f1*.js\n",
+      ...Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`lib/big/f${i}.js`, `${i}`])),
+    });
+    const fault = failDirRead({ dir: join(dir, "lib", "big"), read: 2, errno: "ENOENT" });
+
+    const { err, exitCode } = await bun(["pm", "pack"], dir, fault.env);
+    expect(fault.reads()).toEqual({ ok: [expect.any(Number)], failed: [constants.errno.ENOENT] });
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-read-removed-300-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/index.js",
     ]);
     expect(exitCode).toBe(0);
   });

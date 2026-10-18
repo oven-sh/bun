@@ -446,6 +446,7 @@ fn iterate_included_project_tree(
     }
 
     // for each included dir, traverse its entries, exclude any with `negate_no_match`.
+    let mut buffers = WalkBuffers::default();
     for included_dir_info in included_dirs {
         iterate_project_tree(
             pack_queue,
@@ -453,6 +454,7 @@ fn iterate_included_project_tree(
             Some(excludes),
             included_dir_info,
             log_level,
+            &mut buffers,
         )?;
     }
 
@@ -526,15 +528,20 @@ fn open_dir_if_present(root_dir: &Dir, subpath: &ZStr) -> Option<Dir> {
     }
 }
 
+enum DirRead {
+    Entry(DirIterator::IteratorResult),
+    End,
+    /// The directory was removed after it was opened, so the entries it listed before are gone too.
+    Removed,
+}
+
 /// `lstat`s where the filesystem reports no kind (FUSE, NFS, XFS `ftype=0`): a link stays a link.
-pub(crate) fn next_dir_entry(
-    iter: &mut DirIterator::WrappedIterator,
-    dir_subpath: &[u8],
-) -> Option<DirIterator::IteratorResult> {
+fn read_dir_entry(iter: &mut DirIterator::WrappedIterator, dir_subpath: &[u8]) -> DirRead {
     #[cfg_attr(windows, allow(unused_mut))] // The Windows iterator always knows the kind.
     let mut entry = match iter.next() {
-        Ok(entry) => entry?,
-        Err(err) if err.get_errno() == bun_sys::E::ENOENT => return None,
+        Ok(Some(entry)) => entry,
+        Ok(None) => return DirRead::End,
+        Err(err) if err.get_errno() == bun_sys::E::ENOENT => return DirRead::Removed,
         Err(err) => fail_read_dir(err, dir_subpath),
     };
     #[cfg(not(windows))]
@@ -546,7 +553,66 @@ pub(crate) fn next_dir_entry(
             Err(err) => fail_read_dir(err, dir_subpath),
         }
     }
-    Some(entry)
+    DirRead::Entry(entry)
+}
+
+pub(crate) fn next_dir_entry(
+    iter: &mut DirIterator::WrappedIterator,
+    dir_subpath: &[u8],
+) -> Option<DirIterator::IteratorResult> {
+    match read_dir_entry(iter, dir_subpath) {
+        DirRead::Entry(entry) => Some(entry),
+        DirRead::End | DirRead::Removed => None,
+    }
+}
+
+/// The files and directories of one directory, in the order it listed them.
+#[derive(Default)]
+struct DirListing {
+    /// For each entry: 1 if it is a directory and 0 if it is a file, its name, and a NUL.
+    entries: Vec<u8>,
+}
+
+impl DirListing {
+    fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    /// Keeps a file or a directory. A walk packs nothing else.
+    fn push(&mut self, name: &[u8], kind: bun_sys::FileKind) {
+        let is_directory = match kind {
+            bun_sys::FileKind::File => false,
+            bun_sys::FileKind::Directory => true,
+            _ => return,
+        };
+        self.entries.push(u8::from(is_directory));
+        self.entries.extend_from_slice(name);
+        self.entries.push(0);
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&[u8], bun_sys::FileKind)> {
+        let mut rest: &[u8] = &self.entries;
+        core::iter::from_fn(move || {
+            let (&is_directory, name_and_rest) = rest.split_first()?;
+            let (name, after) = strings::split_once_char(name_and_rest, 0)?;
+            rest = after;
+            let kind = if is_directory == 1 {
+                bun_sys::FileKind::Directory
+            } else {
+                bun_sys::FileKind::File
+            };
+            Some((name, kind))
+        })
+    }
+}
+
+/// What `iterate_project_tree` reuses from one directory to the next, and from one call to the next.
+#[derive(Default)]
+struct WalkBuffers {
+    /// A directory is listed in full before its ignore file is looked for: the listing says if there is one.
+    listing: DirListing,
+    /// `dir_subpath/entry_name\0` of the entry that is being looked at.
+    subpath: Vec<u8>,
 }
 
 #[cold]
@@ -865,9 +931,14 @@ fn add_bundled_dep(
                 continue;
             }
 
-            if let Exclusion::Excluded(pattern, kind) =
-                is_excluded(&entry, &entry_subpath_, dir_depth, &[], &None)
-            {
+            if let Exclusion::Excluded(pattern, kind) = is_excluded(
+                entry_name,
+                entry.kind,
+                &entry_subpath_,
+                dir_depth,
+                &[],
+                &None,
+            ) {
                 print_ignored(log_level, kind, pattern, &entry_subpath_, entry.kind);
                 continue;
             }
@@ -975,8 +1046,10 @@ fn iterate_project_tree(
     files_excludes: Option<&[Pattern]>,
     root_dir: DirInfo,
     log_level: LogLevel,
+    buffers: &mut WalkBuffers,
 ) -> Result<(), AllocError> {
     let root_depth = root_dir.2;
+    let WalkBuffers { listing, subpath } = buffers;
     let mut ignores: Vec<IgnorePatterns> = Vec::new();
 
     if let Some(excludes) = files_excludes.filter(|excludes| !excludes.is_empty()) {
@@ -1000,18 +1073,40 @@ fn iterate_project_tree(
             ignores.pop();
         }
 
-        if let Some(patterns) = IgnorePatterns::read_from_disk(dir, dir_depth) {
+        listing.clear();
+        let mut ignore_files = [ListedIgnoreFile::default(); IGNORE_FILES.len()];
+        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(dir));
+        let removed = loop {
+            let entry = match read_dir_entry(&mut dir_iter, &dir_subpath) {
+                DirRead::Entry(entry) => entry,
+                DirRead::End => break false,
+                DirRead::Removed => break true,
+            };
+            let entry_name = entry.name.slice_u8();
+            ListedIgnoreFile::note(&mut ignore_files, entry_name, entry.kind);
+            listing.push(entry_name, entry.kind);
+        };
+        // The listing can have stopped before it named the ignore file.
+        if removed {
+            continue;
+        }
+
+        if let Some(patterns) = IgnorePatterns::read_from_disk(dir, dir_depth, ignore_files) {
             ignores.push(patterns);
         }
 
-        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(dir));
-        while let Some(entry) = next_dir_entry(&mut dir_iter, &dir_subpath) {
-            if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
-                continue;
-            }
+        subpath.clear();
+        if !dir_subpath.is_empty() {
+            subpath.extend_from_slice(&dir_subpath);
+            subpath.push(b'/');
+        }
+        let entry_name_start = subpath.len();
 
-            let entry_name = entry.name.slice_u8();
-            let entry_subpath_ = entry_subpath(&dir_subpath, entry_name)?;
+        for (entry_name, entry_kind) in listing.iter() {
+            subpath.truncate(entry_name_start);
+            subpath.extend_from_slice(entry_name);
+            subpath.push(0);
+            let entry_subpath_ = ZStr::from_slice_with_nul(subpath);
 
             if dir_depth == 1 {
                 // The root package.json and the bundled dependencies are handled separately.
@@ -1020,30 +1115,36 @@ fn iterate_project_tree(
                 }
             } else if files_excludes.is_some()
                 && dir_depth == root_depth
-                && entry.kind == bun_sys::FileKind::Directory
+                && entry_kind == bun_sys::FileKind::Directory
                 && entry_name == b"node_modules"
             {
                 continue;
             }
 
-            let entries_inherit: InheritedIgnore =
-                match is_excluded(&entry, &entry_subpath_, dir_depth, &ignores, &inherited) {
-                    Exclusion::Included => None,
-                    Exclusion::WalkOnly(pattern, kind) => Some((pattern.into(), kind)),
-                    Exclusion::Excluded(pattern, kind) => {
-                        print_ignored(log_level, kind, pattern, &entry_subpath_, entry.kind);
-                        continue;
-                    }
-                };
+            let entries_inherit: InheritedIgnore = match is_excluded(
+                entry_name,
+                entry_kind,
+                entry_subpath_,
+                dir_depth,
+                &ignores,
+                &inherited,
+            ) {
+                Exclusion::Included => None,
+                Exclusion::WalkOnly(pattern, kind) => Some((pattern.into(), kind)),
+                Exclusion::Excluded(pattern, kind) => {
+                    print_ignored(log_level, kind, pattern, entry_subpath_, entry_kind);
+                    continue;
+                }
+            };
 
-            if entry.kind == bun_sys::FileKind::File {
-                if !is_listed_bin(bins, BinType::File, &entry_subpath_) {
+            if entry_kind == bun_sys::FileKind::File {
+                if !is_listed_bin(bins, BinType::File, entry_subpath_) {
                     pack_queue.add(PackQueueItem {
-                        path: entry_subpath_,
+                        path: ZBox::from_bytes(entry_subpath_.as_bytes()),
                     })?;
                 }
-            } else if !is_listed_bin(bins, BinType::Dir, &entry_subpath_) {
-                let subdir = open_subdir(dir, entry_name, &entry_subpath_);
+            } else if !is_listed_bin(bins, BinType::Dir, entry_subpath_) {
+                let subdir = open_subdir(dir, entry_name, entry_subpath_);
                 dirs.push((
                     DirInfo(subdir, entry_subpath_.as_bytes().into(), dir_depth + 1),
                     entries_inherit,
@@ -1255,14 +1356,13 @@ enum Exclusion<'a> {
 type InheritedIgnore = Option<(Box<[u8]>, IgnorePatternsKind)>;
 
 fn is_excluded<'a>(
-    entry: &DirIterator::IteratorResult,
+    entry_name: &[u8],
+    entry_kind: bun_sys::FileKind,
     entry_subpath: &'a ZStr,
     dir_depth: usize,
     ignores: &'a [IgnorePatterns],
     inherited: &'a InheritedIgnore,
 ) -> Exclusion<'a> {
-    let entry_name = entry.name.slice_u8();
-
     if dir_depth == 1 {
         // first, check files that can never be ignored. project root
         // directory only
@@ -1317,7 +1417,7 @@ fn is_excluded<'a>(
         }
         for pattern in ignore.list.iter() {
             if pattern.flags.contains(PatternFlags::DIRS_ONLY)
-                && entry.kind != bun_sys::FileKind::Directory
+                && entry_kind != bun_sys::FileKind::Directory
             {
                 continue;
             }
@@ -1332,7 +1432,7 @@ fn is_excluded<'a>(
                 if !result.matches() {
                     ignored = false;
                 } else if ignored
-                    && entry.kind == bun_sys::FileKind::Directory
+                    && entry_kind == bun_sys::FileKind::Directory
                     && negation_reaches_below(pattern, rel)
                 {
                     walk_only = true;
@@ -1402,6 +1502,7 @@ pub(crate) fn published_files(
 ) -> Result<(PackQueue, Vec<BinInfo>), AllocError> {
     let mut pack_queue = PackQueue::default();
     let bins = get_package_bins(json_root);
+    let mut buffers = WalkBuffers::default();
 
     for bin in &bins {
         let kind = bin_kind_without_following_symlinks(root_path, bin.path.as_bytes());
@@ -1419,6 +1520,7 @@ pub(crate) fn published_files(
                         None,
                         DirInfo(bin_dir, bin.path.as_bytes().into(), 2),
                         log_level,
+                        &mut buffers,
                     )?;
                 }
             }
@@ -1433,6 +1535,7 @@ pub(crate) fn published_files(
             None,
             DirInfo(Dir::from_fd(root_dir.fd), Box::default(), 1),
             log_level,
+            &mut buffers,
         )?;
         return Ok((pack_queue, bins));
     };
@@ -2883,6 +2986,41 @@ pub(crate) enum IgnorePatternsKind {
     PackageJson,
 }
 
+/// The ignore files of a directory. The first one that opens is the one that counts.
+const IGNORE_FILES: [IgnorePatternsKind; 2] =
+    [IgnorePatternsKind::Npmignore, IgnorePatternsKind::Gitignore];
+
+/// How the listing of a directory names one of the `IGNORE_FILES`.
+#[derive(Clone, Copy, Default)]
+struct ListedIgnoreFile {
+    /// The kind of the entry with exactly this name.
+    exact: Option<bun_sys::FileKind>,
+    /// An entry has this name in another ASCII case. A filesystem that ignores case opens it by this name.
+    other_case: bool,
+}
+
+impl ListedIgnoreFile {
+    fn note(
+        listed: &mut [ListedIgnoreFile; IGNORE_FILES.len()],
+        entry_name: &[u8],
+        entry_kind: bun_sys::FileKind,
+    ) {
+        const NAME_LEN: usize = ".npmignore".len();
+        const _: () = assert!(".gitignore".len() == NAME_LEN);
+        if entry_name.len() != NAME_LEN || entry_name[0] != b'.' {
+            return;
+        }
+        for (listed, kind) in listed.iter_mut().zip(IGNORE_FILES) {
+            let name = <&str>::from(kind).as_bytes();
+            if entry_name == name {
+                listed.exact = Some(entry_kind);
+            } else if strings::eql_case_insensitive_ascii_check_length(entry_name, name) {
+                listed.other_case = true;
+            }
+        }
+    }
+}
+
 impl IgnorePatterns {
     /// Fatal: the tarball would hold the files that were to be ignored.
     fn ignore_file_fail(
@@ -2890,6 +3028,7 @@ impl IgnorePatterns {
         ignore_kind: IgnorePatternsKind,
         action: &str,
         err: bun_sys::Error,
+        reason: &str,
     ) -> ! {
         let mut buf = bun_paths::path_buffer_pool::get();
         let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf) {
@@ -2898,13 +3037,14 @@ impl IgnorePatterns {
         };
         Output::err(
             crate::Error::from(err),
-            "failed to {} {} at: \"{}{}{}\"",
+            "failed to {} {} at: \"{}{}{}\"{}",
             (
                 action,
                 <&str>::from(ignore_kind),
                 bstr::BStr::new(strings::without_trailing_slash(dir_path)),
                 SEP_STR,
                 <&str>::from(ignore_kind),
+                reason,
             ),
         );
         Global::crash();
@@ -2938,24 +3078,44 @@ impl IgnorePatterns {
         }
     }
 
+    /// Reads the ignore file that `listed`, the listing of `dir`, names. A listed one that does not open is fatal,
+    /// with ENOENT too: that is what `open` answers for a symlink to nothing.
+    ///
     /// ignore files are always ignored, don't need to worry about opening or reading twice
-    fn read_from_disk(dir: &Dir, dir_depth: usize) -> Option<IgnorePatterns> {
+    fn read_from_disk(
+        dir: &Dir,
+        dir_depth: usize,
+        listed: [ListedIgnoreFile; IGNORE_FILES.len()],
+    ) -> Option<IgnorePatterns> {
         let mut opened: Option<(File, IgnorePatternsKind)> = None;
-        for kind in [IgnorePatternsKind::Npmignore, IgnorePatternsKind::Gitignore] {
+        for (kind, listed) in IGNORE_FILES.into_iter().zip(listed) {
+            if listed.exact.is_none() && !listed.other_case {
+                continue;
+            }
             match dir.open_file(<&str>::from(kind).as_bytes(), bun_sys::O::RDONLY, 0) {
                 Ok(file) => {
                     opened = Some((file, kind));
                     break;
                 }
-                Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
-                Err(err) => Self::ignore_file_fail(dir, kind, "open", err),
+                // Only another case of the name is listed, and this filesystem tells the two apart.
+                Err(err) if listed.exact.is_none() && err.get_errno() == bun_sys::E::ENOENT => {}
+                Err(err) => {
+                    let is_dangling_link = listed.exact == Some(bun_sys::FileKind::SymLink)
+                        && err.get_errno() == bun_sys::E::ENOENT;
+                    let reason = if is_dangling_link {
+                        ": link target does not exist"
+                    } else {
+                        ""
+                    };
+                    Self::ignore_file_fail(dir, kind, "open", err, reason)
+                }
             }
         }
         let (ignore_file, ignore_kind) = opened?;
 
         let contents = ignore_file
             .read_to_end()
-            .unwrap_or_else(|err| Self::ignore_file_fail(dir, ignore_kind, "read", err));
+            .unwrap_or_else(|err| Self::ignore_file_fail(dir, ignore_kind, "read", err, ""));
         let _ = ignore_file.close();
 
         let mut patterns: Vec<Pattern> = Vec::new();

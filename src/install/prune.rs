@@ -8,8 +8,7 @@ use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
-use bun_paths::SEP;
-use bun_paths::typed::{AbsPath, DynPathBuf, Z};
+use bun_paths::{AbsPath, AbsPathBuf, PathZ, SEP, SubPathBuf};
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use bun_threading::{WaitGroup, WorkPool};
 
@@ -2075,15 +2074,15 @@ impl LinkedNodeModules {
         Some(sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink)
     }
 
-    pub(crate) fn at(node_modules: &Z<AbsPath>) -> Option<LinkedNodeModules> {
-        if Self::is_at(node_modules.z()) != Some(true) {
+    pub(crate) fn at(node_modules: &PathZ<AbsPath>) -> Option<LinkedNodeModules> {
+        if Self::is_at(node_modules.slice_z()) != Some(true) {
             return None;
         }
         Some(LinkedNodeModules {
             real_path: if cfg!(windows) {
                 Box::default()
             } else {
-                LinkedMembers::real_path_of(node_modules.as_bytes())
+                LinkedMembers::real_path_of(node_modules.slice())
             },
             abs_path: (&**node_modules).into(),
         })
@@ -2094,13 +2093,19 @@ impl LinkedNodeModules {
     ///
     /// On Windows `path` is not rewritten, because a relative link resolves differently behind a
     /// junction than behind a symlink. A link out of this `node_modules` gets an absolute target.
-    pub(crate) fn resolve(&self, path: &mut DynPathBuf<'_, AbsPath>) -> bool {
-        let Some(real_path) = AbsPath::from_os(&self.real_path) else {
-            return path
-                .get()
-                .is_ok_and(|path| path.strip_prefix(&self.abs_path).is_some());
+    pub(crate) fn resolve(&self, path: &mut AbsPathBuf) -> bool {
+        let below = path.as_path().ok();
+        let Some(below) = below.and_then(|path| path.strip_prefix(&self.abs_path)) else {
+            return false;
         };
-        path.rebase(&self.abs_path, real_path)
+        if let Some(real_path) = AbsPath::new_unchecked(&self.real_path) {
+            let below = SubPathBuf::from(below);
+            path.set_abs(real_path);
+            if let Ok(below) = below.as_path() {
+                path.append(below);
+            }
+        }
+        true
     }
 
     /// `folders` are the symlinked `node_modules` folders, relative to the project root, that a

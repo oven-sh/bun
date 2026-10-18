@@ -259,6 +259,37 @@ test("--heap-prof-name and --heap-prof-dir work together", async () => {
   expectV8HeapSnapshotShape(profile);
 });
 
+test.skipIf(isWindows)("a backslash in the cwd, --heap-prof-dir and --heap-prof-name is part of a name", async () => {
+  using dir = tempDir("heap-prof-backslash-test", {
+    "pro\\j": {},
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--heap-prof",
+      "--heap-prof-dir",
+      "o\\ut",
+      "--heap-prof-name",
+      "x\\y.heapprofile",
+      "-e",
+      `console.log("hello");`,
+    ],
+    cwd: join(String(dir), "pro\\j"),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("hello");
+  expect(exitCode).toBe(0);
+
+  const profile = await readProfile(join(String(dir), "pro\\j", "o\\ut"), "x\\y.heapprofile");
+  expectV8HeapSnapshotShape(profile);
+});
+
 // Node parity: heap-profiler-scoped flags without --heap-prof exit 9 with
 // "<execPath>: <flag> must be used with --heap-prof" on stderr.
 for (const [flag, value] of [

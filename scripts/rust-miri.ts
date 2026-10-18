@@ -17,7 +17,7 @@
  * the bugs we care about.
  *
  * Usage:
- *   bun run rust:miri              # default crate set, crates run concurrently
+ *   bun run rust:miri              # default crate set (some also as Windows), runs are concurrent
  *   bun run rust:miri -p bun_foo   # extra args go straight to one `cargo miri test`
  */
 
@@ -56,8 +56,7 @@ const MIRI_CRATES = [
   "bun_wyhash",
 ];
 
-// Miri interprets any target from any host, so these also run as this target:
-// it is the only run their `cfg(windows)` tests get.
+// Miri interprets any target from any host. Nothing else runs the `cfg(windows)` tests of these.
 const WINDOWS_TARGET = "x86_64-pc-windows-msvc";
 const MIRI_WINDOWS_CRATES = ["bun_paths"];
 
@@ -111,14 +110,18 @@ if (extraArgs.length > 0) {
 // Default set: Miri interprets one test at a time per process, so a single
 // `cargo miri test -p a -p b ...` is serial end to end. Build everything once,
 // then run one `cargo miri test -p <crate>` per crate concurrently.
-const allCrates = MIRI_CRATES.flatMap(c => ["-p", c]);
-console.log(`\x1b[36m[miri]\x1b[0m cargo miri test --no-run ${allCrates.join(" ")}`);
-if (run("cargo", ["miri", "test", "--no-run", ...allCrates], { env }).status !== 0) process.exit(1);
+for (const crates of [
+  MIRI_CRATES.flatMap(c => ["-p", c]),
+  [...MIRI_WINDOWS_CRATES.flatMap(c => ["-p", c]), "--target", WINDOWS_TARGET],
+]) {
+  console.log(`\x1b[36m[miri]\x1b[0m cargo miri test --no-run ${crates.join(" ")}`);
+  if (run("cargo", ["miri", "test", "--no-run", ...crates], { env }).status !== 0) process.exit(1);
+}
 
-type Job = { crate: string; args: string[] };
-type Result = { crate: string; ok: boolean; seconds: number; output: string };
+type Job = { label: string; args: string[] };
+type Result = { label: string; ok: boolean; seconds: number; output: string };
 
-function testCrate({ crate, args }: Job): Promise<Result> {
+function testCrate({ label, args }: Job): Promise<Result> {
   return new Promise(done => {
     const started = Date.now();
     const chunks: Buffer[] = [];
@@ -126,17 +129,17 @@ function testCrate({ crate, args }: Job): Promise<Result> {
     child.stdout.on("data", chunk => chunks.push(chunk));
     child.stderr.on("data", chunk => chunks.push(chunk));
     child.on("close", code =>
-      done({ crate, ok: code === 0, seconds: (Date.now() - started) / 1000, output: Buffer.concat(chunks).toString() }),
+      done({ label, ok: code === 0, seconds: (Date.now() - started) / 1000, output: Buffer.concat(chunks).toString() }),
     );
   });
 }
 
 const queue: Job[] = [
   ...MIRI_WINDOWS_CRATES.map(crate => ({
-    crate: `${crate} (windows)`,
+    label: `${crate} (windows)`,
     args: ["-p", crate, "--target", WINDOWS_TARGET],
   })),
-  ...MIRI_CRATES.map(crate => ({ crate, args: ["-p", crate] })),
+  ...MIRI_CRATES.map(crate => ({ label: crate, args: ["-p", crate] })),
 ];
 const width = Math.max(1, Math.min(availableParallelism(), queue.length));
 console.log(`\x1b[36m[miri]\x1b[0m ${queue.length} runs, ${width} at a time`);
@@ -148,18 +151,18 @@ async function worker() {
     const result = await testCrate(job);
     results.push(result);
     const status = result.ok ? "\x1b[32mok\x1b[0m" : "\x1b[31mFAILED\x1b[0m";
-    console.log(`\x1b[36m[miri]\x1b[0m ${result.crate} ${status} ${result.seconds.toFixed(0)}s`);
+    console.log(`\x1b[36m[miri]\x1b[0m ${result.label} ${status} ${result.seconds.toFixed(0)}s`);
     if (!result.ok || !inActions) {
       console.log(result.output);
     } else {
-      console.log(`::group::${result.crate} output\n${result.output}\n::endgroup::`);
+      console.log(`::group::${result.label} output\n${result.output}\n::endgroup::`);
     }
   }
 }
 
 await Promise.all(Array.from({ length: width }, worker));
 
-const failed = results.filter(r => !r.ok).map(r => r.crate);
+const failed = results.filter(r => !r.ok).map(r => r.label);
 if (failed.length) {
   console.error(`\x1b[31m[miri]\x1b[0m failed: ${failed.join(", ")}`);
   process.exit(1);

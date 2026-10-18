@@ -3,8 +3,7 @@ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use bun_collections::{ArrayHashMap, DynamicBitSet};
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
-use bun_paths::typed::{Component, Z};
-use bun_paths::{self as path, OSPathChar, OSPathSlice};
+use bun_paths::{self as path, OSPathChar, OSPathSlice, PathZ, SubPath};
 use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
@@ -1163,10 +1162,7 @@ impl LinkBatch {
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
 /// Holds the commit of a git package or the integrity of a tarball. Both linkers look for it.
-pub(crate) const BUN_TAG: &[u8] = BUN_TAG_TEXT.as_bytes();
-pub(crate) const BUN_TAG_NAME: &Z<Component> = path::component!(BUN_TAG_TEXT);
-// `component!` takes a `&str`, and a `Z` does not deref in a constant, so neither makes the other.
-const BUN_TAG_TEXT: &str = ".bun-tag";
+pub(crate) const BUN_TAG: &PathZ<SubPath> = path::sub_path!(".bun-tag");
 
 /// Whether an installed tarball's `.bun-tag` says it holds the bytes bun.lock pins.
 pub(crate) fn tarball_tag_matches(tag: &[u8], integrity: &Integrity, skips_verify: bool) -> bool {
@@ -1217,7 +1213,7 @@ impl<'a> PackageInstall<'a> {
         let mut spill = Vec::new();
         let bun_tag_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
             &mut spill,
-            &[self.destination_dir_subpath.as_bytes(), BUN_TAG],
+            &[self.destination_dir_subpath.as_bytes(), BUN_TAG.slice()],
         );
 
         let Ok(bun_tag_file) = self

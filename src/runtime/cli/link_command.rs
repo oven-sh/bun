@@ -2,7 +2,7 @@ use bstr::BStr;
 
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::AbsPath;
+use bun_paths::AbsPathBuf;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{Dir, Fd, FdDirExt};
 
@@ -181,8 +181,7 @@ pub(crate) fn link_global_bins(
     let mut link_dest_buf = bun_paths::path_buffer_pool::get();
     let mut link_rel_buf = bun_paths::path_buffer_pool::get();
 
-    // Twice: `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`) cannot be one value.
-    let node_modules_path = || match <AbsPath>::init_fd_path(Fd::from_std_dir(node_modules)) {
+    let node_modules_path = match AbsPathBuf::init_fd_path(Fd::from_std_dir(node_modules)) {
         Ok(p) => p,
         Err(e) => {
             if manager.options.log_level != LogLevel::Silent {
@@ -191,14 +190,16 @@ pub(crate) fn link_global_bins(
             Global::crash();
         }
     };
-    let target_node_modules_path = node_modules_path();
-    let mut node_modules_path = node_modules_path();
+    let node_modules_path = match node_modules_path.as_path() {
+        Ok(path) => path,
+        Err(e) => return Some(e.into()),
+    };
 
     let mut bin_linker = bin::Linker {
         bin: package.bin,
-        node_modules_path: &mut node_modules_path,
+        node_modules_path,
         global_bin_path: manager.options.bin_path,
-        target_node_modules_path: &raw const target_node_modules_path,
+        target_node_modules_path: node_modules_path,
         target_package_name: strings::StringOrTinyString::init(name),
         package_name: strings::StringOrTinyString::init(name),
         string_buf: lockfile.buffers.string_bytes.as_slice(),

@@ -230,7 +230,7 @@ pub enum Error {
     #[error(transparent)]
     Paths(#[from] bun_paths::Error),
     #[error(transparent)]
-    PathOptions(#[from] bun_paths::path_options::Error),
+    Path(#[from] bun_paths::PathError),
     #[error(transparent)]
     Fmt(#[from] core::fmt::Error),
 }
@@ -375,7 +375,7 @@ impl Error {
             Self::Bunfig(e) => e.name(),
             Self::Transpiler(e) => e.name(),
             Self::Paths(e) => e.name(),
-            Self::PathOptions(e) => <&'static str>::from(e),
+            Self::Path(e) => <&'static str>::from(e),
             Self::Fmt(_) => "FmtError",
         }
     }

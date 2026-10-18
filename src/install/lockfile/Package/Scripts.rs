@@ -3,11 +3,12 @@ use bstr::BStr;
 use bun_core::ZBox;
 use bun_core::fmt::{PathSep, escape_control_chars};
 use bun_core::strings;
+use bun_errno::SystemErrno;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{Resolution, ResolutionTag, initialize_store};
 use bun_paths::resolve_path::{join_abs_string_buf_z, platform};
-use bun_paths::{self, SEP_STR};
+use bun_paths::{self, AbsPath, AbsPathBuf, PathZ, SEP_STR, sub_path};
 use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
 
@@ -215,7 +216,7 @@ impl Scripts {
     pub(crate) fn create_list(
         &self,
         lockfile_buf: &[u8],
-        cwd_: &mut bun_paths::AutoAbsPath,
+        cwd_: &PathZ<AbsPath>,
         package_name: &[u8],
         resolution_tag: ResolutionTag,
         add_node_gyp_rebuild_script: bool,
@@ -309,7 +310,7 @@ impl Scripts {
         &mut self,
         log: &mut bun_ast::Log,
         lockfile: &Lockfile,
-        folder_path: &mut bun_paths::AutoAbsPath,
+        folder_path: &mut AbsPathBuf,
         folder_name: &[u8],
         resolution: &Resolution,
         trusted: bool,
@@ -325,6 +326,7 @@ impl Scripts {
             return list;
         }
 
+        let folder_path = folder_path.as_path().map_err(SystemErrno::from)?;
         let add_node_gyp_rebuild_script =
             trusted && self.wants_default_node_gyp(folder_path.slice(), None);
 
@@ -342,21 +344,17 @@ impl Scripts {
         &mut self,
         string_builder: &mut LockfileStringBuilder<'_>,
         log: &mut bun_ast::Log,
-        folder_path: &mut bun_paths::AutoAbsPath,
+        folder_path: &mut AbsPathBuf,
     ) -> Result<bool, crate::Error> {
-        if folder_path.len() + "/package.json".len() >= bun_paths::MAX_PATH_BYTES {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-        }
         let json_buf;
         let parsed;
         let json: Expr = {
-            // `defer save.restore()` — `save()` returns an RAII guard that
-            // restores the path length on Drop and derefs to the path.
             let mut save = folder_path.save();
-            let _ = save.append(b"package.json");
+            let path = save.append(sub_path!("package.json")).as_path();
+            let path = path.map_err(SystemErrno::from)?;
 
-            json_buf = bun_sys::File::read_from(Fd::cwd(), save.slice_z())?;
-            let json_src = bun_ast::Source::init_path_string(save.slice(), json_buf.as_slice());
+            json_buf = bun_sys::File::read_from(Fd::cwd(), path.slice_z())?;
+            let json_src = bun_ast::Source::init_path_string(path.slice(), json_buf.as_slice());
 
             initialize_store();
             parsed = bun_json::ParsedJson::parse_package_json(&json_src, log)?;
@@ -373,7 +371,7 @@ impl Scripts {
     pub(crate) fn create_from_package_json(
         &mut self,
         log: &mut bun_ast::Log,
-        folder_path: &mut bun_paths::AutoAbsPath,
+        folder_path: &mut AbsPathBuf,
         folder_name: &[u8],
         resolution_tag: ResolutionTag,
     ) -> Result<Option<List>, crate::Error> {
@@ -383,6 +381,7 @@ impl Scripts {
         let mut builder = tmp.string_builder();
         let gypfile = self.fill_from_package_json(&mut builder, log, folder_path)?;
 
+        let folder_path = folder_path.as_path().map_err(SystemErrno::from)?;
         let add_node_gyp_rebuild_script =
             self.wants_default_node_gyp(folder_path.slice(), Some(gypfile));
 

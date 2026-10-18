@@ -1,12 +1,12 @@
-use bun_paths::typed::{Path, SubPath, Z};
+use bun_paths::{Path, PathZ, SubPath};
 use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
 
 // macOS clonefileat only
 
 pub(crate) struct FileCloner<'a> {
     pub cache_dir: Fd,
-    pub cache_dir_subpath: &'a Z<SubPath>,
-    pub dest_subpath: &'a Z<Path>,
+    pub cache_dir_subpath: &'a PathZ<SubPath>,
+    pub dest_subpath: &'a PathZ<Path>,
 }
 
 impl FileCloner<'_> {
@@ -15,9 +15,9 @@ impl FileCloner<'_> {
         let clonefileat = || {
             sys::clonefileat(
                 self.cache_dir,
-                self.cache_dir_subpath.z(),
+                self.cache_dir_subpath.slice_z(),
                 Fd::cwd(),
-                dest.z(),
+                dest.slice_z(),
             )
         };
         match clonefileat() {
@@ -31,15 +31,15 @@ impl FileCloner<'_> {
                     // to wipe and re-clone here — we're only ever writing
                     // into a per-process staging directory or a project-local
                     // path, never into a published shared directory.
-                    let _ = Fd::cwd().delete_tree(dest.as_bytes());
+                    let _ = Fd::cwd().delete_tree(dest.slice());
                     clonefileat()
                 }
 
                 Errno::ENOENT => {
-                    let Some(parent_dest_dir) = dest.parent() else {
+                    let Some(parent_dest_dir) = dest.dirname() else {
                         return Err(err);
                     };
-                    let _ = Fd::cwd().make_path(parent_dest_dir.as_bytes());
+                    let _ = Fd::cwd().make_path(parent_dest_dir.slice());
                     clonefileat()
                 }
                 _ => Err(err),

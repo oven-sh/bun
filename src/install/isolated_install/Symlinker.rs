@@ -1,14 +1,13 @@
 use bun_core::strings;
 #[cfg(windows)]
-use bun_paths::typed::AbsPath;
-use bun_paths::typed::{AnyPathBuf, Path, RelPath, Scratch, Z};
-use bun_paths::{self, component};
+use bun_paths::AbsPath;
+use bun_paths::{self, Path, PathBuf, PathZ, RelPath, sub_path};
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
 pub(crate) struct Symlinker<'a> {
-    pub(crate) dest: &'a Z<Path>,
+    pub(crate) dest: &'a PathZ<Path>,
     /// Relative to the directory of `dest`.
-    pub(crate) target: &'a Z<RelPath>,
+    pub(crate) target: &'a PathZ<RelPath>,
     /// The directories of `dest` after `dest[..real_len]` may be links that came with the project.
     pub(crate) real_len: usize,
     /// When greater than `real_len`, `dest[..node_modules_len]` is a workspace's `node_modules`. If
@@ -21,14 +20,14 @@ pub(crate) struct Symlinker<'a> {
     /// relative `target`. `LinkedNodeModules::resolve` explains why.
     pub(crate) is_absolute: bool,
     #[cfg(windows)]
-    pub(crate) fallback_junction_target: &'a Z<AbsPath>,
+    pub(crate) fallback_junction_target: &'a PathZ<AbsPath>,
 }
 
 impl Symlinker<'_> {
     /// True if it looked at a directory, which may be gone now.
     fn remove_planted_parents(&mut self) -> bun_sys::Result<bool> {
         let Some(parent) =
-            (self.dest.parent().map(Path::as_bytes)).filter(|dir| dir.len() > self.real_len)
+            (self.dest.dirname().map(Path::slice)).filter(|dir| dir.len() > self.real_len)
         else {
             return Ok(false);
         };
@@ -50,15 +49,19 @@ impl Symlinker<'_> {
     pub(crate) fn symlink(&self) -> bun_sys::Result<()> {
         #[cfg(windows)]
         {
-            let fallback = self.fallback_junction_target.z();
+            let fallback = self.fallback_junction_target.slice_z();
             if self.is_absolute {
-                return bun_sys::symlink_or_junction(self.dest.z(), fallback, None);
+                return bun_sys::symlink_or_junction(self.dest.slice_z(), fallback, None);
             }
-            return bun_sys::symlink_or_junction(self.dest.z(), self.target.z(), Some(fallback));
+            return bun_sys::symlink_or_junction(
+                self.dest.slice_z(),
+                self.target.slice_z(),
+                Some(fallback),
+            );
         }
         #[cfg(not(windows))]
         {
-            return bun_sys::symlink(self.target.z(), self.dest.z());
+            return bun_sys::symlink(self.target.slice_z(), self.dest.slice_z());
         }
     }
 
@@ -79,13 +82,13 @@ impl Symlinker<'_> {
                 };
                 match symlink_err1.get_errno() {
                     Errno::ENOENT => {
-                        let Some(dest_parent) = dest.parent() else {
+                        let Some(dest_parent) = dest.dirname() else {
                             return Err(symlink_err1);
                         };
-                        let _ = Fd::cwd().make_path(dest_parent.as_bytes());
+                        let _ = Fd::cwd().make_path(dest_parent.slice());
                     }
                     Errno::EEXIST if !self.is_behind_link => {
-                        let _ = Fd::cwd().delete_tree(dest.as_bytes());
+                        let _ = Fd::cwd().delete_tree(dest.slice());
                     }
                     _ => return Err(symlink_err1),
                 }
@@ -93,72 +96,71 @@ impl Symlinker<'_> {
             }
             Strategy::ExpectExisting => {
                 let mut current_link_buf = bun_paths::path_buffer_pool::get();
-                let current_link_len = match bun_sys::readlink(dest.z(), &mut current_link_buf) {
-                    Ok(len) => len,
-                    Err(readlink_err) => {
-                        if self.remove_planted_parents()? {
-                            return self.ensure(strategy, may_retry);
-                        }
-                        return match readlink_err.get_errno() {
-                            Errno::ENOENT => {
-                                let mut linked = self.symlink();
-                                if linked
-                                    .as_ref()
-                                    .is_err_and(|err| err.get_errno() == Errno::ENOENT)
-                                    && let Some(dest_parent) = dest.parent()
-                                {
-                                    let _ = Fd::cwd().make_path(dest_parent.as_bytes());
-                                    linked = self.symlink();
-                                }
-                                match linked {
-                                    // Another install made it since the readlink.
-                                    Err(err) if may_retry && err.get_errno() == Errno::EEXIST => {
-                                        self.ensure(strategy, false)
-                                    }
-                                    linked => linked.map(|()| true),
-                                }
+                let current_link_len =
+                    match bun_sys::readlink(dest.slice_z(), &mut current_link_buf) {
+                        Ok(len) => len,
+                        Err(readlink_err) => {
+                            if self.remove_planted_parents()? {
+                                return self.ensure(strategy, may_retry);
                             }
-                            // Kept: the copy `bun patch <pkg>` made, a mount point (EBUSY).
-                            _ => {
-                                let mut mem = Scratch::new();
-                                if AnyPathBuf::from_in(&mut mem, dest)
-                                    .push(component!("package.json"))
-                                    .get()
-                                    .is_ok_and(|package_json| bun_sys::exists_z(package_json.z()))
-                                {
-                                    return Ok(false);
+                            return match readlink_err.get_errno() {
+                                Errno::ENOENT => {
+                                    let mut linked = self.symlink();
+                                    if linked
+                                        .as_ref()
+                                        .is_err_and(|err| err.get_errno() == Errno::ENOENT)
+                                        && let Some(dest_parent) = dest.dirname()
+                                    {
+                                        let _ = Fd::cwd().make_path(dest_parent.slice());
+                                        linked = self.symlink();
+                                    }
+                                    match linked {
+                                        // Another install made it since the readlink.
+                                        Err(err)
+                                            if may_retry && err.get_errno() == Errno::EEXIST =>
+                                        {
+                                            self.ensure(strategy, false)
+                                        }
+                                        linked => linked.map(|()| true),
+                                    }
                                 }
-                                if !self.is_behind_link {
-                                    if bun_sys::rmdir(dest.z())
-                                        .is_err_and(|err| err.get_errno() == Errno::EBUSY)
+                                // Kept: the copy `bun patch <pkg>` made, a mount point (EBUSY).
+                                _ => {
+                                    if PathBuf::<Path>::from(dest)
+                                        .append(sub_path!("package.json"))
+                                        .as_path()
+                                        .is_ok_and(|package_json| {
+                                            bun_sys::exists_z(package_json.slice_z())
+                                        })
                                     {
                                         return Ok(false);
                                     }
-                                    let _ = Fd::cwd().delete_tree(dest.as_bytes());
+                                    if !self.is_behind_link {
+                                        if bun_sys::rmdir(dest.slice_z())
+                                            .is_err_and(|err| err.get_errno() == Errno::EBUSY)
+                                        {
+                                            return Ok(false);
+                                        }
+                                        let _ = Fd::cwd().delete_tree(dest.slice());
+                                    }
+                                    return self.symlink().map(|()| true);
                                 }
-                                return self.symlink().map(|()| true);
-                            }
-                        };
-                    }
-                };
+                            };
+                        }
+                    };
                 let mut current_link: &[u8] = &current_link_buf[..current_link_len];
 
                 // libuv adds a trailing slash to junctions.
                 current_link = strings::without_trailing_slash(current_link);
 
-                if !self.is_absolute
-                    && strings::eql_long(current_link, self.target.as_bytes(), true)
-                {
+                if !self.is_absolute && strings::eql_long(current_link, self.target.slice(), true) {
                     return Ok(false);
                 }
 
                 #[cfg(windows)]
                 {
-                    if strings::eql_long(
-                        current_link,
-                        self.fallback_junction_target.as_bytes(),
-                        true,
-                    ) {
+                    if strings::eql_long(current_link, self.fallback_junction_target.slice(), true)
+                    {
                         return Ok(false);
                     }
                 }
@@ -169,9 +171,10 @@ impl Symlinker<'_> {
 
                 // The wrong package. On Windows a directory link, dangling or not, needs rmdir.
                 if cfg!(not(windows))
-                    || bun_sys::rmdir(dest.z()).is_err_and(|err| err.get_errno() == Errno::EPERM)
+                    || bun_sys::rmdir(dest.slice_z())
+                        .is_err_and(|err| err.get_errno() == Errno::EPERM)
                 {
-                    let _ = bun_sys::unlink(dest.z());
+                    let _ = bun_sys::unlink(dest.slice_z());
                 }
 
                 return self.symlink().map(|()| true);

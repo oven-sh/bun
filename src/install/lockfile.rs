@@ -1031,18 +1031,18 @@ impl Lockfile {
         }
         let buf = self.buffers.string_bytes.as_slice();
         let folder = self.packages.items_resolution()[id as usize].folder();
-        let Some(selected) = join_top_level_dir(&[folder.slice(buf)]) else {
+        let selected = join_top_level_dir(&[folder.slice(buf)]);
+        let Ok(selected) = selected.as_path() else {
             return false;
         };
-        let selected = strings::without_trailing_slash(selected.slice());
         (self.buffers.resolutions.iter().enumerate()).any(|(row, &target)| {
             let dependency = &self.buffers.dependencies[row];
             target == id
                 && crate::dedupe::applied_override(self, row as DependencyID, dependency)
                     .map(|rule| rule.version())
                     .filter(|version| version.tag == dependency::version::Tag::Folder)
-                    .and_then(|version| join_top_level_dir(&[version.folder().slice(buf)]))
-                    .is_some_and(|named| strings::without_trailing_slash(named.slice()) == selected)
+                    .map(|version| join_top_level_dir(&[version.folder().slice(buf)]))
+                    .is_some_and(|named| named.as_path().is_ok_and(|named| **named == **selected))
         })
     }
 
@@ -2230,11 +2230,13 @@ pub(crate) fn linked_workspace_path_in(
     range.satisfies(version, range_buf, buf).then_some(path)
 }
 
-/// For lockfile paths: `join` resolves an absolute one and `..`. `None`: too long for a buffer.
-pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> Option<bun_paths::AutoAbsPathChecked> {
-    let mut path = bun_paths::AutoAbsPathChecked::init_top_level_dir();
-    path.join(parts).ok()?;
-    Some(path)
+/// For lockfile paths: `join` resolves an absolute one and `..`.
+pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> bun_paths::AbsPathBuf {
+    let mut path = bun_paths::AbsPathBuf::init_top_level_dir();
+    for part in parts {
+        path.join::<bun_paths::platform::Auto>(part);
+    }
+    path
 }
 
 impl Lockfile {
@@ -3628,8 +3630,8 @@ impl Lockfile {
         for relative_dir in
             core::iter::once(b"".as_slice()).chain(members.map(|p| p.slice(string_bytes)))
         {
-            let Some(package_json_path) = join_top_level_dir(&[relative_dir, b"package.json"])
-            else {
+            let package_json_path = join_top_level_dir(&[relative_dir, b"package.json"]);
+            let Ok(package_json_path) = package_json_path.as_path() else {
                 continue;
             };
             let path = package_json_path.slice();

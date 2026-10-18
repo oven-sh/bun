@@ -1,5 +1,3 @@
-use bstr::BStr;
-
 use bun_core::{Global, Output};
 use bun_install::package_manager_real::{
     PackageManager, get_cache_directory_and_abs_path, populate_package_cache,
@@ -66,7 +64,9 @@ pub(crate) fn exec(
     bun_core::pretty!("<r>\n");
 
     let (_, cache_dir) = get_cache_directory_and_abs_path(pm);
-    bun_core::prettyln!("<d>Cache: {}<r>", BStr::new(cache_dir.slice()));
+    if let Ok(cache_dir) = cache_dir.as_path() {
+        bun_core::prettyln!("<d>Cache: {}<r>", cache_dir);
+    }
     Output::flush();
 
     Ok(())

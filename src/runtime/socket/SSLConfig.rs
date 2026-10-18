@@ -338,30 +338,40 @@ fn handle_path(
             .throw());
     }
     // Opened later (for fetch, on the HTTP thread), and the SSL_CTX caches key on this string.
-    let mut path = if cfg!(windows) || !bun_paths::is_absolute_posix(name) {
-        bun_paths::AutoAbsPathChecked::init_top_level_dir()
-    } else {
-        bun_paths::AutoAbsPathChecked::init()
+    let cwd = bun_paths::fs::FileSystem::instance().top_level_dir();
+    // Win32 resolves `..` as the join does, which also knows `C:foo` and `\foo`.
+    #[cfg(windows)]
+    let mut buf = bun_paths::path_buffer_pool::get();
+    #[cfg(windows)]
+    let path = bun_paths::resolve_path::join_abs_string_buf_z_checked::<bun_paths::platform::Auto>(
+        cwd,
+        &mut buf[..],
+        &[name],
+    );
+    // The kernel resolves `..` through symlinks, so it is left in.
+    #[cfg(not(windows))]
+    let path = {
+        let mut relative = name.strip_prefix(b"./").unwrap_or(name).to_vec();
+        bun_paths::resolve_path::slashes_to_posix_in_place(&mut relative);
+        bun_core::ZBox::from_vec(if bun_paths::is_absolute_posix(name) {
+            relative
+        } else {
+            let cwd = bun_core::strings::without_trailing_slash(cwd);
+            [cwd, b"/", &relative].concat()
+        })
     };
-    // The kernel resolves `..` through symlinks, so it is left in. Win32 resolves it as `join` does, which also knows `C:foo` and `\foo`.
-    let pinned = if cfg!(windows) {
-        path.join(&[name])
-    } else {
-        path.append(name)
-    };
-    // `append` drops a trailing slash, with which no file opens.
-    if name.is_empty()
-        || (cfg!(not(windows)) && name.ends_with(b"/"))
-        || pinned.is_err()
-        || bun_sys::access(path.slice_z(), bun_sys::posix::F_OK).is_err()
-    {
+    #[cfg(not(windows))]
+    let path = (!name.ends_with(b"/")).then_some(&*path);
+    let Some(path) =
+        path.filter(|path| !name.is_empty() && bun_sys::access(path, bun_sys::posix::F_OK).is_ok())
+    else {
         return Err(global.throw_invalid_arguments(format_args!("Unable to access {field} path")));
-    }
+    };
     // BoringSSL's fopen is narrow on Windows: a non-ASCII cwd must not be baked into the path.
-    if cfg!(windows) && !bun_core::strings::is_all_ascii(path.slice()) {
+    if cfg!(windows) && !bun_core::strings::is_all_ascii(path.as_bytes()) {
         return Ok(dupe_z(name));
     }
-    Ok(dupe_z(path.slice()))
+    Ok(dupe_z(path.as_bytes()))
 }
 
 fn handle_file_for_field(

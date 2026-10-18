@@ -15,10 +15,11 @@ pub(crate) fn workspace_is_missing_on_disk(
     let Some(workspace_path) = lockfile.workspace_paths.get(&workspace_name_hash).copied() else {
         return false;
     };
-    let Some(mut package_json_path) = join_top_level_dir(&[
+    let package_json_path = join_top_level_dir(&[
         workspace_path.slice(lockfile.buffers.string_bytes.as_slice()),
         b"package.json",
-    ]) else {
+    ]);
+    let Ok(package_json_path) = package_json_path.as_path() else {
         return true;
     };
     !bun_sys::exists_z(package_json_path.slice_z())

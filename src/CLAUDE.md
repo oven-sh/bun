@@ -229,6 +229,59 @@ let joined  = resolve_path::join_string_buf::<platform::Auto>(&mut *buf, &[a, b]
 `bun_paths::os_path_buffer_pool` selects the wide (`u16`) variant on Windows
 and the narrow (`u8`) variant on POSIX.
 
+### Paths as types (`src/paths/Path.rs`)
+
+To build a path, use `PathBuf<V>` rather than offsets into a buffer. It owns one
+path buffer (inline on POSIX, from the pool on Windows), never allocates, and
+builds a view `V`. A view is a borrowed slice that is native (`SEP` only) and
+normalized (no `.`, no empty name, no trailing separator):
+
+| View       | Holds                                   | Derefs to |
+| ---------- | --------------------------------------- | --------- |
+| `Path`     | any native path                         |           |
+| `AbsPath`  | an absolute path, no `..`               | `Path`    |
+| `RelPath`  | a relative path, `..` only at the front | `Path`    |
+| `SubPath`  | a relative path with no `..`            | `RelPath` |
+| `FileName` | one name                                | `SubPath` |
+
+Each takes a unit, `u8` by default: `AbsPath<u16>` is a wide path. `PathZ<V>` is
+a `V` followed by a NUL; `slice_z()` is what a syscall takes, `slice()` the units.
+`AbsPathBuf`, `RelPathBuf` and `SubPathBuf` name the `u8` builders.
+
+Pick the entry by where the input came from:
+
+| Input                                         | Entry                                                                        |
+| --------------------------------------------- | ---------------------------------------------------------------------------- |
+| a literal                                     | `append(sub_path!("node_modules/.bin"))`                                     |
+| another view                                  | `append(sub)`, `from(view)`, `set(view)`, `from_abs`/`set_abs` (either unit) |
+| a name the OS listed                          | `append(FileName::new_unchecked(name))`                                      |
+| a path the OS returned                        | `set_unchecked(units)`, `from_fn(\|room\| ..)`, `init_fd_path(fd)`           |
+| a package name or alias                       | `append_names::<Posix>(name)`: names only, no `.` or `..`                    |
+| a formatted name                              | `append_fmt(format_args!("{name}@{version}"))`                               |
+| text that must stay inside the directory      | `join_below::<P>(text)`: fails with `Escapes` or `ExpectedRelative`          |
+| any other text (a flag, a config, a lockfile) | `join::<P>(text)`, which does what `path.resolve` does                       |
+
+`P` says how the text is read: `Posix` (only `/` separates), `Windows`, `Auto`
+(the host's rules) or `Loose` (`/` and `\` both separate on every host).
+
+```rust
+use bun_paths::platform::Posix;
+use bun_paths::{AbsPathBuf, sub_path};
+
+let mut path = AbsPathBuf::init_top_level_dir();
+path.append(sub_path!("node_modules")).append_names::<Posix>(alias);
+{
+    let mut package_json = path.save();             // ResetScope: puts the path back on drop
+    package_json.append(sub_path!("package.json"));
+    bun_sys::exists_z(package_json.as_path()?.slice_z());
+}
+```
+
+No step returns a `Result`. The first failure (`PathError`) is kept, later steps
+do nothing, and `as_path()`, the only way to the path, returns it. `PathError`
+converts to `bun_errno::SystemErrno` and nests in a crate's `Error` with `#[from]`.
+Inside a `ResetScope` nothing can remove or replace what was there before it.
+
 ## URL Parsing (`bun_url::whatwg`)
 
 WHATWG-compliant, backed by WebKit's URL parser. `Parsed` owns the C++

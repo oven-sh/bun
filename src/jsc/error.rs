@@ -65,7 +65,7 @@ pub enum Error {
     #[error(transparent)]
     MakeLibUvOwned(#[from] bun_sys::MakeLibUvOwnedError),
     #[error(transparent)]
-    Path(#[from] bun_paths::path_options::Error),
+    Path(#[from] bun_paths::PathError),
     #[error(transparent)]
     Bundler(#[from] bun_bundler::Error),
     #[error(transparent)]

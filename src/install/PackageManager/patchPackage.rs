@@ -7,8 +7,7 @@ use bun_core::{ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::platform;
 use bun_paths::resolve_path;
-use bun_paths::typed::Pooled;
-use bun_paths::{AbsPath, Platform, SEP};
+use bun_paths::{AbsPathBuf, Platform, SEP};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
 use crate::bin;
@@ -1090,9 +1089,8 @@ fn has_trusted_scripts(
     {
         return false;
     }
-    let Ok(mut folder_path) = bun_paths::AutoAbsPath::from(folder) else {
-        return false;
-    };
+    let mut folder_path = AbsPathBuf::init();
+    folder_path.join::<platform::Auto>(folder);
     // bun.lock does not record a dependency's scripts, so they are read from its package.json.
     let mut scripts = pkg.scripts;
     let list = scripts.get_list(
@@ -1152,9 +1150,13 @@ fn make_bins_executable(
     // `bin::Linker` sets the mode of the files it links to. The links themselves are not needed, so
     // they go in a temporary folder.
     let links = TempTree(temp_sibling(folder));
-    let (Ok(cache_path), Ok(mut links_path)) = (
-        <AbsPath>::init_fd_path(cache_dir),
-        <AbsPath>::from(links.0.as_slice()),
+    let mut links_path = AbsPathBuf::init();
+    let Ok(cache_path) = AbsPathBuf::init_fd_path(cache_dir) else {
+        return;
+    };
+    let (Ok(cache_path), Ok(links_path)) = (
+        cache_path.as_path(),
+        (links_path.join::<platform::Auto>(links.0.as_slice())).as_path(),
     ) else {
         return;
     };
@@ -1164,10 +1166,10 @@ fn make_bins_executable(
     let mut rel_buf = bun_paths::path_buffer_pool::get();
     bin::Linker {
         bin: pkg.bin,
-        target_node_modules_path: &raw const cache_path,
+        target_node_modules_path: cache_path,
         target_package_name: cache_entry,
         seen: None,
-        node_modules_path: &mut links_path,
+        node_modules_path: links_path,
         package_name: cache_entry,
         global_bin_path: ZStr::EMPTY,
         string_buf: lockfile.buffers.string_bytes.as_slice(),
@@ -1512,18 +1514,17 @@ fn copy_cache_entry(
     // Open the cache entry before changing anything, because it may no longer exist.
     let cached_package_folder = Dir::borrow(&cache_dir).open_dir(cache_dir_subpath, ITERATE)?;
 
-    // BOUNDARY: `to` is raw bytes in this file.
-    let mut dest_subpath = OsPathBuf::new_in(Pooled::new());
+    let mut dest_subpath = OsPathBuf::init();
     dest_subpath.join::<platform::Auto>(to);
 
     #[cfg(windows)]
     let src_path = {
         let mut path_buf = bun_paths::w_path_buffer_pool::get();
         let cache_dir_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
-        let mut src_path = OsAbsPathBuf::unset_in(Pooled::new());
+        let mut src_path = OsAbsPathBuf::init();
         src_path
-            .set_os(&*cache_dir_path)
-            .push_names::<platform::Auto>(cache_dir_subpath);
+            .set_unchecked(&*cache_dir_path)
+            .append_names::<platform::Auto>(cache_dir_subpath);
         src_path
     };
 

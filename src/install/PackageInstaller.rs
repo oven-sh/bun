@@ -5,7 +5,7 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{dirname, join_abs_string_buf_z_checked, join_z_buf};
-use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
+use bun_paths::{AbsPathBuf, MAX_PATH_BYTES, PathBuffer, SEP, platform};
 use bun_semver::String;
 use bun_sys::{Dir, Fd};
 
@@ -491,7 +491,7 @@ fn abs_node_modules_path(
     lockfile: &Lockfile,
     string_buf: &[u8],
     tree_id: lockfile::tree::Id,
-) -> AbsPath {
+) -> AbsPathBuf {
     let mut rel_buf = bun_paths::path_buffer_pool::get();
     rel_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
     let mut depth_buf = lockfile::tree::depth_buf_uninit();
@@ -506,8 +506,8 @@ fn abs_node_modules_path(
         &mut rel_buf,
         &mut depth_buf,
     );
-    let mut abs = AbsPath::init_top_level_dir();
-    abs.append(rel.as_bytes()).unwrap_or_oom();
+    let mut abs = AbsPathBuf::init_top_level_dir();
+    abs.join::<platform::Auto>(rel.as_bytes());
     abs
 }
 
@@ -518,7 +518,8 @@ pub(crate) fn remove_placed_package(
     alias: &[u8],
 ) {
     let path = abs_node_modules_path(lockfile, lockfile.buffers.string_bytes.as_slice(), tree_id);
-    let Ok(node_modules) = Dir::open(path.slice()) else {
+    let Some(node_modules) = (path.as_path().ok()).and_then(|path| Dir::open(path.slice()).ok())
+    else {
         return;
     };
     // Rename first: a delete can stop midway, and a half-deleted package must not pass `verify`.
@@ -533,7 +534,7 @@ pub(crate) fn remove_placed_package(
         // If the rename fails, delete the files `verify` reads first.
         if let Some(package) = crate::prune::descend(&node_modules, alias) {
             let _ = package.delete_tree(b"package.json");
-            let _ = package.delete_tree(package_install::BUN_TAG);
+            let _ = package.delete_tree(package_install::BUN_TAG.slice());
         }
         let _ = node_modules.delete_tree(alias);
     }
@@ -699,8 +700,13 @@ impl<'a> PackageInstaller<'a> {
         let lockfile = self.lockfile();
         let manager = self.manager_mut();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
-        let mut node_modules_path: AbsPath =
-            AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
+        let mut node_modules_path = AbsPathBuf::init();
+        let Ok(node_modules_path) = node_modules_path
+            .join::<platform::Auto>(self.node_modules.path.as_slice())
+            .as_path()
+        else {
+            return;
+        };
         let mut is_behind_link = (!lockfile.is_importer_tree_id(tree_id)).then_some(false);
 
         let pkgs = lockfile.packages.slice();
@@ -750,7 +756,7 @@ impl<'a> PackageInstaller<'a> {
             let package_name_ = strings::StringOrTinyString::init(alias);
             let mut target_package_name = package_name_;
             let mut can_retry_without_native_binlink_optimization = false;
-            let mut target_node_modules_path_opt: Option<AbsPath> = None;
+            let mut target_node_modules_path_opt: Option<AbsPathBuf> = None;
             let mut defer_this_bin = false;
 
             'native_binlink_optimization: {
@@ -845,15 +851,6 @@ impl<'a> PackageInstaller<'a> {
             }
 
             loop {
-                // `node_modules_path` (mut) and `target_node_modules_path`
-                // (read-only) refer to the same buffer when no replacement is
-                // set. Derive both from a single `*mut` so the read pointer
-                // shares the write reference's provenance (a `*const` taken
-                // from `&node_modules_path` would be popped by the later
-                // `&mut` reborrow under stacked-borrows).
-                // SAFETY: `bin::Linker::link` only reads `target_node_modules_path` and
-                // never writes through it while `node_modules_path` is borrowed.
-                let nm_ptr: *mut AbsPath = &raw mut node_modules_path;
                 let mut bin_linker = bin::Linker {
                     bin,
                     global_bin_path: manager.options.bin_path,
@@ -864,12 +861,9 @@ impl<'a> PackageInstaller<'a> {
                     seen: Some(&mut self.seen_bin_links),
                     target_node_modules_path: target_node_modules_path_opt
                         .as_ref()
-                        .map(std::ptr::from_ref::<AbsPath>)
-                        .unwrap_or_else(|| nm_ptr.cast_const()),
-                    // SAFETY: `nm_ptr` = `&raw mut node_modules_path` (live local); the only
-                    // other pointer derived from it is the read-only `target_node_modules_path`
-                    // above, which `bin::Linker::link` never writes through.
-                    node_modules_path: unsafe { &mut *nm_ptr },
+                        .and_then(|path| path.as_path().ok())
+                        .unwrap_or(node_modules_path),
+                    node_modules_path,
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
                     rel_buf: link_rel_buf,
@@ -1621,7 +1615,7 @@ impl<'a> PackageInstaller<'a> {
         alias: &[u8],
         package_id: PackageID,
         resolution_tag: resolution::Tag,
-        folder_path: &mut bun_paths::AutoAbsPath,
+        folder_path: &mut AbsPathBuf,
         log_level: Options::LogLevel,
     ) -> usize {
         debug_assert!(resolution_tag != resolution::Tag::Root);
@@ -1674,7 +1668,9 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        count += scripts.wants_default_node_gyp(folder_path.slice(), gypfile) as usize;
+        count += (folder_path.as_path())
+            .is_ok_and(|path| scripts.wants_default_node_gyp(path.slice(), gypfile))
+            as usize;
 
         count
     }
@@ -2455,11 +2451,10 @@ impl<'a> PackageInstaller<'a> {
                     && self.metas[package_id as usize].has_install_script()
                 {
                     // `hasInstallScript` is a false positive when binding.gyp is not published.
-                    let mut folder_path =
-                        AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
+                    let mut folder_path = AbsPathBuf::init();
                     folder_path
-                        .append(alias.slice(string_buf!()))
-                        .unwrap_or_oom();
+                        .join::<platform::Auto>(self.node_modules.path.as_slice())
+                        .append_names::<platform::Posix>(alias.slice(string_buf!()));
 
                     let count = self.get_installed_package_scripts_count(
                         alias.slice(string_buf!()),
@@ -2608,8 +2603,10 @@ impl<'a> PackageInstaller<'a> {
         let (alias, alias_hash) = (dep.name, dep.name_hash);
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
 
-        let mut folder_path = AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
-        folder_path.append(alias.slice(string_buf)).unwrap_or_oom();
+        let mut folder_path = AbsPathBuf::init();
+        folder_path
+            .join::<platform::Auto>(self.node_modules.path.as_slice())
+            .append_names::<platform::Posix>(alias.slice(string_buf));
 
         if self
             .manager()
@@ -2668,7 +2665,7 @@ impl<'a> PackageInstaller<'a> {
         &mut self,
         folder_name: &[u8],
         log_level: Options::LogLevel,
-        package_path: &mut bun_paths::AutoAbsPath,
+        package_path: &mut AbsPathBuf,
         dependency_id: DependencyID,
         package_id: PackageID,
         resolution: &Resolution,

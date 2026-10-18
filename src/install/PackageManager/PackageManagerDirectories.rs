@@ -10,7 +10,7 @@ use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{Dependency, Integrity, PackageID, Resolution};
-use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
+use bun_paths::{self as path, AbsPathBuf, PathBuffer, SEP, platform};
 use bun_semver as Semver;
 #[cfg(windows)]
 use bun_sys::FdDirExt;
@@ -165,13 +165,11 @@ pub(crate) unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> sys::
 }
 
 #[inline]
-pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPath) {
+pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPathBuf) {
     let cache_dir = get_cache_directory(this);
-    (
-        cache_dir,
-        AbsPath::from(this.cache_directory_path.as_bytes())
-            .expect("cache_directory_path is absolute"),
-    )
+    let mut path = AbsPathBuf::init();
+    path.join::<platform::Auto>(this.cache_directory_path.as_bytes());
+    (cache_dir, path)
 }
 
 #[inline]

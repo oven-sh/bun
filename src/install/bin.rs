@@ -9,9 +9,10 @@ use bun_core::w;
 #[cfg(not(windows))]
 use bun_paths::MAX_PATH_BYTES;
 use bun_paths::platform::Auto as PlatformAuto;
+use bun_paths::platform::Loose;
 use bun_paths::resolve_path::{self, join_abs_string_buf_z_checked as join_z_checked};
 use bun_paths::strings;
-use bun_paths::{self as path, AbsPath, SEP};
+use bun_paths::{self as path, AbsPath, AbsPathBuf, PathZ, SEP, sub_path};
 use bun_semver::{ExternalString, String};
 #[cfg(not(windows))]
 use bun_sys::Mode;
@@ -818,13 +819,7 @@ pub struct Linker<'a> {
 
     /// Usually will be the same as `node_modules_path`.
     /// Used to support native bin linking.
-    ///
-    /// This intentionally may alias `node_modules_path` (the common
-    /// case). A `&'a AbsPath` would
-    /// conflict with the `&'a mut AbsPath` borrow on `node_modules_path`, so
-    /// keep it as a raw pointer; the only read site dereferences it under a
-    /// SAFETY note in `build_target_package_dir`.
-    pub target_node_modules_path: *const AbsPath,
+    pub target_node_modules_path: &'a AbsPath,
 
     /// Usually will be the same as `package_name`.
     /// Used to support native bin linking.
@@ -834,7 +829,7 @@ pub struct Linker<'a> {
     // linking each tree.
     pub seen: Option<&'a mut StringHashMap<()>>,
 
-    pub node_modules_path: &'a mut AbsPath,
+    pub node_modules_path: &'a PathZ<AbsPath>,
 
     /// Used for generating relative paths
     pub package_name: strings::StringOrTinyString,
@@ -876,7 +871,14 @@ impl<'a> Linker<'a> {
         exec_mode();
     }
 
-    fn is_behind_link(known: &mut Option<bool>, node_modules_path: &mut AbsPath) -> bool {
+    fn make_bin_dir(node_modules_path: &AbsPath) {
+        let mut dir = AbsPathBuf::from(node_modules_path);
+        if let Ok(dir) = dir.append(sub_path!(".bin")).as_path() {
+            let _ = sys::Dir::cwd().make_path(dir.slice());
+        }
+    }
+
+    fn is_behind_link(known: &mut Option<bool>, node_modules_path: &PathZ<AbsPath>) -> bool {
         *known.get_or_insert_with(|| {
             crate::prune::LinkedNodeModules::is_at(node_modules_path.slice_z()) == Some(true)
         })
@@ -1237,10 +1239,7 @@ impl<'a> Linker<'a> {
                     return Err(err);
                 }
 
-                let node_modules_path_save = self.node_modules_path.len();
-                let _ = self.node_modules_path.append(b".bin");
-                let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
-                self.node_modules_path.set_length(node_modules_path_save);
+                Self::make_bin_dir(self.node_modules_path);
 
                 open_bunx_file()?
             }
@@ -1323,10 +1322,7 @@ impl<'a> Linker<'a> {
 
         // `.bin` hasn't been created yet. The global bin dir is not created here.
         if !global && matches!(&result, Err(err) if err.get_errno() == sys::Errno::ENOENT) {
-            let node_modules_path_save = self.node_modules_path.len();
-            let _ = self.node_modules_path.append(b".bin");
-            let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
-            self.node_modules_path.set_length(node_modules_path_save);
+            Self::make_bin_dir(self.node_modules_path);
 
             result = sys::symlink_running_executable(rel_target, abs_dest);
         }
@@ -1409,12 +1405,8 @@ impl<'a> Linker<'a> {
 
     #[cfg(not(windows))]
     fn resolved_target_parent_escapes_package_dir(&self, abs_target: &ZStr) -> bool {
-        // SAFETY: `target_node_modules_path` is set at construction to either
-        // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
-        // both outlive `self` and are not mutated for the duration of this
-        // read.
         let dest_dir_without_trailing_slash =
-            strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
+            strings::without_trailing_slash(self.target_node_modules_path.slice());
         let package_name = self.target_package_name.slice();
 
         let mut package_dir_buf = path::path_buffer_pool::get();
@@ -1583,12 +1575,8 @@ impl<'a> Linker<'a> {
 
     /// Length of `<node_modules>/<package>/` in `abs_target_buf`, `None` if a NUL no longer fits.
     pub(crate) fn build_target_package_dir(&mut self) -> Option<usize> {
-        // SAFETY: `target_node_modules_path` is set at construction to either
-        // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
-        // both outlive `self` and are not mutated for the duration of this
-        // read.
         let dest_dir_without_trailing_slash =
-            strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
+            strings::without_trailing_slash(self.target_node_modules_path.slice());
         let package_name = self.target_package_name.slice();
 
         let buf = &mut *self.abs_target_buf;
@@ -1909,15 +1897,10 @@ pub(crate) fn link_free_bins(
     global_bin_path: Option<&ZStr>,
     placed: &[(&[u8], crate::PackageID)],
 ) {
-    // Two copies of the same path: the linker reads `target_node_modules_path` while it holds
-    // `node_modules_path` by `&mut`, so they cannot be one value.
-    let abs_node_modules = || -> AbsPath {
-        let mut dir = AbsPath::init_top_level_dir();
-        let _ = dir.append(node_modules);
-        dir
+    let mut node_modules_path = AbsPathBuf::init_top_level_dir();
+    let Ok(node_modules_path) = node_modules_path.join::<Loose>(node_modules).as_path() else {
+        return;
     };
-    let (target_node_modules_path, mut node_modules_path) =
-        (abs_node_modules(), abs_node_modules());
 
     let mut seen: StringHashMap<()> = StringHashMap::default();
     match global_bin_path {
@@ -1940,10 +1923,10 @@ pub(crate) fn link_free_bins(
         let package_name = strings::StringOrTinyString::init(folder);
         Linker {
             bin,
-            target_node_modules_path: &raw const target_node_modules_path,
+            target_node_modules_path: node_modules_path,
             target_package_name: package_name,
             seen: Some(&mut seen),
-            node_modules_path: &mut node_modules_path,
+            node_modules_path,
             package_name,
             global_bin_path: global_bin_path.unwrap_or(ZStr::EMPTY),
             string_buf: lockfile.buffers.string_bytes.as_slice(),

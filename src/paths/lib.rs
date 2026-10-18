@@ -19,10 +19,6 @@ pub mod w_path_buffer_pool {
     pub fn get() -> PoolGuard<WPathBuffer> {
         PathBufferPoolT::<WPathBuffer>::get()
     }
-    #[inline]
-    pub fn put(buf: Box<WPathBuffer>) {
-        PathBufferPoolT::<WPathBuffer>::put(buf)
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -360,10 +356,9 @@ pub use resolve_path::{
 pub use path_buffer_pool::os_path_buffer_pool;
 #[path = "Path.rs"]
 pub mod path;
-pub mod typed;
 pub use path::{
-    AbsPath, AutoAbsPath, AutoAbsPathChecked, AutoRelPath, Path, PathUnit, RelPath,
-    options as path_options,
+    AbsPath, AbsPathBuf, FileName, Path, PathBuf, PathError, PathUnit, PathZ, RelPath, RelPathBuf,
+    ResetScope, SubPath, SubPathBuf, View,
 };
 
 /// Width-generic dirname
@@ -474,7 +469,7 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 // resolve them without a `bun_resolver` edge.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod fs {
-    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use core::sync::atomic::{AtomicU32, Ordering};
     use std::io::Write as _;
     use std::sync::OnceLock;
 
@@ -495,17 +490,10 @@ pub mod fs {
     }
 
     static INSTANCE: OnceLock<FileSystem> = OnceLock::new();
-    // Kept as a separate flag so `instance_loaded()` is a cheap relaxed load.
-    static INSTANCE_LOADED: AtomicBool = AtomicBool::new(false);
 
     static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
     impl FileSystem {
-        #[inline]
-        pub(crate) fn instance_loaded() -> bool {
-            INSTANCE_LOADED.load(Ordering::Relaxed)
-        }
-
         /// Panics if `init` has not been called.
         #[inline]
         pub fn instance() -> &'static FileSystem {
@@ -520,7 +508,6 @@ pub mod fs {
             let _ = INSTANCE.set(FileSystem {
                 top_level_dir: top_level_dir.to_vec(),
             });
-            INSTANCE_LOADED.store(true, Ordering::Release);
             INSTANCE.get().unwrap()
         }
 

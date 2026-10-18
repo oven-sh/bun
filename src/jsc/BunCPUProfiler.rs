@@ -3,7 +3,8 @@ use std::io::Write as _;
 
 use crate::VM;
 use bun_core::String as BunString;
-use bun_paths::{AutoAbsPathChecked, PathBuffer};
+use bun_paths::platform::Auto;
+use bun_paths::{AbsPath, AbsPathBuf, PathBuffer, PathZ};
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -85,20 +86,17 @@ fn write_profile_to_file(
 ) -> Result<(), ProfilerError> {
     let profile_slice = profile_string.to_utf8();
 
-    // dir/name are unbounded CLI input, so use the length-checked variant.
-    let mut path_buf = AutoAbsPathChecked::init_top_level_dir();
-    // (defer path_buf.deinit() — handled by Drop)
-
-    build_output_path(&mut path_buf, config, is_md_format)?;
+    let mut path_buf = AbsPathBuf::init_top_level_dir();
+    let output_path = build_output_path(&mut path_buf, config, is_md_format)?;
 
     // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
     #[cfg(windows)]
     let mut path_buf_os = bun_paths::os_path_buffer_pool::get();
     #[cfg(windows)]
     let output_path_os =
-        bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut path_buf_os, path_buf.slice_z());
+        bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut path_buf_os, output_path.slice());
     #[cfg(not(windows))]
-    let output_path_os = path_buf.slice_z();
+    let output_path_os = output_path.slice_z();
 
     // Write the profile to disk using bun.sys.File.writeFile
     let result =
@@ -129,11 +127,11 @@ fn write_profile_to_file(
     Ok(())
 }
 
-fn build_output_path(
-    path: &mut AutoAbsPathChecked,
+fn build_output_path<'a>(
+    path: &'a mut AbsPathBuf,
     config: &CPUProfilerConfig,
     is_md_format: bool,
-) -> Result<(), ProfilerError> {
+) -> Result<&'a PathZ<AbsPath>, ProfilerError> {
     // Generate filename
     let mut filename_buf = bun_paths::path_buffer_pool::get();
 
@@ -160,16 +158,10 @@ fn build_output_path(
         generate_default_filename(&mut filename_buf, is_md_format)?
     };
 
-    if !config.dir.is_empty() {
-        path.join(&[config.dir])
-            .map_err(|_| ProfilerError::FilenameTooLong)?;
-    }
-
-    // `join` resolves an absolute --cpu-prof-name where `append` asserts on it.
-    path.join(&[filename])
-        .map_err(|_| ProfilerError::FilenameTooLong)?;
-
-    Ok(())
+    path.join::<Auto>(config.dir)
+        .join::<Auto>(filename)
+        .as_path()
+        .map_err(|_| ProfilerError::FilenameTooLong)
 }
 
 fn generate_default_filename(

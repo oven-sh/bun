@@ -609,6 +609,29 @@ test.skipIf(isWindows).each(["relative", "absolute"])(
   },
 );
 
+test.skipIf(isWindows)("a relative keyFile is found from a working directory named with a backslash", async () => {
+  using dir = tempDir("bun-serve-ssl-backslash", {
+    "pro\\j": { "cert.pem": tlsCert.cert, "key.pem": tlsCert.key },
+  });
+  const script = `
+    using server = Bun.serve({
+      port: 0,
+      tls: { keyFile: "key.pem", certFile: "./cert.pem" },
+      fetch: () => new Response("served"),
+    });
+    console.log(await fetch(server.url, { tls: { caFile: "cert.pem" } }).then(res => res.text()));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: join(String(dir), "pro\\j"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "served\n", stderr: "", exitCode: 0 });
+});
+
 test.skipIf(isWindows)("a keyFile with a trailing slash is not the file without it", () => {
   using dir = tempDir("bun-serve-ssl-slash", { "key.pem": tlsCert.key, "cert.pem": tlsCert.cert });
   const certFile = join(String(dir), "cert.pem");

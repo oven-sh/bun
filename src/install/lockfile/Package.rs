@@ -1197,10 +1197,11 @@ impl Diff {
                         break 'update_mapping false;
                     };
 
-                    let Some(package_json_path) = lockfile::join_top_level_dir(&[
+                    let package_json_path = lockfile::join_top_level_dir(&[
                         workspace_path.slice(to_buf!()),
                         b"package.json",
-                    ]) else {
+                    ]);
+                    let Ok(package_json_path) = package_json_path.as_path() else {
                         break 'update_mapping false;
                     };
 
@@ -1468,13 +1469,14 @@ impl Diff {
         removed_names: &mut Vec<PackageNameHash>,
     ) -> crate::Result<Option<DiffSummary>> {
         let from_pkg = from_lockfile.packages.get(from_package_id as usize);
-        let Some(package_json_path) = lockfile::join_top_level_dir(&[
+        let package_json_path = lockfile::join_top_level_dir(&[
             from_pkg
                 .resolution
                 .folder()
                 .slice(from_lockfile.buffers.string_bytes.as_slice()),
             b"package.json",
-        ]) else {
+        ]);
+        let Ok(package_json_path) = package_json_path.as_path() else {
             return Ok(None);
         };
         let Ok(contents) = bun_sys::File::read_from(bun_sys::Fd::cwd(), package_json_path.slice())

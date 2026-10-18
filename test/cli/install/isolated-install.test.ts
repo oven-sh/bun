@@ -1536,9 +1536,6 @@ describe.concurrent("link: dependencies", () => {
   });
 });
 
-// A `file:` dependency declared by a registry package points at a folder inside
-// that package (the same fixtures as "transitive file dependencies" in
-// bun-install-registry.test.ts, which covers the hoisted linker).
 describe.concurrent("transitive file dependencies of a tarball, written with a backslash", () => {
   // Installs a tarball `p` that declares `"q": "file:<folder>"`, and returns what is beside `p` in its store entry.
   async function install(folder: string, options?: Parameters<typeof runBunInstall>[2]) {
@@ -1592,6 +1589,9 @@ describe.concurrent("transitive file dependencies of a tarball, written with a b
   });
 });
 
+// A `file:` dependency declared by a registry package points at a folder inside
+// that package (the same fixtures as "transitive file dependencies" in
+// bun-install-registry.test.ts, which covers the hoisted linker).
 describe.concurrent("transitive file dependencies of registry packages", () => {
   const dependencies = {
     // depends on file-dep@1.0.0

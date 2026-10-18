@@ -1,6 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, normalizeBunSnapshot, pack, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, pack, tempDir } from "harness";
 import { join, relative } from "path";
 import { pathToFileURL } from "url";
 import { ARBORIST, OFFLINE_REGISTRY, fixture, readLock, run, writeExtra } from "./migration-harness";
@@ -788,6 +788,35 @@ describe.concurrent("a package-lock.json entry of another host without an integr
       registry.integrity("a-dep", "1.0.10"),
       registry.integrity("no-deps", "1.1.0"),
     ]);
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent.skipIf(isWindows)("in a project folder named with a backslash", () => {
+  const a = { "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }) };
+  test.each([
+    ["yarn.lock", "# yarn lockfile v1\n\n", {}, {}, [""]],
+    [
+      "pnpm-lock.yaml",
+      `lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      a:\n        specifier: workspace:*\n        version: link:packages/a\n\n  packages/a: {}\n`,
+      { workspaces: ["packages/*"], dependencies: { a: "workspace:*" } },
+      a,
+      ["", "packages/a"],
+    ],
+  ])("%s is migrated", async (lock, contents, packageJson, files, workspaces) => {
+    using dir = tempDir("migrate-backslash", {
+      "pro\\j": {
+        "package.json": JSON.stringify({ name: "root", version: "1.0.0", ...packageJson }),
+        [lock]: contents,
+        ...files,
+      },
+    });
+    const project = join(String(dir), "pro\\j");
+    writeExtra(project, {});
+
+    const { stderr, exitCode } = await run(project, "pm", "migrate");
+    expect(stderr).toContain(`migrated lockfile from ${lock}`);
+    expect(Object.keys((await readLock(project)).lock.workspaces)).toEqual(workspaces);
     expect(exitCode).toBe(0);
   });
 });

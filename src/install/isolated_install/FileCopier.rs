@@ -3,7 +3,7 @@ use core::ptr;
 
 use bun_alloc::AllocError;
 #[cfg(windows)]
-use bun_paths::typed::SubPath;
+use bun_paths::SubPath;
 use bun_paths::{self, OSPathSlice};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
@@ -48,7 +48,7 @@ impl FileCopier {
 
     pub(crate) fn copy(&mut self) -> sys::Result<()> {
         let path_error = path_error(sys::Tag::copyfile);
-        let dest_subpath = self.dest_subpath.get().map_err(path_error)?;
+        let dest_subpath = self.dest_subpath.as_path().map_err(path_error)?;
         // `make_open_path` is u8-only; on Windows the OS-unit path is u16 so
         // narrow it via the same infallible `from_w_path` transcode that
         // `bun_sys::make_path_w` uses. Don't synthesise EINVAL on
@@ -58,10 +58,10 @@ impl FileCopier {
         let mut dest_u8_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
         let dest_subpath_u8: &[u8] =
-            bun_paths::string_paths::from_w_path(&mut dest_u8_buf[..], dest_subpath.units())
+            bun_paths::string_paths::from_w_path(&mut dest_u8_buf[..], dest_subpath.slice())
                 .as_bytes();
         #[cfg(not(windows))]
-        let dest_subpath_u8: &[u8] = dest_subpath.as_bytes();
+        let dest_subpath_u8: &[u8] = dest_subpath.slice();
         let dest_dir = match bun_sys::make_path::make_open_path(
             &Dir::cwd(),
             dest_subpath_u8,
@@ -96,18 +96,18 @@ impl FileCopier {
                     _ => continue,
                 }
 
-                let (mut src, mut dest) = (self.src_path.scope(), self.dest_subpath.scope());
-                let below = SubPath::from_os(entry.path.as_slice());
-                let src = src.push(below).get().map_err(path_error)?;
-                let dest = dest.push(below).get().map_err(path_error)?;
+                let (mut src, mut dest) = (self.src_path.save(), self.dest_subpath.save());
+                let below = SubPath::new_unchecked(entry.path.as_slice());
+                let src = src.append(below).as_path().map_err(path_error)?;
+                let dest = dest.append(below).as_path().map_err(path_error)?;
 
                 match entry.kind {
                     EntryKind::Directory => {
                         // SAFETY: FFI — both `z()` are NUL-terminated WStrs.
                         if unsafe {
                             bun_sys::windows::CreateDirectoryExW(
-                                src.z().as_ptr(),
-                                dest.z().as_ptr(),
+                                src.slice_z().as_ptr(),
+                                dest.slice_z().as_ptr(),
                                 ptr::null_mut(),
                             )
                         } == 0
@@ -117,24 +117,17 @@ impl FileCopier {
                         }
                     }
                     EntryKind::File => {
-                        if let Err(first_err) = bun_sys::copy_file::copy_file(src.z(), dest.z()) {
-                            // Retry after creating the parent directory.
-                            // For root-level files (`index.js`,
-                            // `package.json`, `LICENSE`) `dirname` is
-                            // null and there is no missing parent to
-                            // create — `dest_dir` itself was already
-                            // opened above — so the original error is the
-                            // real failure and must propagate. Silently
-                            // continuing here would let a staged
-                            // global-store entry be renamed into place
-                            // with files missing.
+                        if let Err(first_err) =
+                            bun_sys::copy_file::copy_file(src.slice_z(), dest.slice_z())
+                        {
+                            // A root-level file has no parent to create: skipping it would publish a global-store entry with files missing.
                             let Some(entry_dirname) =
                                 bun_paths::Dirname::dirname::<u16>(entry.path.as_slice())
                             else {
                                 return Err(first_err);
                             };
                             let _ = bun_sys::make_path::make_path::<u16>(&dest_dir, entry_dirname);
-                            bun_sys::copy_file::copy_file(src.z(), dest.z())?;
+                            bun_sys::copy_file::copy_file(src.slice_z(), dest.slice_z())?;
                         }
                     }
                     _ => unreachable!(),

@@ -6209,7 +6209,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             debug_assert!(!self.runtime_imports.__require.is_empty());
             let r = self.runtime_identifier_ref(b"__require");
             self.ignore_usage(r);
-            self.ignore_usage(self.require_ref);
+            // `const r = require; typeof r` folds on the revisit that follows
+            // the substitution. The first visit recorded that use of `require`.
+            if !self.is_control_flow_dead {
+                self.ignore_recorded_usage(self.require_ref);
+            }
         }
     }
 
@@ -6811,21 +6815,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn ignore_usage(&mut self, r#ref: Ref) {
         if !self.is_control_flow_dead && !self.is_revisit_for_substitution {
-            debug_assert!((r#ref.inner_index() as usize) < self.symbols.len());
-            self.symbols[r#ref.inner_index() as usize].use_count_estimate = self.symbols
-                [r#ref.inner_index() as usize]
-                .use_count_estimate
-                .saturating_sub(1);
-            if let Some(use_) = self.existing_part_use(r#ref) {
-                use_.subtract(1);
-                if use_.count_estimate() == 0 {
-                    self.forget_part_use(r#ref);
-                }
-            }
+            self.ignore_recorded_usage(r#ref);
         }
 
         // Don't roll back the "tsUseCounts" increment. This must be counted even if
         // the value is ignored because that's what the TypeScript compiler does.
+    }
+
+    /// Takes one use of `ref` back from its count and from the current part.
+    #[inline]
+    fn ignore_recorded_usage(&mut self, r#ref: Ref) {
+        debug_assert!((r#ref.inner_index() as usize) < self.symbols.len());
+        self.symbols[r#ref.inner_index() as usize].use_count_estimate = self.symbols
+            [r#ref.inner_index() as usize]
+            .use_count_estimate
+            .saturating_sub(1);
+        if let Some(use_) = self.existing_part_use(r#ref) {
+            use_.subtract(1);
+            if use_.count_estimate() == 0 {
+                self.forget_part_use(r#ref);
+            }
+        }
     }
 
     pub(crate) fn ignore_usage_of_identifier_in_dot_chain(&mut self, expr: Expr) {

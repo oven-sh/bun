@@ -2575,6 +2575,33 @@ describe("bundler", () => {
       run: { stdout: "object object object 7,7,7" },
     });
 
+    // The minifier moves `require` into `typeof r` and folds it after the
+    // first visit. In folded.js no use of `require` remains, so the file is
+    // no CommonJS file. In removed.js the `require()` call still is a use.
+    itBundled(`cjs2esm/SubstitutedRequireReadFoldsOneUse_${backend}`, {
+      backend,
+      files: {
+        "/entry.js": /* js */ `
+          import "./folded.js";
+          import removed from "./removed.js";
+          console.log(globalThis.folded, typeof removed, globalThis.removed);
+        `,
+        "/folded.js": /* js */ `
+          function f() { const r = require; return typeof r; }
+          globalThis.folded = f();
+        `,
+        "/removed.js": /* js */ `
+          const dep = require("./dep.js");
+          (function () { const r = require; return typeof r; });
+          globalThis.removed = dep.value;
+        `,
+        "/dep.js": `exports.value = 7;`,
+      },
+      minifySyntax: true,
+      cjs2esm: { unhandled: ["/removed.js", "/dep.js"] },
+      run: { stdout: "function object 7" },
+    });
+
     // `var impl = require()` becomes an import and leaves its statement
     // empty. A use in a function above it is still a use.
     itBundled(`cjs2esm/UseAboveUnwrappedRequireDeclaration_${backend}`, {

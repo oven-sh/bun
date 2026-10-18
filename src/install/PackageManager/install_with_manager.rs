@@ -1709,7 +1709,7 @@ fn enqueue_row(manager: &mut PackageManager, row: DependencyID) {
     }
 }
 
-/// Runs when all else is resolved: a row that `clean` discards must not ask the registry.
+/// Runs when the queue is empty: a row that `clean` discards must not ask the registry.
 #[cold]
 #[inline(never)]
 fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) {
@@ -1865,7 +1865,8 @@ fn settle_only_peers(
 
 #[derive(Default)]
 struct NamedUpdates {
-    /// Rows paired with the package that theirs replaces, for redirect_moved_edges and print_plan.
+    /// Rows paired with the package that theirs replaces, for redirect_moved_edges, print_plan and
+    /// the security scan.
     moved: Vec<(DependencyID, PackageID)>,
     /// `--latest` only: every in-scope row naming a requested package, for refresh_children_of_named.
     latest_rows: Vec<DependencyID>,

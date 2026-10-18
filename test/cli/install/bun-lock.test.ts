@@ -4976,6 +4976,36 @@ it.concurrent.each([
   },
 );
 
+it.concurrent(
+  "a dependency follows the alias of the project next to a peer on a newer version of its package",
+  async () => {
+    const manifests: Manifests = {
+      a: { "1.0.0": { peerDependencies: { short: "^1.8.0" } } },
+      b: { "1.0.0": { dependencies: { kept: "~1.5.0" } } },
+      short: { "1.5.0": {}, "1.9.0": {} },
+    };
+    using registry = await serveRegistry(manifests);
+    const published = manifests.short;
+    manifests.short = { "1.5.0": {} };
+    const packageJson = (dependencies: object) => ({
+      name: "foo",
+      dependencies: { ...dependencies, kept: "npm:short@^1.5.0" },
+    });
+    using dir = projectOn(registry, { "package.json": packageJson({}) });
+    const cwd = String(dir);
+    await installWithOwnCache(cwd);
+
+    manifests.short = published;
+    await rm(join(cwd, ".bun-cache"), { recursive: true });
+    await write(join(cwd, "package.json"), JSON.stringify(packageJson({ a: "1.0.0", b: "1.0.0" })));
+    const { err } = await installWithOwnCache(cwd);
+    expect(err).not.toContain("error:");
+    const lock = await file(join(cwd, "bun.lock")).text();
+    expect(instancesOf(lock, "kept")).toEqual({ "kept": "short@1.5.0" });
+    expect(instancesOf(lock, "short")).toEqual({ "short": "short@1.9.0" });
+  },
+);
+
 it.concurrent("an optional peer of the project does not take the version of another peer away", async () => {
   using registry = await serveRegistry({
     a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
@@ -5444,6 +5474,24 @@ it.concurrent("an edited override is applied after a manifest has failed and bun
   await editOverride(cwd, "z", "1.0.0", "2.0.0");
   await installWithOwnCache(cwd);
   expect(instancesOf(await file(join(cwd, "bun.lock")).text(), "z")).toEqual({ "z": "z@2.0.0" });
+});
+
+it.concurrent("the version of an edited override says why a manifest that has failed before is missing", async () => {
+  using registry = await serveRegistry({
+    a: { "1.0.0": { dependencies: { z: "^1.0.0" } } },
+    n: { "1.0.0": { optionalDependencies: { gone: "1.0.0" } } },
+    z: { "1.0.0": {}, "2.0.0": { dependencies: { gone: "1.0.0" } } },
+  });
+  const project = { name: "foo", dependencies: { a: "1.0.0" }, overrides: { z: "1.0.0" } };
+  using dir = projectOn(registry, { "package.json": project });
+  const cwd = String(dir);
+  await installWithOwnCache(cwd);
+
+  await write(join(cwd, "package.json"), JSON.stringify({ ...project, dependencies: { a: "1.0.0", n: "1.0.0" } }));
+  await editOverride(cwd, "z", "1.0.0", "2.0.0");
+  const { err, code } = await runWithOwnCache(cwd, "install");
+  expect(err.split("\n").filter(line => line.startsWith("error:"))).toEqual([`error: GET ${registry.url}gone - 404`]);
+  expect(code).toBe(1);
 });
 
 it.concurrent(

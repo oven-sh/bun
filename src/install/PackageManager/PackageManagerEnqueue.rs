@@ -1061,7 +1061,8 @@ fn takes_alias_target(
     if links_workspace(this, name_hash, &aliased.npm().version) {
         return Ok(links_workspace(this, name_hash, declared));
     }
-    if let Some(id) = lockfile.package_satisfying(name_hash, aliased, |_| true) {
+    let is_decided = |id| !lockfile.is_only_for_peers(id);
+    if let Some(id) = lockfile.package_satisfying(name_hash, aliased, is_decided) {
         let bound = lockfile.packages.items_resolution()[id as usize]
             .npm()
             .version;
@@ -4219,9 +4220,15 @@ impl PackageManager {
     #[cold]
     pub(crate) fn log_held(&mut self) {
         use bun_ast::Kind;
+        use package_manager_real::FailureReport as Report;
         let held = self.held_messages.take().unwrap_or_default();
         if held.is_empty() {
             return;
+        }
+        for failure in self.manifest_failures.values_mut() {
+            if failure.reported == Report::Held {
+                failure.reported = Report::NotYet;
+            }
         }
         let lockfile = &*self.lockfile;
         let all = reachable::Options::all(0);
@@ -4251,9 +4258,8 @@ impl PackageManager {
                 HeldAbout::Package(_) => true,
                 // A dependency of the project needed the manifest later on and logged the error.
                 HeldAbout::Task(id)
-                    if (self.manifest_failures.get(&id)).is_some_and(|failure| {
-                        failure.reported == package_manager_real::FailureReport::Errored
-                    }) =>
+                    if (self.manifest_failures.get(&id))
+                        .is_some_and(|failure| failure.reported == Report::Errored) =>
                 {
                     continue;
                 }
@@ -4295,6 +4301,7 @@ impl PackageManager {
                     _ => true,
                 },
             };
+            let mut reported = Report::Warned;
             for mut msg in msgs {
                 // It is still printed, as a warning, because the missing package may have changed
                 // how other dependencies were resolved.
@@ -4302,11 +4309,19 @@ impl PackageManager {
                     msg.kind = Kind::Warn;
                 }
                 match msg.kind {
-                    Kind::Err => log.errors += 1,
+                    Kind::Err => {
+                        log.errors += 1;
+                        reported = Report::Errored;
+                    }
                     Kind::Warn => log.warnings += 1,
                     _ => {}
                 }
                 log.msgs.push(msg);
+            }
+            if let HeldAbout::Task(id) = about
+                && let Some(failure) = self.manifest_failures.get_mut(&id)
+            {
+                failure.reported = reported;
             }
         }
     }

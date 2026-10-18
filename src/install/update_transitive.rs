@@ -546,10 +546,10 @@ struct Row {
     later: Box<[u8]>,
 }
 
-/// `rows` resolve to versions that `bun update` added for a peer. Pairs each with the version of
-/// that package in `bun.lock` that nothing depends on any more, and registers that one for its
-/// update row. Runs when all is resolved: the pairs are for `print_plan`, no other dependency
-/// follows them.
+/// `rows` resolve to versions that `bun update` added for a peer. Pairs each with the highest
+/// version of that package in `bun.lock` that nothing in the tree resolves to, and registers that
+/// one for its update row. Runs when all is resolved: the pairs are for `print_plan` and the
+/// security scan, no other dependency follows them.
 pub(crate) fn register_replaced_by(
     manager: &mut PackageManager,
     rows: &[DependencyID],

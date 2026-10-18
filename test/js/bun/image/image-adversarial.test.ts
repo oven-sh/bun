@@ -1289,11 +1289,22 @@ describe("palette PNG of colours built to share slots of the colour table", () =
   // Colour number `i` of a set that the hash spreads over the table.
   const spread = (i: number) => (i | 0xff000000) >>> 0;
   const pixelsOf = (keys: Uint32Array) => new Uint8Array(keys.buffer);
-  const pngOf = (w: number, h: number, keys: Uint32Array) =>
-    makePng(w, h, (x, y) => {
-      const key = keys[y * w + x];
-      return [key & 255, (key >>> 8) & 255, (key >>> 16) & 255, key >>> 24];
-    });
+  // A row at a time: a callback per pixel takes most of the test in a debug
+  // build.
+  const pngOf = (w: number, h: number, keys: Uint32Array) => {
+    const ihdr = new Uint8Array(13);
+    new DataView(ihdr.buffer).setUint32(0, w);
+    new DataView(ihdr.buffer).setUint32(4, h);
+    ihdr.set([8, 6], 8);
+    const raw = new Uint8Array(h * (1 + w * 4));
+    for (let y = 0; y < h; y++) raw.set(pixelsOf(keys).subarray(y * w * 4, (y + 1) * w * 4), y * (1 + w * 4) + 1);
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      pngChunk("IHDR", ihdr),
+      pngChunk("IDAT", zlib.deflateSync(raw)),
+      pngChunk("IEND", new Uint8Array(0)),
+    ]);
+  };
   // How many times the processor time of `control` the palette encode of
   // `hostile` takes. A child process measures it: on a busy machine the
   // clock says little.
@@ -1340,8 +1351,12 @@ describe("palette PNG of colours built to share slots of the colour table", () =
     // slots and the growth to 256 slots 2,080, which is over 4 for each of
     // 792 pixels.
     const [w, h, colors] = [256, 256, 16];
-    const hostile = Uint32Array.from({ length: w * h }, (_, i) => withHash(0x5a5a0000 | Math.floor(i / 12)));
-    const control = Uint32Array.from({ length: w * h }, (_, i) => spread(Math.floor(i / 12)));
+    const runs = (colour: (j: number) => number) => {
+      const keys = new Uint32Array(w * h);
+      for (let j = 0; j * 12 < keys.length; j++) keys.fill(colour(j), j * 12, j * 12 + 12);
+      return keys;
+    };
+    const [hostile, control] = [runs(j => withHash(0x5a5a0000 | j)), runs(spread)];
     expect([quantizeRoute(pixelsOf(hostile), colors), quantizeRoute(pixelsOf(control), colors)]).toEqual([
       65 * 12,
       w * h,
@@ -1356,12 +1371,13 @@ describe("palette PNG of colours built to share slots of the colour table", () =
     // 500 slots. No insert is slow here: the budget has to count the lookups
     // too. It stops the count after 148 of them.
     const [w, h, colors, flat, chain] = [256, 256, 3, 24000, 500];
-    const fill = (slot: number) =>
-      Uint32Array.from({ length: w * h }, (_, i) => {
-        if (i < flat) return withHash((900 << 22) | 0x77);
-        if ((i -= flat) < chain) return withHash(((100 + i) << 22) | 0x1234);
-        return withHash(((slot + (i & 1)) << 22) | 0x4321);
-      });
+    const fill = (slot: number) => {
+      const keys = new Uint32Array(w * h).fill(withHash((900 << 22) | 0x77), 0, flat);
+      for (let i = 0; i < chain; i++) keys[flat + i] = withHash(((100 + i) << 22) | 0x1234);
+      const pair = [0, 1].map(j => withHash(((slot + j) << 22) | 0x4321));
+      for (let i = flat + chain; i < keys.length; i++) keys[i] = pair[(i - flat - chain) & 1];
+      return keys;
+    };
     // In the control the two colours start at free slots.
     const [hostile, control] = [fill(100), fill(700)];
     expect([quantizeRoute(pixelsOf(hostile), colors), quantizeRoute(pixelsOf(control), colors)]).toEqual([
@@ -1382,13 +1398,16 @@ describe("palette PNG of colours built to share slots of the colour table", () =
     // mapping pass, which has no budget of its own, would walk 510 slots.
     const [w, h, colors, grown, chain] = [256, 256, 16, 511, 510];
     const alternating = w * h - grown - chain - 2;
-    const fill = (hostile: boolean) =>
-      Uint32Array.from({ length: w * h }, (_, i) => {
-        if (i < alternating) return withHash(((2046 + (i & 1)) << 21) | (i & 1));
-        if ((i -= alternating) < grown) return spread(i);
-        if ((i -= grown) < chain) return hostile ? withHash((2046 << 21) | (0x100 + 2 * i)) : spread(0x10000 + i);
-        return spread(grown + i - chain);
-      });
+    const fill = (hostile: boolean) => {
+      const keys = new Uint32Array(w * h);
+      const pair = [0, 1].map(j => withHash(((2046 + j) << 21) | j));
+      for (let i = 0; i < alternating; i++) keys[i] = pair[i & 1];
+      for (let i = 0; i < grown; i++) keys[alternating + i] = spread(i);
+      const chained = (i: number) => (hostile ? withHash((2046 << 21) | (0x100 + 2 * i)) : spread(0x10000 + i));
+      for (let i = 0; i < chain; i++) keys[alternating + grown + i] = chained(i);
+      for (let i = 0; i < 2; i++) keys[alternating + grown + chain + i] = spread(grown + i);
+      return keys;
+    };
     const [hostile, control] = [fill(true), fill(false)];
     expect([quantizeRoute(pixelsOf(hostile), colors), quantizeRoute(pixelsOf(control), colors)]).toEqual([
       w * h,

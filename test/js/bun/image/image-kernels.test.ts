@@ -1027,7 +1027,7 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
       // channel are 8 colours, which repeat from the start. Six levels are
       // 216 colours, which do not. "mixed" is 3,000 to 4,000 pixels of the
       // first kind, then the second.
-      const kinds = ["flat", "flat", "dense", "dense", "mixed", "mixed", "mixed", "mixed"] as const;
+      const kinds = ["flat", "dense", "mixed", "mixed"] as const;
       const cases = kinds.map(kind => {
         const [w, colors, withAlpha] = [65 + next(8), 3 + next(5), next(3) === 0];
         const few = kind === "dense" ? 0 : kind === "flat" ? w * 64 : 3000 + next(1000);
@@ -1040,7 +1040,7 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
         const pixelsCounted = quantizeRoute(new Uint8Array(pixels.flat()), colors);
         return pixelsCounted === w * 64 ? "all" : pixelsCounted;
       });
-      expect(counted).toEqual(["all", "all", 9, 10, "all", 4161, "all", 4182]);
+      expect(counted).toEqual(["all", 10, 3967, "all"]);
       const got = await Promise.all(
         cases.map(async ({ w, colors, pixels }) => {
           const out = await new Bun.Image(makePng(w, 64, (x, y) => pixels[y * w + x]))

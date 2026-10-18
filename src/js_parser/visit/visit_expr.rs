@@ -2534,8 +2534,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             return;
         }
-        // A JS/TS source is a worker or import() target, not an asset. A dotfile (`.env`) is
-        // deploy-time configuration, not a file to ship.
+        // Not a JS/TS source (a worker or import() target) and not a dotfile such as `.env`.
         let ext = bun_paths::extension(specifier);
         if [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx"]
             .iter()

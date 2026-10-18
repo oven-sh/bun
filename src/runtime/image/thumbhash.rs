@@ -3,7 +3,7 @@
 //!
 //! ~21–25 bytes encode the low-order DCT coefficients of L/P/Q (luma + two
 //! opponent-colour planes, optionally A) of a ≤100×100 image. Decoding gives a
-//! ≤32px blur with the right average colour, aspect ratio and rough structure.
+//! ≤32px blur with the right average colour, rough aspect ratio and structure.
 //!
 //! `Bun.Image.placeholder()` runs `decode → box-resize ≤100 → encode()` →
 //! `decode()` → PNG-encode → `data:` URL, all on the work pool. The hash
@@ -196,12 +196,37 @@ impl From<DecodeError> for super::codecs::Error {
     }
 }
 
-/// Decode `hash` to a ≤32px RGBA image. Returns `error.DecodeFailed` if the
-/// hash is too short. Output is `bun.default_allocator`-owned.
-pub(crate) fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {
+/// Reads the L count as stored. `decode` raises it to 3 only to lay out the L coefficients.
+fn render_size(hash: &[u8]) -> Result<(u32, u32), DecodeError> {
     if hash.len() < 5 {
         return Err(DecodeError::DecodeFailed);
     }
+    let has_alpha = hash[2] & 0x80 != 0;
+    let land = hash[4] & 0x80 != 0;
+    let l_max: u32 = if has_alpha { 5 } else { 7 };
+    let l_min = (hash[3] & 7) as u32;
+    // `encode` stores at least 1. The reference renders 0 as a zero-sized image.
+    if l_min == 0 {
+        return Err(DecodeError::DecodeFailed);
+    }
+    let (lx, ly) = if land { (l_max, l_min) } else { (l_min, l_max) };
+    let ratio = lx as f32 / ly as f32;
+    let w: u32 = if ratio > 1.0 {
+        32
+    } else {
+        (32.0 * ratio).round() as u32
+    };
+    let h: u32 = if ratio > 1.0 {
+        (32.0 / ratio).round() as u32
+    } else {
+        32
+    };
+    Ok((w, h))
+}
+
+/// Decode `hash` to a ≤32px RGBA image. `DecodeFailed` for a short hash or a stored L count of 0.
+pub(crate) fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {
+    let (w, h) = render_size(hash)?;
     let h24: u32 = hash[0] as u32 | (hash[1] as u32) << 8 | (hash[2] as u32) << 16;
     let h16: u16 = hash[3] as u16 | (hash[4] as u16) << 8;
     let l_dc: f32 = (h24 & 63) as f32 / 63.0;
@@ -247,17 +272,6 @@ pub(crate) fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {
         0
     };
 
-    let ratio = lx as f32 / ly as f32;
-    let w: u32 = if ratio > 1.0 {
-        32
-    } else {
-        (32.0 * ratio).round() as u32
-    };
-    let h: u32 = if ratio > 1.0 {
-        (32.0 / ratio).round() as u32
-    } else {
-        32
-    };
     let mut rgba = vec![0u8; (w as usize) * (h as usize) * 4].into_boxed_slice();
 
     let mut fx = [0.0f32; 7];

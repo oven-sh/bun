@@ -563,6 +563,34 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(exitCode).toBe(0);
   });
 
+  // Bun.write tries a synchronous write on the main thread first. On a
+  // non-blocking pipe that write can stop part way (EAGAIN once the pipe
+  // buffer is full). The async writer must continue after the bytes that are
+  // already in the pipe, not start over. `void process.stdout` puts fd 1 in
+  // non-blocking mode. 200000 bytes is above the 64 KiB pipe buffer and below
+  // the 256 KiB fast-path limit. Real kernel pipes need `sh` (see above).
+  it.skipIf(isWindows).each([
+    ["string", `Buffer.alloc(200000, "x").toString()`],
+    ["Uint8Array", `new Uint8Array(200000)`],
+  ])("Bun.write(Bun.stdout, %s) resumes a partial pipe write at the first unsent byte (#45663)", async (_label, expr) => {
+    const script = `void process.stdout; process.stderr.write(String(await Bun.write(Bun.stdout, ${expr})))`;
+
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `"$BUN" -e ${JSON.stringify(script)} | wc -c`],
+      env: { ...bunEnv, BUN: bunExe() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ piped: stdout.trim(), resolved: stderr.trim() }).toEqual({
+      piped: "200000",
+      resolved: "200000",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("Bun.file(0) survives GC", async () => {
     for (let i = 0; i < 10; i++) {
       let f = Bun.file(0);

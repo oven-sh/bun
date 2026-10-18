@@ -284,11 +284,15 @@ impl WriteFile {
         io::IoRequestLoop::schedule(&mut self.io_request);
     }
 
+    /// `already_written` leading bytes of `bytes_blob` are on the destination
+    /// already. The write loop starts after them. `total_written` counts them,
+    /// so the promise still resolves with the full size.
     #[cfg(not(windows))]
     pub(crate) fn create(
         file_blob: Blob,
         bytes_blob: Blob,
         mkdirp_if_not_exists: bool,
+        already_written: usize,
     ) -> Result<WriteFile, Error> {
         let write_file = WriteFile {
             file_blob,
@@ -305,7 +309,7 @@ impl WriteFile {
             io_request: io::Request::new(Self::on_request_writable),
             io_parking: super::IoParking::new(),
             state: AtomicU8::new(ClosingState::Running as u8),
-            total_written: 0,
+            total_written: already_written,
             could_block: false,
             close_after_io: false,
             mkdirp_if_not_exists,
@@ -1322,6 +1326,7 @@ impl WriteFileWaitFromLockedValueTask {
                         mkdirp_if_not_exists: Some(this.mkdirp_if_not_exists),
                         ..Default::default()
                     },
+                    0,
                 ) {
                     Ok(p) => p,
                     Err(err) => {

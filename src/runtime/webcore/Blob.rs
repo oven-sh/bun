@@ -4320,11 +4320,16 @@ fn write_file_with_empty_source_to_destination(
     ))
 }
 
+/// `already_written` is the count of leading bytes of `source_blob` that are
+/// on the destination already (the main-thread fast path in
+/// [`write_file_internal`] stopped part way). The write starts after them and
+/// the promise resolves with the full count.
 pub(crate) fn write_file_with_source_destination(
     cx: &bun_jsc::JsThread<'_>,
     source_blob: &mut Blob,
     destination_blob: &mut Blob,
     options: &WriteFileOptions,
+    already_written: usize,
 ) -> JsResult<JSValue> {
     let destination_store = destination_blob
         .store
@@ -4337,6 +4342,15 @@ pub(crate) fn write_file_with_source_destination(
     debug_assert!(
         destination_type != store::DataTag::Bytes,
         "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller."
+    );
+    // The fast path only runs for a string or an ArrayBuffer source (a bytes
+    // blob here) and a file destination.
+    debug_assert!(
+        already_written == 0
+            || (destination_type == store::DataTag::File
+                && source_blob.store.get().as_ref().map(|s| s.data.tag())
+                    == Some(store::DataTag::Bytes)),
+        "a partial main-thread write can only hand off to WriteFile"
     );
 
     let Some(source_store) = source_blob.store.get().clone() else {
@@ -4385,6 +4399,7 @@ pub(crate) fn write_file_with_source_destination(
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
+                already_written,
             )
             .expect("unreachable");
             // SAFETY: `write_file_promise` was just produced by heap::alloc above; sole owner.
@@ -4676,83 +4691,60 @@ pub(crate) fn write_file_internal(
     // This is a heuristic, but it's a good one.
     //
     // except if you're on Windows. Windows I/O is slower. Let's not even try.
+    //
+    // The fast path can stop part way (a non-blocking pipe is full). The async
+    // writer below then continues from `already_written`, never from zero.
     #[cfg(not(windows))]
-    {
-        let mut needs_async = false;
+    let already_written: usize = 'fast: {
         let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
             || (matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.offset.get() == 0 && !b.is_s3()
                     && !(b.store.get().is_some()
                         && matches!(b.store().expect("infallible: store present").data, store::Data::File(ref f)
                             if f.mode != 0 && bun_core::kind_from_mode(f.mode) == bun_core::FileKind::File))));
-        if fast_path_ok {
-            if data.is_string() {
-                let len = data.get_length(cx.global())?;
-                if len < 256 * 1024 {
-                    let str = data.to_bun_string(cx.global())?;
-                    let pathlike: &PathOrFileDescriptor = match &*path_or_blob {
-                        PathOrBlob::Path(p) => p,
-                        PathOrBlob::Blob(b) => {
-                            &b.store()
-                                .expect("infallible: store present")
-                                .data
-                                .as_file()
-                                .pathlike
-                        }
-                    };
-                    let result = if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
-                        write_string_to_file_fast::<true>(
-                            cx.global(),
-                            pathlike,
-                            &str,
-                            &mut needs_async,
-                        )
-                    } else {
-                        write_string_to_file_fast::<false>(
-                            cx.global(),
-                            pathlike,
-                            &str,
-                            &mut needs_async,
-                        )
-                    };
-                    if !needs_async {
-                        return Ok(result);
-                    }
-                }
-            } else if let Some(buffer_view) = data.as_array_buffer(cx.global()) {
-                if buffer_view.byte_len < 256 * 1024 {
-                    let pathlike: &PathOrFileDescriptor = match &*path_or_blob {
-                        PathOrBlob::Path(p) => p,
-                        PathOrBlob::Blob(b) => {
-                            &b.store()
-                                .expect("infallible: store present")
-                                .data
-                                .as_file()
-                                .pathlike
-                        }
-                    };
-                    let result = if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
-                        write_bytes_to_file_fast::<true>(
-                            cx.global(),
-                            pathlike,
-                            buffer_view.byte_slice(),
-                            &mut needs_async,
-                        )
-                    } else {
-                        write_bytes_to_file_fast::<false>(
-                            cx.global(),
-                            pathlike,
-                            buffer_view.byte_slice(),
-                            &mut needs_async,
-                        )
-                    };
-                    if !needs_async {
-                        return Ok(result);
-                    }
-                }
-            }
+        if !fast_path_ok {
+            break 'fast 0;
         }
-    }
+        let pathlike: &PathOrFileDescriptor = match &*path_or_blob {
+            PathOrBlob::Path(p) => p,
+            PathOrBlob::Blob(b) => {
+                &b.store()
+                    .expect("infallible: store present")
+                    .data
+                    .as_file()
+                    .pathlike
+            }
+        };
+        let result = if data.is_string() {
+            let len = data.get_length(cx.global())?;
+            if len >= 256 * 1024 {
+                break 'fast 0;
+            }
+            let str = data.to_bun_string(cx.global())?;
+            if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
+                write_string_to_file_fast::<true>(cx.global(), pathlike, &str)
+            } else {
+                write_string_to_file_fast::<false>(cx.global(), pathlike, &str)
+            }
+        } else if let Some(buffer_view) = data.as_array_buffer(cx.global()) {
+            if buffer_view.byte_len >= 256 * 1024 {
+                break 'fast 0;
+            }
+            if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
+                write_bytes_to_file_fast::<true>(cx.global(), pathlike, buffer_view.byte_slice())
+            } else {
+                write_bytes_to_file_fast::<false>(cx.global(), pathlike, buffer_view.byte_slice())
+            }
+        } else {
+            break 'fast 0;
+        };
+        match result {
+            FastWrite::Settled(value) => return Ok(value),
+            FastWrite::NeedsAsync { written } => written,
+        }
+    };
+    #[cfg(windows)]
+    let already_written: usize = 0;
 
     // if path_or_blob is a path, convert it into a file blob
     let mut destination_blob: Blob = match path_or_blob {
@@ -5014,7 +5006,13 @@ pub(crate) fn write_file_internal(
     // RefPtr<Store> clone+drop keeps the destination store alive across the call.
     let _dest_hold = destination_store;
 
-    write_file_with_source_destination(cx, &mut *source_blob, &mut destination_blob, &options)
+    write_file_with_source_destination(
+        cx,
+        &mut *source_blob,
+        &mut destination_blob,
+        &options,
+        already_written,
+    )
 }
 
 fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult<()> {
@@ -5138,13 +5136,23 @@ pub(crate) fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) ->
 
 const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 
+/// Outcome of the main-thread write attempt in [`write_file_internal`].
+#[cfg(not(windows))]
+enum FastWrite {
+    /// The write settled on the main thread: a resolved or rejected promise.
+    Settled(JSValue),
+    /// The destination would block, or the path needs a `mkdir`. The write
+    /// continues off the main thread. `written` bytes are already on the
+    /// destination, so the async writer starts after them.
+    NeedsAsync { written: usize },
+}
+
 #[cfg(not(windows))]
 fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     str: &BunString,
-    needs_async: &mut bool,
-) -> JSValue {
+) -> FastWrite {
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
     } else {
@@ -5159,14 +5167,15 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *needs_async = true;
-                    return JSValue::ZERO;
+                    return FastWrite::NeedsAsync { written: 0 };
                 }
-                return JSPromise::rejected_promise(
-                    global_this,
-                    err.with_path(pathlike.path().slice()).to_js(global_this),
-                )
-                .to_js();
+                return FastWrite::Settled(
+                    JSPromise::rejected_promise(
+                        global_this,
+                        err.with_path(pathlike.path().slice()).to_js(global_this),
+                    )
+                    .to_js(),
+                );
             }
         }
     };
@@ -5203,21 +5212,27 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
                 bun_sys::Result::Err(err) => {
                     truncate.set(false);
                     if err.get_errno() == bun_sys::E::EAGAIN {
-                        *needs_async = true;
-                        return JSValue::ZERO;
+                        return FastWrite::NeedsAsync {
+                            written: written.get(),
+                        };
                     }
                     let err_js = if !NEEDS_OPEN {
                         err.to_js(global_this)
                     } else {
                         err.with_path(pathlike.path().slice()).to_js(global_this)
                     };
-                    return JSPromise::rejected_promise(global_this, err_js).to_js();
+                    return FastWrite::Settled(
+                        JSPromise::rejected_promise(global_this, err_js).to_js(),
+                    );
                 }
             }
         }
     }
 
-    JSPromise::resolved_promise_value(global_this, JSValue::js_number(written.get() as f64))
+    FastWrite::Settled(JSPromise::resolved_promise_value(
+        global_this,
+        JSValue::js_number(written.get() as f64),
+    ))
 }
 
 #[cfg(not(windows))]
@@ -5225,8 +5240,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     bytes: &[u8],
-    needs_async: &mut bool,
-) -> JSValue {
+) -> FastWrite {
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
     } else {
@@ -5244,14 +5258,15 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *needs_async = true;
-                    return JSValue::ZERO;
+                    return FastWrite::NeedsAsync { written: 0 };
                 }
-                return JSPromise::rejected_promise(
-                    global_this,
-                    err.with_path(pathlike.path().slice()).to_js(global_this),
-                )
-                .to_js();
+                return FastWrite::Settled(
+                    JSPromise::rejected_promise(
+                        global_this,
+                        err.with_path(pathlike.path().slice()).to_js(global_this),
+                    )
+                    .to_js(),
+                );
             }
         }
     };
@@ -5274,15 +5289,16 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             }
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::EAGAIN {
-                    *needs_async = true;
-                    return JSValue::ZERO;
+                    return FastWrite::NeedsAsync { written };
                 }
                 let err_js = if !NEEDS_OPEN {
                     err.to_js(global_this)
                 } else {
                     err.with_path(pathlike.path().slice()).to_js(global_this)
                 };
-                return JSPromise::rejected_promise(global_this, err_js).to_js();
+                return FastWrite::Settled(
+                    JSPromise::rejected_promise(global_this, err_js).to_js(),
+                );
             }
         }
     }
@@ -5291,7 +5307,10 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         let _ = bun_sys::ftruncate(fd, i64::try_from(written).expect("int cast"));
     }
 
-    JSPromise::resolved_promise_value(global_this, JSValue::js_number(written as f64))
+    FastWrite::Settled(JSPromise::resolved_promise_value(
+        global_this,
+        JSValue::js_number(written as f64),
+    ))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

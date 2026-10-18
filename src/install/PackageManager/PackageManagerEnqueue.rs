@@ -3408,11 +3408,20 @@ fn settle_without_manifest(
         } else {
             ranges_of_every_asker(this, dependency, dependency_id)
         };
-        // If no installed version satisfies every range, the registry may have one.
+        // If no installed version satisfies every range, the registry may have one, unless two of
+        // the ranges don't overlap. Then the result is the same with and without the manifest.
         let existing_id = if ranges.is_empty() {
             installed_peer_target(this, name_hash, version, dependency_id)
         } else {
-            installed_version_in_ranges(&this.lockfile, name_hash, version, &ranges)
+            let lockfile: &Lockfile::Lockfile = &this.lockfile;
+            installed_version_in_ranges(lockfile, name_hash, version, &ranges).or_else(|| {
+                if !has_disjoint_ranges(lockfile, &ranges) {
+                    return None;
+                }
+                installed_peer_target(this, name_hash, version, dependency_id).or_else(|| {
+                    installed_version_in_any_range(lockfile, name_hash, dependency_id, &ranges)
+                })
+            })
         };
         if let Some(existing_id) = existing_id {
             return Some(Settled::Package(existing_id));
@@ -4050,6 +4059,14 @@ fn installed_version_in_ranges(
         resolution.tag == ResolutionTag::Npm
             && (ranges.iter())
                 .all(|range| (range.npm().version).satisfies(resolution.npm().version, buf, buf))
+    })
+}
+
+/// Returns true if two of the ranges have no version in common.
+fn has_disjoint_ranges(lockfile: &Lockfile::Lockfile, ranges: &[dependency::Version]) -> bool {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    ranges.iter().enumerate().any(|(i, a)| {
+        (ranges[i + 1..].iter()).any(|b| !a.npm().version.intersects(buf, &b.npm().version, buf))
     })
 }
 

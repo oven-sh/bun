@@ -2609,6 +2609,36 @@ test.concurrent.each(["hoisted", "isolated"])(
   },
 );
 
+// hostdom needs host@2 and lib needs host@1, so no version can satisfy both, and lib shares the installed host@2. The
+// registry can't change that, so it isn't asked about host, and it doesn't matter that it can't answer.
+test.concurrent("peers whose ranges don't overlap are resolved without a request for their manifest", async () => {
+  using graph = await serveGraph({
+    host: { "1.5.0": {}, "2.1.0": {} },
+    holder: { "1.0.0": { dependencies: { host: "2.1.0" } } },
+    hostdom: { "2.1.0": { peerDependencies: { host: "^2.1.0" } } },
+    lib: { "1.0.0": { peerDependencies: { host: "^1.0.0" } } },
+  });
+  let isHostDown = false;
+  using server = Bun.serve({
+    port: 0,
+    fetch: request =>
+      isHostDown && new URL(request.url).pathname === "/host"
+        ? new Response("not found", { status: 404 })
+        : fetch(new URL(new URL(request.url).pathname, graph.url)),
+  });
+  using tmp = tempDir("hoist-disjoint-peers-no-request", {
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({ name: "root", dependencies: { holder: "1.0.0", hostdom: "2.1.0" } }),
+  });
+  const dir = String(tmp);
+  await run(dir, "install");
+
+  isHostDown = true;
+  await rm(join(dir, ".bun-cache"), { recursive: true, force: true });
+  await run(dir, "add", "lib@1.0.0");
+  expect(layout(dir)).toEqual(["holder@1.0.0", "host@2.1.0", "hostdom@2.1.0", "lib@1.0.0"]);
+});
+
 test.concurrent("a package stays under the host that bundles the version that its peer accepts", async () => {
   const host = {
     name: "host",

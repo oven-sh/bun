@@ -416,18 +416,21 @@ const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
  * Version 13. added support for ErrorInstance objects.
  * Version 14. Date, RegExp, Error, DOMException, CryptoKey, KeyObject, X509Certificate,
  * and Bun cloneable types are recorded in the object reference pool on both sides.
+ * Without a new version: an ErrorInstance that has no line, column or sourceURL is marked with ErrorWithoutPosition.
  */
 [[maybe_unused]] static constexpr unsigned CurrentVersion = 14;
 // Deserializers must not pool the version 14 terminal types for older payloads,
 // whose writers never counted them, or the pool indices stop matching the writer's.
 [[maybe_unused]] static constexpr unsigned FirstVersionWithPooledTerminals = 14;
 [[maybe_unused]] static constexpr unsigned TerminatorTag = 0xFFFFFFFF;
-[[maybe_unused]] static constexpr int32_t ErrorWithoutPosition = -1;
 [[maybe_unused]] static constexpr unsigned StringPoolTag = 0xFFFFFFFE;
 [[maybe_unused]] static constexpr unsigned NonIndexPropertiesTag = 0xFFFFFFFD;
 
 // The high bit of a StringData's length determines the character size.
 static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
+
+// In place of the 0 or 1 before a nullable sourceURL. Earlier readers take it for 1, and would refuse every payload of a new version.
+static constexpr int32_t ErrorWithoutPosition = -1;
 
 /*
  * Object serialization is performed according to the following grammar, all tags
@@ -1263,7 +1266,6 @@ private:
                 writeNullableString(message);
                 write(line);
                 write(column);
-                // In place of the 1 of a null sourceURL, which is what released readers take it for.
                 if (hasPosition)
                     writeNullableString(sourceURL);
                 else
@@ -3734,13 +3736,11 @@ private:
                 fail();
                 return JSValue();
             }
-            const uint8_t* afterFlag = m_ptr;
+            const uint8_t* flagPtr = m_ptr;
             int32_t flag;
-            bool hasPosition = !readLittleEndian(afterFlag, m_end, flag) || flag != ErrorWithoutPosition;
-            if (!hasPosition)
-                m_ptr = afterFlag;
+            bool hasPosition = !readLittleEndian(flagPtr, m_end, flag) || flag != ErrorWithoutPosition;
             String sourceURL;
-            if (hasPosition && !readNullableString(sourceURL)) {
+            if (!readNullableString(sourceURL)) {
                 fail();
                 return JSValue();
             }

@@ -1001,15 +1001,36 @@ describe("Error serialization semantics", () => {
     { line: 0 },
     { column: 0 },
     { sourceURL: "" },
-  ])("%j is cloned", position => {
+  ])("with %j the clone has line and column", position => {
     const e = Object.assign(errorWithoutPosition(), position);
     expect(ownNames(structuredClone(e))).toEqual(["column", "line", "message", "stack"]);
+  });
+
+  describe("between versions of Bun", () => {
+    // serialize() of it with the stack "Error: message", written by Bun 1.4.3. The flag of its null sourceURL is at 29.
+    const writtenByBun143 = "DgAAADcAAAAAAAcAAIBtZXNzYWdlAAAAAAAAAAABAAAAAAAAAA4AAIBFcnJvcjogbWVzc2FnZQ==";
+
+    test("an error without them is written as before, but for a flag that earlier readers take for the same", () => {
+      const bytes = Buffer.from(serialize(Object.assign(errorWithoutPosition(), { stack: "Error: message" })));
+      expect(bytes.readInt32LE(29)).toBe(-1);
+      bytes.writeInt32LE(1, 29);
+      expect(bytes.toString("base64")).toBe(writtenByBun143);
+    });
+
+    test("what an earlier writer wrote for it is read with line and column", () => {
+      expect(ownNames(deserialize(Buffer.from(writtenByBun143, "base64")))).toEqual([
+        "column",
+        "line",
+        "message",
+        "stack",
+      ]);
+    });
   });
 
   // It adds frames to an error whose stack has not been made yet.
   test("a stream that is errored with a clone without line, column and sourceURL leaves it as it is", async () => {
     const e = errorWithoutPosition();
-    const cloned = Object.freeze(structuredClone(e));
+    const cloned = structuredClone(e);
     const reader = new ReadableStream({ pull: controller => controller.error(cloned) }).getReader();
     expect(await reader.read().catch(error => error)).toBe(cloned);
     expect(ownNames(cloned)).toEqual(["message", "stack"]);

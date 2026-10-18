@@ -46,8 +46,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_setNextScriptExecutionContextIdentifierForTe
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue identifier = callFrame->argument(0);
-    if (!identifier.isAnyInt() || identifier.asAnyInt() < 2 || identifier.asAnyInt() > std::numeric_limits<uint32_t>::max())
-        return throwVMRangeError(globalObject, scope, "Expected an integer from 2 to 4294967295"_s);
+    if (!identifier.isAnyInt() || identifier.asAnyInt() < 2 || identifier.asAnyInt() >= std::numeric_limits<uint32_t>::max())
+        return throwVMRangeError(globalObject, scope, "Expected an integer from 2 to 4294967294"_s);
     auto previous = WebCore::ScriptExecutionContext::setNextIdentifierForTesting(WebCore::ScriptExecutionContextIdentifier { static_cast<uint32_t>(identifier.asAnyInt()) });
     return JSValue::encode(jsNumber(std::to_underlying(previous)));
 }

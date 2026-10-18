@@ -3546,11 +3546,14 @@ test.concurrent(
 );
 
 // The root's only rows are its two workspace links, which are not dependencies to check.
-test.concurrent("`bun update --depth 0` from a workspace root without -r selects no entries and says so", async () => {
-  const { dir, texts, textsBefore } = await staleMemberGroups();
-  await expectNothingToUpdate(dir, noneSelected(0, "selected by --depth 0"), "--depth", "0");
-  expect(await texts()).toStrictEqual(textsBefore);
-});
+test.concurrent(
+  "`bun update --depth 0` from a workspace root without -r selects no entries and reports that",
+  async () => {
+    const { dir, texts, textsBefore } = await staleMemberGroups();
+    await expectNothingToUpdate(dir, noneSelected(0, "selected by --depth 0"), "--depth", "0");
+    expect(await texts()).toStrictEqual(textsBefore);
+  },
+);
 
 test.concurrent.each(["1", "x", ""])("`bun update --depth=%s` is rejected", async depth => {
   const { dir } = await staleDirectAndTransitive();
@@ -4413,7 +4416,8 @@ test.concurrent("`bun update -i -r` installs the version a workspace member's pe
   expect(exitCode).toBe(0);
 });
 
-// No install can succeed while a member's package.json does not parse. The picker used to be shown all the same, the other package.json files were rewritten, and then the install failed with bun.lock left behind them.
+// No install can succeed while a workspace's package.json doesn't parse. The picker used to be shown anyway, the other
+// package.json files were rewritten, and then the install failed, leaving bun.lock out of date.
 test.concurrent(
   "`bun update -i -r` fails like `bun update -r`, before it offers or writes anything, when a member's package.json cannot be parsed",
   async () => {

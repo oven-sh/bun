@@ -449,7 +449,7 @@ test.concurrent.skipIf(isWindows).each(characters)("--verbose, a file of a packa
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("the mark under a line of a file stands under the place it is about", async () => {
+test.concurrent("the marker under a source line points at the right column", async () => {
   using dir = tempDir("escape-controls-mark", { "package.json": `{ "a${C1}b": 1, oops }` });
   const { stdout, stderr, exitCode } = await run(String(dir), "install");
   const before = `1 | { "a${C1_ESCAPED}b": 1, `;
@@ -459,7 +459,7 @@ test.concurrent("the mark under a line of a file stands under the place it is ab
 });
 
 // It does nothing on a terminal.
-test.concurrent("a NUL stays in the line of a file, and is spelled out in the message", async () => {
+test.concurrent("a NUL is kept in the source line, and is escaped in the message", async () => {
   using dir = tempDir("escape-controls-nul", { "package.json": `{ "name": "app", /*\0*/ a\0b }` });
   const { stderr, exitCode } = await run(String(dir), "install");
   const before = `1 | { "name": "app", /*\0*/ `;

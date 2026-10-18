@@ -1449,7 +1449,7 @@ describe.concurrent("bun run", () => {
       // Takes the name of the directory.
       "blocked/bun-node": "not a directory",
     });
-    // A bun.exe of its own, so that nothing is written beside the one under test.
+    // Uses its own copy of bun.exe, so that nothing is written next to the one being tested.
     const ownBun = (folder: string) => {
       const exe = join(String(dir), folder, "bun.exe");
       try {

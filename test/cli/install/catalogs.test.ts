@@ -2583,7 +2583,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
         const ifNoneMatch = request.headers.get("if-none-match");
         requests.push(ifNoneMatch);
         const etag = `"v${versions.length}"`;
-        // A registry edge that lags behind confirms what the client has.
+        // A registry edge server that lags behind confirms what the client already has.
         if (stale304 && ifNoneMatch !== null) return new Response(null, { status: 304, headers: { etag } });
         return Response.json(
           {
@@ -2717,7 +2717,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
     expect(registry.requests).toEqual([null]);
   });
 
-  test("one request serves the workspace that it helps and the one that it does not", async () => {
+  test("one request serves both the workspace that it helps and the one that it doesn't", async () => {
     const versions = ["1.0.0"];
     using registry = serveMutableRegistry(versions);
     using dir = writeRegistryProject(
@@ -2779,7 +2779,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
     expect(registry.requests).toEqual([null]);
   });
 
-  test("a tag that only a workspace of the name stands in for", async () => {
+  test("a tag that only a workspace with that name can satisfy", async () => {
     using registry = serveMutableRegistry(["1.0.0"]);
     using dir = writeRegistryProject(
       {
@@ -2808,7 +2808,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
 
     await write(join(String(dir), "package.json"), depends(spec));
     registry.requests.length = 0;
-    // The registry may have the version by now, so it is asked before another version stands in.
+    // The registry may have the version by now, so it's asked before another version is used.
     expect(await install(String(dir))).toEqual({
       messages: [],
       exitCode: 0,

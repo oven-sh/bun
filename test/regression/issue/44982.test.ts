@@ -35,8 +35,10 @@ test.skipIf(!isLinux)(
         view.setUint32(136, view.getUint32(136, true) | SA_ONSTACK, true);
         if (symbols.sigaction(SIGPWR, ptr(act), null) !== 0) throw new Error("sigaction write failed");
 
+        // Enough live objects that marking does not finish in the pause that starts the collection, so the
+        // collector thread still owns it when this thread parks and has to suspend this thread for its stack.
         const keep = [];
-        for (let i = 0; i < 10_000; i++) keep.push({ i, s: "x" + i });
+        for (let i = 0; i < 30_000; i++) keep.push({ i, s: "x" + i, tags: ["a" + i, "b" + i] });
         // The GC timer (every 250 ms) requests the idle collection after 1 s of quiet, so by about
         // 1.3 s, and the collector runs it while this thread waits for the timer. BUN_JSC_logGC
         // prints the collection to stderr; the parent checks that one happened between the marks.
@@ -73,7 +75,7 @@ test.skipIf(!isLinux)(
     const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
     const idleWindow = stderr.slice(stderr.indexOf("MARK"), stderr.indexOf("DONE"));
     expect(idleWindow).toContain("=> FullCollection");
-    expect(stdout).toBe("done 10000\n");
+    expect(stdout).toBe("done 30000\n");
     expect(exited).toBe(0);
   },
 );

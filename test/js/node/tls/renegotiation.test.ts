@@ -663,18 +663,22 @@ it.concurrent.each([
     const events: string[] = [];
     const closed = Promise.withResolvers<void>();
     socket.on("secureConnect", () => {
-      events.push(`secureConnect authorized=${socket.authorized}`);
+      events.push(`secureConnect authorized=${socket.authorized} authError=${socket.authorizationError}`);
       socket.end("go");
     });
     socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}: ${err.message}`));
     socket.on("close", (hadError: boolean) => {
-      events.push(`close hadError=${hadError}`);
+      events.push(`close hadError=${hadError} authError=${socket.authorizationError}`);
       closed.resolve();
     });
     socket.resume();
     try {
       await closed.promise;
-      expect(events).toEqual([`secureConnect authorized=${trusted}`, "close hadError=false"]);
+      const authError = trusted ? null : "DEPTH_ZERO_SELF_SIGNED_CERT";
+      expect(events).toEqual([
+        `secureConnect authorized=${trusted} authError=${authError}`,
+        `close hadError=false authError=${authError}`,
+      ]);
     } finally {
       socket.destroy();
       raw?.destroy();

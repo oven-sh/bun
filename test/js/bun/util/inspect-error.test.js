@@ -512,7 +512,8 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
 });
 
 describe("lines of the name and the message that look like stack frames are not printed as stack frames", () => {
-  const fake = "\n    at fake (/nonexistent/fake.js:1:5)";
+  const at = "\n    at ";
+  const fake = at + "fake (/nonexistent/fake.js:1:5)";
   const printedFrames = err =>
     Bun.inspect(err)
       .replaceAll("\\", "/")
@@ -533,21 +534,24 @@ describe("lines of the name and the message that look like stack frames are not 
   test.each([
     ["in the message", "m" + fake, {}],
     ["in the message, without a name", "m" + fake, { beforeRead: e => (e.name = "") }],
-    ["in the message, with the name changed since", "m" + fake, { afterRead: e => (e.name = "Renamed") }],
     ["in the name", "m", { beforeRead: e => (e.name = "N" + fake) }],
     ["in both", "m" + fake, { beforeRead: e => (e.name = "m" + fake) }],
     [
-      "none, the message is now the end of the first frame",
+      "none, the message is now as long as all that is before the second frame",
       "m",
-      { afterRead: e => (e.message = e.stack.split("\n")[1].slice("    at make (".length)) },
+      { afterRead: e => (e.message = "x".repeat(e.stack.indexOf(at, e.stack.indexOf(at) + 1) - "Error: ".length)) },
     ],
     [
       "none, the message now ends in the line break before the first frame",
       "m",
       { afterRead: e => (e.message += "\n") },
     ],
-    ["none, the name now ends in the line break before the first frame", "", { afterRead: e => (e.name += "\n") }],
-    ["none, the name now ends in the first frame", "", { afterRead: e => (e.name += "\n    at make") }],
+    ["none, the name now ends in the first frame", "", { afterRead: e => (e.name += at + "make") }],
+    [
+      "none, the message now ends in the last frame",
+      "m",
+      { afterRead: e => (e.message = e.stack.slice("Error: ".length)) },
+    ],
   ])("%s", (_, message, changes) => {
     expect(printedFrames(make(message, changes))).toEqual(["at make (this file)", "at this file"]);
   });

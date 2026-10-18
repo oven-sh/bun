@@ -351,6 +351,8 @@ static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
     app->setOnSocketClosed([](void* socketData, int is_ssl, struct us_socket_t* rawSocket, int readError, bool peerEnded) -> void {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
+        // A TLS socket's ciphertext that the kernel didn't take is either still held here, or was thrown away on the way here.
+        socket->closedWithUnsentData = !reinterpret_cast<uWS::AsyncSocket<isSSL>*>(rawSocket)->hasFullyDrained() || us_socket_ssl_spill_dropped(rawSocket);
         socket->onClose(readError, peerEnded);
     });
     app->setOnSocketDrain([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
@@ -386,7 +388,7 @@ extern "C" void NodeHTTP_setUsingCustomExpectHandler(bool is_ssl, void* uws_app,
     }
 }
 
-extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::JSGlobalObject* globalObject, bool* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, void* upgrade_ctx, bool isCurrent, void** nodeHttpResponsePtr);
+extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::JSGlobalObject* globalObject, bool* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, bool isCurrent, void** nodeHttpResponsePtr);
 
 template<bool isSSL>
 static EncodedJSValue NodeHTTPServer__onRequest(
@@ -397,7 +399,6 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     JSValue methodString,
     uWS::HttpRequest* request,
     uWS::HttpResponse<isSSL>* response,
-    void* upgrade_ctx,
     void** nodeHttpResponsePtr)
 {
     auto& vm = globalObject->vm();
@@ -418,7 +419,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     const bool isCurrent = !isPipelinedDispatch || !httpResponseData->socketData;
 
     bool hasBody = false;
-    WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, isCurrent, nodeHttpResponsePtr)));
+    WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, isCurrent, nodeHttpResponsePtr)));
     if (!flatHeaders.isEmpty()) {
         NodeHTTPResponse__adoptRawRequestHeaders(*nodeHttpResponsePtr, flatHeaders.span().data(), flatHeaders.size());
     }
@@ -498,7 +499,27 @@ static bool connectionValueHasClose(const WTF::String& value)
     return false;
 }
 
-template<bool isSSL>
+// Headers that user code can't set on a 101 response. HttpResponse::upgrade() writes the handshake headers itself
+// (RFC 6455 4.2.2), and a 1xx response must not have Content-Length or Transfer-Encoding (RFC 9110 8.6).
+static bool isReservedWebSocketUpgradeHeader(WebCore::HTTPHeaderName name)
+{
+    switch (name) {
+    case WebCore::HTTPHeaderName::Upgrade:
+    case WebCore::HTTPHeaderName::Connection:
+    case WebCore::HTTPHeaderName::SecWebSocketAccept:
+    case WebCore::HTTPHeaderName::SecWebSocketKey:
+    case WebCore::HTTPHeaderName::SecWebSocketVersion:
+    case WebCore::HTTPHeaderName::SecWebSocketProtocol:
+    case WebCore::HTTPHeaderName::SecWebSocketExtensions:
+    case WebCore::HTTPHeaderName::ContentLength:
+    case WebCore::HTTPHeaderName::TransferEncoding:
+        return true;
+    default:
+        return false;
+    }
+}
+
+template<bool isSSL, bool forWebSocketUpgrade = false>
 static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res)
 {
     auto& internalHeaders = headers.internalHeaders();
@@ -511,6 +532,10 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
     auto* data = res->getHttpResponseData();
 
     for (const auto& header : internalHeaders.commonHeaders()) {
+        if constexpr (forWebSocketUpgrade) {
+            if (isReservedWebSocketUpgradeHeader(header.key))
+                continue;
+        }
 
         const auto& name = WebCore::httpHeaderNameString(header.key);
         const auto& value = header.value;
@@ -818,7 +843,6 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
     EncodedJSValue methodString,
     uWS::HttpRequest* request,
     uWS::HttpResponse<false>* response,
-    void* upgrade_ctx,
     void** nodeHttpResponsePtr)
 {
     return NodeHTTPServer__onRequest<false>(
@@ -829,7 +853,6 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
         JSValue::decode(methodString),
         request,
         response,
-        upgrade_ctx,
         nodeHttpResponsePtr);
 }
 
@@ -841,7 +864,6 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
     EncodedJSValue methodString,
     uWS::HttpRequest* request,
     uWS::HttpResponse<true>* response,
-    void* upgrade_ctx,
     void** nodeHttpResponsePtr)
 {
     return NodeHTTPServer__onRequest<true>(
@@ -852,7 +874,6 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
         JSValue::decode(methodString),
         request,
         response,
-        upgrade_ctx,
         nodeHttpResponsePtr);
 }
 
@@ -1017,6 +1038,15 @@ extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0
     case UWSResponseKind::H3:
         writeFetchHeadersToStreamResponse<uWS::Http3Response, uWS::Http3ResponseData>(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
         break;
+    }
+}
+
+extern "C" void WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(WebCore::FetchHeaders* arg0, bool isSSL, void* arg1)
+{
+    if (isSSL) {
+        writeFetchHeadersToUWSResponse<true, true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg1));
+    } else {
+        writeFetchHeadersToUWSResponse<false, true>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg1));
     }
 }
 

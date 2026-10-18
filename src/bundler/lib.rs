@@ -384,7 +384,8 @@ bun_dispatch::link_interface! {
         fn origin_path() -> &'static [u8];
         fn loaders() -> *const bun_collections::StringArrayHashMap<bun_ast::Loader>;
         fn eval_source() -> Option<*const bun_ast::Source>;
-        fn main() -> &'static [u8];
+        // The path of the entry module, `None` when there is none (`bun bake`).
+        fn main() -> Option<&'static [u8]>;
         fn read_dir_info_package_json(dir: &[u8]) -> Option<*const bun_resolver::PackageJSON>;
         fn is_blob_url(specifier: &[u8]) -> bool;
         fn resolve_blob(specifier: &[u8]) -> Option<options::OpaqueBlob>;

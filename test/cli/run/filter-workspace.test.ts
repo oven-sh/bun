@@ -321,6 +321,52 @@ describe("bun", () => {
     });
   });
 
+  test.each([
+    ["prescript", ["dep0 prescript: Exited with code 7", "dep0 script: Skipped", "dep0 postscript: Skipped"]],
+    ["script", ["dep0 prescript: Exited with code 0", "dep0 script: Exited with code 7", "dep0 postscript: Skipped"]],
+  ])("a failing %s script skips the rest of its chain, and other packages still run", (failing, lines) => {
+    const scripts = { prescript: "echo ran-pre", script: "echo ran-main", postscript: "echo ran-post" };
+    using dir = tempDir("testworkspace", {
+      dep0: { "package.json": JSON.stringify({ name: "dep0", scripts: { ...scripts, [failing]: "exit 7" } }) },
+      dep1: {
+        "package.json": JSON.stringify({
+          name: "dep1",
+          dependencies: { dep0: "*" },
+          scripts: { script: "echo ran-dependent" },
+        }),
+      },
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "--filter", "*", "script"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = stdout.toString().split("\n");
+    expect(out.filter(line => line.startsWith("dep0 ") && !line.includes("ran-"))).toEqual(lines);
+    expect(out).toContain("dep1 script: ran-dependent");
+    expect(exitCode).toBe(7);
+  });
+
+  test("a failing script doesn't skip scripts in a different package with the same name", () => {
+    using dir = tempDir("testworkspace", {
+      a: { "package.json": JSON.stringify({ name: "same", scripts: { script: "exit 7" } }) },
+      b: { "package.json": JSON.stringify({ name: "same", scripts: { script: "echo ran-b" } }) },
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "--filter", "*", "script"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = stdout.toString().split("\n");
+    expect(out).toContain("same script: ran-b");
+    expect(out).not.toContain("same script: Skipped");
+    expect(exitCode).toBe(7);
+  });
+
   test("respect dependency order", () => {
     using dir = tempDir("testworkspace", {
       dep0: {

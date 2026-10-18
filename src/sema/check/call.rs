@@ -688,6 +688,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn has_correct_arity(
         &mut self,
         s: &CallState<'_>,
+        sig: SigId,
         params: &List<'_, SigParam>,
     ) -> bool {
         let (file, call, node, args) = (s.file, s.call, s.node, s.args);
@@ -702,7 +703,7 @@ impl<'p, 's> Checker<'p, 's> {
         let spread = args.iter().position(|a| a.is_spread());
         let is_incomplete = self.is_call_incomplete(file, call, node);
         let is_open = matches!(params, List::Own(_));
-        self.has_correct_arity_for_count(params, is_open, actual, spread, is_incomplete)
+        self.has_correct_arity_for_count(sig, params, is_open, actual, spread, is_incomplete)
     }
 
     /// `hasCorrectArity` for a call with `actual` arguments. `spread`: the first spread argument.
@@ -710,6 +711,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// is found where tsgo asks for that type.
     fn has_correct_arity_for_count(
         &mut self,
+        sig: SigId,
         params: &[SigParam],
         is_open: bool,
         actual: usize,
@@ -717,13 +719,13 @@ impl<'p, 's> Checker<'p, 's> {
         is_incomplete: bool,
     ) -> bool {
         // Which parameters accept `void` only matters where a required one is omitted. That
-        // `getMinArgumentCount` asks only matters for `get_type_of_parameter` of a pattern, and
-        // where `is_open`.
+        // `getMinArgumentCount` asks only matters for `get_type_of_parameter` of a pattern, for a
+        // type that `params` lacks, and where `is_open`.
         let rest = params.last().filter(|p| p.rest);
         if !is_open
             && spread.is_none()
             && !rest.is_some_and(|p| self.is_tuple(p.ty))
-            && !params.iter().any(SigParam::is_named_by_pattern)
+            && !(params.iter()).any(|p| p.is_named_by_pattern() || p.ty == TypeId::UNRESOLVED)
         {
             if actual > params.len() {
                 return rest.is_some();
@@ -734,7 +736,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let count = self.parameter_count(params);
-        let least = self.min_argument_count(params);
+        let least = self.min_argument_count_asked(Some(sig), params);
         if is_open {
             // `getParameterCount`, then `getMinArgumentCount`: from the last required parameter
             // down to one that does not accept `void`.
@@ -762,7 +764,7 @@ impl<'p, 's> Checker<'p, 's> {
             if is_open && let Some(param) = params.get(i) {
                 self.request_type_of_parameter(param);
             }
-            let Some(ty) = self.param_type_at(params, i) else {
+            let Some(ty) = self.param_type_asked_at(sig, params, i) else {
                 return false;
             };
             if !self.some_type(ty, |_, m| m == TypeId::VOID || m == TypeId::UNRESOLVED) {
@@ -1329,8 +1331,8 @@ impl<'p, 's> Checker<'p, 's> {
         s.candidate_for_type_argument_error = None;
         if s.is_single_non_generic_candidate {
             let candidate = s.candidates[0];
-            let params = self.sig_params(candidate);
-            if !s.type_args.is_empty() || !self.has_correct_arity(s, &params) {
+            let params = self.sig_params_with_first(candidate, 0);
+            if !s.type_args.is_empty() || !self.has_correct_arity(s, candidate, &params) {
                 return None;
             }
             if !self.is_signature_applicable(s, candidate, relation, CheckMode::empty(), false) {
@@ -1342,9 +1344,9 @@ impl<'p, 's> Checker<'p, 's> {
         for index in 0..s.candidates.len() {
             let candidate = s.candidates[index];
             let type_params = self.sig_type_params(candidate);
-            let params = self.sig_params(candidate);
+            let params = self.sig_params_with_first(candidate, 0);
             if !self.has_correct_type_argument_arity(&type_params, s.type_args.len())
-                || !self.has_correct_arity(s, &params)
+                || !self.has_correct_arity(s, candidate, &params)
             {
                 continue;
             }
@@ -1378,8 +1380,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 // The instantiation of a generic rest type can change the arity.
                 if has_generic_rest {
-                    let instantiated = self.sig_params(check_candidate);
-                    if !self.has_correct_arity(s, &instantiated) {
+                    let instantiated = self.sig_params_with_first(check_candidate, 0);
+                    if !self.has_correct_arity(s, check_candidate, &instantiated) {
                         s.candidate_for_argument_arity_error = Some(check_candidate);
                         continue;
                     }
@@ -1401,8 +1403,8 @@ impl<'p, 's> Checker<'p, 's> {
                         &context.inferred_type_params,
                     );
                     if has_generic_rest {
-                        let instantiated = self.sig_params(check_candidate);
-                        if !self.has_correct_arity(s, &instantiated) {
+                        let instantiated = self.sig_params_with_first(check_candidate, 0);
+                        if !self.has_correct_arity(s, check_candidate, &instantiated) {
                             s.candidate_for_argument_arity_error = Some(check_candidate);
                             continue;
                         }
@@ -1927,7 +1929,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> usize {
         let (mut best, mut most): (usize, Option<usize>) = (0, None);
         for (i, &candidate) in candidates.iter().enumerate() {
-            let params = self.sig_params(candidate);
+            let params = self.sig_params_with_first(candidate, 0);
             let count = self.parameter_count(&params);
             if self.has_effective_rest_parameter(&params) || count >= args_count {
                 return i;
@@ -3318,14 +3320,16 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(sig) = resolved.sig else {
             return (self.has_any_flag(resolved.ret)).then_some(TypeId::ANY);
         };
-        let params = self.sig_params(sig);
+        let params = self.sig_params_with_first(sig, 0);
         let param = match params.last() {
             // What `getSpreadArgumentType` pushes for an element of a tuple is more precise.
             Some(last) if last.rest && index + 1 >= params.len() => {
                 self.contextual_indexed_access(last.ty, index + 1 - params.len())
             }
             // `getTypeAtPosition`: where there is no parameter the contextual type is `any`.
-            _ => self.param_type_at(&params, index).unwrap_or(TypeId::ANY),
+            _ => self
+                .param_type_asked_at(sig, &params, index)
+                .unwrap_or(TypeId::ANY),
         };
         Some(self.without_no_infer(param))
     }

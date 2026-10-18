@@ -146,7 +146,7 @@ test("bidirectional traffic through TLS proxy routes large frames via the tunnel
     expect(pongs).toBeGreaterThanOrEqual(REQUIRED);
     expect(pushes).toBeGreaterThanOrEqual(REQUIRED);
 
-    ws.close();
+    ws.close(1000);
     expect(await closed).toBe(1000);
   } finally {
     clearIntervals();

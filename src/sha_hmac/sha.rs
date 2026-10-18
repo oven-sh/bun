@@ -198,8 +198,8 @@ pub mod evp {
     // evp::Algorithm — moved from bun_jsc::api::bun::crypto,
     //   so `csrf` and `sha_hmac::hmac` can name it without
     //   depending upward on bun_jsc/bun_runtime.
-    //   Only the enum + `md()` are lowered; `names` (needs bun.String) and
-    //   the name-lookup map stay in the higher-tier EVP wrapper.
+    //   Only the enum + `md()` are lowered; the name-lookup map stays in the
+    //   higher-tier EVP wrapper.
     // ──────────────────────────────────────────────────────────────────────
 
     /// We do this to avoid asking BoringSSL what the digest name is, because

@@ -137,7 +137,7 @@ const handlers = {
     const reader = new DataViewReader(view, 1);
 
     // The code generating each list is annotated with equivalent "List n"
-    // comments in DevServer.rs's finalize_bundle function.
+    // comments in dev_server/finalize.rs's finalize_bundle function.
 
     // List 1
     const serverSideRoutesUpdated = new Set();
@@ -191,7 +191,9 @@ const handlers = {
     }
     if (isServerSideRouteUpdate) {
       performRouteReload();
-      return;
+      // When the pages also run here (`config.route`), the same edit comes as JavaScript too:
+      // apply it, so Fast Refresh updates the page in place.
+      if (!config.route) return;
     }
     // JavaScript modules
     if (reader.hasMoreData()) {

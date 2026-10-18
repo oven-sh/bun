@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 test.concurrent("child_process ipc", async () => {
   const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc_fixture.js`.text();

@@ -151,6 +151,9 @@ const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 pub(crate) const DEFAULT_STREAM_RESET_BURST: u32 = 1000;
 pub(crate) const DEFAULT_STREAM_RESET_RATE: u32 = 33;
 
+/// More ids than the default budgets let a session refuse: 1002 over the limit, 100 for memory.
+const MAX_REFUSED_IDS: usize = 2048;
+
 #[derive(Clone, Copy)]
 enum ResetBy {
     Peer,
@@ -369,7 +372,7 @@ pub(crate) struct Connection {
     replenish_buf: Vec<(u32, u32)>,
     /// Reused buffer for evicting closed streams after each receive pass (no per-call allocation).
     evict_buf: Vec<u32>,
-    /// Sorted ids of the refused streams. A later frame on one gets no second answer.
+    /// Sorted ids of the last refused streams. A later frame on one gets no second answer.
     refused_ids: Vec<u32>,
 
     preface_received: usize,
@@ -942,6 +945,9 @@ impl Connection {
     /// Ids rise (RFC 9113 5.1.1), so a push keeps the list sorted. Any other id is not kept.
     fn remember_refused(&mut self, stream_id: u32) {
         if self.refused_ids.last().is_none_or(|&last| last < stream_id) {
+            if self.refused_ids.len() == MAX_REFUSED_IDS {
+                self.refused_ids.drain(..MAX_REFUSED_IDS / 2);
+            }
             self.refused_ids.push(stream_id);
         }
     }
@@ -2659,6 +2665,19 @@ mod tests {
         assert!(sink.resets.borrow().is_empty());
         assert!(sink.opens.borrow().is_empty());
         assert!(!sink.too_many_invalid_frames.get());
+    }
+
+    #[test]
+    fn refused_ids_keeps_the_last_ids_only() {
+        let (mut c, sink) = limited(0);
+        c.max_invalid_frames = u32::MAX;
+        let count = MAX_REFUSED_IDS as u32 + 1;
+        for i in 0..count {
+            c.receive(&sink, &request(1 + 2 * i));
+        }
+        assert!(c.refused_ids.len() <= MAX_REFUSED_IDS);
+        assert!(!c.was_refused(1));
+        assert!(c.was_refused(2 * count - 1));
     }
 
     #[test]

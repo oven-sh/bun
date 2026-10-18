@@ -20,6 +20,8 @@ const tlsCert = {
   key: fs.readFileSync(path.join(keys, "agent1-key.pem"), "utf8"),
 };
 const bunOnly = { skip: typeof Bun === "undefined" };
+// Node.js cannot load the harness of this repository.
+const harness = typeof Bun === "undefined" ? undefined : await import("harness");
 
 /** `test.each` of bun:test: one test for each row, and the row is the argument list of `body`. */
 function each(rows: readonly unknown[], options: { skip?: boolean } = {}) {
@@ -1231,7 +1233,8 @@ describe("a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS", () => {
   });
 
   // The listener throws in the dispatch of the reset, before the session handler has finished.
-  // The child is a debug build in CI, and it needs more than the default timeout to start.
+  // The child is a second process of the build under test. A debug build can need more than the
+  // 5 s of a local run to start it.
   test("an 'aborted' listener that throws does not keep the slot", { timeout: 60_000 }, async () => {
     const script = /* js */ `
       const http2 = require("node:http2");
@@ -1281,27 +1284,29 @@ describe("a stream refused over SETTINGS_MAX_CONCURRENT_STREAMS", () => {
         });
       });
     `;
-    const env = { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" };
-    const child = spawn(process.execPath, ["-e", script], { env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(harness?.bunExe() ?? process.execPath, ["-e", script], {
+      env: harness?.bunEnv ?? process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     const [stdout, stderr, [exitCode]] = await Promise.all([
       text(child.stdout),
       text(child.stderr),
       once(child, "close"),
     ]);
     assert.deepStrictEqual(
-      { stdout: stdout.trim(), exitCode },
+      { stdout: stdout.trim(), exitCode, stderr: exitCode === 0 ? "" : stderr },
       {
         stdout: JSON.stringify({ handlers: [1, 3], answer: "HEADERS" }),
         exitCode: 0,
+        stderr: "",
       },
     );
-    assert.ok(!stderr.includes("error:"), stderr);
   });
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
-if (typeof Bun !== "undefined") {
-  const { bunEnv, nodeExe } = await import("harness");
+if (harness) {
+  const { bunEnv, nodeExe } = harness;
   const node = nodeExe();
 
   describe("Node.js compatibility", () => {

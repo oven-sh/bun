@@ -190,6 +190,25 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The script of the page is bundled for the browser, so comp.ts is in the
+  // module graph twice: as an import of the test, and as an import of front.ts.
+  test("change to a file that the test and the script of a page both import selects the test", async () => {
+    using dir = tempDir("test-changed-page", {
+      "package.json": JSON.stringify({ name: "page", type: "module" }),
+      "src/server.ts": `import page from "./page.html";\nexport const routes = { "/": page };\n`,
+      "src/page.html": `<!doctype html><script type="module" src="./front.ts"></script>\n`,
+      "src/front.ts": `import { c } from "./comp";\nconsole.log(c);\n`,
+      "src/comp.ts": `export const c = 3;\n`,
+      "app.test.ts": `import { test, expect } from "bun:test";\nimport { c } from "./src/comp";\nimport { routes } from "./src/server";\ntest("app", () => expect([c, typeof routes]).toEqual([3, "object"]));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "src", "comp.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["app.test.ts"])).toEqual(["app.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("staged changes are picked up", async () => {
     using dir = tempDir("test-changed-staged", fixture);
     initRepo(String(dir));

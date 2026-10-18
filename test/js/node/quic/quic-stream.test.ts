@@ -2,7 +2,16 @@
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, runCommandMaxRSS, withoutAsanQuarantine } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectRssDeltaBelow,
+  isASAN,
+  isDebug,
+  isWindows,
+  runCommandMaxRSS,
+  withoutAsanQuarantine,
+} from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -376,8 +385,10 @@ describe("headers queued before the handshake", () => {
   });
 });
 
-// A debug build takes about 3 s to load node:quic in a fixture.
-const fixtureTimeout = 60_000;
+// Each fixture spawns bun and loads node:quic. On an ASAN debug build that
+// takes 1.5 s, the handshake 0.9 s more, and a test 3 to 6 s in all. The
+// default of 5 s is too short for that, so these tests set their own ceiling.
+const fixtureTimeout = 20_000;
 
 // The native side keeps the unsent body of a stream in one queue. Every write
 // to lsquic used to copy all of that queue first, and setBody() copied the
@@ -431,6 +442,24 @@ describe("a large body handed to a stream in one piece", () => {
       // About 1 when a write costs what lsquic takes. 6 and up, whatever the
       // build, when every write copies the queue first.
       expect(whole / pieces).toBeLessThan(4);
+    },
+    fixtureTimeout,
+  );
+});
+
+// Once the FIN of a stream has gone to lsquic, nothing is written to its
+// queue again. The queue's allocation must go with the FIN, not with the GC
+// of the stream object. The fixture keeps six finished streams of 8 MiB
+// alive.
+describe("the queue of a finished stream", () => {
+  test(
+    "is freed when its FIN goes out",
+    async () => {
+      // 50 MiB and up on every build while the queues stay. 7 to 20 MiB measured without them.
+      await expectRssDeltaBelow(["--no-warnings", join(import.meta.dir, "outbound-body-release-fixture.ts"), "6"], {
+        release: 35,
+        debug: 35,
+      });
     },
     fixtureTimeout,
   );

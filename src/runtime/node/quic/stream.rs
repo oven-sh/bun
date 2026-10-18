@@ -490,12 +490,16 @@ impl QuicStream {
             if end == PendingEnd::Fin {
                 s.shutdown(1);
                 self.wrote_to_lsquic.set(true);
-                self.outbound.with_mut(|o| o.end = PendingEnd::None);
+                self.outbound.with_mut(|o| {
+                    o.clear();
+                    o.end = PendingEnd::None;
+                });
                 self.with_state(|s| s.fin_sent = 1);
                 if self.stream_id() & STREAM_ID_UNI_BIT != 0 {
                     s.shutdown(0);
                 }
             } else if end == PendingEnd::Trailers && !self.trailers_requested.replace(true) {
+                self.outbound.with_mut(|o| o.clear());
                 if let Some(session) = self.session_ref() {
                     session.push_event(SessionEvent::StreamWantsTrailers {
                         stream: core::ptr::from_ref(self).cast_mut(),

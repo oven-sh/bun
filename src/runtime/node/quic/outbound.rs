@@ -32,8 +32,9 @@ impl Outbound {
         self.data.extend(bytes);
     }
 
+    /// Drops the queue and its allocation. Every caller is done with the send side.
     pub(super) fn clear(&mut self) {
-        self.data.clear();
+        self.data = VecDeque::new();
     }
 
     /// Returns what `Stream::writev` returns. The queue is out of `cell` while lsquic runs.

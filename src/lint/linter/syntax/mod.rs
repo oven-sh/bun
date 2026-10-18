@@ -278,16 +278,64 @@ pub fn may_be_misread<'a>(file: &'a File<'a>) -> bool {
 
 /// The message for a file that ESLint's parser throws on. No rule runs on such a file.
 pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
-    parse_errors(file).into_iter().next()
+    verdict(file).messages.first().cloned()
 }
 
 /// [`parse_error`], and the others that oxlint prints about the file, in its order. ESLint's parsers throw one.
 pub fn parse_errors<'a>(file: &'a File<'a>) -> Vec<LintMessage> {
-    parse_errors_and_stage(file).0
+    verdict(file).messages.clone()
+}
+
+/// What is decided about a file before any rule runs: [`verdict`].
+pub(crate) struct Verdict {
+    /// [`parse_errors`]. Empty: the file is linted.
+    pub(super) messages: Vec<LintMessage>,
+    /// oxlint says nothing about the file, which its parser refuses: see [`is_flow`].
+    pub(super) is_flow: bool,
+    /// [`File::reading`] could not be made, so nothing is known.
+    pub(super) is_unknown: bool,
+}
+
+impl Verdict {
+    /// What the tree of `file` says.
+    fn of<'a>(file: &'a File<'a>) -> Verdict {
+        let (messages, is_of_parser) = errors_and_stage(file);
+        let is_silent = !messages.is_empty() && is_of_parser && file.language().is_oxlint;
+        Verdict {
+            is_flow: is_silent && is_flow(file),
+            messages,
+            is_unknown: false,
+        }
+    }
+}
+
+/// Whether TypeScript's parser has an error for `file` that counts. The tree has holes then, which no rule expects.
+pub(super) fn has_holes<'a>(file: &'a File<'a>) -> bool {
+    error_of_parser(file).is_some()
+}
+
+/// Whether `file` is refused, decided once for all who ask. The tree of a file with types is the type checker's, which is parsed
+/// as `tsc` parses. Such a file answers with [its reading](File::reading): always with a configuration of oxlint, whose parser
+/// has errors that leave no trace in that tree, and otherwise where TypeScript's parser has an error, which the parser of the
+/// configuration need not have.
+pub(super) fn verdict<'a>(file: &'a File<'a>) -> &'a Verdict {
+    file.lazy.linter.verdict.get_or_init(|| {
+        let is_asked = || !file.language().refuses_what_parser_refuses || has_holes(file);
+        let Some(reading) = file.reading().filter(|_| is_asked()) else {
+            return Verdict::of(file);
+        };
+        let mut verdict = Verdict {
+            messages: Vec::new(),
+            is_flow: false,
+            is_unknown: true,
+        };
+        reading(file.text(), &mut |read| verdict = Verdict::of(read));
+        verdict
+    })
 }
 
 /// [`parse_errors`], and whether a parser has them. `false`: oxc has parsed the file, and the pass that builds its scopes has them.
-pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage>, bool) {
+fn errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage>, bool) {
     let parser = file.language().parser;
     // It has no place.
     if parser == Parser::Espree
@@ -405,7 +453,7 @@ fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
 /// Whether oxlint says nothing about the file, which it cannot parse: it is JavaScript, and its first comment has `@flow`.
 /// What the pass that builds the scopes has to say about a file that oxc can parse, it prints.
 /// oxc looks at the comments that its lexer has passed. Where it gives up, that's those before the token that is wrong.
-pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
+fn is_flow<'a>(file: &'a File<'a>) -> bool {
     let mut comments = file.comments().map(|it| it.span());
     let first = comments.find(|it| !file.slice(*it).starts_with(b"#!"));
     let Some(first) = first.filter(|_| file.is_javascript()) else {

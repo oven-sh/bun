@@ -204,6 +204,10 @@ pub(crate) struct Lazy {
     extensions: [OnceCell<Box<dyn std::any::Any>>; 2],
 }
 
+/// [`File::reading`]: parses a text as the configuration of the file says, binds it, and calls the function with the file, which
+/// has no types. The function is not called if the code is nested too deeply for the parser.
+pub type Reading<'r> = dyn Fn(&[u8], &mut dyn for<'f> FnMut(&'f File<'f>)) + 'r;
+
 /// The file that is linted or formatted.
 pub struct File<'a> {
     pub(crate) hir: Hir<'a>,
@@ -223,6 +227,10 @@ pub struct File<'a> {
     pub(crate) package_module: std::cell::OnceCell<std::sync::Arc<[u8]>>,
     pub(crate) inferred_from: Cell<Option<&'a dyn crate::linter::globals::InferredGlobals>>,
     pub(crate) inferred_globals: OnceCell<Option<crate::linter::globals::ProgramGlobals<'a>>>,
+    /// [`File::reading`]
+    reading: Cell<Option<&'a Reading<'a>>>,
+    /// [`File::parser_tracked_names`]
+    parser_tracked_names: Cell<bool>,
     is_later_script: Cell<bool>,
     /// [`File::in_language`]
     parsed: Option<(&'a crate::languages::Parsed, crate::source::LineBreaks)>,
@@ -284,10 +292,34 @@ impl<'a> File<'a> {
             package_module: std::cell::OnceCell::new(),
             inferred_from: Cell::new(None),
             inferred_globals: OnceCell::new(),
+            reading: Cell::new(None),
+            parser_tracked_names: Cell::new(false),
             is_later_script: Cell::new(false),
             parsed: None,
             path,
         }
+    }
+
+    /// How the parser of the configuration reads the text, for a file whose tree is the type checker's: that tree is parsed as
+    /// `tsc` parses, whatever [`File::language`] says. What refuses a file asks this one. `None`: the tree is that reading.
+    #[inline]
+    pub(crate) fn reading(&self) -> Option<&'a Reading<'a>> {
+        self.reading.get()
+    }
+
+    pub(crate) fn set_reading(&self, reading: &'a Reading<'a>) {
+        self.reading.set(Some(reading));
+    }
+
+    /// The parser has looked out for a name that may be declared twice (`Dialect::oxc_names`), whatever
+    /// [`LanguageOptions::parser_tracks_names`] says.
+    #[inline]
+    pub(crate) fn parser_tracked_names(&self) -> bool {
+        self.parser_tracked_names.get()
+    }
+
+    pub fn set_parser_tracked_names(&self) {
+        self.parser_tracked_names.set(true);
     }
 
     /// Turns a `File` that was built from an empty `hir` into a file in another [language](crate::languages). `text` is

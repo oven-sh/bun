@@ -177,8 +177,12 @@ pub struct LintResult {
     /// Why a rule has [handed the file back](File::hand_back) to that of its package, which has run in its place.
     pub handed_back: Option<crate::formats::Reason>,
     /// It [may be misread](may_be_misread), or a comment in a file that is not JavaScript turns on a rule that is not for its
-    /// language, and whoever lints has somebody else to read it. There is nothing else in the result.
+    /// language, and whoever lints has somebody else to read it. Or the file has types, and [its reading](File::reading) cannot
+    /// be made. There is nothing else in the result.
     pub is_unread: bool,
+    /// The file has types and was linted without them, as the parser of its configuration reads it: TypeScript's parser, whose
+    /// tree the types are for, has an error where that one has none.
+    pub without_types: bool,
     /// ESLint throws this while it lints the file, and that ends the run with the exit code 2: a rule refuses options that its
     /// schema accepts ([`Rule::validate`](crate::rule::Rule::validate)), or a rule of a JavaScript plugin throws. There is
     /// nothing else in the result then.
@@ -454,8 +458,33 @@ impl<S: RuleSet> Linter<S> {
         &self.registry
     }
 
-    /// ESLint's `Linter.verify`, from after the file is parsed. `file` was made with
-    /// `config.language`.
+    /// Lints what the parser of the configuration makes of `file`, which has types, without them.
+    fn lint_reading<'a>(
+        &self,
+        file: &'a File<'a>,
+        config: &ResolvedConfig,
+        options: &LintOptions,
+    ) -> LintResult {
+        let mut result = None;
+        if let Some(reading) = file.reading() {
+            reading(file.text(), &mut |read| {
+                result = Some(self.lint(read, config, options));
+            });
+        }
+        match result {
+            Some(result) => LintResult {
+                without_types: true,
+                ..result
+            },
+            None => LintResult {
+                is_unread: true,
+                ..LintResult::default()
+            },
+        }
+    }
+
+    /// ESLint's `Linter.verify`, from after the file is parsed. `file` was made with `config.language`, or it has types and
+    /// [a reading](File::reading) that was.
     pub fn lint<'a>(
         &self,
         file: &'a File<'a>,
@@ -464,27 +493,43 @@ impl<S: RuleSet> Linter<S> {
     ) -> LintResult {
         let locator = Locator::new(file);
         let mut problems: Vec<LintMessage> = Vec::new();
-        let (mut fatal, is_of_parser) = match file.parsed() {
+        let verdict = match file.parsed() {
             // Its language has parsed it.
-            Some(_) => (Vec::new(), false),
-            None => syntax::parse_errors_and_stage(file),
+            Some(_) => None,
+            None => Some(syntax::verdict(file)),
         };
-        if !fatal.is_empty() {
-            let is_oxlint = file.language().is_oxlint;
-            if is_oxlint && is_of_parser && syntax::is_flow(file) {
-                return LintResult::default();
-            }
+        if verdict.is_some_and(|it| it.is_unknown) {
+            return LintResult {
+                is_unread: true,
+                ..LintResult::default()
+            };
+        }
+        let fatal = verdict.map_or(&[][..], |it| &it.messages[..]);
+        let is_refused = !fatal.is_empty();
+        // The tree is the type checker's, and TypeScript's parser has left holes in it, which no rule expects.
+        let has_holes = file.types.is_some() && syntax::has_holes(file);
+        if has_holes && !is_refused {
+            return self.lint_reading(file, config, options);
+        }
+        if is_refused {
+            let is_flow = verdict.is_some_and(|it| it.is_flow);
             // What oxc refuses, oxlint does not lint. tsgolint reads the file on its own, and oxlint, which has not seen the comments,
             // passes on all that it reports. Here that is so where the tree is whole: the error is an early one.
-            if !is_oxlint || file.types.is_none() || file.has_parse_errors() {
+            if !file.language().is_oxlint || file.types.is_none() || has_holes {
                 return LintResult {
-                    messages: fatal,
+                    messages: match is_flow {
+                        true => Vec::new(),
+                        false => fatal.to_vec(),
+                    },
                     ..LintResult::default()
                 };
             }
-            problems.append(&mut fatal);
+            if !is_flow {
+                problems.extend_from_slice(fatal);
+            }
         }
-        let is_refused = !problems.is_empty();
+        // They stay first, in the order of the parser.
+        let refused = problems.len();
         let mut result = LintResult::default();
         let enabled_js =
             (config.js_rules.iter()).filter(|it| it.severity != Severity::Off && !is_refused);
@@ -1086,8 +1131,11 @@ impl<S: RuleSet> Linter<S> {
         if file.language().stands_alone {
             problems.iter_mut().for_each(LintMessage::stay_in_file);
         }
-        if wants_places && !in_run_order {
-            LintMessage::sort(&mut problems);
+        if wants_places
+            && !in_run_order
+            && let Some(of_rules) = problems.get_mut(refused..)
+        {
+            LintMessage::sort(of_rules);
         }
 
         let report_unused = (options.report_unused_disable_directives)

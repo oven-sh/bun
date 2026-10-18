@@ -323,6 +323,13 @@ impl Timing {
         to.fetch_add(elapsed(started), Ordering::Relaxed);
         self.now()
     }
+
+    /// Takes the time since `started` off what is going to be added to `from`: it is counted as something else.
+    pub(crate) fn take_off(&self, from: &AtomicU64, started: Option<Instant>) {
+        if started.is_some() {
+            from.fetch_sub(elapsed(started), Ordering::Relaxed);
+        }
+    }
 }
 
 /// Whether `a.filePath < b.filePath` in JavaScript ([`strings::order_utf16`]) is the order of the bytes for `path`.

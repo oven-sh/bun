@@ -533,7 +533,8 @@ type Found<'a> = (Span, Name<'a>, Declaration<'a>, Scope<'a>);
 /// "Identifier `a` has already been declared"
 pub(super) fn redeclarations<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     // Where no rule makes the variables of every file, the parser has looked out for a name that may be declared twice.
-    if file.language().parser_tracks_names && !file.has_rare_syntax(rare::MAY_REDECLARE) {
+    let is_tracked = file.language().parser_tracks_names || file.parser_tracked_names();
+    if is_tracked && !file.has_rare_syntax(rare::MAY_REDECLARE) {
         return Vec::new();
     }
     let mut all: Vec<Found<'a>> = Vec::new();

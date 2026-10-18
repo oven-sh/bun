@@ -17,6 +17,8 @@ pub(crate) struct PerFile {
     ignores_comments: Cell<bool>,
     comments: OnceCell<Vec<ConfigComment>>,
     variables: OnceCell<CommentVariables>,
+    /// [`super::syntax::verdict`]
+    pub(super) verdict: OnceCell<super::syntax::Verdict>,
 }
 
 /// The part of ESLint's `applyInlineConfig` that is about variables.

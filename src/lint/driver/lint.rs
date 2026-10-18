@@ -135,6 +135,9 @@ struct How<'h> {
     /// Set if the file isn't JavaScript: the arguments of [`File::in_language`].
     in_language: Option<(&'h [u8], &'h Parsed, LineBreaks)>,
     rules: Which<'h>,
+    /// The parser of oxlint's dialect looks out for a name that may be declared twice, whatever the rules are: the scopes of
+    /// the file are made for nothing else. See [`File::parser_tracked_names`].
+    tracks_names: bool,
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -518,8 +521,10 @@ impl Context<'_, '_> {
             Some(_) => (Some(ScriptKind::Js), &b""[..]),
             None => (as_what.script.map(|it| it.0).or(how.script_kind), text),
         };
+        let mut dialect = how.dialect;
+        dialect.oxc_names |= as_what.tracks_names && dialect.oxc;
         bun_sema_parser::with_summary(
-            how.dialect,
+            dialect,
             (arena, session),
             path,
             script_kind,
@@ -547,6 +552,9 @@ impl Context<'_, '_> {
                     Some((text, parsed, breaks)) => file.in_language(text, parsed, breaks),
                     None => file,
                 };
+                if dialect.oxc_names {
+                    file.set_parser_tracked_names();
+                }
                 file.set_modules(self.modules);
                 // Under the name of a component the formatter would print one of its scripts as a component.
                 if as_what.script.is_none() {
@@ -559,6 +567,26 @@ impl Context<'_, '_> {
                 then(Some(&file));
             },
         );
+    }
+
+    /// [`File::reading`] of the file at `path`, whose tree the type checker has made: `text` as the parser of `config` reads it.
+    pub(crate) fn read_as_configured(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        config: &ResolvedConfig,
+        then: &mut dyn for<'f> FnMut(&'f File<'f>),
+    ) {
+        let how = How {
+            tracks_names: true,
+            ..How::default()
+        };
+        let started = self.timing.now();
+        self.parse_again_as(path, text, config, &how, &mut |file| {
+            // Who asks counts all of its time as that of the rules.
+            self.timing.take_off(&self.timing.rules, started);
+            then(file);
+        });
     }
 
     /// [`ParseAgain`] for the file at `path`.

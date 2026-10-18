@@ -7,6 +7,11 @@
 //! that checked it, while its types are there. Type errors are not reported, that is what
 //! `bun check` is for, unless oxlint's `--type-check` asks for them.
 //!
+//! # Syntax
+//!
+//! The tree of a program is parsed as `tsc` parses. Whether a file is refused is for the parser of its configuration to say,
+//! which reads the file once more where the two can differ: `File::reading`.
+//!
 //! # Fixes
 //!
 //! ESLint lints a file again after it has fixed it, up to ten times. So it is here, for all files
@@ -86,7 +91,7 @@ fn check_and_lint(
         );
         let (mut in_no_project, mut is_one_left) = (Vec::new(), false);
         for ((&at, of_one), place) in positions.iter().zip(of_some).zip(place) {
-            let is_left = of_one.is_none() && place != Place::Refused;
+            let is_left = of_one.is_none() && !matches!(place, Place::Refused | Place::Unread);
             if is_left || place == Place::InNoProject {
                 in_no_project.push(at);
             }
@@ -124,6 +129,8 @@ enum Place {
     InNoProject,
     /// Its project is refused. It is linted without types.
     Refused,
+    /// The parser of its configuration cannot read it on the thread of the checker. It is linted without types.
+    Unread,
 }
 
 /// `CreateInferredProjectProgram` of tsgolint: one program for all files that no project includes, JavaScript too.
@@ -412,6 +419,9 @@ fn check_and_lint_in(
             })
         }));
         let started = context.timing.now();
+        let reading = |text: &[u8], then: &mut dyn for<'f> FnMut(&'f File<'f>)| {
+            context.read_as_configured(path, text, config, then);
+        };
         let linted = bun_lint::types::with_file_and_modules(
             checker,
             file,
@@ -421,6 +431,7 @@ fn check_and_lint_in(
             Some(context.modules),
             Some(context.formatter),
             Some(&of_file),
+            &reading,
             |file| {
                 let text = file.text();
                 let parse_again = |then: &mut dyn for<'f> FnMut(&'f File<'f>)| {
@@ -431,7 +442,10 @@ fn check_and_lint_in(
                     ..options
                 };
                 let mut result = context.linter.lint(file, config, &options);
-                if file.is_too_large_for_flow_analysis() {
+                if result.is_unread {
+                    return None;
+                }
+                if file.is_too_large_for_flow_analysis() && !result.without_types {
                     result.messages.insert(0, too_large_for_flow_analysis());
                 }
                 if config.language.is_oxlint {
@@ -444,13 +458,15 @@ fn check_and_lint_in(
                     || context.checks_types;
                 let text = (is_reported && (context.keeps_text || context.fixes()))
                     .then(|| file.text().to_vec());
-                (result, text)
+                Some((result, text))
             },
         );
         context.timing.add(&context.timing.rules, started);
         // A task of the checker can run again: the last time counts.
         match linted {
-            Some(linted) => results.lock()[at] = Some(linted),
+            Some(Some(linted)) => results.lock()[at] = Some(linted),
+            // Who lints it without types says that it is nested too deeply for the parser.
+            Some(None) => places.lock()[at] = Place::Unread,
             // It is linted without types. Of a tree that is too deep for the parser the linter says so itself.
             None if !checker.hir(file).ran_out_of_stack && checker.bound(file).ran_out_of_stack => {
                 context.out_of_stack.lock().push(path.to_vec());
@@ -583,7 +599,13 @@ fn check_and_lint_in(
             }
         }
         for (result, _) in results.iter_mut().flatten() {
-            LintMessage::sort(&mut result.messages);
+            // What the parser has stays first, in its order.
+            let place = |it: &LintMessage| {
+                (!is_parse_error(it)).then_some((it.line as i32, it.column as i32))
+            };
+            if !result.messages.is_sorted_by_key(place) {
+                bun_lint::utils::sort::sort_by_key(&mut result.messages, place);
+            }
         }
     }
     (results, places)
@@ -792,6 +814,7 @@ pub(crate) fn lint(
                 let (is_fixed, fixes) = fixed;
                 // What is not there is not written.
                 let is_fixed = is_fixed && text.is_some();
+                let had_types = !result.without_types;
                 let mut result = context.result(
                     crate::paths::to_native(file.path.to_vec()),
                     result,
@@ -799,7 +822,7 @@ pub(crate) fn lint(
                     is_fixed,
                     file.config,
                 );
-                result.had_types = true;
+                result.had_types = had_types;
                 result.fixes = if is_fixed { fixes } else { 0 };
                 done[index] = Some(result);
             };

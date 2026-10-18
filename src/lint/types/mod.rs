@@ -533,7 +533,7 @@ impl bun_sema::atom::Intern for WrittenNames<'_> {
 
 /// The same, for a file that has [`File::modules`], [`File::formatter`] and [`File::inferred_globals`]. `path`: [`File::path`], the path that the file is
 /// linted under. `None`: the name that the program has for it, which is in the checker's format (`/C:/a.ts`) and spelled as the
-/// program found it.
+/// program found it. `reading`: [`File::reading`]. The tree of the program is parsed as `tsc` parses, not as `language` says.
 pub fn with_file_and_modules<R>(
     checker: &mut bun_sema::check::Checker<'_, '_>,
     file: FileId,
@@ -543,6 +543,7 @@ pub fn with_file_and_modules<R>(
     modules: Option<&dyn crate::modules::Modules>,
     formatter: Option<&dyn crate::formats::Formats>,
     inferred: Option<&dyn crate::linter::globals::InferredGlobals>,
+    reading: &crate::ast::Reading<'_>,
     then: impl for<'a> FnOnce(&'a File<'a>) -> R,
 ) -> Option<R> {
     let module = checker.p.files.module(file);
@@ -555,6 +556,7 @@ pub fn with_file_and_modules<R>(
     Some(checker.with_services(file, read_library, |services| {
         let types = Checker::new(services);
         let file = File::new(path, hir, bound, atoms, language, Some(types));
+        file.set_reading(reading);
         if let Some(modules) = modules {
             file.set_modules(modules);
         }

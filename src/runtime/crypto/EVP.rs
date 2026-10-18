@@ -127,9 +127,8 @@ bun_core::comptime_string_map! {
     };
 }
 
-/// Digest names node accepts beyond the `Algorithm` tags. OpenSSL registers
-/// its signature OIDs and legacy spellings as digest aliases, BoringSSL does
-/// not. A `listed` name appears in `crypto.getHashes()`, in node's spelling.
+/// Node digest names that OpenSSL registers as aliases and BoringSSL does not.
+/// A `listed` name appears in `crypto.getHashes()`.
 struct DigestAlias {
     name: &'static str,
     algorithm: Algorithm,
@@ -184,9 +183,8 @@ pub(crate) fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
         .map(|alias| alias.algorithm)
 }
 
-/// `crypto.getHashes()`, in byte order like node. `Blake2b256` is bun-only.
-/// A name without an `EVP_MD` cannot feed `pbkdf2`/`hkdf`, and node's tests
-/// gate DEP0198 and cSHAKE on `shake128` being listed, so those stay out.
+/// `crypto.getHashes()`, byte-ordered like node. Only names with an `EVP_MD`;
+/// `Blake2b256` is bun-only and node's tests gate cSHAKE/DEP0198 on `shake128`.
 pub(crate) fn node_hash_names() -> &'static [BunString] {
     static NAMES: std::sync::OnceLock<Vec<BunString>> = std::sync::OnceLock::new();
     NAMES

@@ -3727,6 +3727,40 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
+  for (let copy = 0; copy < 16; copy++)
+    test(
+      "zz diag " + copy,
+      async () => {
+        const bad: string[] = [];
+        for (let run = 0; run < 4 && bad.length < 2; run++) {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              join(import.meta.dir, "zz-diag-pages-fixture.mjs"),
+              dir,
+              join(import.meta.dir, "zz-diag-report.mjs"),
+            ],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+            timeout: 40_000,
+            killSignal: "SIGKILL",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          if (stdout.trim() !== "collected" || exitCode !== 0)
+            bad.push(
+              `RUN ${run}: stdout ${JSON.stringify(stdout.trim())} exit ${exitCode}\n` +
+                stderr
+                  .split("\n")
+                  .filter(line => line.startsWith("DIAG"))
+                  .slice(0, 90)
+                  .join("\n"),
+            );
+        }
+        expect(bad.join("\n")).toBe("");
+      },
+      200_000,
+    );
   test("a server whose HTML routes were still being built is released with it", async () => {
     expect(await runsFixture("disposed-while-building-pages.mjs")).toEqual({ stdout: "collected", exitCode: 0 });
   });

@@ -4723,8 +4723,11 @@ fn check_named_files(
                 })
                 .map(|i| FileId(i as u32))
                 .collect();
-            host.parallel(suspects.len(), &|i| {
-                accept(check_chunk(&suspects[i..=i], Requested::Syntactic));
+            // A checker for each file would cost more than the files: every JavaScript file is a suspect.
+            let chunks = suspects.chunks(suspects.len().div_ceil(MIN_TASKS).max(1));
+            let chunks: Vec<&[FileId]> = chunks.collect();
+            host.parallel(chunks.len(), &|i| {
+                accept(check_chunk(chunks[i], Requested::Syntactic));
             });
             finish_files();
             let syntactic = std::mem::take(&mut *found.lock());

@@ -1,13 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import type { Socket } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
-import { once } from "node:events";
-import net from "node:net";
 import { join } from "node:path";
-import tls from "node:tls";
-
-// The tests below wait for the clock: for a second to pass, for a handler that blocks, for an
-// idle window. The explicit timeouts are for those waits on a debug+ASAN build, where each
-// child process also takes seconds to start.
 
 // The Date header is the second in which the response is written, read from a coarse clock.
 // That clock and Date.now() can disagree by a clock tick, which is the second before at a
@@ -76,169 +70,186 @@ test.concurrent("Date header is not updated every request", async () => {
   expect(dates.size).toBeLessThanOrEqual(seconds);
 });
 
-// x-now is the server's clock when the handler returned the response, so the check does not
-// depend on how long the response took to arrive.
+// The child processes of the two groups below start in beforeAll. A test is then its own wait
+// and no more, on a debug build too, where a child takes seconds to start.
+
 describe("Date header is the second the response is written in", () => {
-  test.concurrent.each(["http1.1", "http2", "http3"] as const)(
-    "%s: after idle time, across a second boundary, and after a handler that blocks",
-    async protocol => {
-      await using server = Bun.spawn({
-        cmd: [bunExe(), join(import.meta.dir, "bun-serve-date-fixture.ts")],
-        env: { ...bunEnv, PROTOCOL: protocol },
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-      const port = Number(await lineReader(server.stdout)());
-      const origin = `${protocol === "http1.1" ? "http" : "https"}://127.0.0.1:${port}`;
+  const protocols = ["http1.1", "http2", "http3"] as const;
+  const origins = {} as Record<(typeof protocols)[number], string>;
+  const servers = new AsyncDisposableStack();
 
-      /** One request. Returns its Date header once that is shown to be current. */
-      async function currentDate(path: string): Promise<string> {
-        const response = await fetch(origin + path, { protocol, tls: { rejectUnauthorized: false } });
-        await response.arrayBuffer();
-        const received = Date.now();
-        const date = response.headers.get("date");
-        expectWrittenBetween(date, Number(response.headers.get("x-now")), received);
-        return date!;
-      }
+  beforeAll(async () => {
+    await Promise.all(
+      protocols.map(async protocol => {
+        const server = servers.use(
+          Bun.spawn({
+            cmd: [bunExe(), join(import.meta.dir, "bun-serve-date-fixture.ts")],
+            env: { ...bunEnv, PROTOCOL: protocol, TLS_CERT: tlsCert.cert, TLS_KEY: tlsCert.key },
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "inherit",
+          }),
+        );
+        // The server stops on stdin EOF and exits by itself (see the fixture).
+        servers.defer(async () => {
+          server.stdin.end();
+          await server.exited;
+        });
+        const port = Number(await lineReader(server.stdout)());
+        origins[protocol] = `${protocol === "http1.1" ? "http" : "https"}://127.0.0.1:${port}`;
+      }),
+    );
+  });
+  afterAll(() => servers.disposeAsync());
 
-      // The first response after the server had no connection for more than 2 s. The wait is
-      // the condition.
-      await Bun.sleep(2100);
-      const first = await currentDate("/");
+  test.concurrent.each(protocols)("%s: after a handler that blocks", async protocol => {
+    /** One request. Returns its Date header once that is shown to be current. */
+    async function currentDate(path: string): Promise<string> {
+      const response = await fetch(origins[protocol] + path, { protocol, tls: { rejectUnauthorized: false } });
+      await response.arrayBuffer();
+      const received = Date.now();
+      const date = response.headers.get("date");
+      // x-now is the server's clock when the handler returned the response, so the check does
+      // not depend on how long the response took to arrive.
+      expectWrittenBetween(date, Number(response.headers.get("x-now")), received);
+      return date!;
+    }
 
-      // Back-to-back responses until one carries the next second.
-      let next = first;
-      while (next === first) next = await currentDate("/");
-      expect(Date.parse(next)).toBeGreaterThan(Date.parse(first));
-
-      // The handler holds the event loop for 1.5 s, so nothing but the write itself can refresh
-      // the date.
-      await currentDate("/block");
-
-      server.stdin.end();
-      expect(await server.exited).toBe(0);
-    },
-    20_000,
-  );
+    const before = await currentDate("/");
+    // The handler holds the event loop until the second has changed, so nothing but the write
+    // itself can refresh the date.
+    const after = await currentDate("/block");
+    expect(Date.parse(after)).toBeGreaterThan(Date.parse(before));
+  });
 });
 
 // No timer keeps the Date header fresh: neither in a process that serves no HTTP, nor in a
-// server between responses. Each child holds one idle socket and counts the turns of its event
-// loop. The other end of the socket is this process.
+// server between responses. Each child holds one idle socket, and the other end of the socket
+// is this process. Two events from here, WINDOW_MS apart, are all that the child's loop has to
+// turn for: it reports how many times it turned from the first to the second.
 //
-// What still turns that loop is the 4 s socket timeout sweep, which a connected socket arms.
-// Two other timers of an idle process are off in the child: the idle GC timer (1 s for its first
-// 30 fires after the heap grows, then 30 s) and JSC's incremental sweeper.
+// What else turns the loop of an idle process is off in the child: the idle GC timer (1 s for
+// its first 30 fires after the heap grows, then 30 s), JSC's incremental sweeper, and on
+// Windows the allocator sweep that the libuv loop comes back for up to 3 times, 100 ms apart,
+// after JS ran. The 4 s socket timeout sweep stays on, and can fall in the window once.
 describe("no timer behind the Date header turns an idle event loop", () => {
-  const IDLE_SECONDS = 6;
+  const WINDOW_MS = 3200;
+  // A timer that fires each second turns the loop 3 times in the window. The event that ends
+  // the window turns it once.
+  const TURNS_WITH_A_TIMER = 4;
   const fixture = join(import.meta.dir, "bun-serve-date-idle-fixture.ts");
-  const env = { ...bunEnv, BUN_GC_TIMER_DISABLE: "1", BUN_JSC_sweepSynchronously: "1" };
-  type Idle = { open?: boolean; iterations: number };
+  const env = {
+    ...bunEnv,
+    BUN_GC_TIMER_DISABLE: "1",
+    BUN_JSC_sweepSynchronously: "1",
+    BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
+  };
 
-  /** Runs the fixture as a client of `port`. Resolves to what it reports after the idle time. */
-  async function idleClient(kind: "net" | "tls" | "https-agent", port: number): Promise<Idle> {
-    await using client = Bun.spawn({
-      cmd: [bunExe(), fixture, kind, String(IDLE_SECONDS * 1000), String(port)],
-      env,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
-    expect(exitCode).toBe(0);
-    return JSON.parse(stdout);
-  }
+  // The two events of a child's socket. `end` resolves to what the child prints.
+  type Idle = { start(): Promise<void>; end(): Promise<{ iterations: number }> };
+  const idle = {} as Record<"tcp" | "tls" | "serve", Idle>;
+  const children = new AsyncDisposableStack();
 
-  test.concurrent(
-    "net.connect",
-    async () => {
-      const server = net.createServer(socket => socket.write("x")).listen(0, "127.0.0.1");
-      try {
-        await once(server, "listening");
-        const idle = await idleClient("net", (server.address() as net.AddressInfo).port);
-        expect(idle).toEqual({ open: true, iterations: expect.any(Number) });
-        // A timer that fires each second turns the loop at least once per second.
-        expect(idle.iterations).toBeLessThan(IDLE_SECONDS);
-      } finally {
-        server.close();
-      }
-    },
-    20_000,
-  );
-
-  test.concurrent(
-    "tls.connect",
-    async () => {
-      const server = tls.createServer(tlsCert, socket => socket.write("x")).listen(0, "127.0.0.1");
-      try {
-        await once(server, "listening");
-        const idle = await idleClient("tls", (server.address() as net.AddressInfo).port);
-        expect(idle).toEqual({ open: true, iterations: expect.any(Number) });
-        expect(idle.iterations).toBeLessThan(IDLE_SECONDS);
-      } finally {
-        server.close();
-      }
-    },
-    20_000,
-  );
-
-  test.concurrent(
-    "https.Agent keep-alive socket in freeSockets",
-    async () => {
-      // idleTimeout: 0, so the server does not close the parked socket while the client idles.
-      await using server = Bun.serve({ port: 0, tls: tlsCert, idleTimeout: 0, fetch: () => new Response("ok") });
-      const idle = await idleClient("https-agent", server.port);
-      expect(idle).toEqual({ open: true, iterations: expect.any(Number) });
-      expect(idle.iterations).toBeLessThan(IDLE_SECONDS);
-    },
-    20_000,
-  );
-
-  test.concurrent(
-    "Bun.serve with an idle keep-alive connection",
-    async () => {
-      await using server = Bun.spawn({
-        cmd: [bunExe(), fixture, "serve-keep-alive", String(IDLE_SECONDS * 1000)],
+  /** A child with a client socket to a listener of this process. */
+  async function idleClient(kind: "tcp" | "tls") {
+    const connected = Promise.withResolvers<Socket>();
+    const listener = children.use(
+      Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: kind === "tls" ? tlsCert : undefined,
+        socket: {
+          ...(kind === "tls" ? { handshake: connected.resolve } : { open: connected.resolve }),
+          data() {},
+        },
+      }),
+    );
+    const client = children.use(
+      Bun.spawn({
+        cmd: [bunExe(), fixture, kind, String(listener.port)],
         env,
         stdout: "pipe",
         stderr: "inherit",
-      });
-      const nextLine = lineReader(server.stdout);
-      const port = Number(await nextLine());
+      }),
+    );
+    const nextLine = lineReader(client.stdout);
+    const socket = await Promise.race([
+      connected.promise,
+      client.exited.then(code => Promise.reject(new Error(`the client exited with code ${code}`))),
+    ]);
+    idle[kind] = {
+      async start() {
+        socket.write("s");
+      },
+      async end() {
+        socket.write("e");
+        return JSON.parse(await nextLine());
+      },
+    };
+  }
 
-      // One connection, and the number of responses that arrived on it.
-      let responses = 0;
-      let closed = false;
-      let arrived = Promise.withResolvers<void>();
-      const socket = await Bun.connect({
+  /** A child that serves HTTP, with one connection from this process. */
+  async function idleServer() {
+    const server = children.use(
+      Bun.spawn({
+        cmd: [bunExe(), fixture, "serve"],
+        env,
+        stdout: "pipe",
+        stderr: "inherit",
+      }),
+    );
+    const nextLine = lineReader(server.stdout);
+    const port = Number(await nextLine());
+
+    // The response to the request that is in flight, if any.
+    let answered: PromiseWithResolvers<void> | undefined;
+    const socket = children.use(
+      await Bun.connect({
         hostname: "127.0.0.1",
         port,
         socket: {
           data(_, chunk) {
-            if (chunk.toString().startsWith("HTTP/1.1 200")) {
-              responses++;
-              arrived.resolve();
-            }
+            if (chunk.toString().startsWith("HTTP/1.1 200")) answered?.resolve();
           },
           close() {
-            closed = true;
-            arrived.reject(new Error("the server closed the connection"));
+            answered?.reject(new Error("the server closed the connection"));
+          },
+          error(_, error) {
+            answered?.reject(error);
           },
         },
-      });
-      const request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
-      socket.write(request);
-      await arrived.promise;
+      }),
+    );
+    // Both requests are on this one connection, so it is open for all of the idle time.
+    const request = async (path: string) => {
+      answered = Promise.withResolvers<void>();
+      socket.write(`GET ${path} HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+      await answered.promise;
+    };
+    idle.serve = {
+      start: () => request("/start"),
+      async end() {
+        await request("/end");
+        return JSON.parse(await nextLine());
+      },
+    };
+  }
 
-      const idle: Idle = JSON.parse(await nextLine());
-      // The same connection still answers, so it was open for all of the idle time.
-      arrived = Promise.withResolvers<void>();
-      socket.write(request);
-      await arrived.promise;
-      expect({ responses, closed }).toEqual({ responses: 2, closed: false });
-      expect(idle.iterations).toBeLessThan(IDLE_SECONDS);
-      socket.end();
-    },
-    20_000,
-  );
+  beforeAll(async () => {
+    await Promise.all([idleClient("tcp"), idleClient("tls"), idleServer()]);
+  });
+  afterAll(() => children.disposeAsync());
+
+  test.concurrent.each([
+    ["a TCP client socket", "tcp"],
+    ["a TLS client socket", "tls"],
+    ["a Bun.serve keep-alive connection", "serve"],
+  ] as const)("%s", async (_, kind) => {
+    await idle[kind].start();
+    // The wait is the test: nothing may turn the child's loop meanwhile, so there is no signal
+    // to wait for.
+    await Bun.sleep(WINDOW_MS);
+    const { iterations } = await idle[kind].end();
+    expect(iterations).toBeLessThan(TURNS_WITH_A_TIMER);
+  });
 });

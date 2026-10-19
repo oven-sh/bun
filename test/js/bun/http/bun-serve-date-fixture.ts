@@ -2,19 +2,18 @@
 // "http2" is TLS with ALPN h2, and "http3" is QUIC with no TCP listener at all. Every response
 // carries x-now, this process's clock when the handler returned it. Prints the port on stdout
 // once listening and stops on stdin EOF.
-import { tls } from "harness";
-
 const protocol = process.env.PROTOCOL;
 
 const server = Bun.serve({
   port: 0,
-  tls: protocol === "http1.1" ? undefined : tls,
+  tls: protocol === "http1.1" ? undefined : { cert: process.env.TLS_CERT!, key: process.env.TLS_KEY! },
   http2: protocol === "http2",
   http3: protocol === "http3",
   http1: protocol !== "http3",
   fetch(req) {
-    // Holds the event loop, so nothing scheduled on it can run before the response is written.
-    if (new URL(req.url).pathname === "/block") Bun.sleepSync(1500);
+    // Holds the event loop until the second has changed, so nothing scheduled on the loop can
+    // run before the response is written.
+    if (new URL(req.url).pathname === "/block") Bun.sleepSync(1200);
     return new Response("ok", { headers: { "x-now": String(Date.now()) } });
   },
 });

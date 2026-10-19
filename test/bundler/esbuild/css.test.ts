@@ -2414,6 +2414,47 @@ c {
     },
   });
 
+  // esbuild's TestCSSAtLayerMergingWithImportConditions. esbuild's snapshot
+  // starts with "@supports (color: first) { @layer a; }", ahead of the imports.
+  itBundled("css/CSSAtLayerMergingWithImportConditions", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "a.css" supports(color: first);
+
+        @import "a.css" supports(color: second);
+        @import "b.css" supports(color: second);
+
+        @import "a.css" supports(color: first);
+        @import "b.css" supports(color: first);
+
+        @import "a.css" supports(color: second);
+        @import "b.css" supports(color: second);
+
+        @import "b.css" supports(color: first);
+      `,
+      "/a.css": /* css */ `
+        @layer a;
+        @import "http://example.com/a.css";
+      `,
+      "/b.css": /* css */ `
+        @layer b;
+        @import "http://example.com/b.css";
+      `,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    async onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toBe(
+          '@import "http://example.com/a.css" supports(color:first);@import "http://example.com/a.css" supports(color:second);@import "http://example.com/b.css" supports(color:second);@import "http://example.com/b.css" supports(color:first);' +
+            "@supports (color:first){@layer a;}@supports (color:first){@layer a;}@supports (color:second){@layer a;}@supports (color:second){@layer a;}" +
+            "@supports (color:second){@layer b;}@supports (color:second){@layer b;}@supports (color:first){@layer b;}@supports (color:first){@layer b;}\n",
+        );
+      await Bun.build({ entrypoints: [api.outfile], outdir: api.join("again") });
+    },
+  });
+
   itBundled("css/CSSAtImportConditionsChainExternal", {
     files: {
       "/entry.css": /* css */ `

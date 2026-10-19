@@ -153,11 +153,10 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     .iter()
                     .any(ImportConditions::has_anonymous_layer)
             {
-                // See the LayerName nominal-type note at `Layers::borrow`.
-                let layers_ptr =
-                    core::ptr::NonNull::from(&repr.layers_pre_import).cast::<Vec<LayerName>>();
                 self.order.push(CssImportOrder {
-                    kind: CssImportOrderKind::Layers(Layers::pre_import(layers_ptr)),
+                    kind: CssImportOrderKind::Layers(Layers::pre_import(core::ptr::NonNull::from(
+                        &repr.layers_pre_import,
+                    ))),
                     // SAFETY: arena-backed `Vec` header; `CssImportOrder`
                     // suppresses `Drop` on it (see the note at `bitwise_copy`),
                     // so the aliased buffer is freed once with the arena.
@@ -349,7 +348,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     // evaluation.
     if has_external_import {
         // Pass 1: Pull out leading "@layer" statements and external "@import" rules.
-        // A layer list under import conditions prints as a block, so it ends the prefix.
+        // esbuild keeps every leading layer list here. One under import conditions
+        // prints as a block, and an "@import" after a block is invalid.
         let mut is_at_layer_prefix = true;
         for entry in order.slice() {
             is_at_layer_prefix &= entry.prints_as_layer_statements();

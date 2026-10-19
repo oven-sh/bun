@@ -23427,6 +23427,38 @@ describe.concurrent("--check", () => {
       },
     );
 
+    // `j0 = i0` caches the pairs from `I0` and `J0` to `I99` and `J99` as failed. `j70 = i70` repeats one of those
+    // comparisons to report the error. It starts 70 levels further down, so it succeeds, and tsc replaces the cached
+    // failures from `I70` and `J70` on.
+    test.each([0, 800])(
+      "reports the same errors as tsc for types that are compared again %i statements after a depth limit error",
+      async n => {
+        const chain = (name: string) =>
+          `${range(100)
+            .map(i => `interface ${name}${i} { n: ${name}${i + 1} }`)
+            .join("\n")}\ninterface ${name}100 { v: 1 }\n`;
+        using dir = project({
+          "chains.d.ts": chain("I") + chain("J"),
+          "index.ts": `declare const i0: I0, i70: I70;
+export const j0: J0 = i0;
+${range(n)
+  .map(i => `export const u${i}: number = ${i};`)
+  .join("\n")}
+export const j70: J70 = i70;
+export const replaced: I70 extends J70 ? 1 : 2 = 0;
+export const kept: I69 extends J69 ? 1 : 2 = 0;
+`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout.split("\n").map(line => line.replace(/^index\.ts\(\d+,\d+\): error /, ""))).toEqual([
+          "TS2321: Excessive stack depth comparing types 'I0' and 'J0'.",
+          "TS2322: Type '0' is not assignable to type '1'.",
+          "TS2322: Type '0' is not assignable to type '2'.",
+        ]);
+        expect(exitCode).toBe(1);
+      },
+    );
+
     // A parser as PEG.js generates it, as in the release bundle of Yarn: rules that call each other in a ring and collect
     // what they get in arrays, in loops. It took seven times as long for each alternative of the last rule.
     test("a generated parser with a rule of 16 alternatives", async () => {

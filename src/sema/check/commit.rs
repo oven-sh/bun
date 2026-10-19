@@ -49,7 +49,8 @@
 //!   (`Task::is_beside_a_ring`). It is lost if it has stored under a key of that commit: it has missed that one
 //!   (`Checker::lose_what_has_missed_a_ring`).
 //! - **The last round** is one task that checks the files that are still discarded, in program order, while nothing else
-//!   runs. It finds all that was committed. What it computes at a limit is what counts, as with one checker.
+//!   runs. It finds all that was committed. What it computes at a limit is what counts, as with one checker. It commits
+//!   once, when it ends (`Checker::is_commit_due`).
 //! - **A diagnostic goes with the entry of the query that has reported it**, in the same commit, and stays if the task is
 //!   lost later: whoever checks the file again finds the entry and does not report. If the entry loses, so does the
 //!   diagnostic (`Program::drop_diagnostics_of_losers`). What the walk of a file reports belongs to the file, and goes when a
@@ -619,13 +620,20 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
+    /// True if the task has logged enough keys to commit. The last round's task never has: no other task runs that could
+    /// read its entries, and a published entry can't be replaced. A comparison that overflows caches failures, and
+    /// typescript-go replaces them when a later statement repeats one of those comparisons to report an error.
+    fn is_commit_due(&self) -> bool {
+        self.task.commits()
+            && !self.task.is_believed()
+            && self.task.buffer().logged() >= KEYS_PER_COMMIT
+    }
+
     /// Nothing is in progress that has looked at a table or is about to store in one.
     fn rest(&mut self) {
         self.lose_what_has_missed_a_ring();
-        let logged = self.task.buffer().logged();
-        let is_due = self.task.view().is_some() && logged >= KEYS_PER_COMMIT;
         // A commit here would store the members of a ring that are in other files, and withhold those in this one.
-        if is_due && !self.task.is_lost() && !self.task.has_closed_a_ring() {
+        if self.is_commit_due() && !self.task.is_lost() && !self.task.has_closed_a_ring() {
             let (is_between_files, is_read) = (false, true);
             self.commit(is_between_files, is_read);
         } else if let Some(view) = self.task.view() {
@@ -700,9 +708,8 @@ impl<'s> Checker<'_, 's> {
     /// `is_read`: see `commit`.
     pub fn commit_after_file(&mut self, is_last: bool, is_read: bool) -> AfterFile {
         self.lose_what_has_missed_a_ring();
-        let logged = self.task.buffer().logged();
-        let is_due = self.task.view().is_some() && logged >= KEYS_PER_COMMIT
-            || self.task.has_closed_a_ring();
+        let is_due =
+            self.is_commit_due() || self.task.has_closed_a_ring() && !self.task.is_believed();
         if !is_last && !is_due && !self.task.is_lost() {
             return AfterFile::Waits;
         }

@@ -81,6 +81,21 @@ describe("builtin preprocessor", () => {
     expect(preprocess(body)).toEqual(expected(body));
   });
 
+  // When `\`` ended the template, the text up to the next `\`` was code. The help text in
+  // src/js/internal/bake.ts says `export default` there, and `bun bake --help` printed `$ =`.
+  test.each([
+    ["export default", "export default"],
+    ["throw new TypeError", "throw new TypeError"],
+    ["new TypeError", "new TypeError"],
+    ["throw new RangeError", "throw new RangeError"],
+    ["extends Array", "class A extends Array"],
+    ["a `$name`", "x = $a"],
+    ["require()", `require("node:fs")`],
+  ])("copies %s between two escaped backticks in template text", (_, words) => {
+    const body = "x = `as for \\`" + words + "\\` in \\`bun app.ts\\` (a Hono app works).`; $b;";
+    expect(preprocess(body)).toEqual(expected(body));
+  });
+
   test("a dynamic require() is an error, also when a static one follows", () => {
     const load = (specifier: string) => `load(${JSON.stringify(specifier)})`;
     expect(() => sliceSourceCode(`{ x = require(y); z = require("z"); }`, true, load)).toThrow(

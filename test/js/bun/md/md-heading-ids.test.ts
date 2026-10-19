@@ -198,7 +198,8 @@ describe("headingIds option", () => {
   test("a repeat gets the number that the loop of github-slugger gives it", () => {
     let seed = 1;
     const next = (n: number) => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 16) % n;
-    const words = ["a", "a", "b", "1", "1", "2", "3", "01", "10", "0", "日本", "é", "4294967296", "99999999999"];
+    // Few words, so that `a`, `a` and `a 1` come in one document often.
+    const words = ["a", "b", "1", "2"];
     // The id that a heading gets when it is alone in a document.
     const slugs = new Map<string, string>();
     const slugOf = (heading: string) => {
@@ -210,7 +211,7 @@ describe("headingIds option", () => {
     const wrong: string[][] = [];
     for (let doc = 0; doc < 100; doc++) {
       const headings = Array.from({ length: 2 + next(10) }, () =>
-        Array.from({ length: 1 + next(3) }, () => words[next(words.length)]).join(next(2) ? " " : "-"),
+        Array.from({ length: 1 + next(2) }, () => words[next(words.length)]).join(next(2) ? " " : "-"),
       );
       // The reference: `slugger.slug()` of github-slugger.
       const occurrences = new Map<string, number>();

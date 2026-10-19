@@ -38,7 +38,6 @@
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
 extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s);
-extern "C" void Bun__NodeHTTP__halfCloseAfterDrain(int ssl, struct us_socket_t *s);
 
 namespace uWS {
 
@@ -830,8 +829,24 @@ private:
                 ((HttpResponse<SSL> *) s)->resetTimeout();
             }
 
+            /* This read can have ended the request body that the FIN of a socket.end() waited for. */
+            if constexpr (IsNodeHttp) {
+                if (((HttpResponse<SSL> *) s)->notifyShutdownAfterDrain()) {
+                    return s;
+                }
+            }
+
             /* We need to check if we should close this socket here now */
-            ((HttpResponse<SSL> *) s)->closeIfDoneAndMarked(httpResponseData);
+            if (httpResponseData->shouldCloseConnection()) {
+                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
+                    if (((AsyncSocket<SSL> *) s)->hasFullyDrained()) {
+                        ((AsyncSocket<SSL> *) s)->shutdown();
+                        /* We need to force close after sending FIN since we want to hinder
+                         * clients from keeping to send their huge data */
+                        ((AsyncSocket<SSL> *) s)->close();
+                    }
+                }
+            }
             return (us_socket_t *) returnedData;
         }
 
@@ -909,8 +924,12 @@ private:
         auto *httpContextData = getSocketContextDataS(s);
 
 
-        if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
+        /* A tunnel, or a node:http socket.end() that waited for these bytes: the socket sends its FIN here. */
+        if ((httpResponseData->isConnectRequest || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN)) && httpResponseData->socketData && httpContextData->onSocketDrain) {
             httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
+            if (us_socket_is_closed(s)) {
+                return s;
+            }
         }
         /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
         if (httpResponseData->onWritable) {
@@ -985,16 +1004,12 @@ private:
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN) {
                     responseDone = true;
                 }
-                /* socket.end() issued while bytes were queued: Node sends the FIN
-                 * once they are out, whether or not the response in flight
-                 * ever ends. A re-armed onWritable means a pinned write that
-                 * bufferedAmount does not count. */
-                if (httpResponseData->halfClosesAtDrain() && httpResponseData->onWritable == nullptr) {
-                    responseDone = true;
-                }
             }
             if (responseDone && asyncSocket->hasFullyDrained()) {
-                reinterpret_cast<HttpResponse<SSL> *>(s)->finishMarkedConnection(httpResponseData);
+                asyncSocket->shutdown();
+                /* We need to force close after sending FIN since we want to hinder
+                 * clients from keeping to send their huge data */
+                asyncSocket->close();
             }
         }
 

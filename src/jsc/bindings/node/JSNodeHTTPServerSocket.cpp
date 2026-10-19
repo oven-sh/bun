@@ -347,22 +347,23 @@ bool JSNodeHTTPServerSocket::isClosed() const
 template<bool SSL>
 static bool deferShutdownUntilResponseDrains(us_socket_t* socket, bool destroySoon)
 {
+    if (!destroySoon) {
+        /* end() sends a FIN and no close: onDrain() sends it when uWS holds nothing more, TLS ciphertext included, even if the response never ends. */
+        if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->hasFullyDrained()) {
+            return false;
+        }
+        reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket))->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
+        return true;
+    }
     /* The end() of a finished response whose request body is still being parsed: Node parses the whole read before destroySoon(). */
-    bool bodyStillParsing = destroySoon && reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->isDeliveringBodyAfterResponse();
+    bool bodyStillParsing = reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->isDeliveringBodyAfterResponse();
     auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
     if (!bodyStillParsing && asyncSocket->getBufferedAmount() == 0) {
         return false;
     }
-    /* uWS shuts down after the parse and the flush. HttpContext dispatches nothing behind a complete response that closes the connection. */
+    /* uWS shuts down after the parse and the flush, and closes there even if the response never ends. HttpContext dispatches nothing behind a complete response that closes the connection. */
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
-    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-    if (destroySoon) {
-        /* And closes it there, even if the response never ends. */
-        httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN;
-    } else {
-        /* The FIN follows them there, even if the response never ends, and no close follows the FIN. */
-        httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
-    }
+    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE | uWS::HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN;
     return true;
 }
 
@@ -903,10 +904,38 @@ void JSNodeHTTPServerSocket::updateTunnelIdle()
     }
 }
 
+/* The FIN of an end() that waited (deferShutdownUntilResponseDrains) is due: uWS holds no more bytes. uWS reads nothing behind a
+ * FIN, so that FIN also waits for the request body of a response that has not ended. */
+template<bool SSL>
+static bool takeShutdownAfterDrain(us_socket_t* socket, bool& peerEnded)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
+    if (!(httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN) || !reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->hasFullyDrained()) {
+        return false;
+    }
+    if ((httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) && httpResponseData->isReceivingRequestBody()) {
+        return false;
+    }
+    httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
+    peerEnded = (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED) != 0;
+    return true;
+}
+
 void JSNodeHTTPServerSocket::onDrain()
 {
     // This function can be called during GC!
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
+    bool peerEnded = false;
+    if (!upgraded && !isClosed() && (is_ssl ? takeShutdownAfterDrain<true>(socket, peerEnded) : takeShutdownAfterDrain<false>(socket, peerEnded))) {
+        halfClose(globalObject);
+        // The peer ended first, so both sides are done: Node.js destroys such a socket at 'finish'.
+        if (peerEnded && !isClosed()) {
+            close();
+        }
+        if (isClosed()) {
+            return;
+        }
+    }
     if (!functionToCallOnDrain) {
         return;
     }
@@ -1092,34 +1121,6 @@ extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, us_socket_t* socket)
     }
     if (auto* res = serverSocket->currentResponse(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_onReadParsed(res->m_ctx);
-    }
-}
-
-template<bool SSL>
-static void halfCloseAfterDrain(us_socket_t* socket)
-{
-    auto* serverSocket = getNodeHTTPServerSocket<SSL>(socket);
-    if (!serverSocket) {
-        return;
-    }
-    auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
-    /* Flood prevention waits for unsent bytes to leave or for the queue of responses to advance. Behind this FIN neither happens, and a paused read never sees the peer's FIN. */
-    if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
-        endFloodPreventionPause<SSL>(socket, httpResponseData);
-    }
-    serverSocket->halfClose(serverSocket->globalObject());
-}
-
-// The bytes that a socket.end() waited for have left (HTTP_NODE_SHUTDOWN_AFTER_DRAIN): the FIN that end() sends at once when nothing is queued.
-extern "C" void Bun__NodeHTTP__halfCloseAfterDrain(int ssl, us_socket_t* socket)
-{
-    if (us_socket_is_closed(socket)) {
-        return;
-    }
-    if (ssl) {
-        halfCloseAfterDrain<true>(socket);
-    } else {
-        halfCloseAfterDrain<false>(socket);
     }
 }
 

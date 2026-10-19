@@ -169,8 +169,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
          * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 22,
-        /* node:http socket.end() with outgoing bytes still queued: send the FIN when they have flushed, whether or not
-         * the response in flight has ended. No close follows that FIN, as when socket.end() finds nothing queued. */
+        /* node:http socket.end() with outgoing bytes still queued. uWS calls onSocketDrain when they have flushed, and
+         * the socket sends its FIN there, whether or not the response in flight has ended. */
         HTTP_NODE_SHUTDOWN_AFTER_DRAIN = 1 << 25,
 
         /* Bits that describe the connection rather than the response in flight.
@@ -255,7 +255,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. */
     bool shouldCloseConnection() const {
-        return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_SHUTDOWN_AFTER_DRAIN))
+        return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN))
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
@@ -264,17 +264,15 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * close-delimited body) is complete; the socket only stays open until its
      * buffered bytes drain. Nothing received from here on is a request this
      * connection may answer (RFC 9112 9.6), and after a close-delimited body the
-     * peer would read whatever we send as more body. */
+     * peer would read whatever we send as more body. The same holds while the FIN
+     * of a node:http socket.end() waits for those bytes. */
     bool isDrainingBeforeClose() const {
-        return (state & (HTTP_CONNECTION_CLOSE | HTTP_RESPONSE_PENDING)) == HTTP_CONNECTION_CLOSE;
+        return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_SHUTDOWN_AFTER_DRAIN)) && !(state & HTTP_RESPONSE_PENDING);
     }
 
-    /* The FIN of a node:http socket.end() that waited for queued bytes gets no close behind it: the peer can still
-     * send, as behind a socket.end() that found nothing queued. It gets one when the peer has ended (nothing is left
-     * to wait for), for destroySoon(), and for a server that closes its idle connections. */
-    bool halfClosesAtDrain() const {
-        return (state & (HTTP_NODE_SHUTDOWN_AFTER_DRAIN | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_CLOSE_WHEN_IDLE | HTTP_NODE_RECEIVED_FIN | HTTP_NODE_PEER_ENDED))
-            == HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
+    /* node:http: the body of the request in flight is still arriving. A tunnel has no body: its parser state only marks the head as read. */
+    bool isReceivingRequestBody() const {
+        return !isConnectRequest && !(state & HTTP_NODE_PARSING_STOPPED) && (hasIncompleteRequestBody() || nodeHttpBodyUntilEof);
     }
 };
 

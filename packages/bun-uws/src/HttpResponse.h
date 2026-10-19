@@ -92,36 +92,39 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 
-    /* Ends a connection that is marked to close, once every outgoing byte has been flushed. Returns true when the
-     * socket was closed. A node:http socket.end() only gets its FIN here (HttpResponseData::halfClosesAtDrain): a
-     * close over request bytes that nothing has read is a reset, and a reset discards the response bytes that the
-     * kernel has not sent yet. The peer's FIN closes that connection. */
-    bool finishMarkedConnection(HttpResponseData<SSL> *httpResponseData) {
-        if (httpResponseData->halfClosesAtDrain()) {
-            if (!us_socket_is_shut_down((us_socket_t *) this)) {
-                Bun__NodeHTTP__halfCloseAfterDrain(SSL, (us_socket_t *) this);
-            }
-            return us_socket_is_closed((us_socket_t *) this);
-        }
-        ((AsyncSocket<SSL> *) this)->shutdown();
-        /* We need to force close after sending FIN since we want to hinder
-         * clients from keeping to send their huge data */
-        ((AsyncSocket<SSL> *) this)->close();
-        return true;
-    }
-
-    /* finishMarkedConnection() when the connection is marked to close (Connection:
+    /* Shutdown+close when the connection is marked to close (Connection:
      * close, peer FIN, close-when-idle), the response is complete and every
      * outgoing byte has been flushed. Returns true when the socket was closed. */
     bool closeIfDoneAndMarked(HttpResponseData<SSL> *httpResponseData) {
         if (httpResponseData->shouldCloseConnection()) {
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                 if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                    return finishMarkedConnection(httpResponseData);
+                    ((AsyncSocket<SSL> *) this)->shutdown();
+                    /* We need to force close after sending FIN since we want to hinder
+                     * clients from keeping to send their huge data */
+                    ((AsyncSocket<SSL> *) this)->close();
+                    return true;
                 }
             }
         }
-        return false;
+        /* The response that just ended can be what the FIN of a node:http socket.end() waited for. */
+        return notifyShutdownAfterDrain();
+    }
+
+    /* node:http: the FIN of a socket.end() waits for queued bytes (HTTP_NODE_SHUTDOWN_AFTER_DRAIN), and then for the request
+     * body of a response that has not ended: nothing is read behind a FIN. onWritable tells the socket when the bytes have
+     * left (onSocketDrain). This tells it again where no writable event follows: the body or the response ended later.
+     * Returns true when the socket closed. */
+    bool notifyShutdownAfterDrain() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN) || !Super::hasFullyDrained()) {
+            return false;
+        }
+        HttpContextData<SSL> *httpContextData = HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this);
+        if (httpResponseData->socketData && httpContextData->onSocketDrain) {
+            httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (us_socket_t *) this);
+        }
+        return us_socket_is_closed((us_socket_t *) this);
     }
 
     /* Called when a response completes. Returns true when the
@@ -174,14 +177,18 @@ public:
     bool closeIfIdle() {
         HttpResponseData<SSL> *data = getHttpResponseData();
         bool idle = data->isIdle;
-        if (idle && HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp()) {
+        const bool isNodeHttp = HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp();
+        if (isNodeHttp && !data->isConnectRequest && us_socket_is_shut_down((us_socket_t *) this)) {
+            /* node:http: behind this side's FIN no request is read and no byte leaves. Only a response that has not ended holds
+             * the connection, not unsent bytes and not a queued response (Node.js: _httpMessage.finished). */
+            idle = !(data->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
+        } else if (idle && isNodeHttp) {
             /* node:http: a connection that still receives a request (a body, or the head of the next one) is not idle, also after its
              * response ended (Node.js: last_message_start_). In the request handler the parser has not entered a chunked body yet, so the armed body handler tells. */
             const bool messageOpen = ((HttpResponseData<SSL, true> *) data)->lastMessageStartMs != 0;
             idle = !(messageOpen && data->inStream != nullptr) && !data->hasIncompleteRequestBody() && !data->hasBufferedPartialRequestHeaders();
-            if (idle && messageOpen && !Super::hasFullyDrained() && !us_socket_is_shut_down((us_socket_t *) this)) {
-                /* The handler of this request still runs and its response has unsent bytes: close when they are out.
-                 * Behind this side's FIN they never leave, so that connection closes now. */
+            if (idle && messageOpen && !Super::hasFullyDrained()) {
+                /* The handler of this request still runs and its response has unsent bytes: close when they are out. */
                 data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
                 idle = false;
             }
@@ -1035,7 +1042,17 @@ public:
             }
 
             /* If we have no backbuffer and we are connection close and we responded fully then close */
-            closeIfDoneAndMarked(getHttpResponseData());
+            HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+            if (httpResponseData->shouldCloseConnection()) {
+                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
+                    if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
+                        ((AsyncSocket<SSL> *) this)->shutdown();
+                        /* We need to force close after sending FIN since we want to hinder
+                        * clients from keeping to send their huge data */
+                        ((AsyncSocket<SSL> *) this)->close();
+                    }
+                }
+            }
         } else {
             /* We are already corked, or can't cork so let's just call the handler */
             handler();

@@ -955,7 +955,9 @@ const ofResolvers = once(() => {
 test.concurrent.each(resolvers.map(([name, , expected], at) => [name, at, expected] as const))(
   "import/resolver: the package's rule runs if a resolver isn't built in: %s",
   async (_, at, expected) => {
-    const { problems } = await ofResolvers();
+    const { problems, stderr, exitCode } = await ofResolvers();
+    // A run that's rejected reports no problems, and that's what the rows for a built-in resolver expect.
+    expect({ stderr, exitCode }).toEqual({ stderr: `Linted ${resolvers.length} files`, exitCode: 1 });
     expect(problems.filter(it => it.startsWith(`${at}/`))).toEqual(expected.map(it => `${at}/${it}`));
   },
 );

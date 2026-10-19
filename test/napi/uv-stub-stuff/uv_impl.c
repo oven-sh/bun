@@ -716,9 +716,6 @@ static napi_value test_async_ref(napi_env env, napi_callback_info info) {
 
 // --- uv_queue_work ----------------------------------------------------------
 
-// Requests whose after_work_cb hasn't run, in every thread's copy of the addon.
-static atomic_int pending_work_requests;
-
 struct work_test {
   uv_work_t req;
   struct reporter reporter;
@@ -764,7 +761,6 @@ static void work_test_after_work_cb(uv_work_t *req, int status) {
   report(&test->reporter, "after", status, passed);
   reporter_destroy(&test->reporter);
   free(test);
-  atomic_fetch_sub(&pending_work_requests, 1);
 }
 
 static struct work_test *queue_work(napi_env env, napi_value callback) {
@@ -778,7 +774,6 @@ static struct work_test *queue_work(napi_env env, napi_value callback) {
     napi_throw_error(env, NULL, "uv_queue_work failed");
     return NULL;
   }
-  atomic_fetch_add(&pending_work_requests, 1);
   return test;
 }
 
@@ -802,13 +797,6 @@ static napi_value test_cancel_work(napi_env env, napi_callback_info info) {
     return NULL;
   napi_value result;
   napi_create_int32(env, uv_cancel((uv_req_t *)&test->req), &result);
-  return result;
-}
-
-static napi_value get_pending_work_requests(napi_env env,
-                                            napi_callback_info info) {
-  napi_value result;
-  napi_create_int32(env, atomic_load(&pending_work_requests), &result);
   return result;
 }
 
@@ -1265,9 +1253,6 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_cancel_work, NULL, &fn);
   napi_set_named_property(env, exports, "testCancelWork", fn);
-
-  napi_create_function(env, NULL, 0, get_pending_work_requests, NULL, &fn);
-  napi_set_named_property(env, exports, "pendingWorkRequests", fn);
 
   napi_create_function(env, NULL, 0, test_mutex_init_destroy, NULL, &fn);
   napi_set_named_property(env, exports, "testMutexInitDestroy", fn);

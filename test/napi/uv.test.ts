@@ -423,24 +423,6 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("a Worker that exits with work queued still runs after_work_cb", async () => {
-    const { stdout, stderr, exitCode } = await runInChild(`
-      const { Worker } = require("node:worker_threads");
-      const worker = new Worker(
-        \`
-          const addon = require(${JSON.stringify(addonPath)});
-          for (let i = 0; i < 4; i++) addon.testQueueWork(() => {});
-          process.exit(0);
-        \`,
-        { eval: true },
-      );
-      worker.on("exit", code => console.log("worker exited", code, "with", addon.pendingWorkRequests(), "pending"));
-    `);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("worker exited 0 with 0 pending\n");
-    expect(exitCode).toBe(0);
-  });
-
   // The handle tests below print the addon's returned state as one JSON line,
   // then one line per event.
   function stateAndEvents(stdout: string) {

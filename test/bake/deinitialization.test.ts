@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import path from "node:path";
 
 test("dev server deinitializes itself", () => {
@@ -140,3 +140,45 @@ test.skipIf(!isASAN)(
   },
   60_000,
 );
+
+test.skipIf(isWindows)("dev server closes the descriptor it opens to bundle an edited file again", async () => {
+  using dir = tempDir("bake-reload-descriptors", {
+    "index.html": `<!DOCTYPE html><html><body><script type="module" src="./entry.ts"></script></body></html>`,
+    "entry.ts": `console.log("v0!");`,
+    "fixture.ts": `
+      import { readdirSync, writeFileSync } from "node:fs";
+      import html from "./index.html";
+
+      const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      const text = url => fetch(new URL(url, server.url)).then(res => res.text());
+      const openDescriptors = () => readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+      async function bundled(marker) {
+        while (true) {
+          const script = (await text("/")).match(/\\/_bun\\/client\\/[^"]+\\.js/)?.[0];
+          if (script && (await text(script)).includes(marker)) return;
+        }
+      }
+
+      await bundled("v0!");
+      const before = openDescriptors();
+      for (let i = 1; i <= 20; i++) {
+        writeFileSync("entry.ts", 'console.log("v' + i + '!");');
+        await bundled("v" + i + "!");
+      }
+      console.log(openDescriptors() - before < 10 ? "closed" : "left open");
+      await server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toEndWith("closed\n");
+  expect(exitCode).toBe(0);
+}, 60_000);

@@ -967,10 +967,10 @@ describe.concurrent("bun lint", () => {
     const print = async (format: string) => {
       const { raw, stdout, exitCode } = await lint(files, ["--threads", "1", "-f", format, ...names]);
       exitCodes[format] = exitCode;
-      // Only this one has the directory in it.
+      // Only this one has the directory in it. A run of a second or more has its time in seconds.
       return (format === "stylish" ? stdout : raw)
         .replace(/\x1b\[[0-9;]*m/g, "")
-        .replace(/Finished in [\d.]+ms/, "Finished in Nms");
+        .replace(/Finished in [\d.]+m?s/, "Finished in Nms");
     };
     const [unix, github, junit, json, gitlab, stylish, checkstyle] = await Promise.all(formats.map(print));
     expect(unix.split("\n")).toEqual([
@@ -1554,19 +1554,23 @@ describe.concurrent("bun lint", () => {
 
     // git keeps a link to `/dev/zero` as it is.
     test.skipIf(isWindows).each([
-      ["eslint.config.js", basic, ["a.js", "eslint.config.js"], 1],
+      ["eslint.config.js", basic, { results: ["a.js", "eslint.config.js"] }, 1],
       // Its problems are warnings.
-      [".oxlintrc.json", "{}", 1, 0],
+      [".oxlintrc.json", "{}", { number_of_files: 1, withProblems: ["a.js"] }, 0],
     ])("a link to a device with the name of a script is passed over: %s", async (name, text, linted, exit) => {
       const { raw, exitCode } = await lint({ [name]: text, "a.js": bad }, ["-f", "json", "."], {
         before: dir => symlinkSync("/dev/null", join(dir, "device.js")),
       });
-      // ESLint's results name every file that was linted. oxlint's report has how many there were.
+      // ESLint's results name every file that was linted. oxlint's report has how many there were, and names those with a problem.
       const printed = JSON.parse(raw);
+      const names = (paths: string[]) => [...new Set(paths.map(it => basename(it)))].sort();
       expect(
         Array.isArray(printed)
-          ? printed.map((it: { filePath: string }) => basename(it.filePath)).sort()
-          : printed.number_of_files,
+          ? { results: names(printed.map((it: { filePath: string }) => it.filePath)) }
+          : {
+              number_of_files: printed.number_of_files,
+              withProblems: names(printed.diagnostics.map((it: { filename: string }) => it.filename)),
+            },
       ).toEqual(linted);
       expect(exitCode).toBe(exit);
     });
@@ -3744,16 +3748,21 @@ describe.concurrent("bun lint", () => {
       test("only --fix-dangerously removes an await that unicorn/no-unnecessary-await reports", async () => {
         const code = "async function worker() {\n  await null;\n  const retries = await 3;\n  return retries;\n}\n";
         const files = { ".oxlintrc.json": "{}", "a.js": code };
-        for (const flags of [["--fix"], ["--fix-suggestions"], ["--fix", "--fix-suggestions"]]) {
-          const result = await lint(files, [...flags, "a.js"], { reads: ["a.js"] });
+        const run = (...flags: string[]) => lint(files, [...flags, "a.js"], { reads: ["a.js"] });
+        const [dangerously, ...others] = await Promise.all([
+          run("--fix-dangerously"),
+          run("--fix"),
+          run("--fix-suggestions"),
+          run("--fix", "--fix-suggestions"),
+        ]);
+        for (const result of others) {
           expect(result.files["a.js"]).toBe(code);
           expect(result.stdout).toContain("no-unnecessary-await");
         }
-        const result = await lint(files, ["--fix-dangerously", "a.js"], { reads: ["a.js"] });
-        expect(result.files["a.js"]).toBe(
+        expect(dangerously.files["a.js"]).toBe(
           "async function worker() {\n  null;\n  const retries = 3;\n  return retries;\n}\n",
         );
-        expect(result.stdout).not.toContain("no-unnecessary-await");
+        expect(dangerously.stdout).not.toContain("no-unnecessary-await");
       });
 
       // What oxlint 1.87 writes.
@@ -4949,6 +4958,38 @@ maybe(() => { return f; });
           const alone = pairs.slice(0, 4).map(([untyped, , lines]): [string, string] => [on([untyped]), text(lines)]);
           const [both, untypedAlone] = await Promise.all([lintRows(rows, []), lintRows(alone, [])]);
           expect(both).toEqual(untypedAlone);
+          // Two runs that report nothing are equal too.
+          expect(untypedAlone).toMatchInlineSnapshot(`
+            [
+              [
+                "a.ts:2 eslint(require-await) error",
+                "a.ts:3 eslint(require-await) error",
+                "a.ts:4 eslint(require-await) error",
+                "a.ts:5 eslint(require-await) error",
+                "a.ts:6 eslint(require-await) error",
+              ],
+              [
+                "a.ts:1 eslint(no-implied-eval) error",
+                "a.ts:2 eslint(no-implied-eval) error",
+                "a.ts:3 eslint(no-implied-eval) error",
+                "a.ts:4 eslint(no-implied-eval) error",
+                "a.ts:5 eslint(no-implied-eval) error",
+              ],
+              [
+                "a.ts:3 eslint(no-throw-literal) error",
+                "a.ts:4 eslint(no-throw-literal) error",
+                "a.ts:5 eslint(no-throw-literal) error",
+                "a.ts:6 eslint(no-throw-literal) error",
+                "a.ts:7 eslint(no-throw-literal) error",
+              ],
+              [
+                "a.ts:2 eslint(prefer-promise-reject-errors) error",
+                "a.ts:3 eslint(prefer-promise-reject-errors) error",
+                "a.ts:4 eslint(prefer-promise-reject-errors) error",
+                "a.ts:5 eslint(prefer-promise-reject-errors) error",
+              ],
+            ]
+          `);
         });
 
         test("where the rule without types is the more severe, both report", async () => {
@@ -7841,13 +7882,15 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           "a.ts": "var a: number;\nexport { a };\n",
           "b.ts": "var b = 1;\nexport { b };\n",
         };
-        const result = await lint(all, ["--fix", "-f", "unix", "a.ts", "b.ts"], { reads: ["a.ts", "b.ts"] });
+        const [result, dry] = await Promise.all([
+          lint(all, ["--fix", "-f", "unix", "a.ts", "b.ts"], { reads: ["a.ts", "b.ts"] }),
+          lint(all, ["--fix-dry-run", "-f", "json", "a.ts"]),
+        ]);
         expect(result.files).toEqual({ "a.ts": all["a.ts"], "b.ts": "let b = 1;\nexport { b };\n" });
         expect(result.stderr).toContain(warning("p/comma", "a.ts"));
         expect(result.stderr).toContain("Fixed 1 problem in 1 file");
         expect(result.stdout).toContain("[Error/p/comma]");
         expect(result.exitCode).toBe(1);
-        const dry = await lint(all, ["--fix-dry-run", "-f", "json", "a.ts"]);
         expect(JSON.parse(dry.raw)[0].output).toBeUndefined();
       });
 

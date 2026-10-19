@@ -162,6 +162,37 @@ fn a_new_member_gets_a_line_and_the_comma_goes_after_the_value_before_it() {
 }
 
 #[test]
+fn a_comment_before_the_closing_bracket_on_the_line_of_the_last_member_is_its_comment() {
+    let old = "{\n  \"name\": \"app\" /* the name */ }";
+    assert_eq!(
+        saved(old, r#"{"name": "app", "version": "1.0.0"}"#),
+        "{\n  \"name\": \"app\", /* the name */\n  \"version\": \"1.0.0\" }"
+    );
+    assert_eq!(
+        saved(
+            "{\n  \"name\": \"app\", /* the name */ }",
+            r#"{"name": "app", "version": "1.0.0"}"#
+        ),
+        "{\n  \"name\": \"app\", /* the name */\n  \"version\": \"1.0.0\", }"
+    );
+    // It goes with its member.
+    assert_eq!(
+        saved(
+            "{\n  \"name\": \"app\",\n  \"version\": \"1.0.0\" /* the version */ }",
+            r#"{"name": "app"}"#
+        ),
+        "{\n  \"name\": \"app\"\n }"
+    );
+    assert_eq!(
+        saved(
+            "{\n  \"b\": 1, // b\n  \"a\": 0 /* a */ }",
+            r#"{"a": 0, "b": 1}"#
+        ),
+        "{\n  \"a\": 0, /* a */\n  \"b\": 1 // b\n }"
+    );
+}
+
+#[test]
 fn a_trailing_comma_stays_a_trailing_comma() {
     assert_eq!(
         saved(
@@ -368,6 +399,32 @@ fn an_object_in_an_array_is_the_item_that_says_all_of_it() {
     );
 }
 
+#[test]
+fn an_array_in_an_array_is_read_once() {
+    // Two reads of each level are 2^64 reads of the innermost one.
+    for (open, close, levels) in [
+        ("[", "]", 64),
+        ("[{\"a\":", "}]", 64),
+        ("[[\"p\",{\"x\":", "}]]", 32),
+    ] {
+        let nested = |core: &str| format!("{}{core}{}", open.repeat(levels), close.repeat(levels));
+        let deep = nested("1");
+        let old = format!("{{\n  \"name\": \"app\",\n  \"deep\": {deep}\n}}\n");
+        assert_unchanged(&old);
+        assert_eq!(
+            saved(&old, &format!("{{\"name\": \"lib\", \"deep\": {deep}}}")),
+            old.replace("app", "lib")
+        );
+        assert_eq!(
+            saved(
+                &old,
+                &format!("{{\"name\": \"app\", \"deep\": {}}}", nested("2"))
+            ),
+            old.replace(&deep, &nested("2"))
+        );
+    }
+}
+
 // ───── a container on one line ─────
 
 #[test]
@@ -563,7 +620,8 @@ fn the_tree_that_is_read_back_is_the_tree_that_was_saved() {
         b"{\"a\": 1, \"b\": [true, null]}",
         b"[1]",
     ] {
-        let other = super::read(other, json::PACKAGE_JSON_OPTS, true, false).expect("reads");
+        let other =
+            super::read(other, json::PACKAGE_JSON_OPTS, Extent::Document, false).expect("reads");
         assert!(!is_tree(&other.root, &root, StackCheck::init()));
     }
 }
@@ -1067,7 +1125,7 @@ fn check(seed: u64, edits: usize, grows: bool) {
         value,
         "seed {seed}: the text is its value"
     );
-    let is_strict = read(old, json::JSONOptions::DEFAULT, true, false).is_some();
+    let is_strict = read(old, json::JSONOptions::DEFAULT, Extent::Document, false).is_some();
     assert!(jsonc || is_strict, "seed {seed}: strict JSON");
     assert!(
         !is_strict || comments_of(old).is_empty(),

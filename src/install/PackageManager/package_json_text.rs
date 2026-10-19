@@ -63,7 +63,7 @@ fn write(
     };
     // A text that `root` was parsed from, and that no edit has changed, says it as it is.
     let same = old.to_vec();
-    if let Some(read) = read(&same, json::PACKAGE_JSON_OPTS, false, with_positions)
+    if let Some(read) = read(&same, json::PACKAGE_JSON_OPTS, Extent::Root, with_positions)
         && is_tree(&read.root, &root, stack)
     {
         debug_assert!(!is_wrong, "package.json text is not written over itself");
@@ -72,7 +72,7 @@ fn write(
     let whole = print_new_file(old, root, indentation)?;
     // A tree that the printer cannot write either (a string that is not UTF-8) is not a bug here.
     if is_wrong
-        && read(&whole, json::PACKAGE_JSON_OPTS, false, false)
+        && read(&whole, json::PACKAGE_JSON_OPTS, Extent::Root, false)
             .is_some_and(|read| is_tree(&read.root, &root, stack))
     {
         debug_assert!(false, "package.json text does not say what its tree says");
@@ -115,7 +115,13 @@ struct OldText<'a> {
 impl OldText<'_> {
     fn is_jsonc(&mut self) -> bool {
         *self.is_jsonc.get_or_insert_with(|| {
-            read(self.text, json::JSONOptions::DEFAULT, true, false).is_none()
+            read(
+                self.text,
+                json::JSONOptions::DEFAULT,
+                Extent::Document,
+                false,
+            )
+            .is_none()
         })
     }
 }
@@ -124,27 +130,46 @@ impl OldText<'_> {
 fn read_new(new: &[u8], mut old: OldText<'_>, with_positions: bool) -> Option<json::ParsedJson> {
     let strict = json::JSONOptions::DEFAULT;
     if old.looks_jsonc {
-        let read_as_jsonc = read(new, json::PACKAGE_JSON_OPTS, true, with_positions)?;
+        let read_as_jsonc = read(
+            new,
+            json::PACKAGE_JSON_OPTS,
+            Extent::Document,
+            with_positions,
+        )?;
         return if old.is_jsonc() {
             Some(read_as_jsonc)
         } else {
-            read(new, strict, true, with_positions)
+            read(new, strict, Extent::Document, with_positions)
         };
     }
-    read(new, strict, true, with_positions).or_else(|| {
+    read(new, strict, Extent::Document, with_positions).or_else(|| {
         if old.is_jsonc() {
-            read(new, json::PACKAGE_JSON_OPTS, true, with_positions)
+            read(
+                new,
+                json::PACKAGE_JSON_OPTS,
+                Extent::Document,
+                with_positions,
+            )
         } else {
             None
         }
     })
 }
 
-/// The parser's rows for `text`. `is_document`: it reads to the end of `text`, past the root.
+/// How far the parser reads a text.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Extent {
+    /// To the end of the root, as a command reads a package.json.
+    Root,
+    /// To the end of the text: after the root it takes blanks and comments only.
+    Document,
+}
+
+/// The parser's rows for `text`.
 fn read(
     text: &[u8],
     opts: json::JSONOptions,
-    is_document: bool,
+    extent: Extent,
     with_positions: bool,
 ) -> Option<json::ParsedJson> {
     bun_ast::initialize_store();
@@ -154,6 +179,7 @@ fn read(
         record_value_locs: with_positions,
         ..opts
     };
+    let is_document = extent == Extent::Document;
     json::ParsedJson::parse_with_opts(opts, is_document, &source, &mut Log::init()).ok()
 }
 
@@ -604,6 +630,22 @@ impl<'a> Text<'a> {
         (from, false)
     }
 
+    /// Where the last comment of `text[from..limit]` ends: `from` if it has none.
+    fn comments_end(&self, from: usize, limit: usize) -> usize {
+        let text = self.text;
+        let (mut at, mut end) = (from, from);
+        while at < limit {
+            match (text[at] == b'/')
+                .then(|| scan::comment_end(text, at))
+                .flatten()
+            {
+                Some(comment_end) => (at, end) = (comment_end, comment_end),
+                None => at += 1,
+            }
+        }
+        end
+    }
+
     /// Where the next token of the old text is, at or after `at`.
     fn token(&mut self, at: usize) -> Step<usize> {
         let gap = scan::gap(self.text, at).ok_or(Stop::Unread)?;
@@ -707,7 +749,11 @@ impl<'a> Text<'a> {
                 container.close
             };
             let after = member.comma.map_or(member.value_end, |comma| comma + 1);
-            let (end, ends_line) = self.rest_of_line(after, next_key);
+            let (mut end, ends_line) = self.rest_of_line(after, next_key);
+            if !ends_line && index + 1 == container.len {
+                // The closing bracket is on the line of the last member: a comment before it is that member's.
+                end = self.comments_end(after, container.close);
+            }
             members.push(MemberLines {
                 lead,
                 end,
@@ -785,13 +831,19 @@ impl<'a> Text<'a> {
         let Some((entries, container)) = self.container_of(value, old) else {
             return old.container.is_none() && self.is_token(old, value);
         };
-        self.has_same_members(&container, entries)
-            && (0..container.len).all(|index| {
+        if !self.has_same_members(&container, entries) {
+            return false;
+        }
+        match entries {
+            // `has_same_members` has read every item of an array in full. A second read here doubles the work at each level.
+            Entries::Items(_) => true,
+            Entries::Members(_) => (0..container.len).all(|index| {
                 let member = self.member(&container, index);
                 entries
                     .value(index)
                     .is_ok_and(|value| self.says(member.old_value(), value))
-            })
+            }),
+        }
     }
 
     /// `(hash of its name, member)` for the members of the text that have a name, sorted.

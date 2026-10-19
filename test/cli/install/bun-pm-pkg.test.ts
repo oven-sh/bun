@@ -1507,36 +1507,6 @@ describe.concurrent("bun pm pkg", () => {
   });
 });
 
-// Not in the concurrent group above: it is heavy on a debug build.
-describe("bun pm pkg set", () => {
-  it("should write every code unit of a string that it sets into a file with a comment", async () => {
-    // The argument of one spawn is at most 32,767 characters on Windows.
-    const unitsPerValue = isWindows ? 0x1000 : 0x2000;
-    const valuesPerSpawn = isWindows ? 1 : 8;
-    const strings = Array.from({ length: 0x10000 / unitsPerValue }, (_, i) =>
-      Array.from({ length: unitsPerValue }, (_, j) => String.fromCharCode(i * unitsPerValue + j)).join(""),
-    );
-    const escaped = (string: string) =>
-      `"${Array.from({ length: string.length }, (_, i) => "\\u" + string.charCodeAt(i).toString(16).padStart(4, "0")).join("")}"`;
-    using dir = tempDir("pm-pkg-units", { "package.json": `{\n  // kept\n  "name": "n"\n}\n` });
-
-    for (let first = 0; first < strings.length; first += valuesPerSpawn) {
-      const values = strings
-        .slice(first, first + valuesPerSpawn)
-        .map((string, i) => `s${first + i}=${escaped(string)}`);
-      const { error, code } = await runPmPkg(["set", ...values, "--json"], String(dir));
-      expect(error).toBe("");
-      expect(code).toBe(0);
-    }
-    const raw = await readRaw(String(dir));
-    expect(raw).toStartWith(`{\n  // kept\n  "name": "n",\n  "s0": "`);
-    expect(Bun.JSONC.parse(raw)).toEqual({
-      name: "n",
-      ...Object.fromEntries(strings.map((string, i) => [`s${i}`, string])),
-    });
-  }, 30_000);
-});
-
 // An edit is written into the text of the file. What it does not touch stays as it is, byte for byte:
 // https://github.com/oven-sh/bun/issues/11536
 describe.concurrent("bun pm pkg: the text of package.json", () => {
@@ -1618,6 +1588,10 @@ describe.concurrent("bun pm pkg: the text of package.json", () => {
     );
     expect(await edited(`{\n  "name": "app" /* the name */\n}\n`, "set", "version=1.0.0")).toBe(
       `{\n  "name": "app", /* the name */\n  "version": "1.0.0"\n}\n`,
+    );
+    // The closing brace is on the line of the last member: the comment before it is that member's.
+    expect(await edited(`{\n  "name": "app" /* the name */ }`, "set", "version=1.0.0")).toBe(
+      `{\n  "name": "app", /* the name */\n  "version": "1.0.0" }`,
     );
   });
 
@@ -1723,7 +1697,7 @@ describe.concurrent("bun pm pkg: the text of package.json", () => {
     // The parser finds its tokens 8,192 bytes at a time. The root ends in the last two bytes of the first part.
     for (const end of [8190, 8191]) {
       const head = `{\n  "name": "app",\n  "description": "`;
-      const packageJson = `${head}${"d".repeat(end - head.length - 2)}"\n}\n// the end\n`;
+      const packageJson = `${head}${Buffer.alloc(end - head.length - 2, "d")}"\n}\n// the end\n`;
       expect(packageJson.indexOf("}")).toBe(end);
       using dir = tempDir("pm-pkg-text-tail", { "package.json": packageJson });
       expect(await runPmPkg(["set", "license=MIT"], String(dir))).toEqual({ output: "", error: "", code: 0 });
@@ -1760,6 +1734,41 @@ describe.concurrent("bun pm pkg: the text of package.json", () => {
     expect(
       await edited(`{\n  "n\\u0061me": "app", // spelled with an escape\n  "v": "1"\n}\n`, "set", "name=lib"),
     ).toBe(`{\n  "n\\u0061me": "lib", // spelled with an escape\n  "v": "1"\n}\n`);
+  });
+
+  // 0x1000 code units a case: the arguments of one spawn are at most 32,767 characters on Windows.
+  it.each(Array.from({ length: 16 }, (_, block) => block * 0x1000))(
+    "writes each code unit from %d on as the code unit that it is",
+    async first => {
+      const string = Array.from({ length: 0x1000 }, (_, i) => String.fromCharCode(first + i)).join("");
+      const escaped = Array.from({ length: 0x1000 }, (_, i) => "\\u" + (first + i).toString(16).padStart(4, "0")).join(
+        "",
+      );
+      using dir = tempDir("pm-pkg-text-units", { "package.json": `{\n  // kept\n  "name": "n"\n}\n` });
+      expect(await runPmPkg(["set", `s="${escaped}"`, "--json"], String(dir))).toEqual({
+        output: "",
+        error: "",
+        code: 0,
+      });
+      const raw = await readRaw(String(dir));
+      expect(raw).toStartWith(`{\n  // kept\n  "name": "n",\n  "s": "`);
+      expect(Bun.JSONC.parse(raw)).toEqual({ name: "n", s: string });
+    },
+  );
+
+  it("reads an array in an array once", async () => {
+    // Two reads of each level never end: 2^64 reads of the innermost one.
+    const nested = (open: string, close: string, levels: number) =>
+      `${Buffer.alloc(open.length * levels, open)}1${Buffer.alloc(close.length * levels, close)}`;
+    const deep = [nested("[", "]", 64), nested(`[{"a":`, "}]", 64), nested(`[["p",{"x":`, "}]]", 32)];
+    await Promise.all(
+      deep.map(async deep => {
+        const packageJson = `{\n  "name": "app",\n  "deep": ${deep}\n}\n`;
+        expect(await edited(packageJson, "set", "license=MIT")).toBe(
+          packageJson.replace(`\n}\n`, `,\n  "license": "MIT"\n}\n`),
+        );
+      }),
+    );
   });
 
   it("prints with --dry-run the text that it would write", async () => {

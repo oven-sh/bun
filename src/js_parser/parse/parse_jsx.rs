@@ -19,6 +19,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if SCAN_ONLY {
             p.needs_jsx_import = true;
         }
+        p.repl_input_gets_wrapper = true;
 
         let tag = JSXTag::parse(p)?;
 

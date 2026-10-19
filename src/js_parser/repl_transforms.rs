@@ -2,7 +2,9 @@
 //!
 //! This module provides transformations for REPL mode:
 //! - Wraps the last expression in { value: expr } for result capture
-//! - Wraps code with await in async IIFE with variable hoisting
+//! - Wraps code with top-level await or an import in an async IIFE
+//! - Prints every other input as the statements of a Program, so the engine
+//!   gives its declarations the scope and the order a script has
 //! - Hoists declarations for variable persistence across REPL lines
 
 use bun_alloc::Arena as Bump;
@@ -16,21 +18,27 @@ use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
 
 use crate::p::P;
 
+/// How the statements of an input run.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReplArm {
+    /// As the statements of a Program. A function declaration is a global binding that exists
+    /// from the start of the input, and what `eval` or a block-level function declares is global.
+    Script,
+    /// In an async arrow function, for `await` and for an import, which is awaited. Its
+    /// declarations are local to the arrow, and the transform hands each one to the global.
+    AsyncWrapper,
+}
+
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Apply REPL-mode transforms to the AST.
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture
-    /// - Wraps code with await in async IIFE with variable hoisting
+    /// - Wraps code with top-level await or an import in an async IIFE
     pub(crate) fn apply_repl_transforms<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
         bump: &'bump Bump,
     ) -> Result<(), bun_alloc::AllocError> {
-        // Skip transform if there's a top-level return (indicates module pattern)
-        if self.has_top_level_return {
-            return Ok(());
-        }
-
         // Collect all statements
         let mut total_stmts_count: usize = 0;
         for part in parts.iter() {
@@ -68,29 +76,35 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
         let all_stmts: &mut [Stmt] = all_stmts.into_bump_slice_mut();
 
-        // Check if there's top-level await or imports (imports become dynamic awaited imports)
-        let mut has_top_level_await = self.top_level_await_keyword.len > 0;
-        if !has_top_level_await {
+        // Only top-level await, or an import (which becomes an awaited dynamic import), needs a
+        // function around the statements.
+        let mut arm = if self.top_level_await_keyword.len > 0 {
+            ReplArm::AsyncWrapper
+        } else {
+            ReplArm::Script
+        };
+        if arm == ReplArm::Script {
             for stmt in all_stmts.iter() {
-                if matches!(stmt.data, StmtData::SImport(_)) {
-                    has_top_level_await = true;
+                if matches!(
+                    stmt.data,
+                    StmtData::SImport(_) | StmtData::SExportFrom(_) | StmtData::SExportStar(_)
+                ) {
+                    arm = ReplArm::AsyncWrapper;
                     break;
                 }
             }
         }
 
-        // Apply transform with is_async based on presence of top-level await
-        self.repl_transform_with_hoisting(parts, all_stmts, bump, has_top_level_await)
+        self.repl_transform_with_hoisting(parts, all_stmts, bump, arm)
     }
 
-    /// Transform code with hoisting and IIFE wrapper
-    /// `is_async`: true for async IIFE (when top-level await present), false for sync IIFE
+    /// Transform code with hoisting, as a Program or inside the async IIFE wrapper
     fn repl_transform_with_hoisting<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
         all_stmts: &[Stmt],
         bump: &'bump Bump,
-        is_async: bool,
+        arm: ReplArm,
     ) -> Result<(), bun_alloc::AllocError> {
         if all_stmts.is_empty() {
             return Ok(());
@@ -100,8 +114,21 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         let mut hoisted_stmts = BumpVec::<Stmt>::with_capacity_in(all_stmts.len(), bump);
         let mut inner_stmts = BumpVec::<Stmt>::with_capacity_in(all_stmts.len(), bump);
 
+        // A directive only has its effect at the start of a Program, in front of the hoisted
+        // declarations. In the wrapper it is the first statement of the arrow's body.
+        let prologue_len = match arm {
+            ReplArm::Script => all_stmts
+                .iter()
+                .take_while(|stmt| matches!(stmt.data, StmtData::SDirective(_)))
+                .count(),
+            ReplArm::AsyncWrapper => 0,
+        };
+
         // Process each statement - hoist all declarations for REPL persistence
-        for stmt in all_stmts.iter() {
+        for (index, stmt) in all_stmts.iter().enumerate() {
+            let Some(stmt) = &self.repl_without_export(*stmt) else {
+                continue;
+            };
             match stmt.data {
                 StmtData::SLocal(local) => {
                     // Hoist all declarations as var so they become context properties
@@ -147,10 +174,11 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     }
                 }
                 StmtData::SFunction(func) => {
-                    // For function declarations:
+                    // A function declaration of a Program is global, and the engine creates it
+                    // before the first statement runs. In the wrapper it is local to the arrow:
                     // Hoist as: var funcName;
                     // Inner: this.funcName = funcName; function funcName() {}
-                    if let Some(name_loc) = func.func.name {
+                    if let (ReplArm::AsyncWrapper, Some(name_loc)) = (arm, func.func.name) {
                         let name_ref = name_loc.ref_;
                         hoisted_stmts.push(self.s(
                             S::Local {
@@ -462,7 +490,11 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     }
                 }
                 StmtData::SDirective(directive) => {
-                    // In REPL mode, treat directives (string literals) as expressions.
+                    // The prologue of a Program keeps its directives (below). A directive is also
+                    // a string expression: it is the value of an input that it ends.
+                    if index < prologue_len && index + 1 != all_stmts.len() {
+                        continue;
+                    }
                     let value_str: &'static [u8] = directive.value.slice();
                     let str_expr = self.new_expr(
                         E::String {
@@ -485,45 +517,49 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             }
         }
 
-        // Wrap the last expression in return { value: expr }
-        self.repl_wrap_last_expression_with_return(&mut inner_stmts, bump);
+        // The value of the input is the value of its last expression statement.
+        self.repl_wrap_last_expression(&mut inner_stmts, bump, arm);
 
-        // Create the IIFE: (() => { ...inner_stmts... })() or (async () => { ... })()
-        let inner_slice: &mut [Stmt] = inner_stmts.into_bump_slice_mut();
-        let arrow = self.new_expr(
-            E::Arrow {
-                body: G::FnBody {
-                    loc: bun_ast::Loc::EMPTY,
-                    stmts: bun_ast::StoreSlice::new_mut(inner_slice),
-                },
-                is_async,
-                ..Default::default()
-            },
-            bun_ast::Loc::EMPTY,
-        );
+        let mut final_stmts =
+            BumpVec::with_capacity_in(prologue_len + hoisted_stmts.len() + inner_stmts.len(), bump);
+        final_stmts.extend_from_slice(&all_stmts[..prologue_len]);
+        final_stmts.extend_from_slice(&hoisted_stmts);
+        match arm {
+            ReplArm::Script => final_stmts.extend_from_slice(&inner_stmts),
+            ReplArm::AsyncWrapper => {
+                // Create the IIFE: (async () => { ...inner_stmts... })()
+                let inner_slice: &mut [Stmt] = inner_stmts.into_bump_slice_mut();
+                let arrow = self.new_expr(
+                    E::Arrow {
+                        body: G::FnBody {
+                            loc: bun_ast::Loc::EMPTY,
+                            stmts: bun_ast::StoreSlice::new_mut(inner_slice),
+                        },
+                        is_async: true,
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                );
 
-        let iife = self.new_expr(
-            E::Call {
-                target: arrow,
-                args: bun_alloc::AstAlloc::vec(),
-                ..Default::default()
-            },
-            bun_ast::Loc::EMPTY,
-        );
+                let iife = self.new_expr(
+                    E::Call {
+                        target: arrow,
+                        args: bun_alloc::AstAlloc::vec(),
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                );
 
-        // Final output: hoisted declarations + IIFE call
-        let final_stmts_count = hoisted_stmts.len() + 1;
-        let mut final_stmts = BumpVec::with_capacity_in(final_stmts_count, bump);
-        for stmt in hoisted_stmts.iter() {
-            final_stmts.push(*stmt);
+                // Final output: hoisted declarations + IIFE call
+                final_stmts.push(self.s(
+                    S::SExpr {
+                        value: iife,
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                ));
+            }
         }
-        final_stmts.push(self.s(
-            S::SExpr {
-                value: iife,
-                ..Default::default()
-            },
-            bun_ast::Loc::EMPTY,
-        ));
         let final_slice: &mut [Stmt] = final_stmts.into_bump_slice_mut();
 
         // Update parts. Input consisting solely of a consumed "use strict"
@@ -657,34 +693,162 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         Ok(())
     }
 
-    /// Wrap the last expression in return { value: expr }
-    fn repl_wrap_last_expression_with_return<'bump>(
+    /// Make `{ value: expr }` of the last expression statement what the input evaluates to: the
+    /// return value of the wrapper, or the last statement of the Program. When a Program ends
+    /// with another statement, `void 0` follows it, so that the caller never takes the
+    /// completion value of a statement (`if (c) ({ value: 1 })`, a promise) for the wrapped value.
+    fn repl_wrap_last_expression<'bump>(
         &mut self,
         inner_stmts: &mut BumpVec<'bump, Stmt>,
         bump: &'bump Bump,
+        arm: ReplArm,
     ) {
-        if !inner_stmts.is_empty() {
-            let mut last_idx: usize = inner_stmts.len();
-            while last_idx > 0 {
-                last_idx -= 1;
-                let last_stmt = inner_stmts[last_idx];
-                match last_stmt.data {
-                    StmtData::SEmpty(_) | StmtData::SComment(_) => continue,
-                    StmtData::SExpr(expr_data) => {
-                        // Wrap in return { value: expr }
-                        let wrapped = self.repl_wrap_expr_in_value_object(expr_data.value, bump);
-                        inner_stmts[last_idx] = self.s(
+        let mut last_idx: usize = inner_stmts.len();
+        while last_idx > 0 {
+            last_idx -= 1;
+            let last_stmt = inner_stmts[last_idx];
+            match last_stmt.data {
+                StmtData::SEmpty(_) | StmtData::SComment(_) => continue,
+                StmtData::SExpr(expr_data) => {
+                    let wrapped = self.repl_wrap_expr_in_value_object(expr_data.value, bump);
+                    inner_stmts[last_idx] = match arm {
+                        ReplArm::Script => self.s(
+                            S::SExpr {
+                                value: wrapped,
+                                ..Default::default()
+                            },
+                            last_stmt.loc,
+                        ),
+                        ReplArm::AsyncWrapper => self.s(
                             S::Return {
                                 value: Some(wrapped),
                             },
                             last_stmt.loc,
-                        );
-                        break;
-                    }
-                    _ => break,
+                        ),
+                    };
+                    return;
                 }
+                _ => break,
             }
         }
+        if arm == ReplArm::Script {
+            // The completion value of a Program whose last statement is not an expression can
+            // be any value of the input (`if (1) p;`). The evaluator takes a result only from
+            // the object above, so the Program ends with `void 0`.
+            let zero = self.new_expr(E::Number::new(0.0), bun_ast::Loc::EMPTY);
+            let undefined = self.new_expr(
+                E::Unary {
+                    op: js_ast::OpCode::UnVoid,
+                    value: zero,
+                    flags: E::UnaryFlags::default(),
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            inner_stmts.push(self.s(
+                S::SExpr {
+                    value: undefined,
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            ));
+        }
+    }
+
+    /// Nothing is exported from an input: an export statement becomes the declaration or the
+    /// expression that it carries. `None` for a statement that only names exports.
+    fn repl_without_export(&mut self, stmt: Stmt) -> Option<Stmt> {
+        match stmt.data {
+            StmtData::SFunction(mut func) => {
+                func.func.flags.remove(flags::Function::IsExport);
+                Some(stmt)
+            }
+            StmtData::SExportDefault(default) => match default.value {
+                js_ast::StmtOrExpr::Expr(value) => Some(self.s(
+                    S::SExpr {
+                        value,
+                        ..Default::default()
+                    },
+                    stmt.loc,
+                )),
+                js_ast::StmtOrExpr::Stmt(declaration) => match declaration.data {
+                    // A declaration needs a name. Without one it is the expression.
+                    StmtData::SFunction(mut func) if self.repl_has_no_own_name(func.func.name) => {
+                        let mut func = core::mem::take(&mut func.func);
+                        func.name = None;
+                        let value = self.new_expr(E::Function { func }, declaration.loc);
+                        Some(self.s(
+                            S::SExpr {
+                                value,
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ))
+                    }
+                    StmtData::SClass(mut class)
+                        if self.repl_has_no_own_name(class.class.class_name) =>
+                    {
+                        let mut class = core::mem::take(&mut class.class);
+                        class.class_name = None;
+                        let value = self.new_expr(class, declaration.loc);
+                        Some(self.s(
+                            S::SExpr {
+                                value,
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ))
+                    }
+                    _ => self.repl_without_export(declaration),
+                },
+            },
+            StmtData::SExportClause(_) => None,
+            // `export .. from "mod"` loads the module, as `import "mod"` does.
+            StmtData::SExportFrom(from) => {
+                Some(self.repl_import_for_effect(from.import_record_index, stmt.loc))
+            }
+            StmtData::SExportStar(star) => {
+                Some(self.repl_import_for_effect(star.import_record_index, stmt.loc))
+            }
+            _ => Some(stmt),
+        }
+    }
+
+    /// The visit pass gives a default export that has no name the generated `<file>_default`.
+    fn repl_has_no_own_name(&self, name: Option<js_ast::LocRef>) -> bool {
+        name.is_none_or(|name| {
+            self.symbols[name.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Other
+        })
+    }
+
+    /// `await import("mod")` as a statement.
+    fn repl_import_for_effect(&mut self, import_record_index: u32, loc: bun_ast::Loc) -> Stmt {
+        let path_str: &'static [u8] = self.import_records.items()[import_record_index as usize]
+            .path
+            .text;
+        let str_expr = self.new_expr(
+            E::String {
+                data: path_str.into(),
+                ..Default::default()
+            },
+            loc,
+        );
+        let import_expr = self.new_expr(
+            E::Import {
+                expr: str_expr,
+                options: Expr::EMPTY,
+                import_record_index: u32::MAX,
+                namespace_ref: bun_ast::Ref::NONE,
+            },
+            loc,
+        );
+        let value = self.new_expr(E::Await { value: import_expr }, loc);
+        self.s(
+            S::SExpr {
+                value,
+                ..Default::default()
+            },
+            loc,
+        )
     }
 
     /// Extract individual identifiers from a binding pattern for hoisting
@@ -718,6 +882,27 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Create { __proto__: null, value: expr } wrapper object
     /// Uses null prototype to create a clean data object
     fn repl_wrap_expr_in_value_object<'bump>(&mut self, expr: Expr, bump: &'bump Bump) -> Expr {
+        // A function or class with no name takes the name of the property it is the value of.
+        // `(0, expr)` is the same value and takes none.
+        let takes_property_name = match expr.data {
+            js_ast::ExprData::EArrow(_) => true,
+            js_ast::ExprData::EFunction(func) => func.func.name.is_none(),
+            js_ast::ExprData::EClass(class) => class.class_name.is_none(),
+            _ => false,
+        };
+        let expr = if takes_property_name {
+            let zero = self.new_expr(E::Number::new(0.0), expr.loc);
+            self.new_expr(
+                E::Binary {
+                    op: js_ast::OpCode::BinComma,
+                    left: zero,
+                    right: expr,
+                },
+                expr.loc,
+            )
+        } else {
+            expr
+        };
         // G::Property is non-Copy (owns Vec) → use bump Vec instead of alloc_slice_copy.
         let mut properties = BumpVec::<G::Property>::with_capacity_in(2, bump);
         // __proto__: null - creates null-prototype object

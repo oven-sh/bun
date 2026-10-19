@@ -290,6 +290,244 @@ describe("Bun.Transpiler replMode", () => {
     });
   });
 
+  // An input with no top-level await and no import is printed as the statements of a script.
+  describe("script inputs", () => {
+    const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
+
+    /** Runs each input in one context. Returns what the last input evaluates to. */
+    function runSession(...inputs: string[]) {
+      const context = vm.createContext({});
+      let result: any;
+      for (const input of inputs) result = vm.runInContext(transpiler.transformSync(input), context);
+      return result;
+    }
+
+    test("are printed with no function around them", () => {
+      expect(transpiler.transformSync("'use strict'; const one = 1; function f() { return one } f()"))
+        .toMatchInlineSnapshot(`
+        ""use strict";
+        var one;
+        one = 1;
+        function f() {
+          return one;
+        }
+        ({
+          __proto__: null,
+          value: f()
+        });
+        "
+      `);
+      // The completion value of a script can be any value. Only the object above is a result.
+      expect(transpiler.transformSync("if (1) p;")).toMatchInlineSnapshot(`
+        "if (1)
+          p;
+        void 0;
+        "
+      `);
+    });
+
+    test("transform() prints the same text as transformSync()", async () => {
+      const input = "function f() { return 1 } f()";
+      expect(await transpiler.transform(input)).toBe(transpiler.transformSync(input));
+    });
+
+    test("a function keeps an assignment to its name", () => {
+      expect(
+        runSession("function f() { return 1 } function wrap(g) { return () => g() + 100 } f = wrap(f)", "f()"),
+      ).toEqual({ value: 101 });
+    });
+
+    test("a closure calls the newest declaration of a function", () => {
+      expect(
+        runSession(
+          "function current() { return 1 } var call = () => current()",
+          "function current() { return 2 }",
+          "call()",
+        ),
+      ).toEqual({ value: 2 });
+    });
+
+    test("a function exists before the first statement of its input runs", () => {
+      expect(runSession("var early = typeof globalThis.late; function late() {}", "early")).toEqual({
+        value: "function",
+      });
+    });
+
+    test.each([
+      ["an if block", "if (true) { function inBlock() {} }"],
+      ["a try block", "try { function inBlock() {} } finally {}"],
+      ["a loop body", "for (const once of [1]) { function inBlock() {} }"],
+      ["a switch case", "switch (1) { case 1: function inBlock() {} }"],
+      ["a labeled block", "label: { function inBlock() {} }"],
+    ])("a function declared in %s is there in the next input", (_, input) => {
+      expect(runSession(input, "typeof inBlock")).toEqual({ value: "function" });
+    });
+
+    test("a name that eval declares is there in the next input", () => {
+      expect(
+        runSession(`eval("var fromEval = 4; function evalFn() { return fromEval }")`, "[evalFn(), typeof fromEval]"),
+      ).toEqual({ value: [4, "number"] });
+    });
+
+    test.each([
+      ["export function exported() { return 1 }", "exported()", 1],
+      ["export async function exported() {}", "typeof exported", "function"],
+      ["export function* exported() {}", "typeof exported", "function"],
+      ["export default function exported() { return 2 }", "exported()", 2],
+      ["export default class Exported {}", "typeof Exported", "function"],
+      ["export const exported = 3", "exported", 3],
+      ["var exported = 4; export { exported }", "exported", 4],
+    ])("%s declares what it carries", (input, next, value) => {
+      expect(runSession(input, next)).toEqual({ value });
+    });
+
+    test("export default evaluates an expression, or a function or class with no name", () => {
+      expect(runSession("export default 6 * 7")).toEqual({ value: 42 });
+      expect(runSession("export default function () { return 5 }").value()).toBe(5);
+      expect(runSession("export default class { static five = 5 }").value.five).toBe(5);
+    });
+
+    test("a function or class with no name that an input evaluates to has no name", () => {
+      for (const input of ["() => 1", "(function () {})", "(class {})", "await 1; () => 2"]) {
+        const output = transpiler.transformSync(input);
+        expect(output).toContain("value: (0, ");
+      }
+      expect(runSession("() => 1").value.name).toBe("");
+      expect(runSession("(function () {})").value.name).toBe("");
+      expect(runSession("(class {})").value.name).toBe("");
+      // A name that the code gives stays.
+      expect(runSession("(function named() {})").value.name).toBe("named");
+      expect(runSession("var assigned = () => 1").value.name).toBe("assigned");
+    });
+
+    test("a top-level return is a syntax error", () => {
+      expect(() => runSession("return 5")).toThrow("Return statements are only valid inside functions.");
+    });
+
+    test("only the last expression statement is the value of an input", () => {
+      // The promise is the value. The input does not wait for it.
+      const pending = runSession("var pending = new Promise(() => {}); pending");
+      expect(Object.keys(pending)).toEqual(["value"]);
+      expect(Bun.peek.status(pending.value)).toBe("pending");
+      expect(runSession("if (1) ({ value: 7 })")).toBeUndefined();
+      expect(runSession("var p = 1; if (1) p;")).toBeUndefined();
+      expect(runSession("function only() {}")).toBeUndefined();
+    });
+
+    test("'use strict' is the directive of the script", () => {
+      expect(runSession("'use strict'; function strictThis() { return this === undefined } strictThis()")).toEqual({
+        value: true,
+      });
+      expect(runSession("function sloppyThis() { return this === globalThis } sloppyThis()")).toEqual({ value: true });
+      // The directive is the value of an input that it ends.
+      expect(runSession("'use strict'")).toEqual({ value: "use strict" });
+    });
+  });
+
+  describe("inputs with top-level await or an import", () => {
+    const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
+
+    test("are printed in an async function, with each declaration handed to the global", () => {
+      const inputs = [
+        "await 1",
+        "var x = await Promise.resolve(10)",
+        "const { a, b } = await Promise.resolve({ a: 1, b: 2 }); a + b",
+        "await 1; function foo() { return 42 }",
+        "await 1; class Bar {}",
+        "for await (const chunk of []) {}",
+        'import fs from "node:fs"; fs.existsSync("/")',
+        'import { join, sep as separator } from "node:path"',
+        'import * as os from "node:os"',
+        'import "node:fs"',
+      ];
+      expect(inputs.map(input => transpiler.transformSync(input)).join("\n")).toMatchInlineSnapshot(`
+        "(async () => {
+          return {
+            __proto__: null,
+            value: await 1
+          };
+        })();
+
+        var x;
+        (async () => {
+          return {
+            __proto__: null,
+            value: x = await Promise.resolve(10)
+          };
+        })();
+
+        var a, b;
+        (async () => {
+          ({ a, b } = await Promise.resolve({ a: 1, b: 2 }));
+          return {
+            __proto__: null,
+            value: a + b
+          };
+        })();
+
+        var foo;
+        (async () => {
+          await 1;
+          this.foo = foo;
+          function foo() {
+            return 42;
+          }
+        })();
+
+        var Bar;
+        (async () => {
+          await 1;
+          return {
+            __proto__: null,
+            value: Bar = class Bar {
+            }
+          };
+        })();
+
+        (async () => {
+          for await (const chunk of []) {}
+        })();
+
+        var fs;
+        (async () => {
+          fs = (await import("node:fs")).default;
+          return {
+            __proto__: null,
+            value: fs.existsSync("/")
+          };
+        })();
+
+        var import_node_path;
+        var join;
+        var separator;
+        (async () => {
+          import_node_path = await import("node:path");
+          join = import_node_path.join;
+          return {
+            __proto__: null,
+            value: separator = import_node_path.sep
+          };
+        })();
+
+        var os;
+        (async () => {
+          return {
+            __proto__: null,
+            value: os = await import("node:os")
+          };
+        })();
+
+        (async () => {
+          return {
+            __proto__: null,
+            value: await import("node:fs")
+          };
+        })();
+        "
+      `);
+    });
+  });
+
   describe("replMode option", () => {
     test("replMode false by default", () => {
       const transpiler = new Bun.Transpiler({ loader: "tsx" });

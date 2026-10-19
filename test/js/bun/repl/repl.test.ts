@@ -780,6 +780,250 @@ describe.concurrent("Bun REPL", () => {
     });
   });
 
+  // An input with no top-level await and no import runs as the statements of a script.
+  describe("declarations of an input", () => {
+    test("a function declared in an input is the global binding of its name", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "function f() { return 1 } function wrap(g) { return () => g() + 100 } f = wrap(f); f()",
+        "f()",
+        "function current() { return 1 } var call = () => current(); call()",
+        "function current() { return 2 }",
+        // A closure from an earlier input calls the newest declaration.
+        "call()",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["101", "101", "1", "undefined", "2"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a function exists before the first statement of its input runs", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "var early = typeof globalThis.late; function late() {}",
+        "early",
+        "throw new Error('stop'); function after() { return 'after' }",
+        "after()",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["undefined", '"function"', "error: stop", '"after"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a function declared in a block is there in the next input", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "if (true) { function inIf() {} }",
+        "try { function inTry() {} } finally {}",
+        "for (const once of [1]) { function inFor() {} }",
+        "switch (1) { case 1: function inSwitch() {} }",
+        "label: { function inLabel() {} }",
+        "[typeof inIf, typeof inTry, typeof inFor, typeof inSwitch, typeof inLabel].join()",
+        "if (true) { function sameInput() { return 7 } } sameInput()",
+        // A block that does not run declares the name and leaves its value.
+        "var kept = 1; if (false) { function kept() {} }",
+        "typeof kept",
+        ".exit",
+      ]);
+      expect(outputs.slice(5)).toEqual([
+        '"function,function,function,function,function"',
+        "7",
+        "undefined",
+        '"number"',
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a name that eval declares is there in the next input", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        `eval("var fromEval = 4; function evalFn() { return fromEval }")`,
+        "evalFn()",
+        "typeof fromEval",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["undefined", "4", '"number"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("an export statement declares or evaluates what it carries", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "export function exported() { return 'exported' }",
+        "exported()",
+        "export async function exportedAsync() {}",
+        "export function* exportedGenerator() {}",
+        "[typeof exportedAsync, typeof exportedGenerator].join()",
+        "export default function byDefault() { return 'default' }",
+        "byDefault()",
+        "export default class DefaultClass {}",
+        "typeof DefaultClass",
+        "export default 6 * 7",
+        "export default function () {}",
+        "export const exportedConst = 7",
+        "var local = 8; export { local, exported as renamed }",
+        "exportedConst + local",
+        // A re-export binds no name. The module is loaded.
+        "export { sep } from 'node:path'; typeof sep",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "undefined",
+        '"exported"',
+        "undefined",
+        "undefined",
+        '"function,function"',
+        "undefined",
+        '"default"',
+        "[class DefaultClass]",
+        '"function"',
+        "42",
+        "[Function]",
+        "7",
+        "8",
+        "15",
+        '"undefined"',
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a function or class with no name that an input evaluates to has no name", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "() => 1",
+        "_.name",
+        "(function () {})",
+        "(class {})",
+        "_.name",
+        "await 1; () => 2",
+        "_.name",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["[Function]", '""', "[Function]", "[class (anonymous)]", '""', "[Function]", '""']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a top-level return and a function named as a fixed global are errors", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "return 5",
+        "function Bun() {}",
+        "typeof Bun.version",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "SyntaxError: Return statements are only valid inside functions.",
+        "TypeError: Can't declare global function 'Bun': property must be either configurable or both writable and enumerable",
+        '"string"',
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("only the last expression statement is the value of an input", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        // The promise is the value. It is not awaited.
+        "var pending = new Promise(() => {}); pending",
+        // Neither of these ends with an expression statement.
+        "if (1) ({ value: 7 })",
+        "if (1) pending;",
+        "'use strict'; function strictThis() { return this === undefined } strictThis()",
+        "// only a comment",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["Promise { <pending> }", "undefined", "undefined", "true", "undefined"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".load runs a file the same way", async () => {
+      using dir = tempDir("repl-load-functions", {
+        "lib.js": "function helper() { return 1 }\nfunction main() { return helper() }\n",
+      });
+      const file = path.join(String(dir), "lib.js");
+      const { outputs, stderr, exitCode } = await runRepl([
+        `.load ${file}`,
+        "function helper() { return 2 }",
+        "main()",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([`Loading ${file}...\nundefined`, "undefined", "2"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".copy and an input of several lines run the same way", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        ".copy var seenByCopy = typeof globalThis.viaCopy; function viaCopy() {}",
+        "seenByCopy",
+        "var seenByLines = typeof globalThis.viaLines; function viaLines() {",
+        "}",
+        "seenByLines",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["Copied 9 characters to clipboard", '"function"', "undefined", '"function"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test.each([
+      ["-e", "", "function\n"],
+      // The promise of an async function that never settles is not the value of the input.
+      ["-p", " main(); async function main() { await new Promise(() => {}) }", "function\nundefined\n"],
+    ])("%s runs an input the same way", async (flag, more, expected) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "repl", flag, `console.log(typeof globalThis.late); function late() {}${more}`],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, NO_COLOR: "1" },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe(expected);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("JSX uses the JSX runtime that the working directory resolves", async () => {
+      const runtime = `
+        globalThis.jsxRuntimeLoads = (globalThis.jsxRuntimeLoads ?? 0) + 1;
+        const element = (type, props) => ({ type, props });
+        module.exports = { Fragment: "Fragment", jsx: element, jsxs: element, jsxDEV: element };
+      `;
+      using dir = tempDir("repl-jsx", {
+        "node_modules/react/package.json": JSON.stringify({ name: "react", version: "0.0.0" }),
+        "node_modules/react/jsx-dev-runtime.js": runtime,
+        "node_modules/react/jsx-runtime.js": runtime,
+      });
+      const { outputs, stderr, exitCode } = await runRepl(
+        [
+          // An input without JSX does not load the runtime.
+          "typeof jsxRuntimeLoads",
+          '<div id="a">text</div>',
+          "function Hello(props) { return <b>{props.name}</b> }",
+          '<Hello name="bun" />.type === Hello',
+          "<><i /></>.type",
+          "jsxRuntimeLoads",
+          // A JSX input runs in a function. A function in a block stays local to the block there.
+          "var number = 1; if (false) { function number() {} } <br />.type",
+          "typeof number",
+          ".exit",
+        ],
+        { cwd: String(dir) },
+      );
+      expect(outputs).toEqual([
+        '"undefined"',
+        '{\n  type: "div",\n  props: {\n    id: "a",\n    children: "text",\n  },\n}',
+        "undefined",
+        "true",
+        '"Fragment"',
+        "1",
+        '"br"',
+        '"number"',
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("multiline input", () => {
     test("keeps reading lines until the input is complete", async () => {
       const { outputs, stderr, exitCode } = await runRepl([
@@ -1709,6 +1953,20 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       send("__pending()\n");
       await waitFor("42");
       expect(allOutput()).not.toMatch(/editor mode/i);
+    });
+  });
+
+  test(".editor mode runs its lines as the statements of one script", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send(".editor\n");
+      await waitFor(/editor mode/i);
+      // A function exists before the first line runs.
+      send("var __early = typeof globalThis.__late\n");
+      send("function __late() {}\n");
+      send("\x04"); // Ctrl+D to finish editor mode
+      await waitFor(/\u276f|> /);
+      send("`early: ${__early}`\n");
+      expect(await waitFor(/"early: \w+"/)).toContain('"early: function"');
     });
   });
 

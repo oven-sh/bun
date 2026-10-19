@@ -2146,6 +2146,8 @@ impl<'a> Repl<'a> {
             bun_ast::Loader::Tsx,
         );
         opts.repl_mode = true;
+        // The import of the JSX runtime is part of what a JSX input evaluates.
+        opts.features.auto_import_jsx = true;
         opts.features.dead_code_elimination = false; // REPL needs all code
         opts.features.top_level_await = true; // Enable top-level await in REPL
         // Keep `lower_using` at its default (true) here even though JavaScriptCore

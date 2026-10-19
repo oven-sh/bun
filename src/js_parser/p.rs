@@ -260,6 +260,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) allow_private_identifiers: bool,
 
     pub(crate) has_top_level_return: bool,
+    /// The input holds JSX, a `using` declaration, a decorator or an `accessor` field. Lowering
+    /// these imports a helper, so a REPL input that has one runs in the wrapper function. The
+    /// visit pass needs to know that before the lowering tells it.
+    pub(crate) repl_input_gets_wrapper: bool,
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
     pub(crate) has_es_module_syntax: bool,
@@ -9708,6 +9712,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // ─── all remaining fields default ───
             allow_private_identifiers: false,
             has_top_level_return: false,
+            repl_input_gets_wrapper: false,
             latest_return_had_semicolon: false,
             has_import_meta: false,
             has_es_module_syntax: false,

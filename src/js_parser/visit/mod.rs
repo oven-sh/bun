@@ -1621,8 +1621,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // case we give up and do not preserve the semantics of the original code.
                             let name = data.func.name.unwrap();
                             let name_ref = name.ref_;
+                            // A REPL input that runs as a Program also keeps the declaration: the
+                            // engine then declares the function in the global scope (Annex B),
+                            // and that is how a later input finds it. In the wrapper function
+                            // that `var` would be local to the wrapper and hide the global.
+                            let kept_for_repl_program = p.options.repl_mode
+                                && p.fn_or_arrow_data_visit.is_outside_fn_or_arrow
+                                && !p.repl_input_gets_wrapper
+                                && p.current_scope().strict_mode
+                                    == bun_ast::StrictModeKind::SloppyMode;
                             // SAFETY: current_scope is a valid arena ptr for the parse.
-                            if p.current_scope().contains_direct_eval {
+                            if p.current_scope().contains_direct_eval || kept_for_repl_program {
                                 if let Some(hoisted_ref) =
                                     p.hoisted_ref_for_sloppy_mode_block_fn.get(&name_ref)
                                 {

@@ -277,6 +277,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TCloseBrace)?;
 
         let has_any_decorators = has_decorators || class_opts.ts_decorators.len() > 0;
+        p.repl_input_gets_wrapper |= has_any_decorators || has_auto_accessor;
         // `Expr: Copy` — safe arena-slice → owned Vec (one memcpy, no double-drop).
         let ts_decorators = ExprNodeList::from_arena_slice(class_opts.ts_decorators);
         Ok(G::Class {
@@ -864,6 +865,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 // p.markSyntaxFeature(.using, token_range.loc);
                 opts.is_using_statement = true;
+                p.repl_input_gets_wrapper = true;
                 let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
                 let decls_slice = bun_collections::RawSlice::new(decls.slice());
                 if opts.is_typescript_declare {
@@ -923,6 +925,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         // p.markSyntaxFeature(.using, using_range.loc);
                         opts.is_using_statement = true;
+                        p.repl_input_gets_wrapper = true;
                         let decls =
                             p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
                         let decls_slice = bun_collections::RawSlice::new(decls.slice());

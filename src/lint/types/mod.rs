@@ -61,7 +61,7 @@
 //!   `checker.getApparentType(type)` is `type.get_apparent_type()`, `checker.getTypeOfSymbol(symbol)`
 //!   is `symbol.get_type()`.
 //! - [`Types`] has what is asked of none of them: the compiler options, the types that always
-//!   exist, the symbols in scope.
+//!   exist, the symbols in scope, what a name means at a node.
 //! - `ts-api-utils` is [`tsutils`].
 //! - `@typescript-eslint/type-utils`, and what in `eslint-plugin/src/util` needs types, is [`utils`].
 //!
@@ -96,6 +96,10 @@
 //!   TypeScript has a signature without parameters that returns `any`. That of an optional call
 //!   returns what the function returns, without the `undefined` of the chain.
 //! - A union has one `undefined` where TypeScript 6 can have the missing type beside it.
+//! - [`Types::resolve_name`] and [`Types::get_symbol_in_scope`] start in the scope that the node is in. For a member
+//!   or a property with a function, that is the scope of the function. A statement, a function, a class, a function
+//!   type, a mapped type, a parameter, a type parameter and a `case` are in the scope around them, so what they
+//!   declare themselves is not found from them. TypeScript starts inside the node.
 //! - [`TsNode`]: tokens, `ParenthesizedType` and `EndOfFileToken` are not nodes.
 //!   [`TsNode::span`] and [`TsNode::get_source_text`] are empty in the default library, whose text
 //!   is not kept.
@@ -215,7 +219,7 @@ macro_rules! queries {
         ///
         /// Rules do not call this. It is what [`Type`], [`TsSymbol`] and the other handles are
         /// made of.
-        pub trait Queries<'a> {
+        pub(crate) trait Queries<'a> {
             $($(#[$doc])* fn $name(&mut self, $($arg: $ty),*) -> $ret {
                 $(let _ = $arg;)*
                 Absent::absent()
@@ -334,7 +338,7 @@ pub struct Checker<'a> {
 }
 
 impl<'a> Checker<'a> {
-    pub fn new(queries: &'a mut dyn Queries<'a>) -> Self {
+    pub(crate) fn new(queries: &'a mut dyn Queries<'a>) -> Self {
         Checker {
             options: queries.compiler_options(),
             file: queries.current_file(),
@@ -457,8 +461,9 @@ impl<'a> Types<'a> {
     }
 
     /// `checker.getSymbolsInScope(node, meaning).find(it => it.name === name)`, which does not make
-    /// the list. It is not `checker.resolveName(..)`: an alias counts for what it is, not for what it
-    /// is an alias of.
+    /// the list. It is not [`Types::resolve_name`]: an alias counts for what it is, not for what it
+    /// is an alias of. Both start in
+    /// [the scope that `node` is in](self#where-the-answers-are-not-those-of-typescript-6).
     pub fn get_symbol_in_scope(
         self,
         node: impl Locate<'a>,
@@ -467,6 +472,22 @@ impl<'a> Types<'a> {
     ) -> Option<TsSymbol<'a>> {
         let (file, node) = (self.file, node.locate(self.file).raw());
         let symbol = file.query(|q| q.symbol_in_scope(node, meaning, name))?;
+        Some(TsSymbol::new(file, symbol))
+    }
+
+    /// `checker.resolveName(name, node, meaning, excludeGlobals)`: what the identifier `name` means as a type, a
+    /// value or a namespace in [the scope that `node` is in](self#where-the-answers-are-not-those-of-typescript-6),
+    /// wherever in the program it is declared. `None` for a qualified name. An import counts for what it is an
+    /// alias of, and is returned as the alias: [`TsSymbol::skip_alias`] leads on.
+    pub fn resolve_name(
+        self,
+        node: impl Locate<'a>,
+        name: &[u8],
+        meaning: SymbolFlags,
+        exclude_globals: bool,
+    ) -> Option<TsSymbol<'a>> {
+        let (file, node) = (self.file, node.locate(self.file).raw());
+        let symbol = file.query(|q| q.resolve_name(node, name, meaning, exclude_globals))?;
         Some(TsSymbol::new(file, symbol))
     }
 

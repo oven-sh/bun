@@ -277,8 +277,8 @@ impl UpdateInteractiveCommand {
     fn load_package_json<'a>(
         manager: &'a mut PackageManager,
         package_json_path: &[u8],
+        log: &mut bun_ast::Log,
     ) -> Option<&'a mut WorkspacePackageJsonCacheEntry> {
-        let log = manager.log_mut();
         match manager.workspace_package_json_cache.get_with_path(
             log,
             package_json_path,
@@ -327,7 +327,8 @@ impl UpdateInteractiveCommand {
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
             let log = manager.log_mut();
-            let Some(package_json) = Self::load_package_json(manager, package_json_path) else {
+            let Some(package_json) = Self::load_package_json(manager, package_json_path, log)
+            else {
                 continue;
             };
 
@@ -387,7 +388,7 @@ impl UpdateInteractiveCommand {
         let package_json_path = Self::build_package_json_path(root_dir, b"", &mut path_buf);
 
         let log = manager.log_mut();
-        let Some(package_json) = Self::load_package_json(manager, package_json_path) else {
+        let Some(package_json) = Self::load_package_json(manager, package_json_path, log) else {
             return Ok(());
         };
 
